@@ -1,0 +1,23 @@
+[15-Apr-2026 17:03:43 UTC] PHP Fatal error:  Uncaught PDOException: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'status' in 'SELECT' in /home/i8kncp3vurlu/public_html/socialmedia/tires.php:25
+Stack trace:
+#0 /home/i8kncp3vurlu/public_html/socialmedia/tires.php(25): PDO->prepare()
+#1 {main}
+  thrown in /home/i8kncp3vurlu/public_html/socialmedia/tires.php on line 25
+[15-Apr-2026 17:03:46 UTC] PHP Fatal error:  Uncaught PDOException: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'status' in 'SELECT' in /home/i8kncp3vurlu/public_html/socialmedia/tires.php:25
+Stack trace:
+#0 /home/i8kncp3vurlu/public_html/socialmedia/tires.php(25): PDO->prepare()
+#1 {main}
+  thrown in /home/i8kncp3vurlu/public_html/socialmedia/tires.php on line 25
+[15-Apr-2026 17:03:51 UTC] PHP Fatal error:  Uncaught PDOException: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'status' in 'SELECT' in /home/i8kncp3vurlu/public_html/socialmedia/tires.php:25
+Stack trace:
+#0 /home/i8kncp3vurlu/public_html/socialmedia/tires.php(25): PDO->prepare()
+#1 {main}
+  thrown in /home/i8kncp3vurlu/public_html/socialmedia/tires.php on line 25
+[16-Apr-2026 11:25:56 UTC] PHP Fatal error:  Uncaught Error: Call to undefined function resolveClient() in /home/i8kncp3vurlu/public_html/socialmedia/batch.php:5
+Stack trace:
+#0 {main}
+  thrown in /home/i8kncp3vurlu/public_html/socialmedia/batch.php on line 5
+[16-Apr-2026 11:26:17 UTC] PHP Fatal error:  Uncaught Error: Call to undefined function resolveClient() in /home/i8kncp3vurlu/public_html/socialmedia/batch.php:5
+Stack trace:
+#0 {main}
+  thrown in /home/i8kncp3vurlu/public_html/socialmedia/batch.php on line 5
