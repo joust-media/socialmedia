@@ -11,6 +11,7 @@
  */
 
 require __DIR__ . '/db.php';
+require_once __DIR__ . '/helpers.php';
 
 header('Content-Type: application/json');
 
@@ -22,6 +23,62 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 $action = $_POST['action'] ?? '';
 
+// ---- Toggle posted flag ----
+if ($action === 'toggle_posted') {
+    $postId = (int)($_POST['id'] ?? 0);
+    $target = ((string)($_POST['to'] ?? '1')) === '1' ? 1 : 0;
+    if ($postId <= 0) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'Invalid id']);
+        exit;
+    }
+    // Make sure the column actually exists (migrate.php may not have run).
+    $colStmt = $pdo->prepare("
+        SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'posts'
+          AND COLUMN_NAME = 'posted'
+    ");
+    $colStmt->execute();
+    if ((int)$colStmt->fetchColumn() === 0) {
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'error' => 'posts.posted column missing — run migrate.php']);
+        exit;
+    }
+    try {
+        if ($target === 1) {
+            $stmt = $pdo->prepare("UPDATE posts SET posted = 1, posted_at = NOW() WHERE id = ?");
+        } else {
+            $stmt = $pdo->prepare("UPDATE posts SET posted = 0, posted_at = NULL WHERE id = ?");
+        }
+        $stmt->execute([$postId]);
+
+        // Capture company_id for activity log
+        $coStmt = $pdo->prepare("SELECT company_id, posted_at FROM posts WHERE id = ?");
+        $coStmt->execute([$postId]);
+        $row = $coStmt->fetch();
+        $coId = (int)($row['company_id'] ?? 0);
+        $postedAt = $row['posted_at'] ?? null;
+        if ($coId > 0) {
+            logActivity($pdo, $coId, 'post', $postId,
+                $target === 1 ? 'posted' : 'unposted', actorFromPost(),
+                $target === 1 ? "Marked post #{$postId} as posted"
+                              : "Unmarked post #{$postId}");
+        }
+
+        echo json_encode([
+            'ok'        => true,
+            'id'        => $postId,
+            'posted'    => $target,
+            'posted_at' => $postedAt,
+        ]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'error' => 'Update failed']);
+    }
+    exit;
+}
+
 // ---- Delete entire post ----
 if ($action === 'delete_post') {
     $postId = (int)($_POST['id'] ?? 0);
@@ -32,6 +89,11 @@ if ($action === 'delete_post') {
     }
     try {
         $pdo->beginTransaction();
+        // Capture company_id for the activity log before we cascade-delete.
+        $coStmt = $pdo->prepare("SELECT company_id FROM posts WHERE id = ?");
+        $coStmt->execute([$postId]);
+        $deletedCompanyId = (int)$coStmt->fetchColumn();
+
         $imgs = $pdo->prepare("SELECT image_url FROM post_images WHERE post_id = ?");
         $imgs->execute([$postId]);
         foreach ($imgs->fetchAll() as $row) {
@@ -42,6 +104,11 @@ if ($action === 'delete_post') {
         }
         // CASCADE deletes post_images and post_categories
         $pdo->prepare("DELETE FROM posts WHERE id = ?")->execute([$postId]);
+        if ($deletedCompanyId > 0) {
+            logActivity($pdo, $deletedCompanyId, 'post', $postId,
+                'deleted', actorFromPost(),
+                "Deleted post #{$postId}");
+        }
         $pdo->commit();
         echo json_encode(['ok' => true, 'id' => $postId]);
     } catch (Exception $e) {
@@ -121,6 +188,29 @@ if ($hasTag) {
 }
 
 try {
+    $pdo->beginTransaction();
+
+    // Capture before-values for diff logging. posts.name is optional (migration-gated).
+    $nameSel = hasPostsNameColumn($pdo) ? 'name' : "'' AS name";
+    $before = $pdo->prepare("
+        SELECT company_id, status, client_comment, scheduled_date, caption, hashtags, {$nameSel}
+          FROM posts WHERE id = ? FOR UPDATE
+    ");
+    $before->execute([$id]);
+    $prev = $before->fetch();
+    if (!$prev) {
+        $pdo->rollBack();
+        http_response_code(404);
+        echo json_encode(['ok' => false, 'error' => 'Post not found']);
+        exit;
+    }
+    // Friendly label used in activity-log summaries.
+    $postLabel = postDisplayLabel([
+        'name'    => $prev['name'] ?? '',
+        'caption' => $prev['caption'] ?? '',
+        'id'      => $id,
+    ]);
+
     $sets   = [];
     $params = [];
     if ($hasStat) { $sets[] = 'status = ?';         $params[] = $status; }
@@ -134,6 +224,52 @@ try {
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
 
+    // Diff-based activity logging — one row per actually-changed field, all sharing one batch_id.
+    $companyId = (int)$prev['company_id'];
+    $actor     = actorFromPost();
+    $batchId   = newBatchId();
+
+    if ($hasStat && $prev['status'] !== $status) {
+        $action = ($status === 'approved') ? 'approved'
+                : (($status === 'denied')  ? 'denied'
+                : 'reset_pending');
+        logActivity($pdo, $companyId, 'post', $id, $action, $actor,
+            "{$postLabel} " . actionLabel($action),
+            null, $batchId);
+    }
+    if ($hasCmt) {
+        $prevCmt = $prev['client_comment'];
+        // Chat semantics: any non-empty submission becomes a fresh message in the thread,
+        // even if it matches the previous text. Empty submissions only clear once.
+        if ($comment !== null && $comment !== '') {
+            logActivity($pdo, $companyId, 'post', $id, 'commented', $actor,
+                "Comment on {$postLabel}", $comment, $batchId);
+        } elseif (($prevCmt ?? '') !== '') {
+            logActivity($pdo, $companyId, 'post', $id, 'uncommented', $actor,
+                "Cleared comment on {$postLabel}", $prevCmt, $batchId);
+        }
+    }
+    if ($hasDate && $prev['scheduled_date'] !== $dateFormatted) {
+        logActivity($pdo, $companyId, 'post', $id, 'edited_schedule', $actor,
+            "Rescheduled post #{$id}",
+            ($prev['scheduled_date'] ?? '') . ' → ' . ($dateFormatted ?? ''),
+            $batchId);
+    }
+    if ($hasCap && (string)$prev['caption'] !== (string)$caption) {
+        logActivity($pdo, $companyId, 'post', $id, 'edited_caption', $actor,
+            "Edited caption on post #{$id}",
+            mb_substr((string)$prev['caption'], 0, 200) . ' → ' . mb_substr((string)$caption, 0, 200),
+            $batchId);
+    }
+    if ($hasTag && (string)$prev['hashtags'] !== (string)$hashtags) {
+        logActivity($pdo, $companyId, 'post', $id, 'edited_hashtags', $actor,
+            "Edited hashtags on post #{$id}",
+            mb_substr((string)$prev['hashtags'], 0, 200) . ' → ' . mb_substr((string)$hashtags, 0, 200),
+            $batchId);
+    }
+
+    $pdo->commit();
+
     echo json_encode([
         'ok'             => true,
         'id'             => $id,
@@ -144,6 +280,7 @@ try {
         'hashtags'       => $hasTag  ? $hashtags       : null,
     ]);
 } catch (Exception $e) {
+    if ($pdo->inTransaction()) { $pdo->rollBack(); }
     http_response_code(500);
     echo json_encode(['ok' => false, 'error' => 'Database error']);
 }

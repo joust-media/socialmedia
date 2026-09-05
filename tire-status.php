@@ -10,6 +10,7 @@
  */
 
 require __DIR__ . '/db.php';
+require_once __DIR__ . '/helpers.php';
 
 header('Content-Type: application/json');
 
@@ -32,6 +33,11 @@ if ($action === 'delete_tire') {
     }
     try {
         $pdo->beginTransaction();
+        // Capture company_id before cascade.
+        $coStmt = $pdo->prepare("SELECT company_id, name FROM tires WHERE id = ?");
+        $coStmt->execute([$tireId]);
+        $tireRow = $coStmt->fetch();
+
         // Delete image files from disk
         $imgs = $pdo->prepare("SELECT image_url FROM tire_images WHERE tire_id = ?");
         $imgs->execute([$tireId]);
@@ -43,6 +49,11 @@ if ($action === 'delete_tire') {
         }
         // CASCADE deletes tire_images and tire_categories
         $pdo->prepare("DELETE FROM tires WHERE id = ?")->execute([$tireId]);
+        if ($tireRow) {
+            logActivity($pdo, (int)$tireRow['company_id'], 'tire', $tireId,
+                'deleted', actorFromPost(),
+                "Deleted item #{$tireId} (" . ($tireRow['name'] ?? '') . ")");
+        }
         $pdo->commit();
         echo json_encode(['ok' => true, 'tire_id' => $tireId]);
     } catch (Exception $e) {
@@ -84,6 +95,28 @@ if ($hasCmt) {
 }
 
 try {
+    $pdo->beginTransaction();
+
+    $hasDisplayName = $pdo->query("SHOW COLUMNS FROM tire_images LIKE 'display_name'")->rowCount() > 0;
+    $nameSel = $hasDisplayName ? 'ti.display_name' : "'' AS display_name";
+    $before = $pdo->prepare("
+        SELECT t.company_id, ti.status, ti.client_comment, ti.caption, {$nameSel}
+          FROM tire_images ti
+          INNER JOIN tires t ON t.id = ti.tire_id
+         WHERE ti.id = ?
+         FOR UPDATE
+    ");
+    $before->execute([$id]);
+    $prev = $before->fetch();
+    if (!$prev) {
+        $pdo->rollBack();
+        http_response_code(404);
+        echo json_encode(['ok' => false, 'error' => 'Image not found']);
+        exit;
+    }
+    // Friendly label for activity-log summaries — preferred over bare "image #42".
+    $imgLabel = imageDisplayLabel(['display_name' => $prev['display_name'], 'caption' => $prev['caption'], 'id' => $id]);
+
     $sets   = [];
     $params = [];
     if ($hasStat) { $sets[] = 'status = ?';         $params[] = $status; }
@@ -94,6 +127,33 @@ try {
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
 
+    $companyId = (int)$prev['company_id'];
+    $actor     = actorFromPost();
+    $batchId   = newBatchId();
+
+    if ($hasStat && $prev['status'] !== $status) {
+        $action = ($status === 'approved') ? 'approved'
+                : (($status === 'denied')  ? 'denied'
+                : 'reset_pending');
+        logActivity($pdo, $companyId, 'tire_image', $id, $action, $actor,
+            "{$imgLabel} " . actionLabel($action),
+            null, $batchId);
+    }
+    if ($hasCmt) {
+        $prevCmt = $prev['client_comment'];
+        // Chat semantics: any non-empty submission becomes a fresh message in the thread,
+        // even if it matches the previous text. Empty submissions only clear once.
+        if ($comment !== null && $comment !== '') {
+            logActivity($pdo, $companyId, 'tire_image', $id, 'commented', $actor,
+                "Comment on {$imgLabel}", $comment, $batchId);
+        } elseif (($prevCmt ?? '') !== '') {
+            logActivity($pdo, $companyId, 'tire_image', $id, 'uncommented', $actor,
+                "Cleared comment on {$imgLabel}", $prevCmt, $batchId);
+        }
+    }
+
+    $pdo->commit();
+
     echo json_encode([
         'ok'      => true,
         'id'      => $id,
@@ -101,6 +161,7 @@ try {
         'comment' => $hasCmt  ? $comment : null,
     ]);
 } catch (Exception $e) {
+    if ($pdo->inTransaction()) { $pdo->rollBack(); }
     http_response_code(500);
     echo json_encode(['ok' => false, 'error' => 'Database error']);
 }

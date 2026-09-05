@@ -1,0 +1,1143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Bee — Brand Guidelines</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Open+Sans:ital,wght@0,400;0,600;0,700;0,800;1,400&family=Poppins:wght@400;500;600;700&family=Orbitron:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: #F4F5F8; }
+  * { box-sizing: border-box; }
+  a { color: #006DF5; text-decoration: none; }
+  a:hover { color: #1B4FDD; text-decoration: underline; }
+
+  @keyframes pbFadeUp {
+    from { opacity: 0; transform: translateY(18px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Nav links: ink by default, blue on hover, no underline. */
+  .pb-nav a { color: #09090B; text-decoration: none; transition: color .15s ease; }
+  .pb-nav a:hover { color: #006DF5; text-decoration: none; }
+
+  /* Solid pill buttons darken on hover, never underline. */
+  .pb-btn { transition: background .2s cubic-bezier(.2,.8,.2,1); }
+  .pb-btn:hover { background: #1B4FDD !important; color: #FFFFFF !important; text-decoration: none !important; }
+
+  /* Card / tile hover lifts (soft shadow). */
+  .pb-lift { transition: box-shadow .3s cubic-bezier(.2,.8,.2,1); }
+  .pb-lift:hover { box-shadow: 0 1px 2px rgba(9,9,11,0.06), 0 8px 20px rgba(9,9,11,0.08); }
+  .pb-icon-tile { transition: box-shadow .3s cubic-bezier(.2,.8,.2,1); }
+  .pb-icon-tile:hover { box-shadow: 0 2px 8px rgba(9,9,11,0.06); text-decoration: none; }
+  .pb-icon-tile:hover span { text-decoration: none; }
+
+  /* Responsive fallbacks for the fixed multi-column grids. */
+  @media (max-width: 860px) {
+    .pb-hero-grid { grid-template-columns: 1fr !important; padding-top: 56px !important; }
+    .pb-hero-orwell { position: static !important; transform: none !important; width: 260px !important; max-width: 70vw !important; margin: 8px auto 0; }
+    .pb-grid-2, .pb-grid-3, .pb-grid-buzz { grid-template-columns: 1fr !important; }
+    .pb-facts { grid-template-columns: 1fr !important; }
+    .pb-hero-h1 { font-size: 44px !important; }
+    .pb-nav-links { gap: 16px !important; }
+  }
+</style>
+</head>
+<body>
+
+<div style="font-family: 'Open Sans', system-ui, sans-serif; color: #09090B; background: #F4F5F8; min-height: 100vh">
+
+  <!-- ============ Sticky nav ============ -->
+  <nav class="pb-nav" style="position: sticky; top: 0; z-index: 50; background: rgba(255,255,255,0.94); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-bottom: 1px solid #E4E4E7">
+    <div style="max-width: 1180px; margin: 0 auto; padding: 0 32px; height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 24px">
+      <a href="#top" style="display: flex; align-items: center; text-decoration: none">
+        <img src="brand/logos/privacy-bee-logo-zinc.png" alt="Privacy Bee" style="height: 34px; display: block">
+      </a>
+      <div class="pb-nav-links" style="display: flex; align-items: center; gap: 26px; flex-wrap: wrap">
+                  <a href="#typography" style="font: 600 15px/1 'Open Sans', sans-serif; text-decoration: none">Typography</a>
+                  <a href="#colors" style="font: 600 15px/1 'Open Sans', sans-serif; text-decoration: none">Colors</a>
+                  <a href="#orwell" style="font: 600 15px/1 'Open Sans', sans-serif; text-decoration: none">Orwell</a>
+                  <a href="#iconography" style="font: 600 15px/1 'Open Sans', sans-serif; text-decoration: none">Iconography</a>
+                  <a href="#logo" style="font: 600 15px/1 'Open Sans', sans-serif; text-decoration: none">Logo</a>
+                  <a href="#shield" style="font: 600 15px/1 'Open Sans', sans-serif; text-decoration: none">Shield</a>
+                  <a href="#framework" style="font: 600 15px/1 'Open Sans', sans-serif; text-decoration: none">Framework</a>
+                  <a href="#video" style="font: 600 15px/1 'Open Sans', sans-serif; text-decoration: none">Video</a>
+                  <a href="#buzz" style="font: 600 15px/1 'Open Sans', sans-serif; text-decoration: none">Buzz</a>
+              </div>
+    </div>
+  </nav>
+
+  <!-- ============ Hero ============ -->
+  <header id="top" style="background: #FFFFFF; border-bottom: 1px solid #E4E4E7; position: relative; overflow: hidden">
+    <div class="pb-hero-grid" style="max-width: 1180px; margin: 0 auto; padding: 88px 32px 0; display: grid; grid-template-columns: 1.4fr 1fr; gap: 48px; align-items: center; animation: pbFadeUp 500ms cubic-bezier(.2,.8,.2,1) both">
+      <div style="display: flex; flex-direction: column; gap: 24px; padding-bottom: 72px">
+        <div style="font: 700 20px/1 'Open Sans', sans-serif; color: #006DF5">Press &amp; Affiliate Kit</div>
+        <h1 class="pb-hero-h1" style="font: 700 64px/1.05 'Poppins', 'Open Sans', sans-serif; letter-spacing: -0.01em; margin: 0; color: #09090B">Privacy Bee<br>Brand Guidelines</h1>
+        <p style="font: 400 20px/34px 'Open Sans', sans-serif; color: #535353; margin: 0; max-width: 54ch">Everything you need to represent Privacy Bee correctly — type, color, our mascot Orwell, iconography, logos, and layout rules. Every asset on this page is downloadable.</p>
+        <div style="display: flex; gap: 16px; align-items: center; flex-wrap: wrap">
+          <a class="pb-btn" href="#typography" style="display: inline-flex; align-items: center; justify-content: center; height: 56px; padding: 0 36px; background: #006DF5; color: #FFFFFF; border-radius: 50px; font: 700 18px/1 'Open Sans', sans-serif; text-decoration: none">Start With Type</a>
+          <a href="brand/tokens/colors_and_type.css" download="privacy-bee-tokens.css" style="font: 700 16px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none">Download Design Tokens (CSS) ↓</a>
+        </div>
+      </div>
+      <div></div>
+      <img class="pb-hero-orwell" src="brand/orwell/hero-cropped.png" alt="Orwell the Privacy Bee" style="position: absolute; right: 0; top: 50%; transform: translateY(-50%); width: 420px; max-width: 40vw; height: auto; display: block">
+    </div>
+  </header>
+
+  <main style="max-width: 1180px; margin: 0 auto; padding: 0 32px 96px; display: flex; flex-direction: column; gap: 96px">
+
+    <!-- ============ 01 Typography ============ -->
+    <section id="typography" style="scroll-margin-top: 96px; padding-top: 72px; display: flex; flex-direction: column; gap: 32px">
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <div style="font: 700 20px/32px 'Open Sans', sans-serif; color: #006DF5">01 — Typography</div>
+        <h2 style="font: 700 38px/48px 'Open Sans', sans-serif; letter-spacing: -0.01em; margin: 0">Four Families, Fixed Jobs</h2>
+        <p style="font: 400 18px/34px 'Open Sans', sans-serif; color: #535353; margin: 0; max-width: 72ch">Inter is the product typeface — all UI, dashboards, and tables. Open Sans is for email only, chosen as a web-safe fallback that renders reliably in every client. Poppins carries marketing heroes; Orbitron is a rare accent. Bold is the only emphasis — italics are rare. All faces load free from Google Fonts.</p>
+      </div>
+
+      <div class="pb-grid-2" style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px">
+        <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 40px; display: flex; flex-direction: column; gap: 12px">
+          <div style="font: 600 13px/1 'Inter', sans-serif; color: #7E7E7E; text-transform: uppercase; letter-spacing: 0.06em">Email Only — Open Sans</div>
+          <div style="font: 700 42px/1.15 'Open Sans', sans-serif; letter-spacing: -0.01em">Your Privacy Mission Starts Now</div>
+          <div style="font: 400 18px/34px 'Open Sans', sans-serif; color: #535353">Email body runs 18/34 Regular; section heads 38/48 Bold with −0.01em tracking. Open Sans is a fail-safe web font for email clients — never use it in product UI. Headlines stay short and punchy — two to six words, Title Case.</div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 24px">
+          <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 32px 40px; display: flex; flex-direction: column; gap: 8px">
+            <div style="font: 600 13px/1 'Inter', sans-serif; color: #7E7E7E; text-transform: uppercase; letter-spacing: 0.06em">Marketing Hero — Poppins Bold</div>
+            <div style="font: 700 40px/1.05 'Poppins', sans-serif; letter-spacing: -0.01em">Trusted by Millions</div>
+          </div>
+          <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 32px 40px; display: flex; flex-direction: column; gap: 8px">
+            <div style="font: 600 13px/1 'Inter', sans-serif; color: #7E7E7E; text-transform: uppercase; letter-spacing: 0.06em">Product UI — Inter (dashboard, tables, app)</div>
+            <div style="font: 500 16px/1.5 'Inter', sans-serif">493 data brokers scanned · 162 exposures identified</div>
+          </div>
+          <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 32px 40px; display: flex; flex-direction: column; gap: 8px">
+            <div style="font: 600 13px/1 'Inter', sans-serif; color: #7E7E7E; text-transform: uppercase; letter-spacing: 0.06em">Accent Mono — Orbitron (sparingly, 14px)</div>
+            <div style="font: 500 14px/1 'Orbitron', monospace; letter-spacing: 0.02em; text-transform: uppercase">Scan Complete</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 40px; display: flex; flex-direction: column; gap: 20px">
+        <div style="font: 600 13px/1 'Inter', sans-serif; color: #7E7E7E; text-transform: uppercase; letter-spacing: 0.06em">Type Scale</div>
+                  <div style="display: grid; grid-template-columns: 140px 1fr; gap: 24px; align-items: baseline; border-top: 1px solid #E4E4E7; padding-top: 16px">
+            <div style="font: 500 14px/1.5 'Inter', sans-serif; color: #7E7E7E">Hero · 96px</div>
+            <div style="font: 700 60px/1.05 &#039;Poppins&#039;, sans-serif; letter-spacing: -0.01em">Poppins Bold</div>
+          </div>
+                  <div style="display: grid; grid-template-columns: 140px 1fr; gap: 24px; align-items: baseline; border-top: 1px solid #E4E4E7; padding-top: 16px">
+            <div style="font: 500 14px/1.5 'Inter', sans-serif; color: #7E7E7E">H1 · 42px</div>
+            <div style="font: 700 42px/1.15 &#039;Open Sans&#039;, sans-serif; letter-spacing: -0.01em">Open Sans Bold</div>
+          </div>
+                  <div style="display: grid; grid-template-columns: 140px 1fr; gap: 24px; align-items: baseline; border-top: 1px solid #E4E4E7; padding-top: 16px">
+            <div style="font: 500 14px/1.5 'Inter', sans-serif; color: #7E7E7E">H2 · 38px</div>
+            <div style="font: 700 38px/48px &#039;Open Sans&#039;, sans-serif; letter-spacing: -0.01em">Section Head</div>
+          </div>
+                  <div style="display: grid; grid-template-columns: 140px 1fr; gap: 24px; align-items: baseline; border-top: 1px solid #E4E4E7; padding-top: 16px">
+            <div style="font: 500 14px/1.5 'Inter', sans-serif; color: #7E7E7E">H4 · 24px</div>
+            <div style="font: 700 24px/32px &#039;Open Sans&#039;, sans-serif">Card Title / Eyebrow</div>
+          </div>
+                  <div style="display: grid; grid-template-columns: 140px 1fr; gap: 24px; align-items: baseline; border-top: 1px solid #E4E4E7; padding-top: 16px">
+            <div style="font: 500 14px/1.5 'Inter', sans-serif; color: #7E7E7E">Body · 18px</div>
+            <div style="font: 400 18px/34px &#039;Open Sans&#039;, sans-serif; color: #535353">Default body copy runs Open Sans 18/34.</div>
+          </div>
+                  <div style="display: grid; grid-template-columns: 140px 1fr; gap: 24px; align-items: baseline; border-top: 1px solid #E4E4E7; padding-top: 16px">
+            <div style="font: 500 14px/1.5 'Inter', sans-serif; color: #7E7E7E">UI · 14px</div>
+            <div style="font: 500 14px/1.5 &#039;Inter&#039;, sans-serif">Inter Medium for dense UI and tables</div>
+          </div>
+                  <div style="display: grid; grid-template-columns: 140px 1fr; gap: 24px; align-items: baseline; border-top: 1px solid #E4E4E7; padding-top: 16px">
+            <div style="font: 500 14px/1.5 'Inter', sans-serif; color: #7E7E7E">Meta · 12px</div>
+            <div style="font: 400 12px/22px &#039;Open Sans&#039;, sans-serif; color: #535353">Small footer and legal text</div>
+          </div>
+                <div style="font: 400 15px/26px 'Open Sans', sans-serif; color: #7E7E7E">Casing: Title Case for headlines and CTAs · Sentence case for body · No emoji in user-facing copy.</div>
+      </div>
+    </section>
+
+    <!-- ============ 02 Colors ============ -->
+    <section id="colors" style="scroll-margin-top: 96px; display: flex; flex-direction: column; gap: 32px">
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <div style="font: 700 20px/32px 'Open Sans', sans-serif; color: #006DF5">02 — Colors</div>
+        <h2 style="font: 700 38px/48px 'Open Sans', sans-serif; letter-spacing: -0.01em; margin: 0">Blue Acts, Yellow Signs</h2>
+        <p style="font: 400 18px/34px 'Open Sans', sans-serif; color: #535353; margin: 0; max-width: 72ch">Privacy-Bee Blue is for CTAs and links. Privacy Yellow is the bee's signature accent — never a button. Pages sit on off-white; pure white is reserved for cards and content rows.</p>
+      </div>
+
+              <div style="display: flex; flex-direction: column; gap: 16px">
+          <h3 style="font: 700 24px/32px 'Open Sans', sans-serif; margin: 0">Brand Core</h3>
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 16px">
+                          <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; overflow: hidden">
+                <div style="height: 88px; background: #006DF5; border-bottom: 1px solid #E4E4E7"></div>
+                <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 3px">
+                  <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Privacy-Bee Blue</div>
+                  <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">#006DF5 · --pb-blue</div>
+                  <div style="font: 400 13px/1.5 'Open Sans', sans-serif; color: #535353">CTAs &amp; links — the action color</div>
+                </div>
+              </div>
+                          <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; overflow: hidden">
+                <div style="height: 88px; background: #1B4FDD; border-bottom: 1px solid #E4E4E7"></div>
+                <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 3px">
+                  <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Blue Deep</div>
+                  <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">#1B4FDD · --pb-blue-deep</div>
+                  <div style="font: 400 13px/1.5 'Open Sans', sans-serif; color: #535353">Hover / pressed state</div>
+                </div>
+              </div>
+                          <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; overflow: hidden">
+                <div style="height: 88px; background: #09090B; border-bottom: 1px solid #E4E4E7"></div>
+                <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 3px">
+                  <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Zinc 950</div>
+                  <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">#09090B · --pb-zinc-950</div>
+                  <div style="font: 400 13px/1.5 'Open Sans', sans-serif; color: #535353">Main dark — text, dark surfaces</div>
+                </div>
+              </div>
+                          <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; overflow: hidden">
+                <div style="height: 88px; background: #FCB223; border-bottom: 1px solid #E4E4E7"></div>
+                <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 3px">
+                  <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Privacy Yellow</div>
+                  <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">#FCB223 · --pb-yellow</div>
+                  <div style="font: 400 13px/1.5 'Open Sans', sans-serif; color: #535353">Official yellow — bee accent, never a button</div>
+                </div>
+              </div>
+                          <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; overflow: hidden">
+                <div style="height: 88px; background: #000F30; border-bottom: 1px solid #E4E4E7"></div>
+                <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 3px">
+                  <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Brand Navy</div>
+                  <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">#000F30 · --pb-navy</div>
+                  <div style="font: 400 13px/1.5 'Open Sans', sans-serif; color: #535353">Legacy consumer footer / site</div>
+                </div>
+              </div>
+                      </div>
+        </div>
+              <div style="display: flex; flex-direction: column; gap: 16px">
+          <h3 style="font: 700 24px/32px 'Open Sans', sans-serif; margin: 0">Surfaces &amp; Neutrals</h3>
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 16px">
+                          <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; overflow: hidden">
+                <div style="height: 88px; background: #F4F5F8; border-bottom: 1px solid #E4E4E7"></div>
+                <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 3px">
+                  <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Surface</div>
+                  <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">#F4F5F8 · --pb-surface</div>
+                  <div style="font: 400 13px/1.5 'Open Sans', sans-serif; color: #535353">Default page background</div>
+                </div>
+              </div>
+                          <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; overflow: hidden">
+                <div style="height: 88px; background: #FFFFFF; border-bottom: 1px solid #E4E4E7"></div>
+                <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 3px">
+                  <div style="font: 700 15px/1.3 'Open Sans', sans-serif">White</div>
+                  <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">#FFFFFF · --pb-white</div>
+                  <div style="font: 400 13px/1.5 'Open Sans', sans-serif; color: #535353">Cards &amp; content rows only</div>
+                </div>
+              </div>
+                          <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; overflow: hidden">
+                <div style="height: 88px; background: #E4E4E7; border-bottom: 1px solid #E4E4E7"></div>
+                <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 3px">
+                  <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Line</div>
+                  <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">#E4E4E7 · --pb-line</div>
+                  <div style="font: 400 13px/1.5 'Open Sans', sans-serif; color: #535353">Hairline UI borders</div>
+                </div>
+              </div>
+                          <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; overflow: hidden">
+                <div style="height: 88px; background: #535353; border-bottom: 1px solid #E4E4E7"></div>
+                <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 3px">
+                  <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Ink 2</div>
+                  <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">#535353 · --pb-ink-2</div>
+                  <div style="font: 400 13px/1.5 'Open Sans', sans-serif; color: #535353">Secondary body text</div>
+                </div>
+              </div>
+                          <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; overflow: hidden">
+                <div style="height: 88px; background: #7E7E7E; border-bottom: 1px solid #E4E4E7"></div>
+                <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 3px">
+                  <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Ink 3</div>
+                  <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">#7E7E7E · --pb-ink-3</div>
+                  <div style="font: 400 13px/1.5 'Open Sans', sans-serif; color: #535353">Tertiary / meta text</div>
+                </div>
+              </div>
+                      </div>
+        </div>
+              <div style="display: flex; flex-direction: column; gap: 16px">
+          <h3 style="font: 700 24px/32px 'Open Sans', sans-serif; margin: 0">Semantic Signal</h3>
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 16px">
+                          <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; overflow: hidden">
+                <div style="height: 88px; background: #6A30B4; border-bottom: 1px solid #E4E4E7"></div>
+                <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 3px">
+                  <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Purple</div>
+                  <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">#6A30B4 · --pb-purple</div>
+                  <div style="font: 400 13px/1.5 'Open Sans', sans-serif; color: #535353">Premium &amp; Signature moments</div>
+                </div>
+              </div>
+                          <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; overflow: hidden">
+                <div style="height: 88px; background: #16BC11; border-bottom: 1px solid #E4E4E7"></div>
+                <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 3px">
+                  <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Success</div>
+                  <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">#16BC11 · --pb-success</div>
+                  <div style="font: 400 13px/1.5 'Open Sans', sans-serif; color: #535353">Removals &amp; confirmations</div>
+                </div>
+              </div>
+                          <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; overflow: hidden">
+                <div style="height: 88px; background: #00A4FF; border-bottom: 1px solid #E4E4E7"></div>
+                <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 3px">
+                  <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Info</div>
+                  <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">#00A4FF · --pb-info</div>
+                  <div style="font: 400 13px/1.5 'Open Sans', sans-serif; color: #535353">Informational cyan</div>
+                </div>
+              </div>
+                          <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; overflow: hidden">
+                <div style="height: 88px; background: #FE453A; border-bottom: 1px solid #E4E4E7"></div>
+                <div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 3px">
+                  <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Danger</div>
+                  <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">#FE453A · --pb-danger</div>
+                  <div style="font: 400 13px/1.5 'Open Sans', sans-serif; color: #535353">Exposures &amp; alerts</div>
+                </div>
+              </div>
+                      </div>
+        </div>
+      
+      <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 32px 40px; display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap">
+        <div style="font: 400 16px/28px 'Open Sans', sans-serif; color: #535353">All colors ship as CSS custom properties in one tokens file.</div>
+        <a class="pb-btn" href="brand/tokens/colors_and_type.css" download="privacy-bee-tokens.css" style="display: inline-flex; align-items: center; height: 44px; padding: 0 28px; background: #006DF5; color: #FFFFFF; border-radius: 50px; font: 700 15px/1 'Open Sans', sans-serif; text-decoration: none">Download Tokens ↓</a>
+      </div>
+    </section>
+
+    <!-- ============ 03 Orwell ============ -->
+    <section id="orwell" style="scroll-margin-top: 96px; display: flex; flex-direction: column; gap: 32px">
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <div style="font: 700 20px/32px 'Open Sans', sans-serif; color: #006DF5">03 — Orwell</div>
+        <h2 style="font: 700 38px/48px 'Open Sans', sans-serif; letter-spacing: -0.01em; margin: 0">Meet Orwell, Our Mascot</h2>
+        <p style="font: 400 18px/34px 'Open Sans', sans-serif; color: #535353; margin: 0; max-width: 72ch">Orwell is a photoreal 3D bee who personifies data protection with warmth and optimism. He does the emotional heavy lifting so copy can stay concrete. Always place him on white or off-white — never on blue. Use him wherever a generic "feelings" icon would go.</p>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px">
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 12px">
+            <img src="brand/orwell/62-waving.png" alt="Waving" style="width: 100%; height: 150px; object-fit: contain">
+            <div style="font: 700 15px/1.3 'Open Sans', sans-serif; text-align: center">Waving</div>
+            <a href="brand/orwell/62-waving.png" download="orwell-62-waving.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none">Download PNG ↓</a>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 12px">
+            <img src="brand/orwell/50-celebrate.png" alt="Celebrate" style="width: 100%; height: 150px; object-fit: contain">
+            <div style="font: 700 15px/1.3 'Open Sans', sans-serif; text-align: center">Celebrate</div>
+            <a href="brand/orwell/50-celebrate.png" download="orwell-50-celebrate.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none">Download PNG ↓</a>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 12px">
+            <img src="brand/orwell/53-thumbs-up.png" alt="Thumbs Up" style="width: 100%; height: 150px; object-fit: contain">
+            <div style="font: 700 15px/1.3 'Open Sans', sans-serif; text-align: center">Thumbs Up</div>
+            <a href="brand/orwell/53-thumbs-up.png" download="orwell-53-thumbs-up.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none">Download PNG ↓</a>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 12px">
+            <img src="brand/orwell/63-magnifying-glass.png" alt="Investigating" style="width: 100%; height: 150px; object-fit: contain">
+            <div style="font: 700 15px/1.3 'Open Sans', sans-serif; text-align: center">Investigating</div>
+            <a href="brand/orwell/63-magnifying-glass.png" download="orwell-63-magnifying-glass.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none">Download PNG ↓</a>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 12px">
+            <img src="brand/orwell/60-business.png" alt="Business" style="width: 100%; height: 150px; object-fit: contain">
+            <div style="font: 700 15px/1.3 'Open Sans', sans-serif; text-align: center">Business</div>
+            <a href="brand/orwell/60-business.png" download="orwell-60-business.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none">Download PNG ↓</a>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 12px">
+            <img src="brand/orwell/61-business-celebrate.png" alt="Business Celebrate" style="width: 100%; height: 150px; object-fit: contain">
+            <div style="font: 700 15px/1.3 'Open Sans', sans-serif; text-align: center">Business Celebrate</div>
+            <a href="brand/orwell/61-business-celebrate.png" download="orwell-61-business-celebrate.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none">Download PNG ↓</a>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 12px">
+            <img src="brand/orwell/54-professor.png" alt="Professor" style="width: 100%; height: 150px; object-fit: contain">
+            <div style="font: 700 15px/1.3 'Open Sans', sans-serif; text-align: center">Professor</div>
+            <a href="brand/orwell/54-professor.png" download="orwell-54-professor.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none">Download PNG ↓</a>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 12px">
+            <img src="brand/orwell/57-bring-it-on.png" alt="Bring It On" style="width: 100%; height: 150px; object-fit: contain">
+            <div style="font: 700 15px/1.3 'Open Sans', sans-serif; text-align: center">Bring It On</div>
+            <a href="brand/orwell/57-bring-it-on.png" download="orwell-57-bring-it-on.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none">Download PNG ↓</a>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 12px">
+            <img src="brand/orwell/67-muscle-lift.png" alt="Strong" style="width: 100%; height: 150px; object-fit: contain">
+            <div style="font: 700 15px/1.3 'Open Sans', sans-serif; text-align: center">Strong</div>
+            <a href="brand/orwell/67-muscle-lift.png" download="orwell-67-muscle-lift.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none">Download PNG ↓</a>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 12px">
+            <img src="brand/orwell/64-oh-no.png" alt="Oh No" style="width: 100%; height: 150px; object-fit: contain">
+            <div style="font: 700 15px/1.3 'Open Sans', sans-serif; text-align: center">Oh No</div>
+            <a href="brand/orwell/64-oh-no.png" download="orwell-64-oh-no.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none">Download PNG ↓</a>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 12px">
+            <img src="brand/orwell/52-arms-crossed.png" alt="Arms Crossed" style="width: 100%; height: 150px; object-fit: contain">
+            <div style="font: 700 15px/1.3 'Open Sans', sans-serif; text-align: center">Arms Crossed</div>
+            <a href="brand/orwell/52-arms-crossed.png" download="orwell-52-arms-crossed.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none">Download PNG ↓</a>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 12px">
+            <img src="brand/orwell/72-i-dont-know.png" alt="Unsure" style="width: 100%; height: 150px; object-fit: contain">
+            <div style="font: 700 15px/1.3 'Open Sans', sans-serif; text-align: center">Unsure</div>
+            <a href="brand/orwell/72-i-dont-know.png" download="orwell-72-i-dont-know.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none">Download PNG ↓</a>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 12px">
+            <img src="brand/orwell/62-displaying.png" alt="Displaying" style="width: 100%; height: 150px; object-fit: contain">
+            <div style="font: 700 15px/1.3 'Open Sans', sans-serif; text-align: center">Displaying</div>
+            <a href="brand/orwell/62-displaying.png" download="orwell-62-displaying.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none">Download PNG ↓</a>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 12px">
+            <img src="brand/orwell/80-number-one-happy.png" alt="Number One" style="width: 100%; height: 150px; object-fit: contain">
+            <div style="font: 700 15px/1.3 'Open Sans', sans-serif; text-align: center">Number One</div>
+            <a href="brand/orwell/80-number-one-happy.png" download="orwell-80-number-one-happy.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none">Download PNG ↓</a>
+          </div>
+              </div>
+
+      <div class="pb-grid-2" style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px">
+        <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 32px 40px; display: flex; flex-direction: column; gap: 12px">
+          <div style="font: 700 18px/1.3 'Open Sans', sans-serif; color: #16BC11">Do</div>
+          <ul style="margin: 0; padding-left: 20px; font: 400 16px/30px 'Open Sans', sans-serif; color: #535353">
+            <li>Use the transparent-background PNG renders as provided</li>
+            <li>Place Orwell on white or off-white (#F4F5F8) surfaces</li>
+            <li>Match the pose to the moment — celebration, alert, business</li>
+          </ul>
+        </div>
+        <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 32px 40px; display: flex; flex-direction: column; gap: 12px">
+          <div style="font: 700 18px/1.3 'Open Sans', sans-serif; color: #FE453A">Don't</div>
+          <div style="display: flex; gap: 20px; align-items: flex-start">
+            <ul style="margin: 0; padding-left: 20px; font: 400 16px/30px 'Open Sans', sans-serif; color: #535353; flex: 1">
+              <li style="font-weight: 700; color: #09090B">Never add a mouth to Orwell</li>
+              <li>Never place Orwell on blue backgrounds</li>
+              <li>Never redraw, recolor, flatten, or restyle him</li>
+              <li>Never crop his face as shown here</li>
+            </ul>
+            <div style="display: flex; gap: 8px">
+              <img src="brand/orwell/do-not-face.png" alt="Incorrect crop of Orwell" style="width: 72px; height: 72px; object-fit: contain; opacity: 0.9">
+              <img src="brand/orwell/do-not-face-2.png" alt="Incorrect crop of Orwell" style="width: 72px; height: 72px; object-fit: contain; opacity: 0.9">
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 04 Iconography ============ -->
+    <section id="iconography" style="scroll-margin-top: 96px; display: flex; flex-direction: column; gap: 32px">
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <div style="font: 700 20px/32px 'Open Sans', sans-serif; color: #006DF5">04 — Iconography</div>
+        <h2 style="font: 700 38px/48px 'Open Sans', sans-serif; letter-spacing: -0.01em; margin: 0">Stroke-Based, 2px, Rounded</h2>
+        <p style="font: 400 18px/34px 'Open Sans', sans-serif; color: #535353; margin: 0; max-width: 72ch">Line icons use a 2px stroke with rounded caps. Default color is ink black; duplicate the SVG and hard-code a hex when you need blue, white, or red. No emoji in user-facing work — where a "feelings" icon is tempting, use Orwell instead.</p>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px">
+                  <a class="pb-icon-tile" href="brand/icons/shield.svg" download="pb-icon-shield.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/shield.svg" alt="shield" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">shield</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/shield-check.svg" download="pb-icon-shield-check.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/shield-check.svg" alt="shield-check" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">shield-check</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/lock-circle.svg" download="pb-icon-lock-circle.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/lock-circle.svg" alt="lock-circle" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">lock-circle</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/search.svg" download="pb-icon-search.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/search.svg" alt="search" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">search</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/search-circle.svg" download="pb-icon-search-circle.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/search-circle.svg" alt="search-circle" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">search-circle</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/bell.svg" download="pb-icon-bell.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/bell.svg" alt="bell" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">bell</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/bell-slash.svg" download="pb-icon-bell-slash.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/bell-slash.svg" alt="bell-slash" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">bell-slash</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/envelope.svg" download="pb-icon-envelope.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/envelope.svg" alt="envelope" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">envelope</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/inbox.svg" download="pb-icon-inbox.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/inbox.svg" alt="inbox" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">inbox</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/inbox-archive.svg" download="pb-icon-inbox-archive.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/inbox-archive.svg" alt="inbox-archive" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">inbox-archive</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/message.svg" download="pb-icon-message.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/message.svg" alt="message" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">message</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/message-plus.svg" download="pb-icon-message-plus.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/message-plus.svg" alt="message-plus" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">message-plus</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/at.svg" download="pb-icon-at.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/at.svg" alt="at" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">at</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/telephone.svg" download="pb-icon-telephone.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/telephone.svg" alt="telephone" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">telephone</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/support.svg" download="pb-icon-support.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/support.svg" alt="support" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">support</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/user-hexagon.svg" download="pb-icon-user-hexagon.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/user-hexagon.svg" alt="user-hexagon" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">user-hexagon</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/group.svg" download="pb-icon-group.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/group.svg" alt="group" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">group</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/check-hexagon.svg" download="pb-icon-check-hexagon.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/check-hexagon.svg" alt="check-hexagon" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">check-hexagon</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/danger-hexagon.svg" download="pb-icon-danger-hexagon.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/danger-hexagon.svg" alt="danger-hexagon" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">danger-hexagon</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/letter-x-hexagon.svg" download="pb-icon-letter-x-hexagon.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/letter-x-hexagon.svg" alt="x-hexagon" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">x-hexagon</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/activity-square.svg" download="pb-icon-activity-square.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/activity-square.svg" alt="activity" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">activity</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/chart-graph.svg" download="pb-icon-chart-graph.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/chart-graph.svg" alt="chart-graph" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">chart-graph</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/chart-pie-one.svg" download="pb-icon-chart-pie-one.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/chart-pie-one.svg" alt="chart-pie" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">chart-pie</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/cog.svg" download="pb-icon-cog.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/cog.svg" alt="cog" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">cog</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/consent-core.svg" download="pb-icon-consent-core.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/consent-core.svg" alt="consent-core" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">consent-core</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/cookie.svg" download="pb-icon-cookie.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/cookie.svg" alt="cookie" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">cookie</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/credit-card.svg" download="pb-icon-credit-card.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/credit-card.svg" alt="credit-card" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">credit-card</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/lightning.svg" download="pb-icon-lightning.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/lightning.svg" alt="lightning" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">lightning</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/location.svg" download="pb-icon-location.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/location.svg" alt="location" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">location</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/grid.svg" download="pb-icon-grid.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/grid.svg" alt="grid" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">grid</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/list.svg" download="pb-icon-list.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/list.svg" alt="list" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">list</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/dots.svg" download="pb-icon-dots.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/dots.svg" alt="dots" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">dots</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/plus.svg" download="pb-icon-plus.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/plus.svg" alt="plus" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">plus</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/power.svg" download="pb-icon-power.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/power.svg" alt="power" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">power</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/chevron.svg" download="pb-icon-chevron.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/chevron.svg" alt="chevron" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">chevron</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+                  <a class="pb-icon-tile" href="brand/icons/chevron-left.svg" download="pb-icon-chevron-left.svg" title="Download SVG" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 15px; padding: 18px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-decoration: none">
+            <span style="display: inline-grid; place-items: center; width: 32px; height: 32px">
+              <img src="brand/icons/chevron-left.svg" alt="chevron-left" style="width: 26px; height: 26px; object-fit: contain">
+            </span>
+            <span style="font: 500 12px/1.3 'Inter', sans-serif; color: #535353; text-align: center">chevron-left</span>
+            <span style="font: 700 12px/1 'Open Sans', sans-serif; color: #006DF5">SVG ↓</span>
+          </a>
+              </div>
+    </section>
+
+    <!-- ============ 05 Logo ============ -->
+    <section id="logo" style="scroll-margin-top: 96px; display: flex; flex-direction: column; gap: 32px">
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <div style="font: 700 20px/32px 'Open Sans', sans-serif; color: #006DF5">05 — Logo</div>
+        <h2 style="font: 700 38px/48px 'Open Sans', sans-serif; letter-spacing: -0.01em; margin: 0">One Mark, Right Every Time</h2>
+        <p style="font: 400 18px/34px 'Open Sans', sans-serif; color: #535353; margin: 0; max-width: 72ch">The zinc wordmark — black type, Privacy Yellow bee — is the default on light surfaces. Use the dark-mode variant on dark surfaces, and the vector mark when you need the bee alone at any size. Never restyle, recolor, or rebuild the logo.</p>
+      </div>
+
+      <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 64px; display: flex; flex-direction: column; align-items: center; gap: 28px">
+        <img src="brand/logos/privacy-bee-logo-zinc.png" alt="Privacy Bee primary logo" style="max-width: 420px; width: 100%; height: auto">
+        <a class="pb-btn" href="brand/logos/privacy-bee-logo-zinc.png" download="privacy-bee-logo-zinc.png" style="display: inline-flex; align-items: center; height: 48px; padding: 0 32px; background: #006DF5; color: #FFFFFF; border-radius: 50px; font: 700 16px/1 'Open Sans', sans-serif; text-decoration: none">Download Primary Logo ↓</a>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px">
+                  <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; overflow: hidden; display: flex; flex-direction: column">
+            <div style="height: 140px; display: grid; place-items: center; padding: 24px; background: #09090B">
+              <img src="brand/logos/privacy-bee-logo-dark-mode.svg" alt="Dark Mode" style="max-width: 180px; max-height: 80px; object-fit: contain">
+            </div>
+            <div style="padding: 16px 20px; border-top: 1px solid #E4E4E7; display: flex; align-items: center; justify-content: space-between; gap: 12px">
+              <div style="display: flex; flex-direction: column; gap: 2px">
+                <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Dark Mode</div>
+                <div style="font: 400 13px/1.4 'Open Sans', sans-serif; color: #7E7E7E">For dark surfaces</div>
+              </div>
+              <a href="brand/logos/privacy-bee-logo-dark-mode.svg" download="privacy-bee-logo-dark-mode.svg" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; white-space: nowrap">SVG ↓</a>
+            </div>
+          </div>
+                  <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; overflow: hidden; display: flex; flex-direction: column">
+            <div style="height: 140px; display: grid; place-items: center; padding: 24px; background: #09090B">
+              <img src="brand/logos/privacy-bee-logo-amber.svg" alt="All Yellow" style="max-width: 180px; max-height: 80px; object-fit: contain">
+            </div>
+            <div style="padding: 16px 20px; border-top: 1px solid #E4E4E7; display: flex; align-items: center; justify-content: space-between; gap: 12px">
+              <div style="display: flex; flex-direction: column; gap: 2px">
+                <div style="font: 700 15px/1.3 'Open Sans', sans-serif">All Yellow</div>
+                <div style="font: 400 13px/1.4 'Open Sans', sans-serif; color: #7E7E7E">Single-color Privacy Yellow</div>
+              </div>
+              <a href="brand/logos/privacy-bee-logo-amber.svg" download="privacy-bee-logo-amber.svg" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; white-space: nowrap">SVG ↓</a>
+            </div>
+          </div>
+                  <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; overflow: hidden; display: flex; flex-direction: column">
+            <div style="height: 140px; display: grid; place-items: center; padding: 24px; background: #FFFFFF">
+              <img src="brand/logos/privacy-bee-mark.svg" alt="Vector Mark" style="max-width: 180px; max-height: 80px; object-fit: contain">
+            </div>
+            <div style="padding: 16px 20px; border-top: 1px solid #E4E4E7; display: flex; align-items: center; justify-content: space-between; gap: 12px">
+              <div style="display: flex; flex-direction: column; gap: 2px">
+                <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Vector Mark</div>
+                <div style="font: 400 13px/1.4 'Open Sans', sans-serif; color: #7E7E7E">Bee alone, any size</div>
+              </div>
+              <a href="brand/logos/privacy-bee-mark.svg" download="privacy-bee-mark.svg" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; white-space: nowrap">SVG ↓</a>
+            </div>
+          </div>
+                  <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; overflow: hidden; display: flex; flex-direction: column">
+            <div style="height: 140px; display: grid; place-items: center; padding: 24px; background: #FFFFFF">
+              <img src="brand/logos/privacy-bee-logo-blue.png" alt="All Blue" style="max-width: 180px; max-height: 80px; object-fit: contain">
+            </div>
+            <div style="padding: 16px 20px; border-top: 1px solid #E4E4E7; display: flex; align-items: center; justify-content: space-between; gap: 12px">
+              <div style="display: flex; flex-direction: column; gap: 2px">
+                <div style="font: 700 15px/1.3 'Open Sans', sans-serif">All Blue</div>
+                <div style="font: 400 13px/1.4 'Open Sans', sans-serif; color: #7E7E7E">Single-color blue</div>
+              </div>
+              <a href="brand/logos/privacy-bee-logo-blue.png" download="privacy-bee-logo-blue.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; white-space: nowrap">PNG ↓</a>
+            </div>
+          </div>
+                  <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; overflow: hidden; display: flex; flex-direction: column">
+            <div style="height: 140px; display: grid; place-items: center; padding: 24px; background: #FFFFFF">
+              <img src="brand/logos/privacy-bee-icon-mono.png" alt="Mono Icon" style="max-width: 180px; max-height: 80px; object-fit: contain">
+            </div>
+            <div style="padding: 16px 20px; border-top: 1px solid #E4E4E7; display: flex; align-items: center; justify-content: space-between; gap: 12px">
+              <div style="display: flex; flex-direction: column; gap: 2px">
+                <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Mono Icon</div>
+                <div style="font: 400 13px/1.4 'Open Sans', sans-serif; color: #7E7E7E">Monochrome mark</div>
+              </div>
+              <a href="brand/logos/privacy-bee-icon-mono.png" download="privacy-bee-icon-mono.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; white-space: nowrap">PNG ↓</a>
+            </div>
+          </div>
+                  <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; overflow: hidden; display: flex; flex-direction: column">
+            <div style="height: 140px; display: grid; place-items: center; padding: 24px; background: #F4F5F8">
+              <img src="brand/logos/privacy-bee-footer-logo.svg" alt="Footer Logo" style="max-width: 180px; max-height: 80px; object-fit: contain">
+            </div>
+            <div style="padding: 16px 20px; border-top: 1px solid #E4E4E7; display: flex; align-items: center; justify-content: space-between; gap: 12px">
+              <div style="display: flex; flex-direction: column; gap: 2px">
+                <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Footer Logo</div>
+                <div style="font: 400 13px/1.4 'Open Sans', sans-serif; color: #7E7E7E">Compact footer use</div>
+              </div>
+              <a href="brand/logos/privacy-bee-footer-logo.svg" download="privacy-bee-footer-logo.svg" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; white-space: nowrap">SVG ↓</a>
+            </div>
+          </div>
+              </div>
+    </section>
+
+    <!-- ============ 06 Shield ============ -->
+    <section id="shield" style="scroll-margin-top: 96px; display: flex; flex-direction: column; gap: 32px">
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <div style="font: 700 20px/32px 'Open Sans', sans-serif; color: #006DF5">06 — Shield</div>
+        <h2 style="font: 700 38px/48px 'Open Sans', sans-serif; letter-spacing: -0.01em; margin: 0">The Shield Mark</h2>
+        <p style="font: 400 18px/34px 'Open Sans', sans-serif; color: #535353; margin: 0; max-width: 72ch">The lock-and-stripes shield is the bee reduced to its essence. Privacy Yellow on light and dark surfaces; zinc when the context demands a single dark color. Never any other color.</p>
+      </div>
+
+      <div class="pb-grid-2" style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px">
+        <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 32px 40px; display: flex; flex-direction: column; gap: 24px">
+          <div style="font: 600 13px/1 'Inter', sans-serif; color: #7E7E7E; text-transform: uppercase; letter-spacing: 0.06em">Yellow on Light</div>
+          <div style="display: flex; align-items: flex-end; justify-content: center; gap: 48px; padding: 24px 0">
+            <img src="brand/logos/privacy-bee-mark-yellow.svg" alt="Yellow shield mark, small" style="height: 56px; width: auto">
+            <img src="brand/logos/privacy-bee-mark-yellow.svg" alt="Yellow shield mark, large" style="height: 110px; width: auto">
+          </div>
+          <a href="brand/logos/privacy-bee-mark-yellow.svg" download="privacy-bee-mark-yellow.svg" style="font: 700 14px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; align-self: center">Download Yellow SVG ↓</a>
+        </div>
+        <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; overflow: hidden; display: flex; flex-direction: column">
+          <div style="background: #09090B; flex: 1; display: flex; align-items: flex-end; justify-content: center; gap: 48px; padding: 56px 40px">
+            <img src="brand/logos/privacy-bee-mark-yellow.svg" alt="Yellow shield mark on zinc, small" style="height: 56px; width: auto">
+            <img src="brand/logos/privacy-bee-mark-yellow.svg" alt="Yellow shield mark on zinc, large" style="height: 110px; width: auto">
+          </div>
+          <div style="padding: 16px 24px; border-top: 1px solid #E4E4E7; display: flex; align-items: center; justify-content: space-between; gap: 12px">
+            <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Yellow on Zinc</div>
+            <a href="brand/logos/privacy-bee-mark-yellow.svg" download="privacy-bee-mark-yellow.svg" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none">SVG ↓</a>
+          </div>
+        </div>
+      </div>
+
+      <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 40px; display: flex; flex-direction: column; gap: 20px">
+        <div style="font: 600 13px/1 'Inter', sans-serif; color: #7E7E7E; text-transform: uppercase; letter-spacing: 0.06em">Sizes</div>
+        <div style="background: #F4F5F8; border-radius: 15px; padding: 48px 40px; display: flex; align-items: flex-end; justify-content: center; gap: 80px; flex-wrap: wrap">
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 14px">
+            <img src="brand/logos/privacy-bee-mark-yellow.svg" alt="Shield small" style="height: 40px; width: auto">
+            <div style="font: 700 15px/1 'Open Sans', sans-serif">Small · 24–40px</div>
+          </div>
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 14px">
+            <img src="brand/logos/privacy-bee-mark-yellow.svg" alt="Shield medium" style="height: 88px; width: auto">
+            <div style="font: 700 18px/1 'Open Sans', sans-serif">Medium · 48–96px</div>
+          </div>
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 14px">
+            <img src="brand/logos/privacy-bee-mark-yellow.svg" alt="Shield large" style="height: 160px; width: auto">
+            <div style="font: 700 24px/1 'Open Sans', sans-serif">Large · 120px+</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 40px; display: flex; flex-direction: column; gap: 20px">
+        <div style="font: 600 13px/1 'Inter', sans-serif; color: #7E7E7E; text-transform: uppercase; letter-spacing: 0.06em">Placement &amp; Spacing</div>
+        <p style="font: 400 16px/28px 'Open Sans', sans-serif; color: #535353; margin: 0; max-width: 80ch">Place the shield to the left or right of its text, center-aligned. Keep 20px between the shield and text, and 20px between stacked or repeated shields.</p>
+        <div style="border: 1px solid #E4E4E7; border-radius: 15px; padding: 48px 40px; display: flex; align-items: center; justify-content: space-around; gap: 40px; flex-wrap: wrap">
+          <div style="display: flex; align-items: center">
+            <img src="brand/logos/privacy-bee-mark-yellow.svg" alt="Shield" style="height: 36px; width: auto">
+            <div style="width: 20px; border-top: 1px dashed #006DF5; position: relative"><div style="position: absolute; top: 4px; left: 50%; transform: translateX(-50%); font: 600 10px/1 'Inter', sans-serif; color: #006DF5; white-space: nowrap">20px</div></div>
+            <div style="font: 600 26px/1 'Poppins', sans-serif; color: #09090B">Privacy</div>
+          </div>
+          <div style="display: flex; flex-direction: column; align-items: center">
+            <img src="brand/logos/privacy-bee-mark-yellow.svg" alt="Shield" style="height: 36px; width: auto">
+            <div style="height: 20px; border-left: 1px dashed #006DF5; position: relative"><div style="position: absolute; left: 6px; top: 50%; transform: translateY(-50%); font: 600 10px/1 'Inter', sans-serif; color: #006DF5">20px</div></div>
+            <div style="font: 600 26px/1 'Poppins', sans-serif; color: #09090B">Privacy</div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 20px">
+            <img src="brand/logos/privacy-bee-mark-yellow.svg" alt="Shield" style="height: 36px; width: auto">
+            <img src="brand/logos/privacy-bee-mark-yellow.svg" alt="Shield" style="height: 36px; width: auto">
+            <img src="brand/logos/privacy-bee-mark-yellow.svg" alt="Shield" style="height: 36px; width: auto">
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 07 Framework ============ -->
+    <section id="framework" style="scroll-margin-top: 96px; display: flex; flex-direction: column; gap: 32px">
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <div style="font: 700 20px/32px 'Open Sans', sans-serif; color: #006DF5">07 — Framework</div>
+        <h2 style="font: 700 38px/48px 'Open Sans', sans-serif; letter-spacing: -0.01em; margin: 0">How Layouts Hold Together</h2>
+        <p style="font: 400 18px/34px 'Open Sans', sans-serif; color: #535353; margin: 0; max-width: 72ch">Emails and marketing lock to a 650px canvas with 32px horizontal padding. Vertical rhythm runs 16 / 32 / 48. Borders do the work of elevation; shadows stay at icon scale.</p>
+      </div>
+
+      <div class="pb-grid-2" style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px">
+        <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 40px; display: flex; flex-direction: column; gap: 20px">
+          <div style="font: 600 13px/1 'Inter', sans-serif; color: #7E7E7E; text-transform: uppercase; letter-spacing: 0.06em">Spacing Scale</div>
+                      <div style="display: grid; grid-template-columns: 60px 1fr; gap: 16px; align-items: center">
+              <div style="font: 500 14px/1 'Inter', sans-serif; color: #535353">8px</div>
+              <div style="height: 14px; width: 8px; background: #006DF5; border-radius: 4px"></div>
+            </div>
+                      <div style="display: grid; grid-template-columns: 60px 1fr; gap: 16px; align-items: center">
+              <div style="font: 500 14px/1 'Inter', sans-serif; color: #535353">16px</div>
+              <div style="height: 14px; width: 16px; background: #006DF5; border-radius: 4px"></div>
+            </div>
+                      <div style="display: grid; grid-template-columns: 60px 1fr; gap: 16px; align-items: center">
+              <div style="font: 500 14px/1 'Inter', sans-serif; color: #535353">24px</div>
+              <div style="height: 14px; width: 24px; background: #006DF5; border-radius: 4px"></div>
+            </div>
+                      <div style="display: grid; grid-template-columns: 60px 1fr; gap: 16px; align-items: center">
+              <div style="font: 500 14px/1 'Inter', sans-serif; color: #535353">32px</div>
+              <div style="height: 14px; width: 32px; background: #006DF5; border-radius: 4px"></div>
+            </div>
+                      <div style="display: grid; grid-template-columns: 60px 1fr; gap: 16px; align-items: center">
+              <div style="font: 500 14px/1 'Inter', sans-serif; color: #535353">48px</div>
+              <div style="height: 14px; width: 48px; background: #006DF5; border-radius: 4px"></div>
+            </div>
+                      <div style="display: grid; grid-template-columns: 60px 1fr; gap: 16px; align-items: center">
+              <div style="font: 500 14px/1 'Inter', sans-serif; color: #535353">64px</div>
+              <div style="height: 14px; width: 64px; background: #006DF5; border-radius: 4px"></div>
+            </div>
+                      <div style="display: grid; grid-template-columns: 60px 1fr; gap: 16px; align-items: center">
+              <div style="font: 500 14px/1 'Inter', sans-serif; color: #535353">96px</div>
+              <div style="height: 14px; width: 96px; background: #006DF5; border-radius: 4px"></div>
+            </div>
+                  </div>
+
+        <div style="display: flex; flex-direction: column; gap: 24px">
+          <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 40px; display: flex; flex-direction: column; gap: 20px">
+            <div style="font: 600 13px/1 'Inter', sans-serif; color: #7E7E7E; text-transform: uppercase; letter-spacing: 0.06em">Corner Radii</div>
+            <div style="display: flex; gap: 20px; align-items: flex-end; flex-wrap: wrap">
+              <div style="display: flex; flex-direction: column; align-items: center; gap: 8px">
+                <div style="width: 76px; height: 76px; background: #F4F5F8; border: 1px solid #D6D6D6; border-radius: 15px"></div>
+                <div style="font: 500 13px/1 'Inter', sans-serif; color: #535353">15px inputs</div>
+              </div>
+              <div style="display: flex; flex-direction: column; align-items: center; gap: 8px">
+                <div style="width: 76px; height: 76px; background: #F4F5F8; border: 1px solid #D6D6D6; border-radius: 24px"></div>
+                <div style="font: 500 13px/1 'Inter', sans-serif; color: #535353">24px icon tiles</div>
+              </div>
+              <div style="display: flex; flex-direction: column; align-items: center; gap: 8px">
+                <div style="width: 76px; height: 76px; background: #F4F5F8; border: 1px solid #D6D6D6; border-radius: 25px"></div>
+                <div style="font: 500 13px/1 'Inter', sans-serif; color: #535353">25px cards</div>
+              </div>
+              <div style="display: flex; flex-direction: column; align-items: center; gap: 8px">
+                <div style="width: 120px; height: 48px; background: #006DF5; border-radius: 50px"></div>
+                <div style="font: 500 13px/1 'Inter', sans-serif; color: #535353">50px CTA pills</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 40px; display: flex; flex-direction: column; gap: 20px">
+            <div style="font: 600 13px/1 'Inter', sans-serif; color: #7E7E7E; text-transform: uppercase; letter-spacing: 0.06em">Buttons</div>
+            <div style="display: flex; gap: 16px; flex-wrap: wrap">
+              <div style="display: inline-flex; align-items: center; justify-content: center; height: 60px; padding: 0 44px; background: #006DF5; color: #FFFFFF; border-radius: 50px; font: 700 20px/1 'Open Sans', sans-serif">Primary CTA</div>
+              <div style="display: inline-flex; align-items: center; justify-content: center; height: 60px; padding: 0 44px; background: #000F30; color: #FFFFFF; border-radius: 50px; font: 700 20px/1 'Open Sans', sans-serif">Business</div>
+            </div>
+            <div style="font: 400 15px/26px 'Open Sans', sans-serif; color: #7E7E7E">60px tall, Open Sans Bold 20px, Title Case labels. No icons, no borders. Hover darkens blue to #1B4FDD.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pb-facts" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 40px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 32px">
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <div style="font: 700 18px/1.3 'Open Sans', sans-serif">650px Canvas</div>
+          <div style="font: 400 15px/26px 'Open Sans', sans-serif; color: #535353">Every email row is 650px wide. Horizontal padding 32px (48/64 for image cards). Content centers for marketing rows; body copy left-aligns for reading.</div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <div style="font: 700 18px/1.3 'Open Sans', sans-serif">Borders Over Shadows</div>
+          <div style="font: 400 15px/26px 'Open Sans', sans-serif; color: #535353">Hairline 1px #E4E4E7 for UI, #D6D6D6 for cards on surface. The signature drop shadow (0 4px 4px 25%) stays at icon and chip scale only.</div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <div style="font: 700 18px/1.3 'Open Sans', sans-serif">Motion</div>
+          <div style="font: 400 15px/26px 'Open Sans', sans-serif; color: #535353">Friendly easing — cubic-bezier(.2,.8,.2,1), 300–500ms, slight overshoot. Use sparingly, as in the shield-lock animation.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 08 Video ============ -->
+    <section id="video" style="scroll-margin-top: 96px; display: flex; flex-direction: column; gap: 32px">
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <div style="font: 700 20px/32px 'Open Sans', sans-serif; color: #006DF5">08 — Video</div>
+        <h2 style="font: 700 38px/48px 'Open Sans', sans-serif; letter-spacing: -0.01em; margin: 0">One Video, Every Platform</h2>
+        <p style="font: 400 18px/34px 'Open Sans', sans-serif; color: #535353; margin: 0; max-width: 72ch">Safe-zone templates for every placement. Keep footage full-bleed; keep the caption pill, headline, and logo inside the green content zone so platform UI never covers them. Every video closes on the post-roll sting.</p>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 16px">
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; overflow: hidden; display: flex; flex-direction: column">
+            <div style="background: #F4F5F8; border-bottom: 1px solid #E4E4E7; display: grid; place-items: center; padding: 16px; height: 220px">
+              <img src="brand/video/ig-fb-stories.png" alt="IG / FB Stories safe-zone template" style="max-width: 100%; max-height: 188px; object-fit: contain; border-radius: 6px">
+            </div>
+            <div style="padding: 14px 18px; display: flex; flex-direction: column; gap: 4px">
+              <div style="font: 700 15px/1.3 'Open Sans', sans-serif">IG / FB Stories</div>
+              <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">9:16 · 1080×1920</div>
+              <a href="brand/video/ig-fb-stories.png" download="ig-fb-stories.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; margin-top: 4px">Download Template ↓</a>
+            </div>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; overflow: hidden; display: flex; flex-direction: column">
+            <div style="background: #F4F5F8; border-bottom: 1px solid #E4E4E7; display: grid; place-items: center; padding: 16px; height: 220px">
+              <img src="brand/video/ig-fb-reels.png" alt="IG / FB Reels safe-zone template" style="max-width: 100%; max-height: 188px; object-fit: contain; border-radius: 6px">
+            </div>
+            <div style="padding: 14px 18px; display: flex; flex-direction: column; gap: 4px">
+              <div style="font: 700 15px/1.3 'Open Sans', sans-serif">IG / FB Reels</div>
+              <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">9:16 · 1080×1920</div>
+              <a href="brand/video/ig-fb-reels.png" download="ig-fb-reels.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; margin-top: 4px">Download Template ↓</a>
+            </div>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; overflow: hidden; display: flex; flex-direction: column">
+            <div style="background: #F4F5F8; border-bottom: 1px solid #E4E4E7; display: grid; place-items: center; padding: 16px; height: 220px">
+              <img src="brand/video/ig-fb-feed-portrait-4x5.png" alt="IG / FB Feed — Portrait safe-zone template" style="max-width: 100%; max-height: 188px; object-fit: contain; border-radius: 6px">
+            </div>
+            <div style="padding: 14px 18px; display: flex; flex-direction: column; gap: 4px">
+              <div style="font: 700 15px/1.3 'Open Sans', sans-serif">IG / FB Feed — Portrait</div>
+              <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">4:5 · 1080×1350</div>
+              <a href="brand/video/ig-fb-feed-portrait-4x5.png" download="ig-fb-feed-portrait-4x5.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; margin-top: 4px">Download Template ↓</a>
+            </div>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; overflow: hidden; display: flex; flex-direction: column">
+            <div style="background: #F4F5F8; border-bottom: 1px solid #E4E4E7; display: grid; place-items: center; padding: 16px; height: 220px">
+              <img src="brand/video/ig-fb-feed-square-1x1.png" alt="IG / FB Feed — Square safe-zone template" style="max-width: 100%; max-height: 188px; object-fit: contain; border-radius: 6px">
+            </div>
+            <div style="padding: 14px 18px; display: flex; flex-direction: column; gap: 4px">
+              <div style="font: 700 15px/1.3 'Open Sans', sans-serif">IG / FB Feed — Square</div>
+              <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">1:1 · 1080×1080</div>
+              <a href="brand/video/ig-fb-feed-square-1x1.png" download="ig-fb-feed-square-1x1.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; margin-top: 4px">Download Template ↓</a>
+            </div>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; overflow: hidden; display: flex; flex-direction: column">
+            <div style="background: #F4F5F8; border-bottom: 1px solid #E4E4E7; display: grid; place-items: center; padding: 16px; height: 220px">
+              <img src="brand/video/tiktok-fyf.png" alt="TikTok — For You Feed safe-zone template" style="max-width: 100%; max-height: 188px; object-fit: contain; border-radius: 6px">
+            </div>
+            <div style="padding: 14px 18px; display: flex; flex-direction: column; gap: 4px">
+              <div style="font: 700 15px/1.3 'Open Sans', sans-serif">TikTok — For You Feed</div>
+              <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">9:16 · 1080×1920</div>
+              <a href="brand/video/tiktok-fyf.png" download="tiktok-fyf.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; margin-top: 4px">Download Template ↓</a>
+            </div>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; overflow: hidden; display: flex; flex-direction: column">
+            <div style="background: #F4F5F8; border-bottom: 1px solid #E4E4E7; display: grid; place-items: center; padding: 16px; height: 220px">
+              <img src="brand/video/youtube-shorts.png" alt="YouTube Shorts safe-zone template" style="max-width: 100%; max-height: 188px; object-fit: contain; border-radius: 6px">
+            </div>
+            <div style="padding: 14px 18px; display: flex; flex-direction: column; gap: 4px">
+              <div style="font: 700 15px/1.3 'Open Sans', sans-serif">YouTube Shorts</div>
+              <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">9:16 · 1080×1920</div>
+              <a href="brand/video/youtube-shorts.png" download="youtube-shorts.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; margin-top: 4px">Download Template ↓</a>
+            </div>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; overflow: hidden; display: flex; flex-direction: column">
+            <div style="background: #F4F5F8; border-bottom: 1px solid #E4E4E7; display: grid; place-items: center; padding: 16px; height: 220px">
+              <img src="brand/video/long-form-16x9.png" alt="Long-Form — YouTube safe-zone template" style="max-width: 100%; max-height: 188px; object-fit: contain; border-radius: 6px">
+            </div>
+            <div style="padding: 14px 18px; display: flex; flex-direction: column; gap: 4px">
+              <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Long-Form — YouTube</div>
+              <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">16:9 · 1920×1080</div>
+              <a href="brand/video/long-form-16x9.png" download="long-form-16x9.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; margin-top: 4px">Download Template ↓</a>
+            </div>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; overflow: hidden; display: flex; flex-direction: column">
+            <div style="background: #F4F5F8; border-bottom: 1px solid #E4E4E7; display: grid; place-items: center; padding: 16px; height: 220px">
+              <img src="brand/video/pinterest-idea-pin.png" alt="Pinterest Idea Pin safe-zone template" style="max-width: 100%; max-height: 188px; object-fit: contain; border-radius: 6px">
+            </div>
+            <div style="padding: 14px 18px; display: flex; flex-direction: column; gap: 4px">
+              <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Pinterest Idea Pin</div>
+              <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">9:16 · 1080×1920</div>
+              <a href="brand/video/pinterest-idea-pin.png" download="pinterest-idea-pin.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; margin-top: 4px">Download Template ↓</a>
+            </div>
+          </div>
+                  <div class="pb-lift" style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; overflow: hidden; display: flex; flex-direction: column">
+            <div style="background: #F4F5F8; border-bottom: 1px solid #E4E4E7; display: grid; place-items: center; padding: 16px; height: 220px">
+              <img src="brand/video/post-roll-sting-9x16.png" alt="Post-Roll Sting — Brand Close safe-zone template" style="max-width: 100%; max-height: 188px; object-fit: contain; border-radius: 6px">
+            </div>
+            <div style="padding: 14px 18px; display: flex; flex-direction: column; gap: 4px">
+              <div style="font: 700 15px/1.3 'Open Sans', sans-serif">Post-Roll Sting — Brand Close</div>
+              <div style="font: 500 13px/1.4 'Inter', sans-serif; color: #7E7E7E">Master · 9:16</div>
+              <a href="brand/video/post-roll-sting-9x16.png" download="post-roll-sting-9x16.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; margin-top: 4px">Download Template ↓</a>
+            </div>
+          </div>
+              </div>
+
+      <div class="pb-grid-2" style="display: grid; grid-template-columns: 1.2fr 1fr; gap: 24px">
+        <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 40px; display: flex; flex-direction: column; gap: 20px">
+          <div style="font: 600 13px/1 'Inter', sans-serif; color: #7E7E7E; text-transform: uppercase; letter-spacing: 0.06em">Captions Guide</div>
+          <div style="background: #232323; border-radius: 16px; padding: 40px 32px 24px; display: flex; flex-direction: column; gap: 20px">
+            <div style="background: #121212; border-radius: 14px; padding: 22px 32px; text-align: center">
+              <span style="font: 600 20px/1.4 'Poppins', 'Open Sans', sans-serif; color: #FFFFFF; text-transform: uppercase; letter-spacing: 0.01em">Acxiom <span style="color: #FCB223">sold</span> your data. We got it deleted.</span>
+            </div>
+            <img src="brand/logos/privacy-bee-logo-dark-mode.svg" alt="Privacy Bee logo, dark-mode variant" style="height: 34px; width: auto; align-self: flex-start">
+          </div>
+          <ul style="margin: 0; padding-left: 20px; font: 400 16px/30px 'Open Sans', sans-serif; color: #535353">
+            <li>Near-black pill (#121212, 14px radius) on footage — white Poppins SemiBold, centered, one line where possible</li>
+            <li>ALL CAPS, 1–2 short sentences. Concrete and direct — name the broker, state the result</li>
+            <li>Highlight the key word in Privacy Yellow (#FCB223) — one word per caption</li>
+            <li>Caption sits in the lower third, always inside the safe zone, with the dark-mode logo below-left</li>
+            <li>Headlines (when used) run all-caps Poppins Bold, white, at the top of the content zone</li>
+          </ul>
+        </div>
+        <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 40px; display: flex; flex-direction: column; gap: 16px">
+          <div style="font: 600 13px/1 'Inter', sans-serif; color: #7E7E7E; text-transform: uppercase; letter-spacing: 0.06em">Safe Zones</div>
+          <div style="display: flex; flex-direction: column; gap: 12px; font: 400 16px/28px 'Open Sans', sans-serif; color: #535353">
+            <div><span style="font-weight: 700; color: #09090B">Feed posts (1:1, 4:5)</span> — keep everything 60px in from every edge.</div>
+            <div><span style="font-weight: 700; color: #09090B">Stories &amp; Reels (9:16)</span> — 270px clear at top, 380–670px at bottom for platform UI, 65px at the sides.</div>
+            <div><span style="font-weight: 700; color: #09090B">TikTok &amp; Shorts (9:16)</span> — 150px clear at top, 320–380px at bottom, 140–150px on the right for action rail.</div>
+            <div><span style="font-weight: 700; color: #09090B">Post-roll sting</span> — every video ends on the brand close: logo settle + tagline on near-black.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 09 Buzz ============ -->
+    <section id="buzz" style="scroll-margin-top: 96px; display: flex; flex-direction: column; gap: 32px">
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <div style="font: 700 20px/32px 'Open Sans', sans-serif; color: #006DF5">09 — Buzz</div>
+        <h2 style="font: 700 38px/48px 'Open Sans', sans-serif; letter-spacing: -0.01em; margin: 0">Buzz, the Mobile App</h2>
+        <p style="font: 400 18px/34px 'Open Sans', sans-serif; color: #535353; margin: 0; max-width: 72ch">Buzz is Privacy Bee in your pocket — scans, exposures, removals, and the Identity Vault. Available on the Apple App Store and Google Play. The app icon is the zinc shield on a Privacy Yellow tile; app UI is set in Inter on the dark surface.</p>
+      </div>
+
+      <div class="pb-grid-buzz" style="display: grid; grid-template-columns: 1fr 2fr; gap: 24px">
+        <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 40px; display: flex; flex-direction: column; align-items: center; gap: 24px">
+          <div style="font: 600 13px/1 'Inter', sans-serif; color: #7E7E7E; text-transform: uppercase; letter-spacing: 0.06em; align-self: flex-start">App Icon</div>
+          <div style="width: 148px; height: 148px; background: #FCB223; border-radius: 34px; display: grid; place-items: center">
+            <img src="brand/logos/shield-zinc.svg" alt="Buzz app icon — zinc shield on Privacy Yellow" style="height: 84px; width: auto">
+          </div>
+          <a href="brand/logos/shield-zinc.svg" download="shield-zinc.svg" style="font: 700 14px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none">Download Shield SVG ↓</a>
+          <div style="display: flex; flex-direction: column; gap: 10px; width: 100%">
+            <div style="display: flex; align-items: center; justify-content: center; height: 48px; background: #09090B; color: #FFFFFF; border-radius: 12px; font: 600 15px/1 'Inter', sans-serif">Download on the App Store</div>
+            <div style="display: flex; align-items: center; justify-content: center; height: 48px; background: #09090B; color: #FFFFFF; border-radius: 12px; font: 600 15px/1 'Inter', sans-serif">Get it on Google Play</div>
+          </div>
+        </div>
+
+        <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 40px; display: flex; flex-direction: column; gap: 20px">
+          <div style="font: 600 13px/1 'Inter', sans-serif; color: #7E7E7E; text-transform: uppercase; letter-spacing: 0.06em">App Store Creative</div>
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px">
+                          <div style="display: flex; flex-direction: column; gap: 10px">
+                <img src="brand/buzz/store-01.png" alt="One App. Total Privacy." style="width: 100%; height: auto; border-radius: 15px; border: 1px solid #E4E4E7; display: block">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
+                  <div style="font: 700 14px/1.3 'Open Sans', sans-serif">One App. Total Privacy.</div>
+                  <a href="brand/buzz/store-01.png" download="buzz-store-01.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; white-space: nowrap">PNG ↓</a>
+                </div>
+              </div>
+                          <div style="display: flex; flex-direction: column; gap: 10px">
+                <img src="brand/buzz/store-02.png" alt="See Where Data Is Exposed" style="width: 100%; height: auto; border-radius: 15px; border: 1px solid #E4E4E7; display: block">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
+                  <div style="font: 700 14px/1.3 'Open Sans', sans-serif">See Where Data Is Exposed</div>
+                  <a href="brand/buzz/store-02.png" download="buzz-store-02.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; white-space: nowrap">PNG ↓</a>
+                </div>
+              </div>
+                          <div style="display: flex; flex-direction: column; gap: 10px">
+                <img src="brand/buzz/store-03.png" alt="Store Creative 03" style="width: 100%; height: auto; border-radius: 15px; border: 1px solid #E4E4E7; display: block">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
+                  <div style="font: 700 14px/1.3 'Open Sans', sans-serif">Store Creative 03</div>
+                  <a href="brand/buzz/store-03.png" download="buzz-store-03.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; white-space: nowrap">PNG ↓</a>
+                </div>
+              </div>
+                      </div>
+        </div>
+      </div>
+
+      <div style="background: #FFFFFF; border: 1px solid #E4E4E7; border-radius: 25px; padding: 40px; display: flex; flex-direction: column; gap: 20px">
+        <div style="font: 600 13px/1 'Inter', sans-serif; color: #7E7E7E; text-transform: uppercase; letter-spacing: 0.06em">In-App Screens (dark)</div>
+        <div class="pb-grid-3" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px">
+                      <div style="display: flex; flex-direction: column; gap: 10px">
+              <div style="background: #09090B; border-radius: 20px; padding: 14px">
+                <img src="brand/buzz/app-dashboard.png" alt="Dashboard" style="width: 100%; height: auto; border-radius: 10px; display: block">
+              </div>
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
+                <div style="font: 700 14px/1.3 'Open Sans', sans-serif">Dashboard</div>
+                <a href="brand/buzz/app-dashboard.png" download="buzz-app-dashboard.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; white-space: nowrap">PNG ↓</a>
+              </div>
+            </div>
+                      <div style="display: flex; flex-direction: column; gap: 10px">
+              <div style="background: #09090B; border-radius: 20px; padding: 14px">
+                <img src="brand/buzz/app-exposures.png" alt="Exposures" style="width: 100%; height: auto; border-radius: 10px; display: block">
+              </div>
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
+                <div style="font: 700 14px/1.3 'Open Sans', sans-serif">Exposures</div>
+                <a href="brand/buzz/app-exposures.png" download="buzz-app-exposures.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; white-space: nowrap">PNG ↓</a>
+              </div>
+            </div>
+                      <div style="display: flex; flex-direction: column; gap: 10px">
+              <div style="background: #09090B; border-radius: 20px; padding: 14px">
+                <img src="brand/buzz/app-identity-vault.png" alt="Identity Vault" style="width: 100%; height: auto; border-radius: 10px; display: block">
+              </div>
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px">
+                <div style="font: 700 14px/1.3 'Open Sans', sans-serif">Identity Vault</div>
+                <a href="brand/buzz/app-identity-vault.png" download="buzz-app-identity-vault.png" style="font: 700 13px/1 'Open Sans', sans-serif; color: #006DF5; text-decoration: none; white-space: nowrap">PNG ↓</a>
+              </div>
+            </div>
+                  </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============ Footer ============ -->
+  <footer style="background: #FFFFFF; border-top: 1px solid #E4E4E7">
+    <div style="max-width: 1180px; margin: 0 auto; padding: 40px 32px; display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap">
+      <img src="brand/logos/privacy-bee-logo-zinc.png" alt="Privacy Bee" style="height: 28px">
+      <div style="font: 400 14px/22px 'Open Sans', sans-serif; color: #696E84">Privacy Bee Brand Guidelines · For press and affiliate use · Questions? Contact the Privacy Bee brand team.</div>
+    </div>
+  </footer>
+</div>
+
+</body>
+</html>
