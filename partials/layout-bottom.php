@@ -25,5 +25,7 @@ unset($uiShowTabs);
 <div class="ui-toast" id="uiToast" role="status" aria-live="polite"></div>
 <?= isset($footExtra) ? $footExtra : '' ?>
 <?= appScript() ?>
+<script src="<?= esc(staticUrl('js/video.js')) ?>" defer></script>
+
 </body>
 </html>

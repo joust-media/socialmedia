@@ -82,6 +82,7 @@ require_once __DIR__ . '/partials/components/status-pill.php';
 require_once __DIR__ . '/partials/components/segmented.php';
 require_once __DIR__ . '/partials/components/inset-list.php';
 require_once __DIR__ . '/partials/components/card.php';
+require_once __DIR__ . '/partials/components/video.php';
 
 /** Return "client=hmf" or "" for building URLs */
 function clientQs() {
@@ -334,13 +335,14 @@ function hasMediaTypeColumn(PDO $pdo) {
 }
 
 /**
- * Allowed media extensions for post uploads.
- * .mov is intentionally NOT here — Chrome/Firefox don't reliably play it
- * even inside a <video> tag. We surface a friendly "please convert to mp4"
- * error to the user instead of silently uploading a file that won't work.
+ * Allowed media extensions for uploads (spec §6).
+ * .mov (QuickTime) is accepted and kept as-is: it plays natively in Safari /
+ * iOS; other browsers get the "Open video / Download" card from App.video.
+ * Video-ness for library_images and tire_images (no media_type column) is
+ * decided by extension through isVideoExt().
  */
 function imageExts() { return ['jpg', 'jpeg', 'png', 'gif', 'webp']; }
-function videoExts() { return ['mp4', 'webm']; }
+function videoExts() { return ['mp4', 'webm', 'mov']; }
 
 /** True if the given file extension is one of our supported video formats. */
 function isVideoExt($ext) {
@@ -349,15 +351,49 @@ function isVideoExt($ext) {
 
 /** Returns 'video' or 'image' based on the URL's extension. */
 function mediaTypeFromUrl($url) {
-    $ext = strtolower(pathinfo((string)$url, PATHINFO_EXTENSION));
+    $path = parse_url((string)$url, PHP_URL_PATH);
+    $ext  = strtolower(pathinfo($path !== null && $path !== false ? $path : (string)$url, PATHINFO_EXTENSION));
     return isVideoExt($ext) ? 'video' : 'image';
 }
 
-/** MIME type for the <video> source tag (defaults to mp4 if unknown). */
+if (!function_exists('videoMime')) {
+    /** MIME type for a <source type> by extension: mp4 → video/mp4, webm → video/webm, mov → video/quicktime. */
+    function videoMime(string $ext): string {
+        $ext = strtolower(trim($ext));
+        if ($ext === 'webm') return 'video/webm';
+        if ($ext === 'mov')  return 'video/quicktime';
+        return 'video/mp4'; // mp4 / m4v / unknown
+    }
+}
+
+/** Legacy name — same table as videoMime(). */
 function videoMimeForExt($ext) {
-    $ext = strtolower((string)$ext);
-    if ($ext === 'webm') return 'video/webm';
-    return 'video/mp4'; // mp4 / m4v / etc.
+    return videoMime((string)$ext);
+}
+
+if (!function_exists('videoFileLooksValid')) {
+    /**
+     * Cheap container sniff for an uploaded video (applied uniformly to
+     * mp4 / webm / mov): non-empty and either an ISO-BMFF / QuickTime box
+     * header (ftyp, moov, mdat, free, skip, wide, pnot, uuid at offset 4), the
+     * WebM/Matroska EBML magic, or a finfo MIME of video/*.
+     */
+    function videoFileLooksValid(string $path): bool {
+        if (!is_file($path) || filesize($path) === 0) return false;
+        $h = (string)@file_get_contents($path, false, null, 0, 64);
+        if (strlen($h) < 8) return false;
+        if (strncmp($h, "\x1A\x45\xDF\xA3", 4) === 0) return true;                 // WebM / Matroska
+        if (in_array(substr($h, 4, 4), ['ftyp', 'moov', 'mdat', 'free', 'skip', 'wide', 'pnot', 'uuid'], true)) return true;
+        if (function_exists('finfo_open')) {
+            $f = @finfo_open(FILEINFO_MIME_TYPE);
+            if ($f) {
+                $mime = (string)@finfo_file($f, $path);
+                finfo_close($f);
+                if (strpos($mime, 'video/') === 0) return true;
+            }
+        }
+        return false;
+    }
 }
 
 /**
@@ -378,12 +414,12 @@ function libraryFileUrl($slug, $filename) {
     return '/media/library/' . rawurlencode($slug) . '/' . rawurlencode($filename);
 }
 
-/** List image filenames sitting directly in a brand's library folder,
- *  natural-sorted. Skips dotfiles (.DS_Store etc.), subfolders, and
- *  anything that isn't a recognized image extension. */
+/** List media filenames (images + videos, spec §6) sitting directly in a
+ *  brand's library folder, natural-sorted. Skips dotfiles (.DS_Store etc.),
+ *  subfolders, and anything that isn't a recognized media extension. */
 function scanLibraryDir($dir) {
     if (!is_dir($dir)) return [];
-    $exts = imageExts();
+    $exts = array_merge(imageExts(), videoExts());
     $out = [];
     foreach (scandir($dir) as $f) {
         if ($f === '.' || $f === '..' || strpos($f, '.') === 0) continue;

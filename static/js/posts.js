@@ -514,21 +514,9 @@
     return $('[data-slide="' + i + '"]', car);
   }
 
-  /* ---- video fallback (spec §6) ------------------------------------- */
+  /* ---- video (spec §6) — App.video owns fallback / posters / unmute --- */
   P.videoFallback = function (root) {
-    $$('video[data-video]', root || document).forEach(function (v) {
-      if (v.__fallback) return;
-      v.__fallback = true;
-      var show = function () {
-        var card = v.parentNode && $('[data-video-fallback]', v.parentNode);
-        if (card) { card.hidden = false; v.controls = false; }
-      };
-      v.addEventListener('error', show);
-      var sources = $$('source', v);
-      if (sources.length) sources[sources.length - 1].addEventListener('error', show);
-      // A source the browser knows it can't decode reports no error in some engines; probe once metadata should exist.
-      if (v.readyState === 0 && v.error) show();
-    });
+    if (App.video) App.video.enhance(root || document);
   };
 
   /* ---- viewer (tap → full screen) ----------------------------------- */
@@ -639,8 +627,9 @@
         var type = res.data.media_type || 'image';
         slide.setAttribute('data-media-type', type); slide.setAttribute('data-src', url);
         if (type === 'video') {
-          slide.innerHTML = '<video playsinline muted controls preload="metadata" data-video><source src="' + escapeHtml(url) + '"></video>'
-                          + '<div class="pd-video-fallback" data-video-fallback hidden><p>Preview not supported in this browser</p><div class="ui-btn-group"><a class="ui-btn ui-btn--tinted ui-btn--sm" href="' + escapeHtml(url) + '" target="_blank" rel="noopener">Open video</a><a class="ui-btn ui-btn--gray ui-btn--sm" href="' + escapeHtml(url) + '" download>Download</a></div></div>';
+          slide.innerHTML = App.video
+            ? App.video.markup(url, { autoplay: true, unmute: true, cls: 'pd-video' })
+            : '<video playsinline muted controls preload="metadata"><source src="' + escapeHtml(url) + '"></video>';
           P.videoFallback(slide);
         } else {
           slide.innerHTML = '<button type="button" class="pd-slide-btn" data-viewer-open aria-label="View full screen"><img src="' + escapeHtml(url) + '" alt=""></button>';

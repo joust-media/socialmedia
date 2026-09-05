@@ -83,7 +83,7 @@ include __DIR__ . '/partials/layout-top.php';
     <section class="studio-upload-oneoff">
       <h3 class="studio-section-title studio-section-title--sm">Or upload files — one post per file</h3>
       <label class="studio-dropzone studio-dropzone--sm" data-file-drop>
-        <input type="file" data-batch-files accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm" multiple>
+        <input type="file" data-batch-files accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov" multiple>
         <span class="studio-dropzone-label">Choose files</span>
         <span class="studio-dropzone-hint">up to 10 MB each · name files with a category keyword to auto-tag</span>
       </label>

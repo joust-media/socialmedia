@@ -360,7 +360,7 @@ include __DIR__ . '/partials/layout-top.php';
             <?php if ($first && !$isVid): ?>
               <img src="<?= h(pdMediaUrl($first['url'])) ?>" alt="" loading="lazy" decoding="async">
             <?php elseif ($first): ?>
-              <?= icon('play', 'pl-thumb-play') ?>
+              <?= videoTile(pdMediaUrl($first['url']), ['class' => 'pl-thumb-video', 'badgeClass' => 'pl-thumb-badge']) ?>
             <?php else: ?>
               <?= icon('photo') ?>
             <?php endif; ?>

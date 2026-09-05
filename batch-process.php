@@ -5,9 +5,9 @@
  * POST batch-process.php?client=<slug>   (multipart or urlencoded)
  *
  *   images[]        files — one pending post per file (existing contract).
- *                   Images must pass getimagesize(); MP4/WebM now accepted too
- *                   (same rules as add-post.php); .mov/.m4v/.avi/.mkv rejected
- *                   with the "convert to MP4" message.
+ *                   Images must pass getimagesize(); MP4/WebM/MOV accepted
+ *                   (same rules as add-post.php, spec §6 — .mov is kept as-is);
+ *                   .m4v/.avi/.mkv rejected with the "convert to MP4" message.
  *   rows            JSON array — one post per row, media from the Approved Pool:
  *                   [{ "caption": "…", "hashtags": "…", "scheduled_date": "2026-09-12T10:00",
  *                      "post_type": "post|story|reel", "assets": ["library:12", "tire:34"] }, …]
@@ -77,8 +77,8 @@ if (count($rows) > 20) {
 
 $spacingDays = max(1, min(30, (int)($_POST['spacing_days'] ?? 3)));
 $maxFileSize = 10 * 1024 * 1024;
-$allowedExt  = array_merge(imageExts(), videoExts());
-$rejectedExt = ['mov', 'm4v', 'avi', 'mkv'];
+$allowedExt  = array_merge(imageExts(), videoExts());   // + mov (spec §6)
+$rejectedExt = ['m4v', 'avi', 'mkv'];
 $hasMedia    = hasMediaTypeColumn($pdo);
 $hasType     = hasPostTypeColumn($pdo);
 $defaultTags = trim((string)($client['default_hashtags'] ?? ''));
@@ -220,12 +220,12 @@ for ($i = 0; $i < $fileCount; $i++) {
         continue;
     }
     if (!in_array($ext, $allowedExt, true)) {
-        $errors[] = "$name: unsupported file type — use JPG, PNG, GIF, WebP, MP4, or WebM";
+        $errors[] = "$name: unsupported file type — use JPG, PNG, GIF, WebP, MP4, WebM, or MOV";
         continue;
     }
     $isVideo = isVideoExt($ext);
     if ($isVideo) {
-        if (!is_file($tmpName) || filesize($tmpName) === 0) { $errors[] = "$name: appears to be empty"; continue; }
+        if (!videoFileLooksValid((string)$tmpName)) { $errors[] = "$name: doesn't look like a valid video file"; continue; }
     } else {
         if (!@getimagesize($tmpName)) { $errors[] = "$name: not a valid image"; continue; }
     }

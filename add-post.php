@@ -64,8 +64,8 @@ $clientQs = 'client=' . urlencode($client['slug']);
 // -------------------------------------------------------------
 $uploadsDir  = __DIR__ . '/uploads';
 $uploadsUrl  = 'uploads';
-$allowedExt  = array_merge(imageExts(), videoExts()); // jpg/png/gif/webp + mp4/webm
-$rejectedExt = ['mov', 'm4v', 'avi', 'mkv']; // common but unsupported by web browsers
+$allowedExt  = array_merge(imageExts(), videoExts()); // jpg/png/gif/webp + mp4/webm/mov (spec §6)
+$rejectedExt = ['m4v', 'avi', 'mkv'];        // common but unsupported by web browsers
 $maxFileSize = 25 * 1024 * 1024; // 25 MB (videos are bigger than images)
 $maxImages   = 10;               // applies to combined images + videos + pool picks per post
 
@@ -334,16 +334,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                         if (!in_array($ext, $allowedExt, true)) {
                             $errors[] = "'{$origName}' has an unsupported file type. "
-                                      . "Allowed: JPG, PNG, GIF, WebP, MP4, WebM.";
+                                      . "Allowed: JPG, PNG, GIF, WebP, MP4, WebM, MOV.";
                             continue;
                         }
                         $isVideo = isVideoExt($ext);
                         if ($isVideo) {
-                            // For videos we can't use getimagesize. Just verify the
-                            // temp file exists and is non-empty.
-                            if (!is_file($_FILES['images']['tmp_name'][$i])
-                                || filesize($_FILES['images']['tmp_name'][$i]) === 0) {
-                                $errors[] = "'{$origName}' appears to be empty.";
+                            // For videos we can't use getimagesize: non-empty + container sniff.
+                            if (!videoFileLooksValid((string)$_FILES['images']['tmp_name'][$i])) {
+                                $errors[] = "'{$origName}' doesn't look like a valid video file.";
                                 continue;
                             }
                         } else {
@@ -468,9 +466,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $isVideo = isVideoExt($ext);
                 if ($isVideo) {
-                    if (!is_file($_FILES['batch_images']['tmp_name'][$i])
-                        || filesize($_FILES['batch_images']['tmp_name'][$i]) === 0) {
-                        $errors[] = "'{$origName}' appears to be empty.";
+                    if (!videoFileLooksValid((string)$_FILES['batch_images']['tmp_name'][$i])) {
+                        $errors[] = "'{$origName}' doesn't look like a valid video file.";
                         continue;
                     }
                 } else {

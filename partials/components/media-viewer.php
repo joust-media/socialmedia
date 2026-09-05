@@ -20,6 +20,11 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
  * note is sent in the SAME request as status=denied to tire-status.php /
  * library-status.php, which enforce the minimum server-side too.
  *
+ * Video slides are built by App.video.build() (the JS twin of
+ * renderVideoElement(), spec §6): autoplay muted, tap-to-unmute pill, and the
+ * "Open video / Download" card when the browser can't decode the file
+ * (e.g. .mov in Chrome). The card lives inside the slide, not in this shell.
+ *
  * Variables from the including scope (all optional, unset afterwards):
  *   $viewerId     default 'uiViewer'
  *   $viewerAdmin  bool — default isAdmin(); admin-only menu items are NOT rendered otherwise
@@ -45,17 +50,6 @@ $viewerReplaceEndpoint = isset($viewerReplaceEndpoint) ? (string)$viewerReplaceE
 
     <button type="button" class="ui-viewer-arrow ui-viewer-arrow--prev" data-viewer-prev aria-label="Previous"><?= icon('arrow-left') ?></button>
     <button type="button" class="ui-viewer-arrow ui-viewer-arrow--next" data-viewer-next aria-label="Next"><?= icon('arrow-left') ?></button>
-
-    <div class="ui-viewer-fallback" data-viewer-fallback hidden>
-      <div class="ui-viewer-fallback-card">
-        <p class="ui-viewer-fallback-title">Preview not supported in this browser</p>
-        <p class="ui-viewer-fallback-text">This video plays in Safari on iPhone, iPad and Mac.</p>
-        <div class="ui-btn-group">
-          <a class="ui-btn ui-btn--filled" data-viewer-fallback-open href="#" target="_blank" rel="noopener">Open video</a>
-          <button type="button" class="ui-btn ui-btn--gray" data-viewer-download>Download</button>
-        </div>
-      </div>
-    </div>
 
     <button type="button" class="ui-viewer-done" data-viewer-done hidden>
       <span class="ui-viewer-done-ring"><?= icon('checkmark') ?></span>

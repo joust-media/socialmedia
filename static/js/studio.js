@@ -367,9 +367,11 @@
       var isVid = it.media === 'video';
       html += '<figure class="pd-slide" data-slide="' + i + '" data-media-type="' + (isVid ? 'video' : 'image') + '" data-src="' + esc(it.src) + '">';
       if (isVid) {
+        // spec §6 markup via App.video (the JS twin of renderVideoElement()); blob: previews keep their File type
         var type = it.type || (fileExt(it.src) === 'webm' ? 'video/webm' : (fileExt(it.src) === 'mov' ? 'video/quicktime' : 'video/mp4'));
-        html += '<video playsinline muted controls preload="metadata" data-video><source src="' + esc(it.src) + '" type="' + esc(type) + '">Your browser can\'t play this video.</video>'
-              + '<div class="pd-video-fallback" data-video-fallback hidden><p>Preview not supported in this browser</p></div>';
+        html += App.video
+          ? App.video.markup(it.src, { mime: type, cls: 'pd-video', autoplay: i === 0, unmute: true })
+          : '<video playsinline muted controls preload="metadata"><source src="' + esc(it.src) + '" type="' + esc(type) + '"></video>';
       } else {
         html += '<img src="' + esc(it.src) + '" alt="' + label + ' ' + (i + 1) + '" loading="' + (i === 0 ? 'eager' : 'lazy') + '" decoding="async">';
       }
@@ -397,9 +399,7 @@
     }
     track.addEventListener('scroll', function () { if (!ticking) { ticking = true; requestAnimationFrame(sync); } }, { passive: true });
     dots.forEach(function (d, k) { d.addEventListener('click', function () { track.scrollTo({ left: k * track.clientWidth, behavior: App.reducedMotion && App.reducedMotion() ? 'auto' : 'smooth' }); }); });
-    $$('video[data-video]', root).forEach(function (v) {
-      v.addEventListener('error', function () { var fb = v.parentNode && $('[data-video-fallback]', v.parentNode); if (fb) { fb.hidden = false; v.hidden = true; } }, true);
-    });
+    if (App.video) App.video.enhance(root);   // fallback card / unmute pill / posters (spec §6)
   }
 
   /* ================================================================== */
@@ -428,19 +428,20 @@
   }
   function fileRowHtml(file, note) {
     var url = URL.createObjectURL(file), vid = isVideoFile(file);
+    var meta = note || (isQuickTime(file) ? mb(file.size) + ' · ' + MOV_NOTE : mb(file.size));
     return '<li data-file-name="' + esc(file.name) + '">'
       + (vid ? '<video class="studio-file-thumb" src="' + esc(url) + '" muted playsinline preload="metadata"></video>' : '<img class="studio-file-thumb" src="' + esc(url) + '" alt="">')
       + '<span class="studio-file-name">' + esc(file.name) + '</span>'
-      + '<span class="studio-file-meta' + (note ? ' is-rejected' : '') + '">' + esc(note || mb(file.size)) + '</span>'
+      + '<span class="studio-file-meta' + (note ? ' is-rejected' : '') + '">' + esc(meta) + '</span>'
       + '<button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-file-remove aria-label="Remove ' + esc(file.name) + '">' + ICON.x + '</button>'
       + '</li>';
   }
-  var MOV_NOTE = '.MOV: Safari-only playback — the server needs MP4';
+  // spec §6: .MOV is accepted and kept as-is — Safari plays it inline, other browsers get the download card.
+  var MOV_NOTE = '.MOV — plays in Safari; Chrome and Firefox get an Open / Download card';
   function fileNote(file, maxMb) {
-    if (isQuickTime(file)) return MOV_NOTE;
     if (file.size > maxMb * 1024 * 1024) return 'Over ' + maxMb + ' MB';
     var ext = fileExt(file.name);
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm'].indexOf(ext) === -1) return 'Unsupported type';
+    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov'].indexOf(ext) === -1) return 'Unsupported type';
     return '';
   }
 
@@ -505,7 +506,7 @@
     if (this.fileList) {
       this.fileList.innerHTML = this.files.map(function (f) { return fileRowHtml(f, fileNote(f, self.maxMb)); }).join('');
     }
-    this.files.forEach(function (f) { if (isQuickTime(f)) toast(f.name + ': .MOV plays in Safari only and the server needs MP4 — convert first (QuickTime: File → Export As → 1080p).', { kind: 'error', duration: 6000 }); });
+    this.files.forEach(function (f) { if (isQuickTime(f)) toast(f.name + ': .MOV plays inline in Safari; Chrome and Firefox will show an Open / Download card instead.', { duration: 6000 }); });
     if (this.preview) this.preview.setFiles(this.validFiles());
     this.syncSlots();
   };
@@ -526,12 +527,6 @@
     if (total > this.max) {
       e.preventDefault();
       toast('Up to ' + this.max + ' media per post — remove ' + (total - this.max) + '.', { kind: 'error' });
-      return;
-    }
-    var bad = this.files.filter(function (f) { return isQuickTime(f); });
-    if (bad.length) {
-      e.preventDefault();
-      toast('Remove the .MOV file(s) or convert them to MP4 first.', { kind: 'error' });
       return;
     }
     var btn = $('[data-composer-submit]', this.form);
@@ -571,12 +566,12 @@
     var status = $('[data-upload-status]', item);
     if (file.size > this.maxMb * 1024 * 1024) { status.textContent = 'Over ' + this.maxMb + ' MB — not uploaded.'; status.classList.add('is-error'); return; }
     if (isQuickTime(file)) {
-      // spec §6: warn before upload. Server acceptance of .mov is the Video phase's call;
-      // today batch-process.php rejects it with a "convert to MP4" message that we surface as-is.
+      // spec §6: warn before upload ("Safari-only playback"); "Upload anyway" enqueues it —
+      // batch-process.php accepts video/quicktime and keeps the original .mov in uploads/.
       $('[data-upload-warning]', item).hidden = false;
       return;
     }
-    if (!/^image\//.test(file.type) && !/^video\/(mp4|webm)$/.test(file.type)) {
+    if (!/^image\//.test(file.type) && !/^video\/(mp4|webm|quicktime)$/.test(file.type)) {
       status.textContent = 'Unsupported type — use JPG, PNG, GIF, WebP, MP4 or WebM.'; status.classList.add('is-error'); return;
     }
     this.enqueue(file, item);
@@ -708,7 +703,7 @@
   Batch.prototype.syncFiles = function () {
     var self = this;
     if (this.fileList) this.fileList.innerHTML = this.files.map(function (f) { return fileRowHtml(f, fileNote(f, 10)); }).join('');
-    this.files.forEach(function (f) { if (isQuickTime(f)) toast(f.name + ': .MOV plays in Safari only and the server needs MP4.', { kind: 'error', duration: 6000 }); });
+    this.files.forEach(function (f) { if (isQuickTime(f)) toast(f.name + ': .MOV plays inline in Safari; Chrome and Firefox will show an Open / Download card instead.', { duration: 6000 }); });
     this.sync();
   };
   Batch.prototype.validFiles = function () { return this.files.filter(function (f) { return !fileNote(f, 10); }); };

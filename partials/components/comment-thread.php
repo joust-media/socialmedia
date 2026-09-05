@@ -14,8 +14,11 @@
  *
  *   commentComposer(int $postId, array $opts = []): string
  *     The pinned input row: textarea + Send button wired for static/js/posts.js
- *     ([data-comment-form], [data-comment-input], [data-comment-send]).
- *     $opts: 'placeholder', 'endpoint' (default 'status.php'), 'entity' ('post').
+ *     ([data-comment-form], [data-comment-input], [data-comment-send]), plus the
+ *     hidden timestamp chip ([data-video-stamp], spec §6) that App.video reveals
+ *     when the surrounding detail contains a video; clicking it inserts "m:ss — "
+ *     at the caret. $opts: 'placeholder', 'endpoint' (default 'status.php'),
+ *     'entity' ('post'), 'stamp' (default true).
  *
  * Actor → side mapping is the only role logic here; whether a viewer may post
  * is decided by the including page (server-side), not by this partial.
@@ -80,7 +83,12 @@ if (!function_exists('commentComposer')) {
         $placeholder = $opts['placeholder'] ?? 'Message';
         $endpoint    = $opts['endpoint'] ?? 'status.php';
         $inputId     = 'comment-' . $postId;
+        $stamp       = !array_key_exists('stamp', $opts) || $opts['stamp'];
         return '<form class="pd-composer" data-comment-form data-id="' . (int)$postId . '" data-endpoint="' . $esc($endpoint) . '" autocomplete="off">'
+             . ($stamp
+                 ? '<button type="button" class="ui-pill ui-pill--accent ui-pill--nodot pd-composer-stamp" data-video-stamp hidden title="Insert the current video time" aria-label="Insert the current video time">'
+                   . (function_exists('icon') ? icon('play') : '') . '<span data-video-stamp-label>0:00</span></button>'
+                 : '')
              . '<label class="ui-visually-hidden" for="' . $esc($inputId) . '">Message</label>'
              . '<textarea class="ui-textarea pd-composer-input" id="' . $esc($inputId) . '" data-comment-input rows="1" maxlength="2000" placeholder="' . $esc($placeholder) . '"></textarea>'
              . '<button type="submit" class="ui-btn ui-btn--filled ui-btn--icon pd-composer-send" data-comment-send aria-label="Send" disabled>'

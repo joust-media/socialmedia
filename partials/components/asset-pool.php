@@ -395,7 +395,7 @@ if (!function_exists('studioPickerHtml')) {
                       . ' data-asset-group-label="' . $esc($a['group_label']) . '" data-asset-media="' . $esc($a['media']) . '"'
                       . ' aria-selected="' . ($on ? 'true' : 'false') . '" title="' . $esc($a['label'] . ' — ' . $a['group_label']) . '">';
                 if ($a['media'] === 'video') {
-                    $out .= '<video src="' . $esc($a['src']) . '" muted playsinline preload="metadata"></video>';
+                    $out .= videoTile($a['src'], ['badgeClass' => 'studio-asset-duration']);
                 } else {
                     $out .= '<img src="' . $esc($a['src']) . '" alt="' . $esc($a['label']) . '" loading="lazy" decoding="async">';
                 }
@@ -508,7 +508,7 @@ if (!function_exists('studioComposerHtml')) {
         $out .= '<section class="studio-upload-oneoff">'
               . '<h3 class="studio-section-title studio-section-title--sm">Or upload a one-off</h3>'
               . '<label class="studio-dropzone studio-dropzone--sm" data-file-drop>'
-              . '<input type="file" name="images[]" data-composer-files accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm" multiple' . ($slots <= 0 ? ' disabled' : '') . '>'
+              . '<input type="file" name="images[]" data-composer-files accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov" multiple' . ($slots <= 0 ? ' disabled' : '') . '>'
               . '<span class="studio-dropzone-label">Choose files</span>'
               . '<span class="studio-dropzone-hint">or drop them here · up to ' . $maxMb . ' MB · JPG, PNG, GIF, WebP, MP4, WebM</span>'
               . '</label>'
@@ -532,7 +532,7 @@ if (!function_exists('studioComposerHtml')) {
                 $isVid = ($img['type'] ?? '') === 'video';
                 $src   = studioRootUrl((string)$img['url']);
                 $out  .= '<label class="ui-thumb studio-existing-item" data-existing-item data-src="' . $esc($src) . '" data-media="' . ($isVid ? 'video' : 'image') . '">'
-                       . ($isVid ? '<video src="' . $esc($src) . '" muted playsinline preload="metadata"></video>' : '<img src="' . $esc($src) . '" alt="">')
+                       . ($isVid ? videoTile($src, ['badge' => false]) : '<img src="' . $esc($src) . '" alt="">')
                        . '<input type="checkbox" name="remove_images[]" value="' . (int)$img['id'] . '" data-remove-image data-image-id="' . (int)$img['id'] . '" aria-label="Remove this media">'
                        . '<span class="studio-existing-x" aria-hidden="true">Remove</span>'
                        . '</label>';

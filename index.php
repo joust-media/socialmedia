@@ -301,8 +301,10 @@ if ($pendingCollections > 0) {
         <span class="home-upcoming-thumb">
           <?php if ($thumbSrc !== '' && !$isVideo): ?>
             <img src="<?= h($thumbSrc) ?>" alt="" loading="lazy">
+          <?php elseif ($isVideo && $thumbSrc !== ''): ?>
+            <?= videoTile($thumbSrc, ['badge' => false, 'class' => 'home-upcoming-video']) ?>
           <?php else: ?>
-            <?= icon($isVideo ? 'play' : 'photo') ?>
+            <?= icon('photo') ?>
           <?php endif; ?>
           <?= statusPill('approved', $isSched, ['class' => 'ui-pill--glass']) ?>
         </span>

@@ -94,7 +94,7 @@
 }
 .as-thumb:active { transform: scale(0.97); }
 .as-thumb:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
-.as-thumb img, .as-thumb video { pointer-events: none; }
+.as-thumb img, .as-thumb video, .as-thumb .ui-video-tile { pointer-events: none; }
 .as-badge { gap: 5px; padding: 3px 7px; line-height: 14px; min-height: 20px; }
 .as-badge .ui-dot { width: 7px; height: 7px; box-shadow: 0 0 0 1px rgba(0,0,0,.25); }
 .as-badge-video { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600; letter-spacing: 0; }
@@ -110,7 +110,7 @@
 }
 .as-thumb-check .ui-icon { width: 13px; height: 13px; stroke-width: 3; }
 .as-thumb[data-status="approved"] .as-thumb-check { display: inline-flex; }
-.as-thumb[data-status="denied"] img, .as-thumb[data-status="denied"] video { filter: grayscale(.6); opacity: .8; }   /* admin's Needs-changes filter only */
+.as-thumb[data-status="denied"] img, .as-thumb[data-status="denied"] video, .as-thumb[data-status="denied"] .ui-video-tile { filter: grayscale(.6); opacity: .8; }   /* admin's Needs-changes filter only */
 
 /* Multi-select mode (batch Approve only) */
 .as-thumb-select {
@@ -232,6 +232,9 @@ html:not(:has(.ui-tabbar)) .as-selectbar { bottom: 0; padding-bottom: max(10px, 
 .ui-viewer-media.is-zooming { transition: none; }
 .ui-viewer-media.is-zoomed { cursor: grab; }
 video.ui-viewer-media { width: 100%; background: #000; touch-action: auto; }
+.ui-viewer-video { width: 100%; height: 100%; background: transparent; }
+.ui-viewer-video .ui-video-fallback { background: transparent; }
+.ui-viewer-video .ui-video-fallback-card { padding: 20px; border-radius: var(--radius-card); background: var(--bg-elevated); }
 .ui-viewer-loading {
   position: absolute; left: 50%; top: 50%; width: 28px; height: 28px; margin: -14px 0 0 -14px;
   border-radius: 50%; border: 2.5px solid rgba(255,255,255,.18); border-top-color: rgba(255,255,255,.85);
@@ -274,7 +277,7 @@ video.ui-viewer-media { width: 100%; background: #000; touch-action: auto; }
 .ui-viewer-deny .ui-icon { stroke-width: 2.6; }
 .ui-viewer-approve.is-done { background: rgba(52,199,89,.2); color: var(--approve); }
 .ui-viewer-deny.is-done { background: var(--deny); color: #fff; }
-.ui-viewer-actions[hidden], .ui-viewer-note[hidden], .ui-viewer-menu[hidden], .ui-viewer-done[hidden], .ui-viewer-fallback[hidden] { display: none; }
+.ui-viewer-actions[hidden], .ui-viewer-note[hidden], .ui-viewer-menu[hidden], .ui-viewer-done[hidden] { display: none; }
 
 /* Inline deny note */
 .ui-viewer-note { max-width: 640px; margin: 0 auto; }
@@ -306,11 +309,7 @@ video.ui-viewer-media { width: 100%; background: #000; touch-action: auto; }
 .ui-viewer-menu-item .ui-icon { width: 20px; height: 20px; color: var(--label-secondary); }
 .ui-viewer-menu-item[hidden] { display: none; }
 
-/* Video fallback card (spec §6) */
-.ui-viewer-fallback { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center; padding: 24px; }
-.ui-viewer-fallback-card { max-width: 360px; padding: 20px; border-radius: var(--radius-card); background: var(--bg-elevated); text-align: center; }
-.ui-viewer-fallback-title { margin: 0 0 4px; font-size: var(--text-headline); line-height: var(--lh-headline); letter-spacing: var(--ls-headline); font-weight: var(--fw-headline); }
-.ui-viewer-fallback-text { margin: 0 0 14px; font-size: var(--text-subhead); line-height: var(--lh-subhead); color: var(--label-secondary); }
+/* Video fallback card (spec §6): rendered inside each video slide by App.video (.ui-video-fallback, components.css) */
 
 /* End-of-queue state */
 .ui-viewer-done {

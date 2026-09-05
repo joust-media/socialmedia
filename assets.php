@@ -132,13 +132,12 @@ if (!function_exists('assetsUrl')) {
     }
 }
 
-/** Normalised media descriptor for a library or tire row (video-ready even though both are images-only today). */
+/** Normalised media descriptor for a library or tire row — neither table has a media_type column, so video-ness is by extension (spec §6). */
 if (!function_exists('assetMediaMeta')) {
     function assetMediaMeta(string $url): array {
         $ext  = strtolower(pathinfo(parse_url($url, PHP_URL_PATH) ?: $url, PATHINFO_EXTENSION));
-        $isV  = isVideoExt($ext) || in_array($ext, ['mov', 'm4v'], true);
-        $mime = $isV ? ($ext === 'mov' ? 'video/quicktime' : ($ext === 'webm' ? 'video/webm' : 'video/mp4')) : '';
-        return ['type' => $isV ? 'video' : 'image', 'ext' => $ext ?: 'jpg', 'mime' => $mime];
+        $isV  = isVideoExt($ext) || $ext === 'm4v';
+        return ['type' => $isV ? 'video' : 'image', 'ext' => $ext ?: 'jpg', 'mime' => $isV ? videoMime($ext) : ''];
     }
 }
 
@@ -413,14 +412,14 @@ include __DIR__ . '/partials/layout-top.php';
                 data-endpoint="<?= esc($endpoint) ?>"<?= $it['manage'] !== '' ? ' data-manage="' . esc($it['manage']) . '"' : '' ?>
                 aria-label="<?= esc('Open ' . $it['label'] . ', ' . ($i + 1) . ' of ' . $total) ?>">
           <?php if ($it['type'] === 'video'): ?>
-            <video muted playsinline preload="metadata" tabindex="-1"><source src="<?= esc($it['src']) ?>" type="<?= esc($it['mime']) ?>"></video>
+            <?= videoTile($it['src'], ['badge' => false]) /* poster when App.video has one cached, else dark tile + play glyph */ ?>
           <?php else: ?>
             <img src="<?= esc($it['src']) ?>" alt="" loading="lazy" decoding="async">
           <?php endif; ?>
           <span class="ui-pill ui-pill--glass ui-pill--nodot ui-thumb-badge as-badge">
             <i class="ui-dot ui-dot--<?= esc($it['status']) ?>" data-status-dot></i>
             <?php if ($it['type'] === 'video'): ?>
-              <span class="as-badge-video"><?= icon('play') ?><span data-duration>–:––</span></span>
+              <?= videoDurationBadge('as-badge-video') ?>
             <?php endif; ?>
           </span>
           <span class="as-thumb-check" aria-hidden="true"><?= icon('checkmark') ?></span>

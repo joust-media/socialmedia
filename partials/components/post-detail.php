@@ -25,11 +25,13 @@
  *     Studio must render exactly this so what Lance sees is what the client sees.
  *
  *   renderPostMedia(array $images, array $opts = []): string
- *     Paged carousel with dots; video per spec §6 with the onerror fallback card.
- *     $opts: 'admin' (adds nothing by itself — Replace lives in the ⋯ menu), 'label'.
+ *     Paged carousel with dots; video through renderVideoElement() (spec §6:
+ *     autoplay muted, tap-to-unmute pill, App.video fallback card).
+ *     $opts: 'admin' (adds nothing by itself — Replace lives in the ⋯ menu), 'label',
+ *            'autoplay' (default true).
  *
  *   pdMediaUrl(string $url): string — root-rooted URL for an image_url value.
- *   pdVideoMime(string $ext): string — video/quicktime for mov, else helpers' videoMimeForExt().
+ *   pdVideoMime(string $ext): string — helpers' videoMime() (video/quicktime for mov).
  *   pdFormatWhen(string $dt): string — "Wednesday, Sep 2 · 10:35 PM" (America/New_York per db.php).
  */
 
@@ -51,20 +53,21 @@ if (!function_exists('pdVideoMime')) {
     function pdVideoMime(string $ext): string
     {
         $ext = strtolower($ext);
+        if (function_exists('videoMime')) return videoMime($ext);
         if ($ext === 'mov') return 'video/quicktime';
-        if ($ext === 'm4v') return 'video/mp4';
-        if (function_exists('videoMimeForExt')) return videoMimeForExt($ext);
         return $ext === 'webm' ? 'video/webm' : 'video/mp4';
     }
 }
 
 if (!function_exists('pdIsVideo')) {
+    /** media_type when the column exists (authoritative), else by extension. */
     function pdIsVideo(array $img): bool
     {
         $type = strtolower((string)($img['type'] ?? ''));
         if ($type === 'video') return true;
         if ($type === 'image') return false;
         $ext = strtolower(pathinfo((string)($img['url'] ?? ''), PATHINFO_EXTENSION));
+        if (function_exists('isVideoExt')) return isVideoExt($ext) || $ext === 'm4v';
         return in_array($ext, ['mp4', 'webm', 'mov', 'm4v'], true);
     }
 }
@@ -122,7 +125,8 @@ if (!function_exists('renderPostMedia')) {
         if ($n === 0) {
             return '<div class="pd-media pd-media--empty"><span class="text-tertiary">No media yet</span></div>';
         }
-        $label = (string)($opts['label'] ?? 'Post media');
+        $label    = (string)($opts['label'] ?? 'Post media');
+        $autoplay = !array_key_exists('autoplay', $opts) || $opts['autoplay'];
         $out  = '<div class="pd-media" data-carousel data-count="' . $n . '" aria-roledescription="carousel" aria-label="' . pdEsc($label) . '">';
         $out .= '<div class="pd-track" data-carousel-track>';
         foreach ($images as $i => $img) {
@@ -132,16 +136,14 @@ if (!function_exists('renderPostMedia')) {
             $vid  = pdIsVideo($img);
             $out .= '<figure class="pd-slide" data-slide="' . $i . '" data-image-id="' . $id . '" data-media-type="' . ($vid ? 'video' : 'image') . '" data-src="' . pdEsc($src) . '" data-ext="' . pdEsc($ext) . '">';
             if ($vid) {
-                $out .= '<video playsinline muted controls preload="metadata" data-video>'
-                      . '<source src="' . pdEsc($src) . '" type="' . pdEsc(pdVideoMime($ext)) . '">'
-                      . 'Your browser can\'t play this video.'
-                      . '</video>'
-                      . '<div class="pd-video-fallback" data-video-fallback hidden>'
-                      . '<p>Preview not supported in this browser</p>'
-                      . '<div class="ui-btn-group">'
-                      . '<a class="ui-btn ui-btn--tinted ui-btn--sm" href="' . pdEsc($src) . '" target="_blank" rel="noopener">Open video</a>'
-                      . '<a class="ui-btn ui-btn--gray ui-btn--sm" href="' . pdEsc($src) . '" download>Download</a>'
-                      . '</div></div>';
+                // spec §6 markup (playsinline muted controls preload=metadata, quicktime source first,
+                // mp4 twin when on disk, fallback card) — one renderer for the whole portal.
+                $out .= renderVideoElement($src, [
+                    'autoplay' => $autoplay && $i === 0,
+                    'unmute'   => true,
+                    'label'    => $label . ' ' . ($i + 1),
+                    'class'    => 'pd-video',
+                ]);
             } else {
                 $out .= '<button type="button" class="pd-slide-btn" data-viewer-open aria-label="View full screen">'
                       . '<img src="' . pdEsc($src) . '" alt="' . pdEsc($label . ' ' . ($i + 1)) . '" loading="' . ($i === 0 ? 'eager' : 'lazy') . '" decoding="async">'
@@ -210,7 +212,7 @@ if (!function_exists('renderPostDetail')) {
         // ---- 1. Media carousel -------------------------------------------
         $out .= renderPostMedia($images, ['admin' => $admin, 'label' => (string)$brand['name'] . ' post']);
         if ($admin) {
-            $out .= '<input type="file" class="ui-visually-hidden" data-replace-input accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm" tabindex="-1" data-replace-endpoint="' . pdEsc($replaceEp) . '">';
+            $out .= '<input type="file" class="ui-visually-hidden" data-replace-input accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov" tabindex="-1" data-replace-endpoint="' . pdEsc($replaceEp) . '">';
         }
 
         // ---- 2. Caption preview ----------------------------------------------

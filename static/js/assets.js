@@ -39,12 +39,6 @@
   function toast(msg, opts) { if (App.toast) App.toast(msg, opts); }
   function emit(el, name, detail) { el.dispatchEvent(new CustomEvent(name, { bubbles: true, detail: detail || {} })); }
   function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
-  function fmtDuration(sec) {
-    if (!isFinite(sec) || sec < 0) return '–:––';
-    var m = Math.floor(sec / 60), s = Math.round(sec % 60);
-    if (s === 60) { m++; s = 0; }
-    return m + ':' + (s < 10 ? '0' : '') + s;
-  }
   function afterMs(ms, fn) { return setTimeout(fn, reduced() ? Math.min(ms, 160) : ms); }
 
   /* ================================================================ */
@@ -65,7 +59,6 @@
         stage: $('[data-viewer-stage]', root), track: $('[data-viewer-track]', root),
         title: $('[data-viewer-title]', root), count: $('[data-viewer-count]', root), status: $('[data-viewer-status]', root),
         prev: $('[data-viewer-prev]', root), next: $('[data-viewer-next]', root),
-        fallback: $('[data-viewer-fallback]', root), fallbackOpen: $('[data-viewer-fallback-open]', root),
         done: $('[data-viewer-done]', root), bar: $('[data-viewer-bar]', root), actions: $('[data-viewer-actions]', root),
         deny: $('[data-viewer-deny]', root), denyLabel: $('[data-viewer-deny-label]', root),
         approve: $('[data-viewer-approve]', root), approveLabel: $('[data-viewer-approve-label]', root),
@@ -187,19 +180,27 @@
       slide.className = 'ui-viewer-slide';
       var media, self = this;
       if (item.type === 'video') {
+        // spec §6 via App.video.build(): autoplay muted + tap-to-unmute pill, and the
+        // "Open video / Download" card inside the slide when the browser can't decode it.
+        var box = App.video
+          ? App.video.build(item.src, { mime: item.mime, poster: item.poster || App.video.getPoster(item.src), autoplay: true, unmute: true,
+                                        cls: 'ui-viewer-video', download: item.download, label: item.label })
+          : null;
+        if (box) {
+          media = $('video', box);
+          media.classList.add('ui-viewer-media');
+          media.addEventListener('loadedmetadata', function () { item.duration = media.duration; });
+          box.addEventListener('video:fallback', function () { self.showFallback(item); });
+          slide.appendChild(box);
+          slide._media = media;
+          return slide;
+        }
         media = document.createElement('video');
         media.className = 'ui-viewer-media';
         media.setAttribute('playsinline', ''); media.muted = true; media.controls = true; media.preload = 'metadata';
-        if (item.poster) media.poster = item.poster;
         var source = document.createElement('source');
         source.src = item.src; if (item.mime) source.type = item.mime;
         media.appendChild(source);
-        // §6: a source the browser can't play fires error on the last <source>; also guard the element itself.
-        var onErr = function () { self.showFallback(item); };
-        source.addEventListener('error', onErr);
-        media.addEventListener('error', onErr);
-        media.addEventListener('loadedmetadata', function () { item.duration = media.duration; });
-        media.addEventListener('canplay', function () { var p = media.play(); if (p && p.catch) p.catch(function () {}); }, { once: true });
       } else {
         var spinner = document.createElement('div');
         spinner.className = 'ui-viewer-loading';
@@ -389,14 +390,12 @@
         .catch(function (err) { toast(err.message || 'Replace failed', { kind: 'error' }); });
     },
 
-    /* ---------------- video fallback (§6) ---------------- */
+    /* ---------------- video fallback (§6) — the card lives inside the slide (App.video) ---------------- */
     showFallback: function (item) {
-      var r = this.refs;
-      if (this.current() !== item) return;
-      if (r.fallbackOpen) r.fallbackOpen.href = item.src;
-      r.fallback.hidden = false;
+      if (item) item.fallback = true;
+      emit(this.root, 'viewer:fallback', { item: item });
     },
-    hideFallback: function () { this.refs.fallback.hidden = true; },
+    hideFallback: function () {},
 
     /* ---------------- keyboard ---------------- */
     _onKey: function (e) {
@@ -469,7 +468,7 @@
 
       stage.addEventListener('pointerdown', function (e) {
         if (!self.isOpen) return;
-        if (e.target.closest('button, a, video, [data-viewer-done], [data-viewer-fallback]')) return;
+        if (e.target.closest('button, a, video, [data-viewer-done], [data-video-fallback]')) return;
         if (!r.menu.hidden) self.closeMenu();
         pointers[e.pointerId] = { x: e.clientX, y: e.clientY }; count = keys().length;
         try { stage.setPointerCapture(e.pointerId); } catch (err) {}
@@ -601,12 +600,7 @@
       if (approveBtn) approveBtn.addEventListener('click', function () { self.approveSelected(); });
       document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && self.selecting && !viewer.isOpen) self.setSelecting(false); });
 
-      // Video duration badges (grid videos are preload="metadata")
-      $$('[data-asset][data-type="video"] video', this.grid).forEach(function (v) {
-        var badge = v.parentNode.querySelector('[data-duration]');
-        var set = function () { if (badge) badge.textContent = fmtDuration(v.duration); };
-        if (v.readyState >= 1) set(); else v.addEventListener('loadedmetadata', set);
-      });
+      // Video tiles: posters + duration badges are filled by App.video (video.js) from its probe/cache.
 
       // Deep link: ?asset=&kind= (resolved server-side into cfg.open) or the legacy #lib-<id> / #image-<id> anchors
       var open = cfg.open;

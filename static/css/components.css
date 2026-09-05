@@ -451,6 +451,69 @@ html:not(:has(.ui-tabbar)) .ui-toast { bottom: calc(24px + env(safe-area-inset-b
   box-shadow: inset 0 0 0 3px var(--accent); pointer-events: none;
 }
 
+/* ---------------------------------------------------------------------
+   Video (spec §6) — markup from partials/components/video.php, behaviour
+   from static/js/video.js (App.video). Transform/opacity only.
+   --------------------------------------------------------------------- */
+.ui-video { position: relative; display: block; width: 100%; height: 100%; background: #000; overflow: hidden; }
+.ui-video video { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.ui-video video[hidden] { display: none; }
+
+/* Tap-to-unmute pill: glass, bottom-right, above the native controls */
+.ui-video-mute {
+  position: absolute; right: 10px; bottom: 56px; z-index: 2;
+  gap: 6px; padding: 5px 12px; min-height: 30px;
+  border: 0; cursor: pointer; font: inherit; font-size: var(--text-footnote); font-weight: 600; color: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,.35), inset 0 0.5px 0 rgba(255,255,255,.28);
+  opacity: 1; transform: none;
+  transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-spring);
+  -webkit-tap-highlight-color: transparent;
+}
+.ui-video-mute[hidden] { display: none; }
+.ui-video-mute:active { transform: scale(0.96); }
+.ui-video-mute:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.ui-video-mute .ui-icon { width: 16px; height: 16px; }
+.ui-video-mute.is-unmuted { background: rgba(255,255,255,.88); color: #000; }
+
+/* "Preview not supported" card — shown by App.video when the browser can't decode the file */
+.ui-video-fallback {
+  position: absolute; inset: 0; z-index: 3;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+  background: var(--bg-elevated); color: var(--label);
+  animation: ui-fade-in var(--dur-base) var(--ease-out);
+}
+.ui-video-fallback[hidden] { display: none; }
+.ui-video-fallback.is-instant { animation: none; }
+.ui-video-fallback-card { max-width: 360px; text-align: center; }
+.ui-video-fallback-title { margin: 0 0 4px; font-size: var(--text-headline); line-height: var(--lh-headline); letter-spacing: var(--ls-headline); font-weight: var(--fw-headline); }
+.ui-video-fallback-text { margin: 0 0 14px; font-size: var(--text-subhead); line-height: var(--lh-subhead); color: var(--label-secondary); }
+.ui-video-fallback .ui-btn-group { justify-content: center; }
+.ui-video.is-fallback { background: var(--bg-elevated); }
+
+/* Grid / list thumbnail for a video: cached poster when known, else a dark tile + play glyph */
+.ui-video-tile { position: relative; display: block; width: 100%; height: 100%; background: #111; color: #fff; overflow: hidden; }
+.ui-video-poster { display: block; width: 100%; height: 100%; object-fit: cover; }
+.ui-video-poster[hidden] { display: none; }
+.ui-video-glyph {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  pointer-events: none; color: #fff;
+}
+.ui-video-glyph .ui-icon { width: 28px; height: 28px; filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
+.ui-video-tile.has-poster .ui-video-glyph .ui-icon { width: 22px; height: 22px; opacity: .92; }
+.ui-video-badge { left: auto; right: 6px; gap: 4px; padding: 3px 7px; line-height: 14px; min-height: 20px; }
+.ui-video-duration {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0; font-variant-numeric: tabular-nums;
+}
+.ui-video-duration .ui-icon { width: 10px; height: 10px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-video-mute { transition-property: opacity, background-color; }
+  .ui-video-mute:active { transform: none; }
+  .ui-video-fallback { animation: ui-fade-in var(--dur-fast) linear; }
+}
+@keyframes ui-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
 /* Comment bubbles (iMessage style) */
 .ui-bubble {
   max-width: 80%; padding: 8px 12px; border-radius: 18px;

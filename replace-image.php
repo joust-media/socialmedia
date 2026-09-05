@@ -30,8 +30,8 @@ if (!currentAdmin()) {
 
 $uploadsDir  = __DIR__ . '/uploads';
 $uploadsUrl  = 'uploads';
-$allowedExt  = array_merge(imageExts(), videoExts()); // jpg/png/gif/webp + mp4/webm
-$rejectedExt = ['mov', 'm4v', 'avi', 'mkv'];
+$allowedExt  = array_merge(imageExts(), videoExts()); // jpg/png/gif/webp + mp4/webm/mov (spec §6)
+$rejectedExt = ['m4v', 'avi', 'mkv'];
 $maxFileSize = 25 * 1024 * 1024; // 25 MB — matches add-post.php
 
 // Determine target table
@@ -83,15 +83,15 @@ if (in_array($ext, $rejectedExt, true)) {
 }
 if (!in_array($ext, $allowedExt, true)) {
     http_response_code(400);
-    echo json_encode(['ok' => false, 'error' => 'Unsupported file type — use JPG, PNG, GIF, WebP, MP4, or WebM.']);
+    echo json_encode(['ok' => false, 'error' => 'Unsupported file type — use JPG, PNG, GIF, WebP, MP4, WebM, or MOV.']);
     exit;
 }
 
 $isVideo = isVideoExt($ext);
 if ($isVideo) {
-    if (!is_file($tmpName) || filesize($tmpName) === 0) {
+    if (!videoFileLooksValid((string)$tmpName)) {
         http_response_code(400);
-        echo json_encode(['ok' => false, 'error' => 'Video file appears to be empty']);
+        echo json_encode(['ok' => false, 'error' => 'Not a valid video file']);
         exit;
     }
 } else {
