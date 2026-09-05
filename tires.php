@@ -1,21 +1,20 @@
 <?php
 /**
- * Legacy shim — redirects to the generic features.php for the tires module.
- * Preserves ?client= and maps ?tire= to ?item=.
+ * Legacy shim — the tires module is now the Collections view of the unified
+ * Assets page. 301s there, preserving ?client= and mapping ?tire= → ?item=.
+ * Old unscoped bookmarks go to the Studio (admin) client picker.
  */
 require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';
 
-$qs = ['module' => 'tires'];
-if ($client) { $qs['client'] = $client['slug']; }
-if (isset($_GET['tire'])) { $qs['item'] = (int)$_GET['tire']; }
-
-// If we have no client (old bookmark), send them to the admin picker
-// so they can pick which Kenda-or-whoever this was for.
-if (empty($qs['client'])) {
-    header('Location: admin');
+if (!$client) {
+    header('Location: ' . clientUrl('studio.php'), true, 301);
     exit;
 }
 
-header('Location: features?' . http_build_query($qs));
+$extra = ['view' => 'collections'];
+$item  = isset($_GET['item']) ? (int)$_GET['item'] : (isset($_GET['tire']) ? (int)$_GET['tire'] : 0);
+if ($item > 0) { $extra['item'] = $item; }
+
+header('Location: ' . clientUrl('assets.php', $extra), true, 301);
 exit;

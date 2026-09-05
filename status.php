@@ -23,6 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     echo json_encode(['ok' => false, 'error' => 'Method not allowed']);
     exit;
 }
+requireSameSiteFetch();   // cross-site POSTs get a JSON 403 (helpers.php)
 
 $action = $_POST['action'] ?? '';
 
@@ -65,6 +66,18 @@ if ($action === 'toggle_posted') {
         exit;
     }
     try {
+        // Spec §4.3: only an approved post can be marked as scheduled (a stale tab
+        // must not schedule a post the client has since denied / reset).
+        if ($target === 1) {
+            $stStmt = $pdo->prepare("SELECT status FROM posts WHERE id = ?");
+            $stStmt->execute([$postId]);
+            $curStatus = $stStmt->fetchColumn();
+            if ($curStatus !== false && $curStatus !== 'approved') {
+                http_response_code(409);
+                echo json_encode(['ok' => false, 'error' => 'Only an approved post can be marked as scheduled']);
+                exit;
+            }
+        }
         if ($target === 1) {
             $stmt = $pdo->prepare("UPDATE posts SET posted = 1, posted_at = NOW() WHERE id = ?");
         } else {
@@ -116,10 +129,8 @@ if ($action === 'delete_post') {
         $imgs = $pdo->prepare("SELECT image_url FROM post_images WHERE post_id = ?");
         $imgs->execute([$postId]);
         foreach ($imgs->fetchAll() as $row) {
-            if (strpos($row['image_url'], 'uploads/') === 0) {
-                $path = __DIR__ . '/' . $row['image_url'];
-                if (is_file($path)) { @unlink($path); }
-            }
+            $path = uploadsPathOrNull((string)$row['image_url']);   // realpath-contained in uploads/
+            if ($path !== null) { @unlink($path); }
         }
         // CASCADE deletes post_images and post_categories
         $pdo->prepare("DELETE FROM posts WHERE id = ?")->execute([$postId]);
@@ -165,6 +176,18 @@ if (!$hasStat && !$hasCmt && !$hasDate && !$hasCap && !$hasTag && !$hasType) {
 if ($hasStat && !in_array($status, ['pending', 'approved', 'denied'], true)) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'Invalid status']);
+    exit;
+}
+// Client verbs are Approve / Deny / Comment only (spec §2): resetting to review is Joust's.
+if ($hasStat && $status === 'pending' && !$isAdminSession) {
+    http_response_code(403);
+    echo json_encode(['ok' => false, 'error' => 'Admin sign-in required']);
+    exit;
+}
+// Denying requires a reason — a note of at least 3 characters (spec §4.2 / §9), for every seat.
+if ($hasStat && $status === 'denied' && mb_strlen(trim((string)($_POST['comment'] ?? '')), 'UTF-8') < 3) {
+    http_response_code(422);
+    echo json_encode(['ok' => false, 'error' => 'Please add a short note (at least 3 characters) explaining what should change.']);
     exit;
 }
 if ($hasCmt) {
@@ -225,10 +248,11 @@ try {
     $pdo->beginTransaction();
 
     // Capture before-values for diff logging. posts.name / post_type are optional (migration-gated).
-    $nameSel = hasPostsNameColumn($pdo) ? 'name' : "'' AS name";
-    $typeSel = hasPostTypeColumn($pdo) ? 'post_type' : "'post' AS post_type";
+    $nameSel   = hasPostsNameColumn($pdo) ? 'name' : "'' AS name";
+    $typeSel   = hasPostTypeColumn($pdo) ? 'post_type' : "'post' AS post_type";
+    $postedSel = hasPostedColumn($pdo) ? 'posted' : '0 AS posted';
     $before = $pdo->prepare("
-        SELECT company_id, status, client_comment, scheduled_date, caption, hashtags, {$nameSel}, {$typeSel}
+        SELECT company_id, status, client_comment, scheduled_date, caption, hashtags, {$nameSel}, {$typeSel}, {$postedSel}
           FROM posts WHERE id = ? FOR UPDATE
     ");
     $before->execute([$id]);
@@ -237,6 +261,20 @@ try {
         $pdo->rollBack();
         http_response_code(404);
         echo json_encode(['ok' => false, 'error' => 'Post not found']);
+        exit;
+    }
+    // Tenant scope: a client seat may only act on its own company's posts (admin bypasses).
+    if (!clientOwnsCompany($pdo, (int)$prev['company_id'])) {
+        $pdo->rollBack();
+        http_response_code(403);
+        echo json_encode(['ok' => false, 'error' => 'This post belongs to another client']);
+        exit;
+    }
+    // A client cannot re-decide a post that is already scheduled or that they denied (spec §2).
+    if ($hasStat && !$isAdminSession && (!empty($prev['posted']) || $prev['status'] === 'denied')) {
+        $pdo->rollBack();
+        http_response_code(403);
+        echo json_encode(['ok' => false, 'error' => 'This post can no longer be changed here — add a comment instead']);
         exit;
     }
     // Friendly label used in activity-log summaries.

@@ -271,6 +271,23 @@ function hasPostsNameColumn(PDO $pdo) {
     return $cached = (int)$s->fetchColumn() > 0;
 }
 
+/** Does posts.posted exist yet? (migrate.php may not have run.) Cached for the request.
+ *  The single shared copy — pages must not redeclare it. */
+if (!function_exists('hasPostedColumn')) {
+    function hasPostedColumn(PDO $pdo) {
+        static $cached = null;
+        if ($cached !== null) return $cached;
+        $s = $pdo->prepare("
+            SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'posts'
+              AND COLUMN_NAME = 'posted'
+        ");
+        $s->execute();
+        return $cached = (int)$s->fetchColumn() > 0;
+    }
+}
+
 /** Sanitize a display_name into a safe filename stem (no extension).
  *  Strips path separators, collapses whitespace + non-name chars to dashes,
  *  trims leading/trailing junk, caps at 80 chars. Returns '' for blank input. */
@@ -510,10 +527,78 @@ function newBatchId() {
     return bin2hex(random_bytes(8));
 }
 
-/** Read POST['actor'] with a whitelist; default 'unknown'. */
+/** Actor for activity rows. The seat is decided by the session, never by the
+ *  request: a non-admin session is always 'client' (POST['actor'] is ignored, so
+ *  the feed cannot be spoofed). The admin may pass actor=client|admin (Studio's
+ *  "reply as client"); anything else → 'admin'. */
 function actorFromPost() {
-    $a = $_POST['actor'] ?? 'unknown';
-    return in_array($a, ['client', 'admin'], true) ? $a : 'unknown';
+    if (function_exists('currentAdmin') && currentAdmin()) {
+        $a = $_POST['actor'] ?? 'admin';
+        return in_array($a, ['client', 'admin'], true) ? $a : 'admin';
+    }
+    return 'client';
+}
+
+/** Client slug sent with a state-changing request (POST `client`, falling back
+ *  to the ?client= scope), sanitised to [a-z0-9-]; '' when absent. */
+if (!function_exists('postedClientSlug')) {
+    function postedClientSlug(): string {
+        $raw = $_POST['client'] ?? $_GET['client'] ?? '';
+        if (!is_string($raw)) return '';
+        return preg_replace('/[^a-z0-9\-]/', '', strtolower(trim($raw)));
+    }
+}
+
+/** Tenant scoping for the client seat. Admin sessions always pass. A non-admin
+ *  request passes only when the posted client slug resolves to $companyId
+ *  (one companies lookup per request). Callers answer 403 on false. */
+if (!function_exists('clientOwnsCompany')) {
+    function clientOwnsCompany(PDO $pdo, int $companyId): bool {
+        if (function_exists('currentAdmin') && currentAdmin()) return true;
+        $slug = postedClientSlug();
+        if ($slug === '' || $companyId <= 0) return false;
+        try {
+            $st = $pdo->prepare("SELECT slug FROM companies WHERE id = ?");
+            $st->execute([$companyId]);
+            $have = $st->fetchColumn();
+        } catch (Throwable $e) {
+            return false;
+        }
+        return is_string($have) && $have !== '' && $have === $slug;
+    }
+}
+
+/** Refuse cross-site requests on state-changing endpoints. Uses the browser's
+ *  Sec-Fetch-Site header only when present (absent = older client = allow);
+ *  same-origin / same-site / none pass, anything else gets a JSON 403. */
+if (!function_exists('requireSameSiteFetch')) {
+    function requireSameSiteFetch(): void {
+        $sfs = $_SERVER['HTTP_SEC_FETCH_SITE'] ?? '';
+        if ($sfs === '') return;
+        if (in_array(strtolower(trim($sfs)), ['same-origin', 'same-site', 'none'], true)) return;
+        http_response_code(403);
+        header('Content-Type: application/json');
+        echo json_encode(['ok' => false, 'error' => 'Cross-site request refused']);
+        exit;
+    }
+}
+
+/** Absolute path of a stored media URL ('uploads/x.jpg') ONLY when the file
+ *  really lives directly inside this app's uploads/ directory (realpath
+ *  containment — 'uploads/../config.php' and symlink tricks return null).
+ *  Use before every unlink of a DB-supplied path. */
+if (!function_exists('uploadsPathOrNull')) {
+    function uploadsPathOrNull(string $url): ?string {
+        $url = trim($url);
+        if ($url === '' || strpos($url, 'uploads/') !== 0) return null;
+        $uploadsDir = realpath(__DIR__ . '/uploads');
+        if ($uploadsDir === false) return null;
+        $path = __DIR__ . '/' . $url;
+        if (!is_file($path)) return null;
+        $real = realpath($path);
+        if ($real === false || realpath(dirname($path)) !== $uploadsDir || dirname($real) !== $uploadsDir) return null;
+        return $real;
+    }
 }
 
 /**

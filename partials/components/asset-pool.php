@@ -100,12 +100,16 @@ if (!function_exists('studioAssetFromLibraryRow')) {
     {
         $file = (string)$row['filename'];
         $ext  = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+        // A library row must name a plain file inside the brand folder — never a path.
+        $safe = $file !== '' && $file === basename($file) && strpos($file, '..') === false;
+        $dir  = libraryDir((string)$client['slug']);
         return [
             'kind'        => 'library',
             'id'          => (int)$row['id'],
             'key'         => 'library:' . (int)$row['id'],
             'src'         => libraryFileUrl((string)$client['slug'], $file),
-            'path'        => libraryDir((string)$client['slug']) . '/' . $file,
+            'path'        => $safe ? $dir . '/' . $file : '',
+            'dir'         => $dir,
             'label'       => function_exists('safeFilenameStem') ? safeFilenameStem($file) : pathinfo($file, PATHINFO_FILENAME),
             'group'       => 'library',
             'group_label' => 'Library',
@@ -181,7 +185,7 @@ if (!function_exists('studioApprovedPool')) {
             $counts['tire']++;
             $tid = (int)$row['tire_id'];
             if (!isset($collections[$tid])) {
-                $collections[$tid] = ['id' => $tid, 'name' => (string)$row['tire_name'], 'count' => 0];
+                $collections[$tid] = ['id' => $tid, 'name' => (string)($row['tire_name'] ?? ''), 'count' => 0];
             }
             $collections[$tid]['count']++;
         }
@@ -273,7 +277,33 @@ if (!function_exists('studioCopyAssetToUploads')) {
         }
         $ext = strtolower((string)($asset['ext'] ?? pathinfo($src, PATHINFO_EXTENSION)));
         $ext = preg_replace('/[^a-z0-9]/', '', $ext);
-        if ($ext === '') $ext = 'jpg';
+        // Destination extension whitelist — only web media ever lands in uploads/ (never .php/.svg/…).
+        $allowedExt = array_merge(
+            function_exists('imageExts') ? imageExts() : ['jpg', 'jpeg', 'png', 'gif', 'webp'],
+            function_exists('videoExts') ? videoExts() : ['mp4', 'webm', 'mov']
+        );
+        if (!in_array($ext, $allowedExt, true)) {
+            throw new StudioAssetException('Unsupported file type for ' . ($asset['label'] ?? 'the file') . ' — use JPG, PNG, GIF, WebP, MP4, WebM or MOV.', 400);
+        }
+        // Source containment: the file must resolve inside this brand's library folder
+        // (asset['dir']) or this app's uploads/ — a DB row cannot point the copy elsewhere.
+        $real = realpath($src);
+        $roots = [];
+        foreach ([(string)($asset['dir'] ?? ''), $uploadsDir] as $root) {
+            if ($root === '') continue;
+            $r = realpath($root);
+            if ($r !== false) $roots[] = rtrim($r, '/');
+        }
+        $contained = false;
+        if ($real !== false) {
+            foreach ($roots as $r) {
+                if (dirname($real) === $r || strpos($real, $r . '/') === 0) { $contained = true; break; }
+            }
+        }
+        if (!$contained) {
+            throw new StudioAssetException('Source file for ' . ($asset['label'] ?? 'the file') . ' is outside the media folders.', 400);
+        }
+        $src = $real;
         if (!is_dir($uploadsDir)) { @mkdir($uploadsDir, 0755, true); }
         if (!is_dir($uploadsDir) || !is_writable($uploadsDir)) {
             throw new StudioAssetException('uploads/ is not writable.', 500);

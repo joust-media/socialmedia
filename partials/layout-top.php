@@ -47,6 +47,6 @@ $uiRole = isAdmin() ? 'admin' : 'client';
 <?= appStylesheets() ?>
 <?= isset($headExtra) ? $headExtra : '' ?>
 </head>
-<body class="<?= esc(trim('ui-body ' . (isset($bodyClass) ? (string)$bodyClass : ''))) ?>" data-role="<?= $uiRole ?>" data-actor="<?= $uiRole ?>">
+<body class="<?= esc(trim('ui-body ' . (isset($bodyClass) ? (string)$bodyClass : ''))) ?>" data-role="<?= $uiRole ?>" data-actor="<?= $uiRole ?>"<?= !empty($client['slug']) ? ' data-client="' . esc($client['slug']) . '"' : '' ?>>
 <?php include __DIR__ . '/navbar.php'; ?>
 <main class="ui-page<?= !empty($pageWide) ? ' ui-page--wide' : '' ?>" id="main">

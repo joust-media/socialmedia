@@ -32,6 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     echo json_encode(['ok' => false, 'error' => 'POST only']);
     exit;
 }
+requireSameSiteFetch();   // cross-site POSTs get a JSON 403 (helpers.php)
 
 // Admin-only API endpoint — JSON 401 instead of an HTML login redirect.
 if (!currentAdmin()) {
@@ -192,7 +193,8 @@ foreach ($rows as $i => $row) {
         $errors[] = "$label: " . $e->getMessage();
     } catch (Exception $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
-        $errors[] = "$label: database error — " . $e->getMessage();
+        error_log('batch-process row ' . $label . ': ' . $e->getMessage());
+        $errors[] = "$label: database error";
     }
 }
 
@@ -271,7 +273,8 @@ for ($i = 0; $i < $fileCount; $i++) {
     } catch (Exception $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
         if (is_file($destPath)) @unlink($destPath);
-        $errors[] = "$name: database error — " . $e->getMessage();
+        error_log('batch-process file ' . $name . ': ' . $e->getMessage());
+        $errors[] = "$name: database error";
     }
 }
 

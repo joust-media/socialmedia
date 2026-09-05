@@ -12,12 +12,17 @@ $script = $_SERVER['SCRIPT_NAME'] ?? '/login.php';
 $base   = rtrim(str_replace('\\', '/', dirname($script)), '/');
 if ($base === '.' || $base === '') { $base = ''; }
 
-// Where to send the user after a successful login. Default = the admin dashboard.
-$returnRaw = $_GET['return'] ?? ($base . '/admin');
+// Where to send the user after a successful login. Default = the Studio.
+$fallback  = $base . '/studio';
+$returnRaw = (isset($_GET['return']) && is_string($_GET['return'])) ? $_GET['return'] : $fallback;
 $returnUrl = $returnRaw;
-// Only allow same-app redirects — never an off-site URL.
-if (!preg_match('#^/[^/]#', $returnUrl) || strpos($returnUrl, '//') === 0) {
-    $returnUrl = $base . '/admin';
+// Only allow same-app redirects — never an off-site URL: the path must start with
+// this app's prefix, may not begin with "//" or "/\" (browsers normalise both to a
+// scheme-relative URL), and may not contain control characters or backslashes.
+if (!preg_match('#^/(?![/\\\\])#', $returnUrl)
+    || preg_match('#[\x00-\x1f\x7f\\\\]#', $returnUrl)
+    || strpos($returnUrl, $base . '/') !== 0) {
+    $returnUrl = $fallback;
 }
 
 if (currentAdmin()) {
@@ -29,6 +34,7 @@ $error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $email = $_POST['email']    ?? '';
     $pw    = $_POST['password'] ?? '';
+    define('JSM_FORCE_SESSION', 1);   // the sign-in POST may create the first session (auth.php)
     if (adminLogin($email, $pw)) {
         header('Location: ' . $returnUrl);
         exit;

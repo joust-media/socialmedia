@@ -21,6 +21,7 @@ require __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/auth.php';
 requireAdmin();
+if ($_SERVER['REQUEST_METHOD'] === 'POST') { requireSameSiteFetch(); }   // cross-site POSTs → 403 (helpers.php)
 
 require_once __DIR__ . '/partials/components/comment-thread.php';
 require_once __DIR__ . '/partials/components/post-detail.php';
@@ -94,10 +95,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $imgs = $pdo->prepare("SELECT image_url FROM post_images WHERE post_id = ?");
                 $imgs->execute([$postId]);
                 foreach ($imgs->fetchAll() as $row) {
-                    if (strpos($row['image_url'], 'uploads/') === 0) {
-                        $path = __DIR__ . '/' . $row['image_url'];
-                        if (is_file($path)) { @unlink($path); }
-                    }
+                    $path = uploadsPathOrNull((string)$row['image_url']);   // realpath-contained in uploads/
+                    if ($path !== null) { @unlink($path); }
                 }
                 $pdo->prepare("DELETE FROM posts WHERE id = ?")->execute([$postId]);
                 logActivity($pdo, (int)$client['id'], 'post', $postId,
@@ -106,7 +105,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 composerDone(true, 'Post deleted.', ['post_id' => $postId]);
             } catch (Exception $e) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
-                $errors[] = 'Delete failed: ' . $e->getMessage();
+                error_log('add-post delete: ' . $e->getMessage());
+                $errors[] = 'Delete failed: database error.';
             }
         }
     }
@@ -267,10 +267,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             ");
                             $sel->execute(array_merge([$postId], $toRemove));
                             foreach ($sel->fetchAll() as $row) {
-                                if (strpos($row['image_url'], 'uploads/') === 0) {
-                                    $path = __DIR__ . '/' . $row['image_url'];
-                                    if (is_file($path)) { @unlink($path); }
-                                }
+                                $path = uploadsPathOrNull((string)$row['image_url']);   // realpath-contained in uploads/
+                                if ($path !== null) { @unlink($path); }
                             }
                             $del = $pdo->prepare("
                                 DELETE FROM post_images WHERE post_id = ? AND id IN ($ph)
@@ -400,7 +398,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $errors[]  = 'Save failed: ' . $e->getMessage();
             } catch (Exception $e) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
-                $errors[] = 'Save failed: ' . $e->getMessage();
+                error_log('add-post save: ' . $e->getMessage());
+                $errors[] = 'Save failed: database error.';
             }
         }
     }
@@ -551,7 +550,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $createdCount++;
                 } catch (Exception $e) {
                     if ($pdo->inTransaction()) $pdo->rollBack();
-                    $errors[] = "DB error on '{$origName}': " . $e->getMessage();
+                    error_log('add-post batch ' . $origName . ': ' . $e->getMessage());
+                    $errors[] = "Database error on '{$origName}'.";
                     if (is_file($dest)) { @unlink($dest); }
                 }
             }

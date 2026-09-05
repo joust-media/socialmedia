@@ -25,6 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     echo json_encode(['ok' => false, 'error' => 'Method not allowed']);
     exit;
 }
+requireSameSiteFetch();   // cross-site POSTs get a JSON 403 (helpers.php)
 
 if (!hasLibraryImagesTable($pdo)) {
     http_response_code(500);
@@ -45,6 +46,12 @@ if ($id <= 0) {
 if (!in_array($status, ['pending', 'approved', 'denied'], true)) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'Invalid status']);
+    exit;
+}
+// Client verbs are Approve / Deny / Comment only (spec §2): resetting to review is Joust's.
+if ($status === 'pending' && !currentAdmin()) {
+    http_response_code(403);
+    echo json_encode(['ok' => false, 'error' => 'Admin sign-in required']);
     exit;
 }
 if (strlen($comment) > 2000) {
@@ -74,6 +81,13 @@ try {
         $pdo->rollBack();
         http_response_code(404);
         echo json_encode(['ok' => false, 'error' => 'Image not found']);
+        exit;
+    }
+    // Tenant scope: a client seat may only act on its own company's images (admin bypasses).
+    if (!clientOwnsCompany($pdo, (int)$row['company_id'])) {
+        $pdo->rollBack();
+        http_response_code(403);
+        echo json_encode(['ok' => false, 'error' => 'This image belongs to another client']);
         exit;
     }
 

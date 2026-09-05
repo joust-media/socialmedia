@@ -18,9 +18,25 @@ if (!empty($_SERVER['SCRIPT_NAME']) && preg_match('#/legacy/[^/]+$#', $_SERVER['
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../helpers.php';
 
+// The tires module (module=tires, no module, or the legacy ?tire= alias) is the
+// Collections view of the unified Assets page — 301 there for everyone, exactly
+// like the root features.php router does. Only other modules render below.
+$moduleSlugEarly = preg_replace('/[^a-z0-9_-]/', '', strtolower((string)($_GET['module'] ?? 'tires')));
+if ($moduleSlugEarly === '' || $moduleSlugEarly === 'tires') {
+    $extra = ['view' => 'collections'];
+    $item  = isset($_GET['item']) ? (int)$_GET['item'] : (isset($_GET['tire']) ? (int)$_GET['tire'] : 0);
+    if ($item > 0) { $extra['item'] = $item; }
+    header('Location: ' . clientUrl('assets.php', $extra), true, 301);
+    exit;
+}
+unset($moduleSlugEarly);
+
 function h($s) {
     return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
+
+// Role-safe rendering (spec §7/§9): a client seat never receives denied items.
+$legacyDeniedFilter = isAdmin() ? '' : " AND status <> 'denied'";
 
 // --- Require a client ---------------------------------------------
 if (!$client) {
@@ -155,7 +171,7 @@ if ($viewMode === 'detail') {
         $imgStmt = $pdo->prepare("
             SELECT id, image_url, caption, status, client_comment{$updatedColSel}{$nameSel}
             FROM tire_images
-            WHERE tire_id = ?
+            WHERE tire_id = ?{$legacyDeniedFilter}
             ORDER BY sort_order ASC, id ASC
         ");
         $imgStmt->execute([$selectedId]);
@@ -195,7 +211,7 @@ if ($viewMode === 'gallery') {
         $imgStmt = $pdo->prepare("
             SELECT id, tire_id, image_url, caption, status{$imgUpdatedCol}
             FROM tire_images
-            WHERE tire_id IN ($ph)
+            WHERE tire_id IN ($ph){$legacyDeniedFilter}
             ORDER BY tire_id, sort_order ASC, id ASC
         ");
         $imgStmt->execute($tireIds);
@@ -673,7 +689,9 @@ $splitName = function($name) {
                 <div class="image-decision">
                   <button class="decision-btn approve <?= $img['status'] === 'approved' ? 'active' : '' ?>" data-decide="approved" type="button">✓ Approve</button>
                   <button class="decision-btn deny <?= $img['status'] === 'denied' ? 'active' : '' ?>" data-decide="denied" type="button">✕ Deny</button>
-                  <button class="decision-btn reset" data-decide="pending" type="button" title="Reset to pending">↺ Reset</button>
+                  <?php if (isAdmin()): // admin-only: a client never resets an item to pending ?>
+                    <button class="decision-btn reset" data-decide="pending" type="button" title="Reset to pending">↺ Reset</button>
+                  <?php endif; ?>
                 </div>
                 <div class="image-comment">
                   <label class="comment-label" for="img-comment-<?= (int)$img['id'] ?>">
@@ -709,6 +727,9 @@ $splitName = function($name) {
   const APP_BASE = <?= json_encode(basePath()) ?>;
   // URL to return to after a delete — stays in this module for this client
   const LIST_URL = <?= json_encode(featureUrl()) ?>;
+  // Tenant scope + actor for the status endpoint (server-side checks; see helpers.php)
+  const CLIENT_SLUG = <?= json_encode((string)$client['slug']) ?>;
+  const ACTOR = <?= json_encode(isAdmin() ? 'admin' : 'client') ?>;
 
   const toastEl=document.getElementById('toast');let toastTimer;
   function showToast(m){toastEl.textContent=m;toastEl.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toastEl.classList.remove('show'),1800)}
@@ -733,8 +754,10 @@ $splitName = function($name) {
   document.addEventListener('click',async e=>{
     const decideBtn=e.target.closest('.image-decision .decision-btn');if(!decideBtn)return;
     const card=decideBtn.closest('.image-card'),imageId=card.getAttribute('data-image-id'),newStatus=decideBtn.getAttribute('data-decide'),allBtns=card.querySelectorAll('.decision-btn');
+    let note='';
+    if(newStatus==='denied'){note=(window.prompt('What should change? A short note is required to deny.')||'').trim();if(note.length<3){showToast('A short note is required to deny');return}}
     allBtns.forEach(b=>b.disabled=true);
-    try{const fd=new FormData();fd.append('id',imageId);fd.append('status',newStatus);fd.append('actor','client');const r=await fetch(APP_BASE+'/tire-status.php',{method:'POST',body:fd}),d=await r.json();if(!d.ok)throw new Error(d.error||'Failed');
+    try{const fd=new FormData();fd.append('id',imageId);fd.append('status',newStatus);fd.append('actor',ACTOR);fd.append('client',CLIENT_SLUG);if(note)fd.append('comment',note);const r=await fetch(APP_BASE+'/tire-status.php',{method:'POST',body:fd}),d=await r.json();if(!d.ok)throw new Error(d.error||'Failed');
       allBtns.forEach(b=>b.classList.toggle('active',b.getAttribute('data-decide')===newStatus));
       const pill=card.querySelector('[data-status-pill]');pill.className='image-card-status '+newStatus;pill.textContent=newStatus.charAt(0).toUpperCase()+newStatus.slice(1);card.setAttribute('data-status',newStatus);
       showToast(newStatus==='approved'?'✓ Approved':newStatus==='denied'?'✕ Denied':'↺ Reset to pending');

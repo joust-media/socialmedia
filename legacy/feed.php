@@ -17,6 +17,13 @@ if (!empty($_SERVER['SCRIPT_NAME']) && preg_match('#/legacy/[^/]+$#', $_SERVER['
 require __DIR__ . '/../db.php';
 require __DIR__ . '/../helpers.php';
 
+// Admin-only since the redesign: this page shows denied items and admin verbs.
+// A client seat is sent to the new Posts page (301), scope preserved.
+if (!isAdmin()) {
+    header('Location: ' . clientUrl('posts.php'), true, 301);
+    exit;
+}
+
 /** Root-rooted URL for an app-relative path ('uploads/x.jpg', 'status.php'). */
 function legacyUrl($path) {
     return basePath() . '/' . ltrim((string)$path, '/');
@@ -26,17 +33,19 @@ function legacyUrl($path) {
 $postCtaUrl = 'https://www.facebook.com/kendapowersports';
 
 /** Does the posts.posted column exist yet? (migrate.php may not have run) */
-function hasPostedColumn(PDO $pdo) {
-    static $cached = null;
-    if ($cached !== null) return $cached;
-    $s = $pdo->prepare("
-        SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME = 'posts'
-          AND COLUMN_NAME = 'posted'
-    ");
-    $s->execute();
-    return $cached = (int)$s->fetchColumn() > 0;
+if (!function_exists('hasPostedColumn')) {
+    function hasPostedColumn(PDO $pdo) {
+        static $cached = null;
+        if ($cached !== null) return $cached;
+        $s = $pdo->prepare("
+            SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'posts'
+              AND COLUMN_NAME = 'posted'
+        ");
+        $s->execute();
+        return $cached = (int)$s->fetchColumn() > 0;
+    }
 }
 
 // Available months (data-driven, populates the dropdown) — scoped to client if provided

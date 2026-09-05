@@ -10,13 +10,11 @@
  * sheet. Every action goes through the existing task.php contract
  * (create / update / toggle / delete). No database changes.
  *
- * Permissions — unchanged from the pre-redesign page (analysis §E): the
- * task list has never distinguished client from admin; everyone who can reach
- * the page can add, edit, toggle and delete. The only role-aware piece is the
- * actor / created_by stamp, which the Foundation phase made session-based
- * (isAdmin()) instead of "is ?client= present". The four $can* flags below are
- * the single place to tighten this later; anything they hide is not rendered
- * (server-side), never hidden with CSS.
+ * Permissions (spec §4.4 / §9): the client seat is view-only — no "+", no edit
+ * sheet controls, no swipe-to-complete / tap target, no delete. Only the admin
+ * creates, edits, completes and deletes (task.php enforces the same server-side
+ * with a 403). The four $can* flags below are the single switch; anything they
+ * hide is not rendered (server-side), never hidden with CSS.
  */
 
 require __DIR__ . '/db.php';
@@ -27,12 +25,9 @@ function h($s) {
 }
 
 // ---------------------------------------------------------------------
-// Permission matrix (see header comment). Today: everyone, for every verb.
+// Permission matrix (see header comment): every task verb is admin-only.
 // ---------------------------------------------------------------------
-$canCreate = true;
-$canEdit   = true;
-$canToggle = true;
-$canDelete = true;
+$canCreate = $canEdit = $canToggle = $canDelete = isAdmin();
 
 // ---------------------------------------------------------------------
 // Tasks — one query, all statuses; the page splits Open / Done itself.

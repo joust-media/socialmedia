@@ -779,10 +779,17 @@
       if (e.target.matches && e.target.matches('[data-replace-input]')) { var art = pd(); if (art) replaceImage(art, e.target); }
     });
 
-    // deep link
+    // deep link (?post=ID): open the sheet once the shared App (sheet, toast) is
+    // ready. posts.js is a deferred script emitted BEFORE app.js, so at init time
+    // App.sheet does not exist yet — opening immediately used to throw inside
+    // P.open()'s promise chain and be swallowed silently.
     if (cfg.openPost) {
-      try { history.replaceState({ post: null }, '', urlWithPost(null)); } catch (err) {}
-      P.open(cfg.openPost);
+      var openDeepLink = function () {
+        try { history.replaceState({ post: null }, '', urlWithPost(null)); } catch (err) {}
+        P.open(cfg.openPost);
+      };
+      if (App._inited && App.sheet) openDeepLink();
+      else document.addEventListener('app:ready', openDeepLink, { once: true });
     }
   }
 

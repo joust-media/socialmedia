@@ -20,6 +20,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     echo json_encode(['ok' => false, 'error' => 'Method not allowed']);
     exit;
 }
+requireSameSiteFetch();   // cross-site POSTs get a JSON 403 (helpers.php)
 
 $id      = (int)($_POST['id'] ?? 0);
 $action  = $_POST['action'] ?? '';
@@ -48,10 +49,8 @@ if ($action === 'delete_tire') {
         $imgs = $pdo->prepare("SELECT image_url FROM tire_images WHERE tire_id = ?");
         $imgs->execute([$tireId]);
         foreach ($imgs->fetchAll() as $row) {
-            if (strpos($row['image_url'], 'uploads/') === 0) {
-                $path = __DIR__ . '/' . $row['image_url'];
-                if (is_file($path)) { @unlink($path); }
-            }
+            $path = uploadsPathOrNull((string)$row['image_url']);   // realpath-contained in uploads/
+            if ($path !== null) { @unlink($path); }
         }
         // CASCADE deletes tire_images and tire_categories
         $pdo->prepare("DELETE FROM tires WHERE id = ?")->execute([$tireId]);
@@ -90,6 +89,18 @@ if ($hasStat && !in_array($status, ['pending', 'approved', 'denied'], true)) {
     echo json_encode(['ok' => false, 'error' => 'Invalid status']);
     exit;
 }
+// Client verbs are Approve / Deny / Comment only (spec §2): resetting to review is Joust's.
+if ($hasStat && $status === 'pending' && !currentAdmin()) {
+    http_response_code(403);
+    echo json_encode(['ok' => false, 'error' => 'Admin sign-in required']);
+    exit;
+}
+// Denying requires a reason — a note of at least 3 characters (spec §4.2 / §9), for every seat.
+if ($hasStat && $status === 'denied' && mb_strlen(trim((string)($_POST['comment'] ?? '')), 'UTF-8') < 3) {
+    http_response_code(422);
+    echo json_encode(['ok' => false, 'error' => 'Please add a short note (at least 3 characters) explaining what should change.']);
+    exit;
+}
 if ($hasCmt) {
     $comment = trim((string)$comment);
     if (strlen($comment) > 2000) {
@@ -118,6 +129,13 @@ try {
         $pdo->rollBack();
         http_response_code(404);
         echo json_encode(['ok' => false, 'error' => 'Image not found']);
+        exit;
+    }
+    // Tenant scope: a client seat may only act on its own company's images (admin bypasses).
+    if (!clientOwnsCompany($pdo, (int)$prev['company_id'])) {
+        $pdo->rollBack();
+        http_response_code(403);
+        echo json_encode(['ok' => false, 'error' => 'This image belongs to another client']);
         exit;
     }
     // Friendly label for activity-log summaries — preferred over bare "image #42".

@@ -25,21 +25,7 @@ function h($s) {
     return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
-/** Does the posts.posted column exist yet? (migrate.php may not have run) */
-if (!function_exists('hasPostedColumn')) {
-    function hasPostedColumn(PDO $pdo) {
-        static $cached = null;
-        if ($cached !== null) return $cached;
-        $s = $pdo->prepare("
-            SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = 'posts'
-              AND COLUMN_NAME = 'posted'
-        ");
-        $s->execute();
-        return $cached = (int)$s->fetchColumn() > 0;
-    }
-}
+// hasPostedColumn() (posts.posted is migration-gated) lives in helpers.php.
 
 $flash    = trim((string)($_GET['msg'] ?? ''));
 $navLinks = [
@@ -126,7 +112,7 @@ $categories   = $pdo->query("SELECT id, name FROM categories ORDER BY sort_order
 
 // Posts segment counts (same rules as posts.php)
 $counts = ['pending' => 0, 'approved' => 0, 'scheduled' => 0, 'denied' => 0];
-$st = $pdo->prepare("SELECT p.status, ($postedExpr) AS posted, COUNT(*) AS n FROM posts p WHERE p.company_id = ? GROUP BY p.status, ($postedExpr)");
+$st = $pdo->prepare("SELECT p.status, ($postedExpr) AS posted, COUNT(*) AS n FROM posts p WHERE p.company_id = ? GROUP BY p.status" . ($hasPosted ? ', p.posted' : ''));
 $st->execute([(int)$client['id']]);
 foreach ($st->fetchAll() as $row) {
     $n = (int)$row['n'];

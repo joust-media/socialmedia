@@ -21,6 +21,13 @@ if (!empty($_SERVER['SCRIPT_NAME']) && preg_match('#/legacy/[^/]+$#', $_SERVER['
 require_once __DIR__ . '/../db.php';
 require_once __DIR__ . '/../helpers.php';
 
+// Admin-only since the redesign: this page shows denied items and has no role
+// checks. A client seat is sent to the new Assets page (301), scope preserved.
+if (!isAdmin()) {
+    header('Location: ' . clientUrl('assets.php', ['view' => 'library']), true, 301);
+    exit;
+}
+
 function h($s) {
     return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }

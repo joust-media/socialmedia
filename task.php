@@ -21,6 +21,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     echo json_encode(['ok' => false, 'error' => 'Method not allowed']);
     exit;
 }
+requireSameSiteFetch();   // cross-site POSTs get a JSON 403 (helpers.php)
 
 $action = $_POST['action'] ?? '';
 
@@ -28,6 +29,11 @@ function fail($msg, $code = 400) {
     http_response_code($code);
     echo json_encode(['ok' => false, 'error' => $msg]);
     exit;
+}
+
+// Every task verb is admin-only (spec §4.4 / §9: a client only views and comments).
+if (in_array($action, ['create', 'update', 'toggle', 'delete'], true) && !currentAdmin()) {
+    fail('Admin sign-in required', 403);
 }
 
 $VALID_STATUS   = ['open', 'in_progress', 'done'];
@@ -45,6 +51,8 @@ try {
             $createdBy = $_POST['created_by'] ?? 'client';
 
             if ($companyId <= 0) fail('Invalid company');
+            // Tenant scope: the posted client slug must resolve to this company (admin bypasses).
+            if (!clientOwnsCompany($pdo, $companyId)) fail('This task belongs to another client', 403);
             if ($title === '')   fail('Title required');
             if (mb_strlen($title) > 300)  fail('Title too long (max 300 chars)');
             if (mb_strlen($desc)  > 5000) fail('Description too long');
@@ -113,6 +121,7 @@ try {
             $pre = $pdo->prepare("SELECT company_id, status, title FROM tasks WHERE id = ?");
             $pre->execute([$id]);
             $preRow = $pre->fetch();
+            if ($preRow && !clientOwnsCompany($pdo, (int)$preRow['company_id'])) fail('This task belongs to another client', 403);
 
             $params[] = $id;
             $stmt = $pdo->prepare('UPDATE tasks SET ' . implode(', ', $sets) . ' WHERE id = ?');
@@ -136,6 +145,14 @@ try {
         case 'toggle': {
             $id = (int)($_POST['id'] ?? 0);
             if ($id <= 0) fail('Invalid id');
+
+            // Tenant scope (admin sessions skip the extra read).
+            if (!currentAdmin()) {
+                $own = $pdo->prepare("SELECT company_id FROM tasks WHERE id = ?");
+                $own->execute([$id]);
+                $ownId = (int)$own->fetchColumn();
+                if ($ownId > 0 && !clientOwnsCompany($pdo, $ownId)) fail('This task belongs to another client', 403);
+            }
 
             // Flip between open <-> done
             $stmt = $pdo->prepare("
@@ -169,6 +186,7 @@ try {
             $pre = $pdo->prepare("SELECT company_id, title FROM tasks WHERE id = ?");
             $pre->execute([$id]);
             $preRow = $pre->fetch();
+            if ($preRow && !clientOwnsCompany($pdo, (int)$preRow['company_id'])) fail('This task belongs to another client', 403);
 
             $stmt = $pdo->prepare("DELETE FROM tasks WHERE id = ?");
             $stmt->execute([$id]);

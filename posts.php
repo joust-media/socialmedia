@@ -26,33 +26,63 @@ function h($s) {
     return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
-/** Does the posts.posted column exist yet? (migrate.php may not have run) */
-if (!function_exists('hasPostedColumn')) {
-    function hasPostedColumn(PDO $pdo) {
-        static $cached = null;
-        if ($cached !== null) return $cached;
-        $s = $pdo->prepare("
-            SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = 'posts'
-              AND COLUMN_NAME = 'posted'
-        ");
-        $s->execute();
-        return $cached = (int)$s->fetchColumn() > 0;
-    }
-}
+// hasPostedColumn() (posts.posted is migration-gated) lives in helpers.php.
 
 $admin     = isAdmin();
 $isPartial = !empty($_GET['partial']);
 $postParam = (int)($_GET['post'] ?? 0);
 
-// A client seat must be scoped; only the admin may browse every company at once.
-if (!$client && !$admin) {
-    http_response_code(404);
-    $pageTitle = 'Posts';
-    $showTabs  = false;
+// Posts only makes sense for one client. A client seat without a scope gets the
+// same "missing client" state assets.php uses (400); the admin picks a client.
+if (!$client) {
+    if ($isPartial) {
+        http_response_code(404);
+        header('Content-Type: text/html; charset=UTF-8');
+        echo '<div class="ui-empty">This post is no longer available.</div>';
+        exit;
+    }
+    if (!$admin) {
+        http_response_code(400);
+        $pageTitle    = 'Posts';
+        $navTrailing  = '';
+        $showTabs     = false;
+        $includeSheet = false;
+        include __DIR__ . '/partials/layout-top.php';
+        echo '<div class="ui-empty">This link is missing its client. Please use the review link Joust sent you.</div>';
+        include __DIR__ . '/partials/layout-bottom.php';
+        exit;
+    }
+    $companies = $pdo->query("
+        SELECT c.id, c.name, c.slug, c.logo_url,
+               (SELECT COUNT(*) FROM posts WHERE posts.company_id = c.id AND posts.status = 'pending') AS pending_count
+        FROM companies c
+        ORDER BY c.name ASC
+    ")->fetchAll();
+    $pageTitle   = 'Posts';
+    $navSubtitle = 'Choose a client';
+    $activeTab   = 'posts';
+    $navTrailing = '';
+    $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">';
+    $bodyClass   = 'page-posts page-posts-chooser';
     include __DIR__ . '/partials/layout-top.php';
-    echo '<div class="ui-empty">This page needs a client link. Ask Joust for yours.</div>';
+    if (!$companies) {
+        echo '<div class="ui-empty">No clients in the <code>companies</code> table yet.</div>';
+    } else {
+        echo insetListOpen('Clients');
+        foreach ($companies as $c) {
+            $pending = (int)$c['pending_count'];
+            echo insetRow([
+                'href'     => clientUrl('posts.php', ['client' => $c['slug']]),
+                'leading'  => clientAvatar($c, 'ui-avatar--lg'),
+                'title'    => $c['name'],
+                'subtitle' => $pending > 0 ? $pending . ' to review' : 'Nothing waiting',
+                'trailing' => $pending > 0 ? '<span class="ui-badge">' . $pending . '</span>' : '',
+                'chevron'  => true,
+                'attrs'    => ['data-client-row' => $c['slug']],
+            ]);
+        }
+        echo insetListClose('Badges show posts still waiting for the client\'s review.');
+    }
     include __DIR__ . '/partials/layout-bottom.php';
     exit;
 }
@@ -171,9 +201,10 @@ $st = $pdo->prepare($monthSql);
 $st->execute($scopeParams);
 $availableMonths = array_values(array_filter(array_column($st->fetchAll(), 'ym')));
 
-$monthParam = isset($_GET['month']) ? (string)$_GET['month'] : null;
+$monthParam = isset($_GET['month']) && is_string($_GET['month']) ? $_GET['month'] : null;
 if ($directPost && !empty($directPost['scheduled_date'])) {
-    $monthParam = date('Y-m', strtotime($directPost['scheduled_date']));
+    $dts = strtotime((string)$directPost['scheduled_date']);
+    $monthParam = $dts ? date('Y-m', $dts) : 'all';
 }
 if ($monthParam === 'all') {
     $selectedMonth = '';
@@ -181,7 +212,8 @@ if ($monthParam === 'all') {
     $current = date('Y-m');
     $selectedMonth = in_array($current, $availableMonths, true) ? $current : '';
 } else {
-    $selectedMonth = preg_match('/^\d{4}-\d{2}$/', $monthParam) ? $monthParam : '';
+    // A real calendar month only (2026-99 is not a month) — anything else means "all".
+    $selectedMonth = preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', $monthParam) ? $monthParam : '';
 }
 
 // ---------------------------------------------------------------------
@@ -214,7 +246,7 @@ if ($selectedMonth !== '') {
 }
 $counts = ['pending' => 0, 'approved' => 0, 'scheduled' => 0, 'denied' => 0];
 $st = $pdo->prepare("SELECT p.status, ($postedExpr) AS posted, COUNT(*) AS n FROM posts p"
-    . ($viewWhere ? ' WHERE ' . implode(' AND ', $viewWhere) : '') . " GROUP BY p.status, ($postedExpr)");
+    . ($viewWhere ? ' WHERE ' . implode(' AND ', $viewWhere) : '') . ' GROUP BY p.status' . ($hasPosted ? ', p.posted' : ''));
 $st->execute($viewParams);
 foreach ($st->fetchAll() as $row) {
     $n = (int)$row['n'];

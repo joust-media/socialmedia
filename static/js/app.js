@@ -224,6 +224,11 @@
       if (v === undefined || v === null) return;
       body.append(k, String(v));
     });
+    // Tenant scope: every state-changing request carries the page's client slug
+    // (<body data-client>, set server-side) unless the caller set one explicitly.
+    if (!body.has('client') && document.body && document.body.dataset.client) {
+      body.append('client', document.body.dataset.client);
+    }
     return fetch(endpoint, {
       method: 'POST',
       credentials: 'same-origin',

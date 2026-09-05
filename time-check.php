@@ -4,8 +4,10 @@
  * Visit /time-check in a browser. Compares PHP's idea of "now" to MySQL's,
  * so you can see at a glance which side is offset and by how much.
  *
- * Safe to delete after diagnosis — it makes no DB writes.
+ * Safe to delete after diagnosis — it makes no DB writes. Admin only.
  */
+require_once __DIR__ . '/auth.php';
+requireAdmin();
 require __DIR__ . '/db.php';
 
 function h($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }

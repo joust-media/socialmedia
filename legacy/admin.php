@@ -47,16 +47,18 @@ $postCtaUrl = 'https://www.facebook.com/kendapowersports';
 $errors = [];
 $flash  = $_GET['msg'] ?? '';
 
-function hasPostedColumn(PDO $pdo) {
-    static $cached = null;
-    if ($cached !== null) return $cached;
-    $s = $pdo->prepare("
-        SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME = 'posts' AND COLUMN_NAME = 'posted'
-    ");
-    $s->execute();
-    return $cached = (int)$s->fetchColumn() > 0;
+if (!function_exists('hasPostedColumn')) {   // shared copy lives in helpers.php
+    function hasPostedColumn(PDO $pdo) {
+        static $cached = null;
+        if ($cached !== null) return $cached;
+        $s = $pdo->prepare("
+            SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'posts' AND COLUMN_NAME = 'posted'
+        ");
+        $s->execute();
+        return $cached = (int)$s->fetchColumn() > 0;
+    }
 }
 
 // hasActivityLog() lives in helpers.php so other pages (index.php) can share it.

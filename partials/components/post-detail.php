@@ -268,7 +268,7 @@ if (!function_exists('renderPostDetail')) {
               . '<textarea class="ui-textarea" id="pd-deny-' . $id . '" data-deny-note placeholder="What should change?" minlength="3" maxlength="2000" rows="2" required></textarea>'
               . '<p class="pd-editor-hint" data-deny-hint>A short note is required so Joust knows what to fix.</p>'
               . '<div class="ui-btn-group"><button type="button" class="ui-btn ui-btn--gray" data-deny-cancel>Cancel</button>'
-              . '<button type="submit" class="ui-btn ui-btn--deny ui-btn--primary" data-deny-submit disabled>Send note data-deny-submit disabled>Send &amp; mark as needs changes</button>amp; deny</button></div>'
+              . '<button type="submit" class="ui-btn ui-btn--deny ui-btn--primary" data-deny-submit disabled>Send &amp; deny</button></div>'
               . '</form>';
 
         // State rows (all rendered; posts.js toggles [data-state] by data-status/data-posted)

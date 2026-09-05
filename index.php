@@ -25,21 +25,7 @@ function h($s) {
     return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
-/** posts.posted is migration-gated (same probe feed.php / admin.php use). */
-if (!function_exists('hasPostedColumn')) {
-    function hasPostedColumn(PDO $pdo) {
-        static $cached = null;
-        if ($cached !== null) return $cached;
-        $s = $pdo->prepare("
-            SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = 'posts'
-              AND COLUMN_NAME = 'posted'
-        ");
-        $s->execute();
-        return $cached = (int)$s->fetchColumn() > 0;
-    }
-}
+// hasPostedColumn() (posts.posted is migration-gated) lives in helpers.php.
 
 /** First line of a caption, clipped, for the Coming up cards. */
 function homeFirstLine($s, $max = 90) {
@@ -57,8 +43,23 @@ $hasLog     = hasActivityLog($pdo);
 $hasLib     = hasLibraryImagesTable($pdo);
 
 // =====================================================================
-// Unscoped — choose a client. Admin also gets the cross-client feed.
+// Unscoped — the admin chooses a client (and gets the cross-client feed).
+// A client seat never sees the client list (slug = tenant key): same
+// "missing client" state assets.php uses, HTTP 400.
 // =====================================================================
+if (!$client && !$isAdmin) {
+    http_response_code(400);
+    $pageTitle    = 'Joust';
+    $htmlTitle    = 'Joust Media — Client portal';
+    $navTrailing  = '';
+    $showTabs     = false;
+    $includeSheet = false;
+    $activeTab    = 'home';
+    include __DIR__ . '/partials/layout-top.php';
+    echo '<div class="ui-empty">This link is missing its client. Please use the review link Joust sent you.</div>';
+    include __DIR__ . '/partials/layout-bottom.php';
+    exit;
+}
 if (!$client) {
     $companies = [];
     try {
