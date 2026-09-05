@@ -6,8 +6,11 @@
  * Exposes:
  *   $client         → company row (id, name, slug, feature_label) or null if unscoped
  *   $clientSlug     → string or ''
+ *   $role           → 'admin' (signed-in jsm_admin session) or 'client'; see isAdmin()
  *   clientQs()      → 'client=hmf' or '' for URL building
  *   clientUrl($page, $extra = []) → builds "page.php?client=hmf&…"
+ *   renderClientNav() / renderAppChrome() / renderAppHead() → the shared iOS-style shell
+ *   icon(), statusPill(), segmented(), insetRow(), card() → partials/components/*
  */
 
 // $pdo must be included before this file.
@@ -47,6 +50,38 @@ if (!empty($_GET['client'])) {
         }
     }
 }
+
+// ---------------------------------------------------------------------
+// Role — resolved once, server-side, next to the client scoping so every
+// page and partial can branch on it. auth.php only declares constants and
+// functions when included; currentAdmin() starts the jsm_admin session,
+// which is safe here because helpers.php is included before any output.
+// Pages that also include auth.php must use require_once (they do).
+// ---------------------------------------------------------------------
+require_once __DIR__ . '/auth.php';
+$role = currentAdmin() ? 'admin' : 'client';
+
+/** True when the visitor is the signed-in admin (session-based). */
+if (!function_exists('isAdmin')) {
+    function isAdmin(): bool {
+        return function_exists('currentAdmin') && currentAdmin() !== null;
+    }
+}
+
+/** Shared escaper for partials. Pages keep their own page-local h(); this
+ *  name is unique so nothing can collide. */
+if (!function_exists('esc')) {
+    function esc($s): string {
+        return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    }
+}
+
+// Shared UI component helpers (all function_exists-guarded, no output).
+require_once __DIR__ . '/partials/components/icon.php';
+require_once __DIR__ . '/partials/components/status-pill.php';
+require_once __DIR__ . '/partials/components/segmented.php';
+require_once __DIR__ . '/partials/components/inset-list.php';
+require_once __DIR__ . '/partials/components/card.php';
 
 /** Return "client=hmf" or "" for building URLs */
 function clientQs() {
@@ -156,19 +191,54 @@ function clientNavItems(PDO $pdo, $client) {
     return $items;
 }
 
-/** Render the nav links built by clientNavItems(). $current marks the active link. */
-function renderClientNav(array $items, $current = '') {
-    if (!$items) return '';
-    $out = '';
-    foreach ($items as $it) {
-        $active = $it['page'] === $current ? ' active' : '';
-        $out .= '<a class="nav-link' . $active . '" href="'
-             . htmlspecialchars($it['url'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '">'
-             . '<span class="nav-link-icon">' . htmlspecialchars($it['icon'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</span>'
-             . '<span class="nav-link-label">' . htmlspecialchars($it['label'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</span>'
-             . '</a>';
+/**
+ * Render the page chrome for a client page: the large-title nav bar plus the
+ * role-aware tab bar (partials/navbar.php + partials/tabbar.php).
+ *
+ * Kept as the single call every existing page already makes, so the whole
+ * site moved to the new shell at once. $items (from clientNavItems()) is only
+ * used to look up a module label; $current is the legacy page key
+ * ('index', 'feed', 'library', 'projects', 'module:<slug>') and is mapped to a
+ * tab by appTabForPage(). $opts are passed through to renderAppChrome()
+ * ('title', 'subtitle', 'back', 'trailing', 'links', 'wide', 'active', 'tabs').
+ */
+function renderClientNav(array $items, $current = '', array $opts = []) {
+    global $client;
+    if (!isset($opts['active'])) { $opts['active'] = appTabForPage((string)$current); }
+    if (!isset($opts['width'])) {
+        // Match each legacy page's own content column so the nav edges line up.
+        $widths = ['index' => '900px', 'feed' => '680px', 'library' => '1200px', 'projects' => '760px'];
+        $opts['width'] = $widths[$current] ?? (strpos((string)$current, 'module:') === 0 ? '1100px' : null);
     }
-    return $out;
+    $title = isset($opts['title']) ? (string)$opts['title'] : appPageTitle((string)$current, $items, $client);
+    unset($opts['title']);
+    return renderAppChrome($title, $opts);
+}
+
+/** Map a legacy page key to a tab id ('home'|'assets'|'posts'|'projects'|'studio'|null). */
+function appTabForPage(string $current) {
+    if ($current === 'index')    return 'home';
+    if ($current === 'feed')     return 'posts';
+    if ($current === 'library')  return 'assets';
+    if (strpos($current, 'module:') === 0) return 'assets';
+    if ($current === 'projects') return 'projects';
+    if ($current === 'admin' || $current === 'studio') return 'studio';
+    return null;
+}
+
+/** Default large title for a legacy page key. */
+function appPageTitle(string $current, array $items, $client): string {
+    switch ($current) {
+        case 'index':    return $client ? (string)$client['name'] : 'Dashboard';
+        case 'feed':     return 'Posts';
+        case 'library':  return 'Assets';
+        case 'projects': return 'Projects';
+        case 'admin':    return 'Studio';
+    }
+    foreach ($items as $it) {
+        if (($it['page'] ?? '') === $current && !empty($it['label'])) return (string)$it['label'];
+    }
+    return $client ? (string)$client['name'] : 'Joust';
 }
 
 /** Produce a human-friendly label for a tire_images row (admin-set display_name preferred,
@@ -853,4 +923,94 @@ function renderBrand($client, $sub = '') {
     $subHtml = $sub !== '' ? '<span class="brand-sub">' . $h($sub) . '</span>' : '';
 
     return '<div class="brand">' . $mark . '<span class="brand-name">' . $h($name) . '</span>' . $subHtml . '</div>';
+}
+
+// =====================================================================
+// New shell (static/ + partials/) — see partials/layout-top.php for the
+// page-level usage; the functions below are what the legacy pages call.
+// =====================================================================
+
+/**
+ * 36px rounded-square client avatar: the logo when the company has one,
+ * otherwise the first letter of the name on a tertiary fill. Unscoped → "J".
+ */
+if (!function_exists('clientAvatar')) {
+    function clientAvatar($client, string $class = ''): string {
+        $name = !empty($client['name']) ? (string)$client['name'] : 'Joust Media';
+        $logo = !empty($client['logo_url']) ? (string)$client['logo_url'] : '';
+        $cls  = trim('ui-avatar ' . $class);
+        if ($logo !== '') {
+            return '<img class="' . esc($cls) . '" src="' . esc($logo) . '" alt="' . esc($name) . '" width="36" height="36" loading="lazy">';
+        }
+        $initial = function_exists('mb_substr') ? mb_substr($name, 0, 1, 'UTF-8') : substr($name, 0, 1);
+        $initial = function_exists('mb_strtoupper') ? mb_strtoupper($initial, 'UTF-8') : strtoupper($initial);
+        return '<span class="' . esc($cls . ' ui-avatar--initial') . '" aria-label="' . esc($name) . '">' . esc($initial) . '</span>';
+    }
+}
+
+/** Root-rooted URL for a file under static/, cache-busted by mtime. */
+function staticUrl(string $path): string {
+    $path = ltrim($path, '/');
+    $file = __DIR__ . '/static/' . $path;
+    $v    = is_file($file) ? (string)filemtime($file) : '';
+    return basePath() . '/static/' . $path . ($v !== '' ? '?v=' . $v : '');
+}
+
+/** The four shared stylesheets, in cascade order. */
+function appStylesheets(): string {
+    $out = '';
+    foreach (['tokens', 'base', 'components', 'motion'] as $name) {
+        $out .= '<link rel="stylesheet" href="' . esc(staticUrl('css/' . $name . '.css')) . '">' . "\n";
+    }
+    return $out;
+}
+
+/** app.js — deferred so it can sit in <head> on legacy pages. */
+function appScript(): string {
+    return '<script src="' . esc(staticUrl('js/app.js')) . '" defer></script>' . "\n";
+}
+
+/**
+ * Everything a legacy page needs in its existing <head> to render inside the
+ * new shell: color-scheme/theme-color metas, the stylesheets and app.js.
+ * (New pages use partials/layout-top.php instead.)
+ */
+function renderAppHead(): string {
+    return "\n" . '<meta name="color-scheme" content="light dark">' . "\n"
+         . '<meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">' . "\n"
+         . '<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">' . "\n"
+         . '<meta name="format-detection" content="telephone=no">' . "\n"
+         . appStylesheets()
+         . appScript();
+}
+
+/**
+ * Nav bar + role-aware tab bar as one HTML string. Safe to call from any
+ * page scope: the partials get $pdo/$client/$role via `global` here.
+ *
+ *   $opts: 'subtitle' (eyebrow), 'back' (['href','label']), 'leading' (HTML),
+ *          'trailing' (HTML; default client avatar; '' hides),
+ *          'links' ([['label','href','primary']]), 'wide' (bool),
+ *          'width' ('900px' — content column to align the nav with),
+ *          'active' (tab id), 'tabs' (bool; default: client scoped or admin)
+ */
+function renderAppChrome(string $pageTitle, array $opts = []): string {
+    global $pdo, $client, $clientSlug, $role;
+
+    $navSubtitle = isset($opts['subtitle']) ? (string)$opts['subtitle'] : '';
+    $navBack     = isset($opts['back']) && is_array($opts['back']) ? $opts['back'] : null;
+    $navLeading  = isset($opts['leading']) ? (string)$opts['leading'] : '';
+    $navTrailing = array_key_exists('trailing', $opts) ? $opts['trailing'] : null;
+    $navLinks    = isset($opts['links']) && is_array($opts['links']) ? $opts['links'] : [];
+    $navWide     = !empty($opts['wide']);
+    $navWidth    = isset($opts['width']) && preg_match('/^\d{2,4}px$/', (string)$opts['width']) ? (string)$opts['width'] : '';
+    $activeTab   = isset($opts['active']) ? $opts['active'] : null;
+    $showTabs    = array_key_exists('tabs', $opts) ? (bool)$opts['tabs'] : (!empty($client) || isAdmin());
+
+    ob_start();
+    include __DIR__ . '/partials/navbar.php';
+    if ($showTabs) {
+        include __DIR__ . '/partials/tabbar.php';
+    }
+    return (string)ob_get_clean();
 }

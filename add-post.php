@@ -6,7 +6,7 @@
 
 require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';
-require __DIR__ . '/auth.php';
+require_once __DIR__ . '/auth.php';
 requireAdmin();
 
 // -------------------------------------------------------------
@@ -575,11 +575,12 @@ $val_datetime   = $isEdit
     : date('Y-m-d\TH:i');
 ?>
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title><?= $isEdit ? 'Edit post' : 'Add a post' ?> — Joust Admin</title>
+<?= renderAppHead() ?>
 <style>
   :root {
     --bg: #f0f2f5; --surface: #ffffff; --surface-2: #f7f8fa;
@@ -798,19 +799,15 @@ $val_datetime   = $isEdit
 </head>
 <body>
 
-<header class="topbar">
-  <div class="topbar-inner">
-    <div class="brand">
-      <div class="brand-mark">J</div>
-      <span>Posts</span>
-      <span class="brand-sub"><?= $isEdit ? 'Edit' : 'Add' ?></span>
-    </div>
-    <div class="top-actions">
-      <a class="btn sm" href="admin?<?= h($clientQs) ?>">← <?= h($client['name']) ?> admin</a>
-      <a class="btn sm" href="logout" title="Signed in as <?= h(currentAdmin()) ?>">Sign out</a>
-    </div>
-  </div>
-</header>
+<?= renderAppChrome($isEdit ? 'Edit post' : 'Add a post', [
+      'subtitle' => $client['name'],
+      'active'   => 'studio',
+      'width'    => '900px',
+      'back'     => ['href' => 'admin?' . $clientQs, 'label' => 'Studio'],
+      'links'    => [
+        ['label' => 'Sign out', 'href' => 'logout', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
+      ],
+    ]) ?>
 
 <div class="wrap">
 

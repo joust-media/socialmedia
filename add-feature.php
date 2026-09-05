@@ -10,7 +10,7 @@
 
 require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';
-require __DIR__ . '/auth.php';
+require_once __DIR__ . '/auth.php';
 requireAdmin();
 
 $uploadsDir    = __DIR__ . '/uploads';
@@ -356,11 +356,12 @@ function selfUrl($extra = []) {
 }
 ?>
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title><?= $isEdit ? 'Edit' : 'Add' ?> <?= h($sLabel) ?> — <?= h($client['name']) ?></title>
+<?= renderAppHead() ?>
 <style>
   :root {
     --bg: #f0f2f5; --surface: #ffffff; --surface-2: #f7f8fa;
@@ -603,28 +604,22 @@ function selfUrl($extra = []) {
 </head>
 <body>
 
-<header class="topbar">
-  <div class="topbar-inner">
-    <div class="brand">
-      <div class="brand-mark">J</div>
-      <span><?= h($module['icon']) ?> <?= h($pLabel) ?></span>
-      <span class="brand-sub"><?= h($client['name']) ?></span>
-    </div>
-    <div class="top-actions">
-      <a class="btn sm" href="admin?client=<?= h($client['slug']) ?>">← Admin home</a>
-      <?php
-        // When editing a specific tire, point at its review page (detail view) instead of the gallery.
-        $viewQs = ['client' => $client['slug'], 'module' => $module['slug']];
-        if ($isEdit) { $viewQs['item'] = (int)$editItem['id']; }
-        $viewLabel = $isEdit ? 'Review on site' : 'View ' . $pLower;
-      ?>
-      <a class="btn sm" href="<?= h('features?' . http_build_query($viewQs)) ?>" target="_blank">
-        <?= h($viewLabel) ?> ↗
-      </a>
-      <a class="btn sm" href="logout" title="Signed in as <?= h(currentAdmin()) ?>">Sign out</a>
-    </div>
-  </div>
-</header>
+<?php
+  // When editing a specific tire, point at its review page (detail view) instead of the gallery.
+  $viewQs = ['client' => $client['slug'], 'module' => $module['slug']];
+  if ($isEdit) { $viewQs['item'] = (int)$editItem['id']; }
+  $viewLabel = $isEdit ? 'Review on site' : 'View ' . $pLower;
+?>
+<?= renderAppChrome(($isEdit ? 'Edit ' : 'Add ') . $sLabel, [
+      'subtitle' => $client['name'],
+      'active'   => 'studio',
+      'width'    => '900px',
+      'back'     => ['href' => 'admin?client=' . rawurlencode($client['slug']), 'label' => 'Studio'],
+      'links'    => [
+        ['label' => $viewLabel, 'href' => 'features?' . http_build_query($viewQs), 'attrs' => ['target' => '_blank']],
+        ['label' => 'Sign out', 'href' => 'logout', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
+      ],
+    ]) ?>
 
 <div class="wrap">
 

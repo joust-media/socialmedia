@@ -233,8 +233,9 @@ function featureUrl($extra = []) {
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title><?= h($module['plural_label']) ?><?= $selectedItem ? ' — ' . h($selectedItem['name']) : '' ?></title>
+<?= renderAppHead() ?>
 <style>
   :root{--bg:#18191a;--surface:#242526;--surface-2:#3a3b3c;--border:#3e4042;--text:#e4e6eb;--text-muted:#b0b3b8;--accent:#2d88ff;--accent-hover:#4599ff;--shadow:0 1px 2px rgba(0,0,0,.4),0 1px 3px rgba(0,0,0,.3);--toast-bg:#e4e6eb;--toast-text:#050505;--accent-red:#e2231a}
   *{box-sizing:border-box}html,body{margin:0;padding:0}
@@ -403,12 +404,11 @@ function featureUrl($extra = []) {
 </style>
 </head>
 <body>
-<header class="topbar">
-  <div class="topbar-inner">
-    <?= renderBrand($client) ?>
-    <nav class="client-nav"><?= renderClientNav($navItems, 'module:' . $module['slug']) ?></nav>
-  </div>
-</header>
+<?= renderClientNav($navItems, 'module:' . $module['slug'], $selectedItem
+      ? ['title'    => $selectedItem['name'],
+         'subtitle' => $module['plural_label'],
+         'back'     => ['href' => featureUrl(), 'label' => $module['plural_label']]]
+      : []) ?>
 
 <main class="feed">
 
@@ -452,8 +452,8 @@ $splitName = function($name) {
 
     <?php if (empty($galleryItems)): ?>
       <div class="empty">
-        No <?= h(strtolower($module['plural_label'])) ?> yet. Add some on the
-        <a href="admin?client=<?= h($client['slug']) ?>">admin page</a>.
+        No <?= h(strtolower($module['plural_label'])) ?> yet.<?php if (isAdmin()): ?> Add some on the
+        <a href="admin?client=<?= h($client['slug']) ?>">admin page</a>.<?php endif; ?>
       </div>
     <?php else: ?>
       <?php foreach ($galleryItems as $g):
@@ -497,8 +497,10 @@ $splitName = function($name) {
             </div>
             <div class="tire-section-actions">
               <a class="nav-link" href="<?= h(featureUrl(['item' => (int)$g['id']])) ?>">Review</a>
-              <button class="section-delete-btn" data-delete-tire="<?= (int)$g['id'] ?>"
-                      data-tire-name="<?= h($g['name']) ?>" type="button">🗑 Delete</button>
+              <?php if (isAdmin()): // admin-only: never rendered for clients ?>
+                <button class="section-delete-btn" data-delete-tire="<?= (int)$g['id'] ?>"
+                        data-tire-name="<?= h($g['name']) ?>" type="button">Delete</button>
+              <?php endif; ?>
             </div>
           </header>
 
@@ -619,9 +621,11 @@ $splitName = function($name) {
             <h2 class="gallery-title"><?= h($selectedItem['name']) ?></h2>
             <div class="gallery-subtitle"><?= count($images) ?> image<?= count($images) !== 1 ? 's' : '' ?></div>
           </div>
-          <button class="gallery-delete" data-delete-tire="<?= (int)$selectedItem['id'] ?>" type="button">
-            🗑 Delete <?= h(strtolower($module['singular_label'])) ?>
-          </button>
+          <?php if (isAdmin()): // admin-only: never rendered for clients ?>
+            <button class="gallery-delete" data-delete-tire="<?= (int)$selectedItem['id'] ?>" type="button">
+              Delete <?= h(strtolower($module['singular_label'])) ?>
+            </button>
+          <?php endif; ?>
         </div>
         <?php if (empty($images)): ?>
           <div class="empty" style="border:none;border-radius:0;box-shadow:none">No images uploaded yet.</div>
@@ -650,7 +654,9 @@ $splitName = function($name) {
                 <div class="tire-item">
                   <img src="<?= h($img['image_url']) ?>" alt="<?= h($img['caption']) ?>" loading="lazy" data-image-el>
                   <button class="save-img-btn" data-src="<?= h($img['image_url']) ?>" data-filename="<?= h($filename) ?>">⬇ Save</button>
-                  <button class="replace-img-btn" data-replace-img type="button" title="Replace this image">🔄 Replace</button>
+                  <?php if (isAdmin()): // admin-only: never rendered for clients ?>
+                    <button class="replace-img-btn" data-replace-img type="button" title="Replace this image">🔄 Replace</button>
+                  <?php endif; ?>
                 </div>
                 <?php if (trim($img['caption']) !== ''): ?>
                   <div class="tire-caption"><?= h($img['caption']) ?></div>
@@ -730,7 +736,7 @@ $splitName = function($name) {
     const tireId=btn.getAttribute('data-delete-tire');btn.disabled=true;btn.textContent='Deleting…';
     try{const fd=new FormData();fd.append('action','delete_tire');fd.append('tire_id',tireId);fd.append('actor','client');const r=await fetch('tire-status.php',{method:'POST',body:fd}),d=await r.json();if(!d.ok)throw new Error(d.error||'Failed');
       showToast('✓ Deleted');setTimeout(()=>window.location.href=LIST_URL,500);
-    }catch(err){btn.disabled=false;btn.textContent='🗑 Delete';showToast('Delete failed: '+(err.message||'unknown'))}
+    }catch(err){btn.disabled=false;btn.textContent='Delete';showToast('Delete failed: '+(err.message||'unknown'))}
   });
 
   // Comment threads — chat-style send semantics

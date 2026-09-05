@@ -11,7 +11,7 @@
 require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';
 require __DIR__ . '/prompt-lib.php';
-require __DIR__ . '/auth.php';
+require_once __DIR__ . '/auth.php';
 requireAdmin();
 
 function h($s) {
@@ -176,8 +176,9 @@ $profileIncomplete = ($ctx['product_type'] === '' || $ctx['industry'] === '');
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>AI Builder — <?= h($client['name']) ?></title>
+<?= renderAppHead() ?>
 <style>
   :root {
     --bg: #18191a; --surface: #242526; --surface-2: #3a3b3c;
@@ -337,21 +338,17 @@ $profileIncomplete = ($ctx['product_type'] === '' || $ctx['industry'] === '');
 </head>
 <body>
 
-<header class="topbar">
-  <div class="topbar-inner">
-    <div class="brand">
-      <div class="brand-mark">J</div>
-      <span>AI Builder</span>
-      <span class="brand-sub"><?= h($client['name']) ?></span>
-    </div>
-    <div class="top-actions">
-      <a class="btn sm" href="admin?<?= h($clientQs) ?>">← <?= h($client['name']) ?> admin</a>
-      <a class="btn sm" href="prompts">Prompt Library</a>
-      <a class="btn sm" href="vehicles">Vehicle Library</a>
-      <a class="btn sm" href="logout">Sign out</a>
-    </div>
-  </div>
-</header>
+<?= renderAppChrome('AI Builder', [
+      'subtitle' => $client['name'],
+      'active'   => 'studio',
+      'width'    => '1100px',
+      'back'     => ['href' => 'admin?' . $clientQs, 'label' => 'Studio'],
+      'links'    => [
+        ['label' => 'Prompt Library',  'href' => 'prompts'],
+        ['label' => 'Vehicle Library', 'href' => 'vehicles'],
+        ['label' => 'Sign out',        'href' => 'logout'],
+      ],
+    ]) ?>
 
 <div class="wrap">
 

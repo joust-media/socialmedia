@@ -54,8 +54,9 @@ $navItems = clientNavItems($pdo, $client);
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title><?= $client ? h($client['name']) . ' — Library' : 'Library' ?></title>
+<?= renderAppHead() ?>
 <style>
   :root {
     --bg: #18191a;
@@ -361,12 +362,7 @@ $navItems = clientNavItems($pdo, $client);
 </head>
 <body>
 
-<header class="topbar">
-  <div class="topbar-inner">
-    <?= renderBrand($client) ?>
-    <nav class="client-nav"><?= renderClientNav($navItems, 'library') ?></nav>
-  </div>
-</header>
+<?= renderClientNav($navItems, 'library') ?>
 
 <div class="wrap">
 

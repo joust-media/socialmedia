@@ -200,8 +200,9 @@ function buildFilterUrl($cats, $month, $statuses = null) {
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Social Approval Feed</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title><?= $client ? h($client['name']) . ' — Posts' : 'Posts' ?></title>
+<?= renderAppHead() ?>
 <style>
   :root {
     --bg: #18191a;
@@ -1024,12 +1025,7 @@ function buildFilterUrl($cats, $month, $statuses = null) {
 </head>
 <body>
 
-<header class="topbar">
-  <div class="topbar-inner">
-    <?= renderBrand($client) ?>
-    <nav class="client-nav"><?= renderClientNav($navItems, 'feed') ?></nav>
-  </div>
-</header>
+<?= renderClientNav($navItems, 'feed') ?>
 
 <main class="feed" id="feed">
 
@@ -1118,10 +1114,14 @@ function buildFilterUrl($cats, $month, $statuses = null) {
         <div class="post-meta">
           <div class="post-name"><?= h($post['company_name']) ?></div>
           <div class="post-date">
+            <?php if (isAdmin()): // inline date editing is admin-only ?>
             <span class="date-display"
                   data-date-display
                   data-iso="<?= h(date('Y-m-d\TH:i', strtotime($post['scheduled_date']))) ?>"
                   title="Click to edit"><?= h(formatDate($post['scheduled_date'])) ?></span>
+            <?php else: ?>
+            <span class="date-display"><?= h(formatDate($post['scheduled_date'])) ?></span>
+            <?php endif; ?>
             <?php if (!empty($post['updated_at'])): ?>
               <span class="post-updated" title="Last edited: <?= h(absoluteTime($post['updated_at'])) ?>">
                 · edited <?= h(relativeTime($post['updated_at'])) ?>
@@ -1130,15 +1130,16 @@ function buildFilterUrl($cats, $month, $statuses = null) {
           </div>
         </div>
         <?php if (hasPostTypeColumn($pdo)): ?>
-          <button class="post-type-badge type-<?= h($postType) ?>"
-                  data-post-type-badge
-                  type="button"
-                  title="Click to change content type">
-            <?php
-              $typeIcons = ['post' => '📄', 'story' => '⭕', 'reel' => '🎬'];
-              echo h($typeIcons[$postType] ?? '📄') . ' ' . h(postTypeLabel($postType));
-            ?>
-          </button>
+          <?php if (isAdmin()): // changing the content type is admin-only ?>
+            <button class="post-type-badge type-<?= h($postType) ?>"
+                    data-post-type-badge
+                    type="button"
+                    title="Click to change content type">
+              <?= h(postTypeLabel($postType)) ?>
+            </button>
+          <?php else: ?>
+            <span class="post-type-badge type-<?= h($postType) ?>"><?= h(postTypeLabel($postType)) ?></span>
+          <?php endif; ?>
         <?php endif; ?>
         <?php if ($isPosted): ?>
           <div class="post-status posted" data-status-pill title="This post has been posted">Posted</div>
@@ -1148,22 +1149,27 @@ function buildFilterUrl($cats, $month, $statuses = null) {
       </div>
 
       <div class="post-body">
-        <div class="post-caption"
-             data-caption-display
-             data-raw="<?= h($post['caption']) ?>"
-             title="Click to edit"
-             role="textbox"
-             tabindex="0"><?= h($post['caption']) ?></div>
-        <div class="post-hashtags"
-             data-hashtags-display
-             data-raw="<?= h($post['hashtags']) ?>"
-             title="Click to edit"
-             role="textbox"
-             tabindex="0"><?= h($post['hashtags']) ?></div>
+        <?php if (isAdmin()): // inline caption / hashtag editing is admin-only ?>
+          <div class="post-caption"
+               data-caption-display
+               data-raw="<?= h($post['caption']) ?>"
+               title="Click to edit"
+               role="textbox"
+               tabindex="0"><?= h($post['caption']) ?></div>
+          <div class="post-hashtags"
+               data-hashtags-display
+               data-raw="<?= h($post['hashtags']) ?>"
+               title="Click to edit"
+               role="textbox"
+               tabindex="0"><?= h($post['hashtags']) ?></div>
+        <?php else: ?>
+          <div class="post-caption" data-raw="<?= h($post['caption']) ?>"><?= h($post['caption']) ?></div>
+          <div class="post-hashtags" data-raw="<?= h($post['hashtags']) ?>"><?= h($post['hashtags']) ?></div>
+        <?php endif; ?>
       </div>
 
       <div class="post-actions-top">
-        <?php if (!$isPosted): ?>
+        <?php if (isAdmin() && !$isPosted): // "Post" is Joust's step, not the client's ?>
           <button class="post-cta-btn"
                   data-post-cta
                   data-caption="<?= h($post['caption']) ?>"
@@ -1176,22 +1182,24 @@ function buildFilterUrl($cats, $month, $statuses = null) {
         <button class="copy-btn" data-copy-post type="button">
           📋 Copy caption &amp; hashtags
         </button>
-        <?php if (hasPostedColumn($pdo)): ?>
-          <?php if (!$isPosted): ?>
-            <button class="mark-posted-btn" data-toggle-posted data-to="1" type="button"
-                    title="Mark this post as posted">
-              ✓ Mark as Posted
-            </button>
-          <?php else: ?>
-            <button class="unmark-posted-btn" data-toggle-posted data-to="0" type="button"
-                    title="Unmark this post">
-              ↺ Unmark
-            </button>
+        <?php if (isAdmin()): // Mark as Posted / Delete: admin-only, never rendered for clients ?>
+          <?php if (hasPostedColumn($pdo)): ?>
+            <?php if (!$isPosted): ?>
+              <button class="mark-posted-btn" data-toggle-posted data-to="1" type="button"
+                      title="Mark this post as posted">
+                ✓ Mark as Posted
+              </button>
+            <?php else: ?>
+              <button class="unmark-posted-btn" data-toggle-posted data-to="0" type="button"
+                      title="Unmark this post">
+                ↺ Unmark
+              </button>
+            <?php endif; ?>
           <?php endif; ?>
+          <button class="delete-post-btn" data-delete-post type="button">
+            🗑 Delete
+          </button>
         <?php endif; ?>
-        <button class="delete-post-btn" data-delete-post type="button">
-          🗑 Delete
-        </button>
       </div>
 
       <?php if ($count > 0): ?>
@@ -1225,10 +1233,12 @@ function buildFilterUrl($cats, $month, $statuses = null) {
                       data-ext="<?= h($ext) ?>">
                 ⬇ Save
               </button>
-              <button class="replace-img-btn" data-replace-img type="button"
-                      title="Replace this <?= $isVid ? 'video' : 'image' ?>">
-                🔄 Replace
-              </button>
+              <?php if (isAdmin()): // Replace is admin-only, never rendered for clients ?>
+                <button class="replace-img-btn" data-replace-img type="button"
+                        title="Replace this <?= $isVid ? 'video' : 'image' ?>">
+                  🔄 Replace
+                </button>
+              <?php endif; ?>
             </div>
           <?php endforeach; ?>
           </div><!-- /.post-media-track -->
@@ -1376,7 +1386,7 @@ function buildFilterUrl($cats, $month, $statuses = null) {
     const copyBtn = e.target.closest('[data-copy-post]');
     if (copyBtn) {
       const post = copyBtn.closest('.post');
-      const capEl = post.querySelector('[data-caption-display]');
+      const capEl = post.querySelector('.post-caption');
       const hashEl = post.querySelector('.post-hashtags');
       const caption = capEl ? capEl.getAttribute('data-raw') : '';
       const hashtags = hashEl ? hashEl.textContent.trim() : '';

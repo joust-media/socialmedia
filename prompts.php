@@ -8,7 +8,7 @@
 require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';
 require __DIR__ . '/prompt-lib.php';
-require __DIR__ . '/auth.php';
+require_once __DIR__ . '/auth.php';
 requireAdmin();
 
 function h($s) {
@@ -83,11 +83,12 @@ function libUrl($cat = null, $tag = null, $q = null) {
 }
 ?>
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Prompt Library — Joust Admin</title>
+<?= renderAppHead() ?>
 <style>
   :root {
     --bg: #f0f2f5; --surface: #ffffff; --surface-2: #f7f8fa;
@@ -217,16 +218,16 @@ function libUrl($cat = null, $tag = null, $q = null) {
 </head>
 <body>
 
-<header class="topbar">
-  <div class="topbar-inner">
-    <div class="brand"><div class="brand-mark">J</div><span>Prompt Library</span></div>
-    <div class="top-actions">
-      <a class="btn sm" href="admin">← Admin</a>
-      <a class="btn sm primary" href="add-prompt">+ New prompt</a>
-      <a class="btn sm" href="logout" title="Signed in as <?= h(currentAdmin()) ?>">Sign out</a>
-    </div>
-  </div>
-</header>
+<?= renderAppChrome('Prompt Library', [
+      'active'   => 'studio',
+      'width'    => '980px',
+      'trailing' => '',
+      'back'     => ['href' => 'admin', 'label' => 'Studio'],
+      'links'    => [
+        ['label' => 'New prompt', 'href' => 'add-prompt', 'primary' => true],
+        ['label' => 'Sign out',   'href' => 'logout', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
+      ],
+    ]) ?>
 
 <div class="wrap">
 

@@ -74,8 +74,9 @@ $navItems = clientNavItems($pdo, $client);
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title><?= $client ? h($client['name']) . ' — Projects' : 'Projects' ?></title>
+<?= renderAppHead() ?>
 <style>
   :root {
     --bg: #18191a;
@@ -416,16 +417,11 @@ $navItems = clientNavItems($pdo, $client);
 </head>
 <body>
 
-<header class="topbar">
-  <div class="topbar-inner">
-    <?= renderBrand($client) ?>
-    <nav class="client-nav"><?= renderClientNav($navItems, 'projects') ?></nav>
-  </div>
-</header>
+<?= renderClientNav($navItems, 'projects') ?>
 
 <div class="wrap">
 
-  <h1 class="page-title">📋 Projects</h1>
+  <h1 class="page-title">Projects</h1>
 
   <div class="add-card">
     <h2>Add new task</h2>
@@ -540,7 +536,8 @@ $navItems = clientNavItems($pdo, $client);
     toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1800);
   }
 
-  const IS_CLIENT_VIEW = <?= $client ? 'true' : 'false' ?>;
+  // Role comes from the server-side session (helpers.php), not from whether ?client= is present.
+  const IS_CLIENT_VIEW = <?= isAdmin() ? 'false' : 'true' ?>;
   const CREATED_BY     = IS_CLIENT_VIEW ? 'client' : 'admin';
 
   // ---- Add task ---------------------------------------------------

@@ -76,8 +76,9 @@ $navItems = clientNavItems($pdo, $client);
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title><?= $client ? h($client['name']) . ' — Dashboard' : 'Dashboard' ?></title>
+<?= renderAppHead() ?>
 <style>
   :root {
     --bg: #18191a;
@@ -326,12 +327,7 @@ $navItems = clientNavItems($pdo, $client);
 </head>
 <body>
 
-<header class="topbar">
-  <div class="topbar-inner">
-    <?= renderBrand($client) ?>
-    <nav class="client-nav"><?= renderClientNav($navItems, 'index') ?></nav>
-  </div>
-</header>
+<?= renderClientNav($navItems, 'index') ?>
 
 <div class="wrap">
 
@@ -348,7 +344,7 @@ $navItems = clientNavItems($pdo, $client);
   <?php if (hasActivityLog($pdo)): ?>
     <div class="activity-card">
       <div class="activity-card-header">
-        <h2 class="activity-card-title">📡 Recent activity</h2>
+        <h2 class="activity-card-title">Recent activity</h2>
         <span class="activity-card-meta">
           <?= $client ? h($client['name']) : 'All clients' ?>
         </span>

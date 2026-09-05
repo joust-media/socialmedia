@@ -1,0 +1,127 @@
+/* =====================================================================
+   Joust client portal — design tokens (spec §5)
+   Light by default. Dark follows the system unless <html data-theme="light">;
+   <html data-theme="dark"> forces dark (the legacy pages hard-code this).
+   Reference tokens, never raw values, in every stylesheet that follows.
+   ===================================================================== */
+
+:root {
+  color-scheme: light dark;
+
+  /* Surfaces & fills */
+  --bg:            #F2F2F7;
+  --bg-elevated:   #FFFFFF;
+  --fill-tertiary: rgba(118,118,128,.12);
+
+  /* Labels */
+  --label:           #000000;
+  --label-secondary: rgba(60,60,67,.60);
+  --label-tertiary:  rgba(60,60,67,.30);
+  --separator:       rgba(60,60,67,.29);
+
+  /* Semantic colors */
+  --accent:    #007AFF;   /* system blue — comments, links, month pill, active tab */
+  --approve:   #34C759;
+  --deny:      #FF3B30;
+  --pending:   #FF9500;
+  --scheduled: #5856D6;
+  --joust:     #FF6A3D;   /* ONLY the Joust avatar/bubble and the Studio tab */
+
+  /* Radii */
+  --radius-card:  20px;
+  --radius-thumb: 12px;
+  --radius-pill:  999px;
+  --radius-list:  12px;   /* grouped inset list corners */
+  --radius-ctl:   10px;   /* buttons, inputs */
+
+  /* Chrome geometry */
+  --tab-bar-h:  83px;     /* 49px bar + 34px home-indicator area */
+  --tab-bar-core: 49px;
+  --sidebar-w:  240px;
+  --content-w:  720px;
+  --content-w-wide: 1200px;
+
+  /* Materials (derived) */
+  --glass-bg:        rgba(249,249,249,.78);
+  --glass-highlight: rgba(255,255,255,.65);
+  --shadow-card:  0 1px 2px rgba(0,0,0,.04), 0 6px 20px rgba(0,0,0,.06);
+  --shadow-sheet: 0 -8px 40px rgba(0,0,0,.18);
+  --shadow-panel: -8px 0 40px rgba(0,0,0,.14);
+  --scrim: rgba(0,0,0,.4);
+
+  /* Type — system stack, tracking tightens as size grows */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", Inter, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --text-large-title: 34px; --lh-large-title: 41px; --ls-large-title: -0.4px;  --fw-large-title: 700;
+  --text-title2:      22px; --lh-title2:      28px; --ls-title2:      -0.3px;  --fw-title2:      700;
+  --text-headline:    17px; --lh-headline:    22px; --ls-headline:    -0.2px;  --fw-headline:    600;
+  --text-body:        17px; --lh-body:        22px; --ls-body:        -0.15px; --fw-body:        400;
+  --text-subhead:     15px; --lh-subhead:     20px; --ls-subhead:     -0.1px;
+  --text-footnote:    13px; --lh-footnote:    18px; --ls-footnote:    -0.08px; --fw-footnote:    400;
+  --text-caption:     12px; --lh-caption:     16px; --ls-caption:      0px;
+
+  /* Motion (see motion.css) */
+  --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);   /* bounce:0, visualDuration ~0.35 */
+  --dur-fast: 150ms;
+  --dur-base: 220ms;
+  --dur-sheet: 350ms;
+}
+
+/* Dark — system preference, unless the page pins light */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:            #000000;
+    --bg-elevated:   #1C1C1E;
+    --fill-tertiary: rgba(118,118,128,.24);
+    --label:           #FFFFFF;
+    --label-secondary: rgba(235,235,245,.60);
+    --label-tertiary:  rgba(235,235,245,.30);
+    --separator:       rgba(84,84,88,.6);
+    --glass-bg:        rgba(29,29,31,.72);
+    --glass-highlight: rgba(255,255,255,.08);
+    --shadow-card:  0 1px 2px rgba(0,0,0,.5), 0 6px 20px rgba(0,0,0,.35);
+    --shadow-sheet: 0 -8px 40px rgba(0,0,0,.6);
+    --shadow-panel: -8px 0 40px rgba(0,0,0,.5);
+    --scrim: rgba(0,0,0,.55);
+  }
+}
+
+/* Pages that pin a theme also pin the UA color scheme (form controls, scrollbars) */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"]  { color-scheme: dark; }
+
+/* Dark — forced by the page */
+:root[data-theme="dark"] {
+  --bg:            #000000;
+  --bg-elevated:   #1C1C1E;
+  --fill-tertiary: rgba(118,118,128,.24);
+  --label:           #FFFFFF;
+  --label-secondary: rgba(235,235,245,.60);
+  --label-tertiary:  rgba(235,235,245,.30);
+  --separator:       rgba(84,84,88,.6);
+  --glass-bg:        rgba(29,29,31,.72);
+  --glass-highlight: rgba(255,255,255,.08);
+  --shadow-card:  0 1px 2px rgba(0,0,0,.5), 0 6px 20px rgba(0,0,0,.35);
+  --shadow-sheet: 0 -8px 40px rgba(0,0,0,.6);
+  --shadow-panel: -8px 0 40px rgba(0,0,0,.5);
+  --scrim: rgba(0,0,0,.55);
+}
+
+/* ---------------------------------------------------------------------
+   Type scale utilities
+   --------------------------------------------------------------------- */
+.t-large-title { font-size: var(--text-large-title); line-height: var(--lh-large-title); letter-spacing: var(--ls-large-title); font-weight: var(--fw-large-title); }
+.t-title2      { font-size: var(--text-title2);      line-height: var(--lh-title2);      letter-spacing: var(--ls-title2);      font-weight: var(--fw-title2); }
+.t-headline    { font-size: var(--text-headline);    line-height: var(--lh-headline);    letter-spacing: var(--ls-headline);    font-weight: var(--fw-headline); }
+.t-body        { font-size: var(--text-body);        line-height: var(--lh-body);        letter-spacing: var(--ls-body);        font-weight: var(--fw-body); }
+.t-subhead     { font-size: var(--text-subhead);     line-height: var(--lh-subhead);     letter-spacing: var(--ls-subhead); }
+.t-footnote    { font-size: var(--text-footnote);    line-height: var(--lh-footnote);    letter-spacing: var(--ls-footnote);    font-weight: var(--fw-footnote); }
+.t-caption     { font-size: var(--text-caption);     line-height: var(--lh-caption);     letter-spacing: var(--ls-caption); }
+
+.text-secondary { color: var(--label-secondary); }
+.text-tertiary  { color: var(--label-tertiary); }
+.text-accent    { color: var(--accent); }
+.text-mono      { font-family: var(--font-mono); }

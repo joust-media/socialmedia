@@ -1,0 +1,171 @@
+/* =====================================================================
+   Joust client portal — base
+   Reset, typography, page container, large-title nav bar, safe areas,
+   focus, and the small legacy-page compatibility layer at the bottom.
+   ===================================================================== */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--label);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--lh-body);
+  letter-spacing: var(--ls-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-optical-sizing: auto;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+img, video, svg { display: block; max-width: 100%; }
+button, input, select, textarea { font: inherit; color: inherit; letter-spacing: inherit; }
+button { cursor: pointer; }
+a { color: var(--accent); text-decoration: none; }
+hr { border: 0; height: 0.5px; background: var(--separator); margin: 16px 0; }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+:focus:not(:focus-visible) { outline: none; }
+
+/* ---------------------------------------------------------------------
+   Icons (inline SVG from icon())
+   --------------------------------------------------------------------- */
+.ui-icon {
+  width: 1.25em; height: 1.25em;
+  flex: 0 0 auto;
+  display: inline-block;
+  vertical-align: -0.25em;
+  fill: none;
+  stroke: currentColor;
+}
+.ui-icon--play, .ui-icon--ellipsis { fill: currentColor; stroke: none; }
+
+/* ---------------------------------------------------------------------
+   Page container
+   --------------------------------------------------------------------- */
+.ui-page {
+  width: 100%;
+  max-width: var(--content-w);
+  margin: 0 auto;
+  padding: 8px max(16px, env(safe-area-inset-right)) 32px max(16px, env(safe-area-inset-left));
+}
+.ui-page--wide { max-width: var(--content-w-wide); }
+.ui-section { margin: 0 0 28px; }
+.ui-section-title {
+  margin: 0 0 8px;
+  padding: 0 4px;
+  font-size: var(--text-title2); line-height: var(--lh-title2);
+  letter-spacing: var(--ls-title2); font-weight: var(--fw-title2);
+}
+.ui-section-title--small {
+  font-size: var(--text-footnote); line-height: var(--lh-footnote);
+  letter-spacing: 0.2px; font-weight: 600; text-transform: uppercase;
+  color: var(--label-secondary); padding: 0 16px;
+}
+
+/* ---------------------------------------------------------------------
+   Large-title navigation bar (sticky, glass once scrolled)
+   --------------------------------------------------------------------- */
+.ui-nav {
+  position: sticky; top: 0; z-index: 800;
+  padding-top: env(safe-area-inset-top);
+  background: var(--bg);
+  transition: box-shadow var(--dur-base) var(--ease-out), background-color var(--dur-base) var(--ease-out);
+}
+.ui-nav.is-scrolled { box-shadow: 0 0.5px 0 var(--separator); }
+.ui-nav-inner {
+  max-width: var(--content-w);
+  margin: 0 auto;
+  padding: 6px max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));
+}
+.ui-nav--wide .ui-nav-inner { max-width: var(--content-w-wide); }
+.ui-nav-row {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 12px; min-height: 52px;
+}
+.ui-nav-leading { display: flex; align-items: center; align-self: center; flex: 0 0 auto; }
+.ui-nav-heading { flex: 1 1 auto; min-width: 0; }
+.ui-nav-eyebrow {
+  margin: 0 0 -2px 1px;
+  font-size: var(--text-footnote); line-height: var(--lh-footnote);
+  letter-spacing: var(--ls-footnote); font-weight: 600;
+  color: var(--label-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ui-nav-title {
+  margin: 0;
+  font-size: var(--text-large-title); line-height: var(--lh-large-title);
+  letter-spacing: var(--ls-large-title); font-weight: var(--fw-large-title);
+  color: var(--label);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ui-nav-trailing { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; align-self: center; }
+.ui-nav-links {
+  display: flex; gap: 6px; flex-wrap: nowrap;
+  margin-top: 8px; padding-bottom: 2px;
+  overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+}
+.ui-nav-links::-webkit-scrollbar { display: none; }
+
+.ui-back {
+  display: inline-flex; align-items: center; gap: 2px;
+  min-height: 44px; padding: 0 8px 0 0; margin-left: -6px;
+  color: var(--accent); font-size: var(--text-body); font-weight: 400;
+  text-decoration: none; -webkit-tap-highlight-color: transparent;
+}
+.ui-back .ui-icon { width: 24px; height: 24px; }
+.ui-back:active { opacity: .5; }
+
+/* Client avatar — 36px rounded square; the only client branding in the chrome */
+.ui-avatar {
+  width: 36px; height: 36px; border-radius: 9px;
+  object-fit: cover; background: var(--bg-elevated);
+  box-shadow: inset 0 0 0 0.5px var(--separator);
+  flex: 0 0 auto;
+}
+.ui-avatar--initial {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--fill-tertiary); color: var(--label-secondary);
+  font-weight: 700; font-size: 15px; letter-spacing: 0;
+}
+.ui-avatar--sm { width: 28px; height: 28px; border-radius: 7px; font-size: 12px; }
+.ui-avatar--lg { width: 56px; height: 56px; border-radius: 14px; font-size: 22px; }
+
+/* ---------------------------------------------------------------------
+   Layout: room for the fixed tab bar (mobile) / sidebar (desktop).
+   :has() so legacy pages whose inline CSS sets `html, body { padding:0 }`
+   still get the offsets; no JS or extra classes required.
+   --------------------------------------------------------------------- */
+html:has(.ui-tabbar) body { padding-bottom: calc(var(--tab-bar-h) + 8px); }
+html:has(.ui-tabbar) .toast { bottom: calc(var(--tab-bar-h) + 16px); }   /* legacy per-page toasts */
+
+@media (min-width: 1024px) {
+  html:has(.ui-tabbar) body { padding-left: var(--sidebar-w); padding-bottom: 0; }
+  html:has(.ui-tabbar) .toast { bottom: 24px; left: calc(50% + var(--sidebar-w) / 2); }
+}
+
+/* Legacy pages: their inline `.toast` (bottom:24px) and `#feed`/`.wrap`
+   containers stay untouched; the shell only provides the outer offsets. */
+html.ui-shell body { padding-top: 0; }
+
+/* Utilities */
+.ui-visually-hidden {
+  position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.ui-stack { display: flex; flex-direction: column; gap: 12px; }
+.ui-row-flex { display: flex; align-items: center; gap: 8px; }
+.ui-spacer { flex: 1 1 auto; }
+.ui-empty {
+  padding: 40px 20px; text-align: center;
+  color: var(--label-secondary); font-size: var(--text-subhead); line-height: var(--lh-subhead);
+}

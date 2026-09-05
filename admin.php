@@ -13,7 +13,7 @@
 require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';
 require __DIR__ . '/prompt-lib.php';
-require __DIR__ . '/auth.php';
+require_once __DIR__ . '/auth.php';
 
 // Single admin gate — everything below assumes a signed-in admin.
 requireAdmin();
@@ -219,11 +219,12 @@ if (!$client) {
     ")->fetchAll();
     ?>
     <!DOCTYPE html>
-    <html lang="en">
+    <html lang="en" data-theme="light">
     <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Pick a client — Joust Admin</title>
+    <?= renderAppHead() ?>
     <style>
       :root { --bg:#f0f2f5; --surface:#fff; --surface-2:#f7f8fa; --border:#dadde1;
               --text:#050505; --text-muted:#65676b; --accent:#1877f2; --accent-hover:#166fe5;
@@ -306,18 +307,17 @@ if (!$client) {
     </style>
     </head>
     <body>
-    <header class="topbar">
-      <div class="topbar-inner">
-        <div class="brand"><div class="brand-mark">J</div><span>Joust Media — Admin</span></div>
-        <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
-          <span style="font-size:12px;color:var(--text-muted);"><?= h(currentAdmin()) ?></span>
-          <a class="btn" href="prompts">🎨 Prompt Library</a>
-          <a class="btn" href="vehicles">🚗 Vehicle Library</a>
-          <a class="btn" href="<?= h(clientUrl('index.php')) ?>" target="_blank">View site ↗</a>
-          <a class="btn" href="logout">Sign out</a>
-        </div>
-      </div>
-    </header>
+    <?= renderAppChrome('Studio', [
+          'subtitle' => 'Choose a client',
+          'active'   => 'studio',
+          'width'    => '900px',
+          'links'    => [
+            ['label' => 'Prompt Library',  'href' => 'prompts'],
+            ['label' => 'Vehicle Library', 'href' => 'vehicles'],
+            ['label' => 'View site',       'href' => clientUrl('index.php'), 'attrs' => ['target' => '_blank']],
+            ['label' => 'Sign out',        'href' => 'logout', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
+          ],
+        ]) ?>
 
     <div class="wrap">
       <?php if ($flash): ?><div class="flash">✓ <?= h($flash) ?></div><?php endif; ?>
@@ -435,8 +435,9 @@ $clientQs = 'client=' . urlencode($client['slug']);
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title><?= h($client['name']) ?> — Admin</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title><?= h($client['name']) ?> — Studio</title>
+<?= renderAppHead() ?>
 <style>
   :root { --bg:#f0f2f5; --surface:#fff; --surface-2:#f7f8fa; --border:#dadde1;
           --text:#050505; --text-muted:#65676b;
@@ -680,25 +681,18 @@ $clientQs = 'client=' . urlencode($client['slug']);
 </head>
 <body>
 
-<header class="topbar">
-  <div class="topbar-inner">
-    <div class="brand">
-      <div class="brand-mark">J</div>
-      <span><?= h($client['name']) ?></span>
-      <span class="brand-sub">Admin</span>
-    </div>
-    <div class="top-actions">
-      <button class="btn ghost sm" id="themeToggle" type="button" aria-label="Toggle theme">
-        <span id="themeIcon">🌙</span>
-      </button>
-      <a class="btn sm" href="admin">⇆ Switch client</a>
-      <a class="btn sm" href="prompts">🎨 Prompt Library</a>
-      <a class="btn sm" href="vehicles">🚗 Vehicle Library</a>
-      <a class="btn sm" href="<?= h(clientUrl('index.php')) ?>" target="_blank">View site ↗</a>
-      <a class="btn sm" href="logout" title="Signed in as <?= h(currentAdmin()) ?>">Sign out</a>
-    </div>
-  </div>
-</header>
+<?= renderAppChrome('Studio', [
+      'subtitle' => $client['name'],
+      'active'   => 'studio',
+      'width'    => '900px',
+      'links'    => [
+        ['label' => 'Switch client',   'href' => 'admin'],
+        ['label' => 'Prompt Library',  'href' => 'prompts'],
+        ['label' => 'Vehicle Library', 'href' => 'vehicles'],
+        ['label' => 'View site',       'href' => clientUrl('index.php'), 'attrs' => ['target' => '_blank']],
+        ['label' => 'Sign out',        'href' => 'logout', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
+      ],
+    ]) ?>
 
 <div class="wrap">
 
@@ -1049,15 +1043,12 @@ $clientQs = 'client=' . urlencode($client['slug']);
     });
   }
 
-  const themeBtn  = document.getElementById('themeToggle');
-  const themeIcon = document.getElementById('themeIcon');
-  let isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  const applyTheme = () => {
-    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
-    themeIcon.textContent = isDark ? '☀️' : '🌙';
-  };
+  // Follow the system appearance; the shared tokens and this page's inline
+  // [data-theme="dark"] palette both key off the same attribute.
+  const themeMQ = window.matchMedia('(prefers-color-scheme: dark)');
+  const applyTheme = () => document.documentElement.setAttribute('data-theme', themeMQ.matches ? 'dark' : 'light');
   applyTheme();
-  themeBtn.addEventListener('click', () => { isDark = !isDark; applyTheme(); });
+  if (themeMQ.addEventListener) themeMQ.addEventListener('change', applyTheme);
 
   const POST_CTA_URL = <?= json_encode($postCtaUrl) ?>;
   const toastEl = document.getElementById('toast');
