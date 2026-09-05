@@ -40,11 +40,14 @@ jobs:
           #   - .git and CI files (not part of the site)
           #   - config.php holds the LIVE database credentials
           #   - uploads/ holds client-uploaded images and is not tracked in git
+          #   - .htaccess lives on the server (controls site routing/PHP config) and is not tracked in the repo
           exclude:
             - "**/.git*"
             - "**/.git*/**"
             - ".github/**"
             - "config.php"
             - "uploads/**"
+            - ".htaccess"
+            - "**/.htaccess"
             - "error_log"
             - "README.md"
