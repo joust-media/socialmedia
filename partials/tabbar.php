@@ -21,7 +21,7 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
 $uiTabs = [
     'home'     => ['label' => 'Home',     'icon' => 'house',     'page' => 'index.php',
                    'scripts' => ['index']],
-    'assets'   => ['label' => 'Assets',   'icon' => 'photo',     'page' => 'library.php',
+    'assets'   => ['label' => 'Assets',   'icon' => 'photo',     'page' => 'assets.php',
                    'scripts' => ['library', 'features', 'tires', 'assets']],
     'posts'    => ['label' => 'Posts',    'icon' => 'grid',      'page' => 'feed.php',
                    'scripts' => ['feed', 'posts']],

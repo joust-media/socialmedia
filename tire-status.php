@@ -11,6 +11,7 @@
 
 require __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
+if (!function_exists('currentAdmin')) { require_once __DIR__ . '/auth.php'; }   // helpers.php already loads it; belt and braces
 
 header('Content-Type: application/json');
 
@@ -23,8 +24,13 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 $id      = (int)($_POST['id'] ?? 0);
 $action  = $_POST['action'] ?? '';
 
-// ---- Delete entire tire ----
+// ---- Delete entire tire ---- (admin only; approve / deny / comment below stay open)
 if ($action === 'delete_tire') {
+    if (!currentAdmin()) {
+        http_response_code(403);
+        echo json_encode(['ok' => false, 'error' => 'Admin sign-in required']);
+        exit;
+    }
     $tireId = (int)($_POST['tire_id'] ?? 0);
     if ($tireId <= 0) {
         http_response_code(400);
