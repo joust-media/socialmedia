@@ -30,8 +30,8 @@ jobs:
           password: ${{ secrets.FTP_PASSWORD }}
 
           # The folder on the GoDaddy server to deploy into.
-          # For a primary domain this is usually public_html/ — change if your site lives elsewhere.
-          server-dir: public_html/
+          # This project lives in the socialmedia subfolder of public_html; deploys are scoped there and never touch the rest of public_html.
+          server-dir: public_html/socialmedia/
 
           # Upload from the repository root.
           local-dir: ./
