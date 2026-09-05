@@ -1,0 +1,134 @@
+name: Relocate staging folder
+
+# ONE-OFF repair job. Delete this file once it has run successfully.
+#
+# Background: the FTP account's root IS the site's document root (the root
+# listing contains css/, js/, images/, media/ and the live socialmedia/ folder).
+# The deploy workflows targeted public_html/socialmedia-staging/, which created
+# a bogus nested public_html/ folder at the FTP root. This job moves
+# public_html/socialmedia-staging -> socialmedia-staging (a single server-side
+# rename, so config.php, .htaccess, uploads/ and the sync-state file all come
+# along untouched).
+#
+# It never touches public_html/socialmedia/ (junk) or the live socialmedia/.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type the word: relocate"
+        required: true
+        type: string
+
+concurrency:
+  group: ftp-relocate-staging
+  cancel-in-progress: false
+
+jobs:
+  relocate:
+    name: Move public_html/socialmedia-staging to socialmedia-staging
+    runs-on: ubuntu-latest
+    env:
+      FTP_SERVER: ${{ secrets.FTP_SERVER }}
+      FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+      FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+    steps:
+      - name: Guard
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -eu
+          if [ "$CONFIRM" != "relocate" ]; then
+            echo "::error::confirm must be exactly 'relocate' (got '$CONFIRM')."; exit 1
+          fi
+          if [ -z "$FTP_SERVER" ] || [ -z "$FTP_USERNAME" ] || [ -z "$FTP_PASSWORD" ]; then
+            echo "::error::FTP secrets are not set."; exit 1
+          fi
+
+      - name: Inspect server (before)
+        run: |
+          set -eu
+          ftp_names() { curl -sS --list-only -u "$FTP_USERNAME:$FTP_PASSWORD" "ftp://$FTP_SERVER/$1"; }
+          ftp_list()  { curl -sS -u "$FTP_USERNAME:$FTP_PASSWORD" "ftp://$FTP_SERVER/$1"; }
+
+          echo "=== FTP root (NLST) ==="
+          root="$(ftp_names "")"
+          echo "$root"
+
+          echo
+          echo "=== public_html/ (NLST) ==="
+          nested="$(ftp_names "public_html/" || true)"
+          echo "${nested:-<missing or empty>}"
+
+          echo
+          echo "=== public_html/socialmedia-staging/ (NLST) ==="
+          staging_names="$(ftp_names "public_html/socialmedia-staging/" || true)"
+          echo "${staging_names:-<missing or empty>}"
+          echo
+          echo "=== public_html/socialmedia-staging/ (full LIST, shows dotfiles if server permits) ==="
+          staging_list="$(ftp_list "public_html/socialmedia-staging/" || true)"
+          echo "${staging_list:-<missing or empty>}"
+
+          ok=1
+          if ! printf '%s\n' "$root" | grep -qx 'socialmedia'; then
+            echo "::error::FTP root does not contain 'socialmedia' - cannot confirm FTP root is the web root. Aborting."; ok=0
+          fi
+          if printf '%s\n' "$root" | grep -qx 'socialmedia-staging'; then
+            echo "::error::FTP root ALREADY contains 'socialmedia-staging' - refusing to clobber it. Aborting."; ok=0
+          fi
+          if ! printf '%s\n' "$nested" | grep -qx 'socialmedia-staging'; then
+            echo "::error::public_html/ does not contain 'socialmedia-staging' - nothing to relocate. Aborting."; ok=0
+          fi
+          [ "$ok" = 1 ] || exit 1
+
+          all="$(printf '%s\n%s' "$staging_names" "$staging_list")"
+          for f in config.php .htaccess uploads .ftp-deploy-sync-state-staging.json; do
+            if printf '%s\n' "$all" | grep -q -- "$f"; then
+              echo "present: $f"
+            else
+              echo "::warning::not seen in listing: $f (may be hidden by the server's LIST output)"
+            fi
+          done
+
+      - name: Rename public_html/socialmedia-staging -> socialmedia-staging
+        run: |
+          set -eu
+          curl -sS -u "$FTP_USERNAME:$FTP_PASSWORD" "ftp://$FTP_SERVER/" --list-only \
+            -Q "RNFR public_html/socialmedia-staging" \
+            -Q "RNTO socialmedia-staging" >/dev/null
+          echo "Rename command completed."
+
+      - name: Verify (after)
+        run: |
+          set -eu
+          ftp_names() { curl -sS --list-only -u "$FTP_USERNAME:$FTP_PASSWORD" "ftp://$FTP_SERVER/$1"; }
+          ftp_list()  { curl -sS -u "$FTP_USERNAME:$FTP_PASSWORD" "ftp://$FTP_SERVER/$1"; }
+
+          echo "=== FTP root (NLST) ==="
+          root="$(ftp_names "")"
+          echo "$root"
+          if ! printf '%s\n' "$root" | grep -qx 'socialmedia-staging'; then
+            echo "::error::'socialmedia-staging' did not appear at the FTP root after rename."; exit 1
+          fi
+
+          echo
+          echo "=== public_html/ (NLST) ==="
+          ftp_names "public_html/" || echo "<missing or empty>"
+
+          echo
+          echo "=== socialmedia-staging/ (NLST) ==="
+          staging_names="$(ftp_names "socialmedia-staging/")"
+          echo "$staging_names"
+          echo
+          echo "=== socialmedia-staging/ (full LIST) ==="
+          staging_list="$(ftp_list "socialmedia-staging/")"
+          echo "$staging_list"
+
+          all="$(printf '%s\n%s' "$staging_names" "$staging_list")"
+          for f in config.php .htaccess uploads .ftp-deploy-sync-state-staging.json; do
+            if printf '%s\n' "$all" | grep -q -- "$f"; then
+              echo "present: $f"
+            else
+              echo "::warning::not seen in listing: $f (may be hidden by the server's LIST output)"
+            fi
+          done
+          echo "Relocation complete."
