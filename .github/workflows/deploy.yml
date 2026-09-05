@@ -1,0 +1,50 @@
+name: Deploy to GoDaddy
+
+# Deploys the site to GoDaddy over FTP whenever code is pushed to `main`.
+# You can also trigger it manually from the Actions tab.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Sync files to GoDaddy via FTP
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Deploy via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          # These three values come from GitHub repo Secrets (Settings > Secrets and variables > Actions).
+          # Never hard-code credentials in this file.
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+
+          # The folder on the GoDaddy server to deploy into.
+          # For a primary domain this is usually public_html/ — change if your site lives elsewhere.
+          server-dir: public_html/
+
+          # Upload from the repository root.
+          local-dir: ./
+
+          # Protect files/folders that must NEVER be overwritten or deleted on the live server:
+          #   - .git and CI files (not part of the site)
+          #   - config.php holds the LIVE database credentials
+          #   - uploads/ holds client-uploaded images and is not tracked in git
+          exclude:
+            - "**/.git*"
+            - "**/.git*/**"
+            - ".github/**"
+            - "config.php"
+            - "uploads/**"
+            - "error_log"
+            - "README.md"
