@@ -27,7 +27,7 @@ $uiTabs = [
                    'scripts' => ['feed', 'posts']],
     'projects' => ['label' => 'Projects', 'icon' => 'checklist', 'page' => 'projects.php',
                    'scripts' => ['projects', 'add-project']],
-    'studio'   => ['label' => 'Studio',   'icon' => 'wand',      'page' => 'admin.php',
+    'studio'   => ['label' => 'Studio',   'icon' => 'wand',      'page' => 'studio.php',
                    'scripts' => ['admin', 'studio', 'add-post', 'add-feature', 'add-tire', 'batch', 'build',
                                  'prompts', 'add-prompt', 'vehicles', 'add-vehicle'],
                    'admin' => true],
