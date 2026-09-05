@@ -1,0 +1,208 @@
+/* =====================================================================
+   Joust client portal — Projects page (spec §4.4)
+   Grouped inset lists (Open / Done), priority dot, swipe-to-complete,
+   tap-target circle, detail + add-task sheets. Loaded after the four
+   shared stylesheets; everything here is prefixed `pj-`.
+   Animates only transform / opacity.
+   ===================================================================== */
+
+.pj { padding-top: 4px; }
+
+/* Section headers: "OPEN 3" */
+.pj-count {
+  display: inline-block; margin-left: 4px;
+  color: var(--label-tertiary); font-weight: 600; letter-spacing: 0;
+}
+
+/* ---------------------------------------------------------------------
+   Row
+   --------------------------------------------------------------------- */
+.pj-item {
+  position: relative;
+  overflow: hidden;
+  touch-action: pan-y;               /* horizontal drags are ours, vertical scroll is the browser's */
+}
+.pj-item[hidden] { display: none; }
+
+.pj-row {
+  --row-inset: 40px;                 /* 16 padding + 12 dot box + 12 gap */
+  position: relative; z-index: 1;
+  min-height: 52px;
+  background: var(--bg-elevated);    /* opaque so the swipe layer only shows while sliding */
+  will-change: transform;
+  user-select: none; -webkit-user-select: none;
+  cursor: pointer;
+}
+.pj-row.is-busy { opacity: .6; }
+
+/* Priority dot in the leading slot (the shared slot is a 56px thumb box) */
+.pj-row .ui-row-leading {
+  width: 12px; height: 12px; border-radius: 0;
+  background: transparent; overflow: visible;
+}
+.pj-dot { width: 10px; height: 10px; }
+.pj-dot--high   { background: var(--deny); }
+.pj-dot--normal { background: var(--pending); }
+.pj-dot--low    { background: var(--label-tertiary); }
+
+/* Title is a real button (keyboard-openable) styled as text */
+.pj-open {
+  display: block; width: 100%; max-width: 100%;
+  margin: 0; padding: 0; border: 0; background: transparent;
+  color: inherit; font: inherit; letter-spacing: inherit; text-align: left;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  cursor: pointer;
+}
+.pj-open:focus-visible { outline-offset: 0; border-radius: 4px; }
+.pj-open-text { display: inline; }
+
+.pj-row.is-done .pj-open-text { color: var(--label-secondary); text-decoration: line-through; text-decoration-color: var(--label-tertiary); }
+.pj-row.is-done .pj-dot { opacity: .45; }
+
+/* "In progress" pill next to the circle */
+.pj-pill { margin-right: 2px; }
+
+/* ---------------------------------------------------------------------
+   Tap target — 22px ring inside a 44px hit area
+   --------------------------------------------------------------------- */
+.pj-check {
+  flex: 0 0 auto;
+  width: 44px; height: 44px; margin: -8px -10px -8px 0;
+  padding: 0; border: 0; background: transparent; color: var(--label-tertiary);
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.pj-check::before {
+  content: ""; position: absolute;
+  width: 22px; height: 22px; border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--label-tertiary);
+  background: transparent;
+  transition: transform var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+}
+.pj-check { position: relative; }
+.pj-check-icon {
+  position: relative; width: 13px; height: 13px; color: #fff;
+  stroke-width: 3; opacity: 0; transform: scale(.6);
+  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-base) var(--ease-spring);
+}
+.pj-check:hover::before { box-shadow: inset 0 0 0 1.5px var(--label-secondary); }
+.pj-check:active::before { transform: scale(.9); }
+.pj-check[aria-pressed="true"]::before,
+.pj-check.is-static::before {
+  background: var(--approve);
+  box-shadow: inset 0 0 0 1.5px var(--approve);
+}
+.pj-check[aria-pressed="true"] .pj-check-icon,
+.pj-check.is-static .pj-check-icon { opacity: 1; transform: none; }
+.pj-check:focus-visible { outline-offset: -4px; }
+
+/* ---------------------------------------------------------------------
+   Swipe layer (behind the row; revealed as the row slides right)
+   --------------------------------------------------------------------- */
+.pj-swipe-bg {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: flex-start;
+  padding-left: 20px;
+  background: var(--approve); color: #fff;
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead); font-weight: 600;
+}
+.pj-swipe-action {
+  display: inline-flex; align-items: center; gap: 6px;
+  transform: scale(.85); opacity: .85;
+  transition: transform var(--dur-base) var(--ease-spring), opacity var(--dur-fast) var(--ease-out);
+}
+.pj-swipe-action .ui-icon { width: 20px; height: 20px; stroke-width: 2.4; }
+.pj-swipe-action--reopen { display: none; }
+.pj-item[data-swipe="reopen"] .pj-swipe-bg { background: var(--accent); }
+.pj-item[data-swipe="reopen"] .pj-swipe-action--done { display: none; }
+.pj-item[data-swipe="reopen"] .pj-swipe-action--reopen { display: inline-flex; }
+.pj-item.is-armed .pj-swipe-action { transform: scale(1); opacity: 1; }
+
+.pj-row.is-dragging { transition: none; }
+.pj-row.is-settling { transition: transform var(--dur-sheet) var(--ease-spring); }
+
+/* Row moving between sections */
+.pj-item.pj-enter { animation: pj-enter var(--dur-base) var(--ease-out); }
+@keyframes pj-enter {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Deep link from the activity feed (#task-<id>) */
+.pj-item { scroll-margin-top: 96px; }
+.pj-item:target .pj-row { animation: pj-target 2.4s var(--ease-out); }
+@keyframes pj-target {
+  0%   { box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 999px rgba(0,122,255,.12); }
+  100% { box-shadow: inset 3px 0 0 transparent, inset 0 0 0 999px transparent; }
+}
+
+/* ---------------------------------------------------------------------
+   Empty states (quiet inset card)
+   --------------------------------------------------------------------- */
+.pj-empty { margin: -14px 0 24px; padding: 22px 16px; text-align: center; }
+.pj-empty[hidden] { display: none; }
+.pj-empty-text {
+  margin: 0; color: var(--label-secondary);
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead);
+}
+.pj-hint { margin-top: -8px; color: var(--label-tertiary); }
+@media (hover: hover) and (pointer: fine) { .pj-hint { display: none; } }
+
+/* Nav "+" */
+.pj-add { flex: 0 0 auto; }
+.pj-add .ui-icon { width: 20px; height: 20px; }
+
+/* ---------------------------------------------------------------------
+   Sheets — add task / task detail
+   --------------------------------------------------------------------- */
+.pj-form { display: flex; flex-direction: column; gap: 14px; padding-top: 4px; }
+.pj-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.pj-field-row { display: flex; gap: 12px; }
+.pj-field-row > .pj-field { flex: 1 1 0; }
+.pj-label {
+  padding: 0 4px;
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote);
+  font-weight: 600; color: var(--label-secondary);
+}
+.pj-form .ui-select {
+  -webkit-appearance: none; appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--label-secondary) 50%), linear-gradient(135deg, var(--label-secondary) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 55%, calc(100% - 13px) 55%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 34px;
+}
+
+.pj-detail-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 4px 4px 0; }
+.pj-detail-meta {
+  margin: 0; padding: 0 4px;
+  color: var(--label-secondary);
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote);
+}
+.pj-detail-text {
+  margin: 0; padding: 0 4px; white-space: pre-wrap; word-wrap: break-word;
+  font-size: var(--text-body); line-height: var(--lh-body); letter-spacing: var(--ls-body);
+}
+.pj-detail-title {
+  margin: 0; padding: 0 4px;
+  font-size: var(--text-title2); line-height: var(--lh-title2); letter-spacing: var(--ls-title2); font-weight: var(--fw-title2);
+  word-wrap: break-word;
+}
+.pj-danger { margin-top: 8px; }
+.pj-sheet-actions { display: flex; gap: 8px; }
+.pj-sheet-actions > .ui-btn { flex: 1 1 0; }
+.pj-sheet-actions > .ui-btn--primary { flex: 1.6 1 0; }
+
+@media (max-width: 420px) {
+  .pj-field-row { flex-direction: column; gap: 14px; }
+}
+
+/* Reduced motion: crossfades only, keep the swipe functional */
+@media (prefers-reduced-motion: reduce) {
+  .pj-row.is-settling { transition-duration: var(--dur-fast); }
+  .pj-check-icon, .pj-check::before, .pj-swipe-action { transition-duration: var(--dur-fast); transform: none; }
+  .pj-item.pj-enter { animation: pj-fade var(--dur-fast) linear; }
+  .pj-item:target .pj-row { animation: none; box-shadow: inset 3px 0 0 var(--accent); }
+  @keyframes pj-fade { from { opacity: 0; } to { opacity: 1; } }
+}
