@@ -338,7 +338,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $isVideo = isVideoExt($ext);
                         if ($isVideo) {
                             // For videos we can't use getimagesize: non-empty + container sniff.
-                            if (!videoFileLooksValid((string)$_FILES['images']['tmp_name'][$i])) {
+                            if (!videoFileLooksValid((string)$_FILES['images']['tmp_name'][$i], $ext)) {
                                 $errors[] = "'{$origName}' doesn't look like a valid video file.";
                                 continue;
                             }
@@ -465,7 +465,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 $isVideo = isVideoExt($ext);
                 if ($isVideo) {
-                    if (!videoFileLooksValid((string)$_FILES['batch_images']['tmp_name'][$i])) {
+                    if (!videoFileLooksValid((string)$_FILES['batch_images']['tmp_name'][$i], $ext)) {
                         $errors[] = "'{$origName}' doesn't look like a valid video file.";
                         continue;
                     }

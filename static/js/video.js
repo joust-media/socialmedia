@@ -27,9 +27,12 @@
                fallback, twin, mime, data:{…} }
      App.video.showFallback(container)  force the card (also called on error)
      App.video.setMuted(container, bool)
-     App.video.getPoster(url) / setPoster(url, dataUrl)
+     App.video.getPoster(url) / setPoster(url, dataUrl)   (only image/jpeg|png|webp data URLs are ever returned)
+     App.video.hasNoPoster(url) / setNoPoster(url)        negative cache: nopos:<absolute url> = timestamp, 7-day TTL
+     App.video.clearCache()             remove every poster:* / nopos:* / duration:* key (sign-out)
      App.video.getDuration(url) / format(seconds)
-     App.video.probe(url, cb)           duration (+ opportunistic poster) via a hidden probe
+     App.video.probe(url, cb)           duration (+ opportunistic poster) via a hidden probe; ≤ 12 per page,
+                                        never for .mov when canPlayType('video/quicktime') is empty
      App.video.insertStamp(form)        insert the current time into the composer
    Events (bubble from the container): 'video:fallback', 'video:poster' {url, poster},
      'video:duration' {url, seconds}, 'video:mute' {muted}.
@@ -40,9 +43,17 @@
   var App = window.App = window.App || {};
   if (App.video) return;
 
-  var POSTER_PREFIX = 'poster:', DURATION_PREFIX = 'duration:';
-  var POSTER_MAX_W = 480, PROBE_MAX = 3, PROBE_TIMEOUT = 15000, FALLBACK_CHECK_MS = 1500;
+  var POSTER_PREFIX = 'poster:', DURATION_PREFIX = 'duration:', NOPOSTER_PREFIX = 'nopos:';
+  var POSTER_MAX_W = 480, PROBE_MAX = 3, PROBE_PAGE_MAX = 12, PROBE_TIMEOUT = 15000, FALLBACK_CHECK_MS = 1500;
+  var NOPOSTER_TTL = 7 * 24 * 60 * 60 * 1000;   // a tile that yielded no poster is not re-probed for a week
   var NETWORK_NO_SOURCE = 3;
+  // Only a JPEG/PNG/WebP data URL may come back out of localStorage into img.src / video.poster.
+  var POSTER_RE = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
+  var quickTimeOk = null;
+  function canDecodeQuickTime() {
+    if (quickTimeOk === null) { try { quickTimeOk = !!document.createElement('video').canPlayType('video/quicktime'); } catch (e) { quickTimeOk = false; } }
+    return quickTimeOk;
+  }
 
   function $(sel, root) { return (root || document).querySelector(sel); }
   function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -61,13 +72,24 @@
   }
 
   function lsGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
+  function lsDel(k) { try { window.localStorage.removeItem(k); } catch (e) {} }
+  function lsKeys(prefixes) {
+    var keys = [];
+    try {
+      for (var i = 0; i < window.localStorage.length; i++) {
+        var kk = window.localStorage.key(i);
+        if (kk && prefixes.some(function (p) { return kk.indexOf(p) === 0; })) keys.push(kk);
+      }
+    } catch (e) {}
+    return keys;
+  }
   function lsSet(k, v) {
     try { window.localStorage.setItem(k, v); return true; }
     catch (e) {
-      // Quota / private mode: drop the oldest posters and retry once.
+      // Quota / private mode: posters carry no timestamp, so evict half of them in
+      // localStorage's (arbitrary) key order, then retry once.
       try {
-        var keys = [];
-        for (var i = 0; i < window.localStorage.length; i++) { var kk = window.localStorage.key(i); if (kk && kk.indexOf(POSTER_PREFIX) === 0) keys.push(kk); }
+        var keys = lsKeys([POSTER_PREFIX]);
         keys.slice(0, Math.ceil(keys.length / 2)).forEach(function (kk) { window.localStorage.removeItem(kk); });
         window.localStorage.setItem(k, v); return true;
       } catch (e2) { return false; }
@@ -84,13 +106,30 @@
     /* ---------------- caches ---------------- */
     posterKey:   function (url) { return POSTER_PREFIX + absUrl(url); },
     durationKey: function (url) { return DURATION_PREFIX + absUrl(url); },
-    getPoster:   function (url) { return isBlob(url) ? null : lsGet(V.posterKey(url)); },
+    noPosterKey: function (url) { return NOPOSTER_PREFIX + absUrl(url); },
+    getPoster:   function (url) { var v = isBlob(url) ? null : lsGet(V.posterKey(url)); return v && POSTER_RE.test(v) ? v : null; },
     getDuration: function (url) { var v = isBlob(url) ? null : lsGet(V.durationKey(url)); var n = v == null ? NaN : parseFloat(v); return isFinite(n) ? n : null; },
     setPoster: function (url, dataUrl) {
-      if (!url || !dataUrl) return false;
+      if (!url || !dataUrl || !POSTER_RE.test(dataUrl)) return false;
       var ok = isBlob(url) ? false : lsSet(V.posterKey(url), dataUrl);
+      if (ok) lsDel(V.noPosterKey(url));
       V.applyPoster(url, dataUrl);
       return ok;
+    },
+    /* Negative cache: a probe that produced no poster is remembered for NOPOSTER_TTL (nopos:<url> = timestamp). */
+    hasNoPoster: function (url) {
+      if (isBlob(url)) return false;
+      var k = V.noPosterKey(url), t = parseInt(lsGet(k) || '', 10);
+      if (!isFinite(t)) return false;
+      if (Date.now() - t < NOPOSTER_TTL) return true;
+      lsDel(k); return false;
+    },
+    setNoPoster: function (url) { if (url && !isBlob(url) && !V.getPoster(url)) lsSet(V.noPosterKey(url), String(Date.now())); },
+    /* Forget every cached poster, negative result and duration (called on sign-out). */
+    clearCache: function () {
+      var keys = lsKeys([POSTER_PREFIX, NOPOSTER_PREFIX, DURATION_PREFIX]);
+      keys.forEach(lsDel);
+      return keys.length;
     },
     setDuration: function (url, seconds) {
       if (!url || typeof seconds !== 'number' || !isFinite(seconds)) return;
@@ -294,15 +333,19 @@
       var badge = $('[data-video-duration]', tile) || (tile.parentNode && $('[data-video-duration]', tile.parentNode));
       if (dur != null) V.applyDuration(url, dur);
       else if (badge) { var t = $('[data-video-duration-text]', badge); (t || badge).textContent = '--:--'; }
-      if ((dur == null && badge) || !poster) V.probe(url);
+      // Probe once for a missing duration/poster — but not again for a URL that already yielded no poster.
+      if (((dur == null && badge) || !poster) && !V.hasNoPoster(url)) V.probe(url);
     },
 
-    /* Hidden preload="metadata" probe, ≤ PROBE_MAX at a time. cb(seconds|null). Also captures a poster when it can. */
-    _queue: [], _active: 0, _probed: {},
+    /* Hidden preload="metadata" probe, ≤ PROBE_MAX at a time and ≤ PROBE_PAGE_MAX per page. cb(seconds|null).
+       Also captures a poster when it can. Skipped outright for .mov when this browser cannot decode QuickTime
+       (Chrome / Firefox): the probe could never yield anything. */
+    _queue: [], _active: 0, _probed: {}, _probeCount: 0,
     probe: function (url, cb) {
       var key = absUrl(url);
       if (V._probed[key]) { if (cb) cb(V.getDuration(url)); return; }
-      V._probed[key] = true;
+      if ((extOf(url) === 'mov' && !canDecodeQuickTime()) || V._probeCount >= PROBE_PAGE_MAX) { if (cb) cb(V.getDuration(url)); return; }
+      V._probed[key] = true; V._probeCount++;
       V._queue.push({ url: url, cb: cb });
       V._drain();
     },
@@ -323,9 +366,13 @@
         try { v.pause(); v.removeAttribute('src'); while (v.firstChild) v.removeChild(v.firstChild); v.load(); } catch (e) {}
         if (v.parentNode) v.parentNode.removeChild(v);
       };
-      var finish = function (sec) {
+      var finish = function (sec, timedOut) {
         if (finished) return; finished = true;
         clearTimeout(timer);
+        // The probe ran to its end (error, no playable source, or metadata without a frame) and left no
+        // poster: remember that so the next page load does not fetch this file again. A timeout is not
+        // remembered (it may just have been a slow network).
+        if (needPoster && !timedOut) V.setNoPoster(url);
         done(sec);
         // Release the element only once its range fetch has gone idle — tearing it down mid-fetch
         // aborts the request, which shows up as a failed media load in diagnostics.
@@ -335,7 +382,7 @@
         v.addEventListener('suspend', idle, { once: true });
         v.addEventListener('stalled', idle, { once: true });
       };
-      var timer = setTimeout(function () { finish(null); }, PROBE_TIMEOUT);
+      var timer = setTimeout(function () { finish(null, true); }, PROBE_TIMEOUT);
       var fail = function () { finish(null); };
       v.addEventListener('error', fail); s.addEventListener('error', fail);
       v.addEventListener('loadedmetadata', function () {

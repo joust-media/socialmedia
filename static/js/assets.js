@@ -184,7 +184,7 @@
         // "Open video / Download" card inside the slide when the browser can't decode it.
         var box = App.video
           ? App.video.build(item.src, { mime: item.mime, poster: item.poster || App.video.getPoster(item.src), autoplay: true, unmute: true,
-                                        cls: 'ui-viewer-video', download: item.download, label: item.label })
+                                        cls: 'ui-viewer-video', download: item.download, label: item.label, twin: item.twin || '' })
           : null;
         if (box) {
           media = $('video', box);
@@ -620,7 +620,7 @@
     tileToItem: function (tile) {
       var d = tile.dataset;
       return { id: parseInt(d.id, 10), kind: d.kind, status: d.status, src: d.src, type: d.type || 'image', mime: d.mime || '',
-               label: d.label || '', download: d.download || '', endpoint: d.endpoint, manage: d.manage || '', tile: tile };
+               label: d.label || '', download: d.download || '', endpoint: d.endpoint, manage: d.manage || '', twin: d.twin || '', tile: tile };
     },
     openAt: function (tile) {
       var self = this, items = this.tiles().map(function (t) { return self.tileToItem(t); });

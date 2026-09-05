@@ -540,7 +540,7 @@ if (!function_exists('studioComposerHtml')) {
               . '<label class="studio-dropzone studio-dropzone--sm" data-file-drop>'
               . '<input type="file" name="images[]" data-composer-files accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov" multiple' . ($slots <= 0 ? ' disabled' : '') . '>'
               . '<span class="studio-dropzone-label">Choose files</span>'
-              . '<span class="studio-dropzone-hint">or drop them here · up to ' . $maxMb . ' MB · JPG, PNG, GIF, WebP, MP4, WebM</span>'
+              . '<span class="studio-dropzone-hint">or drop them here · up to ' . $maxMb . ' MB · JPG, PNG, GIF, WebP, MP4, WebM, MOV</span>'
               . '</label>'
               . '<ul class="studio-filelist" data-composer-filelist role="list"></ul>'
               . '</section>';

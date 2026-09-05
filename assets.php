@@ -136,7 +136,7 @@ if (!function_exists('assetsUrl')) {
 if (!function_exists('assetMediaMeta')) {
     function assetMediaMeta(string $url): array {
         $ext  = strtolower(pathinfo(parse_url($url, PHP_URL_PATH) ?: $url, PATHINFO_EXTENSION));
-        $isV  = isVideoExt($ext) || $ext === 'm4v';
+        $isV  = isVideoExt($ext);
         return ['type' => $isV ? 'video' : 'image', 'ext' => $ext ?: 'jpg', 'mime' => $isV ? videoMime($ext) : ''];
     }
 }
@@ -197,6 +197,7 @@ if ($view === 'library') {
                 'label'    => 'Library image',               // never the raw filename in the UI
                 'download' => (string)$r['filename'],
                 'manage'   => '',
+                'twin'     => $meta['type'] === 'video' ? videoTwinUrl($url, libraryDir($slug) . '/' . $r['filename']) : '',
             ];
         }
     }
@@ -246,6 +247,7 @@ if ($view === 'library') {
                 'label'    => $label,
                 'download' => ($stem !== '' ? $stem : 'image') . '.' . $meta['ext'],
                 'manage'   => $isAdmin ? clientUrl('add-feature.php', ['module' => 'tires', 'edit_item' => $itemId]) : '',
+                'twin'     => $meta['type'] === 'video' ? videoTwinUrl(basePath() . '/' . ltrim((string)$r['image_url'], '/')) : '',
             ];
         }
     } else {
@@ -409,7 +411,7 @@ include __DIR__ . '/partials/layout-top.php';
                 data-asset data-id="<?= (int)$it['id'] ?>" data-kind="<?= esc($it['kind']) ?>" data-status="<?= esc($it['status']) ?>"
                 data-src="<?= esc($it['src']) ?>" data-type="<?= esc($it['type']) ?>"<?= $it['mime'] !== '' ? ' data-mime="' . esc($it['mime']) . '"' : '' ?>
                 data-label="<?= esc($it['label']) ?>" data-download="<?= esc($it['download']) ?>"
-                data-endpoint="<?= esc($endpoint) ?>"<?= $it['manage'] !== '' ? ' data-manage="' . esc($it['manage']) . '"' : '' ?>
+                data-endpoint="<?= esc($endpoint) ?>"<?= $it['manage'] !== '' ? ' data-manage="' . esc($it['manage']) . '"' : '' ?><?= !empty($it['twin']) ? ' data-twin="' . esc($it['twin']) . '"' : '' /* transcoded .mp4 next to a .mov → second <source> in the viewer */ ?>
                 aria-label="<?= esc('Open ' . $it['label'] . ', ' . ($i + 1) . ' of ' . $total) ?>">
           <?php if ($it['type'] === 'video'): ?>
             <?= videoTile($it['src'], ['badge' => false]) /* poster when App.video has one cached, else dark tile + play glyph */ ?>

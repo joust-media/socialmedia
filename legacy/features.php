@@ -768,7 +768,7 @@ $splitName = function($name) {
     const btn=e.target.closest('[data-delete-tire]');if(!btn)return;
     if(!confirm('Delete this and all its images? This cannot be undone.'))return;
     const tireId=btn.getAttribute('data-delete-tire');btn.disabled=true;btn.textContent='Deleting…';
-    try{const fd=new FormData();fd.append('action','delete_tire');fd.append('tire_id',tireId);fd.append('actor','client');const r=await fetch(APP_BASE+'/tire-status.php',{method:'POST',body:fd}),d=await r.json();if(!d.ok)throw new Error(d.error||'Failed');
+    try{const fd=new FormData();fd.append('action','delete_tire');fd.append('tire_id',tireId);fd.append('actor','client');fd.append('client',CLIENT_SLUG);const r=await fetch(APP_BASE+'/tire-status.php',{method:'POST',body:fd}),d=await r.json();if(!d.ok)throw new Error(d.error||'Failed');
       showToast('✓ Deleted');setTimeout(()=>window.location.href=LIST_URL,500);
     }catch(err){btn.disabled=false;btn.textContent='Delete';showToast('Delete failed: '+(err.message||'unknown'))}
   });
@@ -789,7 +789,7 @@ $splitName = function($name) {
     const text=ta.value.trim();
     if(!text){ta.focus();return}
     saveBtn.disabled=true;status.className='comment-status saving';status.textContent='Sending…';
-    try{const fd=new FormData();fd.append('id',imageId);fd.append('comment',text);fd.append('actor','client');const r=await fetch(APP_BASE+'/tire-status.php',{method:'POST',body:fd}),d=await r.json();if(!d.ok)throw new Error(d.error||'Failed');
+    try{const fd=new FormData();fd.append('id',imageId);fd.append('comment',text);fd.append('actor','client');fd.append('client',CLIENT_SLUG);const r=await fetch(APP_BASE+'/tire-status.php',{method:'POST',body:fd}),d=await r.json();if(!d.ok)throw new Error(d.error||'Failed');
       showToast('✓ Message sent');
       // Reload so the new message appears in the thread above
       setTimeout(()=>window.location.reload(),300);

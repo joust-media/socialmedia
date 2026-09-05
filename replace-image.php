@@ -90,7 +90,7 @@ if (!in_array($ext, $allowedExt, true)) {
 
 $isVideo = isVideoExt($ext);
 if ($isVideo) {
-    if (!videoFileLooksValid((string)$tmpName)) {
+    if (!videoFileLooksValid((string)$tmpName, $ext)) {
         http_response_code(400);
         echo json_encode(['ok' => false, 'error' => 'Not a valid video file']);
         exit;

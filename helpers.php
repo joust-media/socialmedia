@@ -379,7 +379,7 @@ if (!function_exists('videoMime')) {
         $ext = strtolower(trim($ext));
         if ($ext === 'webm') return 'video/webm';
         if ($ext === 'mov')  return 'video/quicktime';
-        return 'video/mp4'; // mp4 / m4v / unknown
+        return 'video/mp4'; // mp4 / unknown
     }
 }
 
@@ -390,23 +390,42 @@ function videoMimeForExt($ext) {
 
 if (!function_exists('videoFileLooksValid')) {
     /**
-     * Cheap container sniff for an uploaded video (applied uniformly to
-     * mp4 / webm / mov): non-empty and either an ISO-BMFF / QuickTime box
-     * header (ftyp, moov, mdat, free, skip, wide, pnot, uuid at offset 4), the
-     * WebM/Matroska EBML magic, or a finfo MIME of video/*.
+     * Container sniff for an uploaded video. $ext is the extension the file
+     * will be stored under (mp4 / webm / mov; the upload's tmp_name has none) —
+     * the container must agree with it:
+     *   webm      → EBML magic 1A 45 DF A3 at offset 0.
+     *   mp4 / mov → an ISO-BMFF/QuickTime `ftyp` box: big-endian box size ≥ 8
+     *               and a known major brand (isom, iso2, iso5, iso6, mp41, mp42,
+     *               avc1, "qt  ", "M4V ", mp71, dash). A file that starts with
+     *               `ftyp` but fails that is rejected outright (no finfo rescue).
+     *               Legacy QuickTime layouts without a leading ftyp (wide/mdat/
+     *               moov first) may still pass when finfo says
+     *               video/mp4 | video/quicktime | video/x-m4v.
+     * Anything else (other video/* MIMEs, other extensions) → false.
      */
-    function videoFileLooksValid(string $path): bool {
+    function videoFileLooksValid(string $path, string $ext = ''): bool {
         if (!is_file($path) || filesize($path) === 0) return false;
         $h = (string)@file_get_contents($path, false, null, 0, 64);
-        if (strlen($h) < 8) return false;
-        if (strncmp($h, "\x1A\x45\xDF\xA3", 4) === 0) return true;                 // WebM / Matroska
-        if (in_array(substr($h, 4, 4), ['ftyp', 'moov', 'mdat', 'free', 'skip', 'wide', 'pnot', 'uuid'], true)) return true;
+        if (strlen($h) < 12) return false;
+        $ext = strtolower(trim($ext));
+        if ($ext === '') $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        if (!in_array($ext, ['mp4', 'webm', 'mov'], true)) return false;
+
+        if ($ext === 'webm') {
+            return strncmp($h, "\x1A\x45\xDF\xA3", 4) === 0;                          // EBML (WebM / Matroska)
+        }
+        if (strncmp($h, "\x1A\x45\xDF\xA3", 4) === 0) return false;                  // EBML under an mp4/mov name
+        $size = unpack('N', substr($h, 0, 4))[1];
+        if (substr($h, 4, 4) === 'ftyp') {
+            $brands = ['isom', 'iso2', 'iso5', 'iso6', 'mp41', 'mp42', 'avc1', 'qt  ', 'M4V ', 'mp71', 'dash'];
+            return $size >= 8 && in_array(substr($h, 8, 4), $brands, true);
+        }
         if (function_exists('finfo_open')) {
             $f = @finfo_open(FILEINFO_MIME_TYPE);
             if ($f) {
                 $mime = (string)@finfo_file($f, $path);
                 finfo_close($f);
-                if (strpos($mime, 'video/') === 0) return true;
+                return in_array($mime, ['video/mp4', 'video/quicktime', 'video/x-m4v'], true);
             }
         }
         return false;
@@ -433,16 +452,21 @@ function libraryFileUrl($slug, $filename) {
 
 /** List media filenames (images + videos, spec §6) sitting directly in a
  *  brand's library folder, natural-sorted. Skips dotfiles (.DS_Store etc.),
- *  subfolders, and anything that isn't a recognized media extension. */
+ *  subfolders, anything that isn't a recognized media extension, and the
+ *  transcoded .mp4 twin of a .mov (surfaced through videoTwinUrl() instead). */
 function scanLibraryDir($dir) {
     if (!is_dir($dir)) return [];
     $exts = array_merge(imageExts(), videoExts());
     $out = [];
-    foreach (scandir($dir) as $f) {
+    $names = scandir($dir);
+    $set = array_flip($names);
+    foreach ($names as $f) {
         if ($f === '.' || $f === '..' || strpos($f, '.') === 0) continue;
         if (!is_file($dir . '/' . $f)) continue;
         $ext = strtolower(pathinfo($f, PATHINFO_EXTENSION));
         if (!in_array($ext, $exts, true)) continue;
+        // X.mp4 next to X.mov is the transcoded twin videoTwinUrl() serves as the second <source>, not its own asset.
+        if ($ext === 'mp4' && (isset($set[substr($f, 0, -3) . 'mov']) || isset($set[substr($f, 0, -3) . 'MOV']))) continue;
         $out[] = $f;
     }
     natcasesort($out);

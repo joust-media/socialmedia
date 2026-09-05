@@ -227,7 +227,7 @@ for ($i = 0; $i < $fileCount; $i++) {
     }
     $isVideo = isVideoExt($ext);
     if ($isVideo) {
-        if (!videoFileLooksValid((string)$tmpName)) { $errors[] = "$name: doesn't look like a valid video file"; continue; }
+        if (!videoFileLooksValid((string)$tmpName, $ext)) { $errors[] = "$name: doesn't look like a valid video file"; continue; }
     } else {
         if (!@getimagesize($tmpName)) { $errors[] = "$name: not a valid image"; continue; }
     }

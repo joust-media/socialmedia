@@ -54,36 +54,98 @@ if (!function_exists('videoUrlExt')) {
     }
 }
 
-if (!function_exists('videoDiskPath')) {
-    /** Best-effort absolute disk path for a media URL this app serves (uploads/ or /media/library/). */
-    function videoDiskPath(string $url): string
+if (!function_exists('videoMediaRoots')) {
+    /**
+     * Directories a media URL this app serves may resolve into, as realpath()s:
+     * uploads/ always, plus the brand's library folder when the URL is
+     * /media/library/<slug>/<file>. Missing directories are simply absent.
+     * Returns [$roots, $rel] where $rel is the app-relative path (basePath stripped).
+     */
+    function videoMediaRoots(string $url): array
     {
-        $path = parse_url($url, PHP_URL_PATH);
-        $path = is_string($path) ? $path : $url;
-        $appRoot = dirname(__DIR__, 2);
+        $parts = @parse_url($url);
+        // Only root-rooted / relative paths belong to this app: anything with a
+        // scheme or host (https://…, //host/…) must not be mapped to local disk.
+        if (!is_array($parts) || isset($parts['scheme']) || isset($parts['host'])) return [[], ''];
+        $path = isset($parts['path']) && is_string($parts['path']) ? $parts['path'] : '';
         $base = function_exists('basePath') ? basePath() : '';
         if ($base !== '' && strpos($path, $base . '/') === 0) $path = substr($path, strlen($base));
+        $roots = [];
+        $up = realpath(dirname(__DIR__, 2) . '/uploads');
+        if ($up !== false) $roots[] = rtrim($up, '/');
+        if (preg_match('#^/media/library/([^/]+)/[^/]+$#', $path, $m) && function_exists('libraryDir')) {
+            $slug = videoLibrarySlug($m[1]);
+            $lib  = $slug !== '' ? realpath(libraryDir($slug)) : false;
+            if ($lib !== false) $roots[] = rtrim($lib, '/');
+        }
+        return [$roots, $path];
+    }
+}
+
+if (!function_exists('videoLibrarySlug')) {
+    /** Decoded brand slug when it is a plain [a-z0-9-] token (never sanitised into a different brand); '' otherwise. */
+    function videoLibrarySlug(string $encoded): string
+    {
+        $slug = strtolower(rawurldecode($encoded));
+        return preg_match('/^[a-z0-9\-]+$/', $slug) ? $slug : '';
+    }
+}
+
+if (!function_exists('videoSafeFilename')) {
+    /** rawurldecode()d final path segment, or '' when it could leave its directory. */
+    function videoSafeFilename(string $encoded): string
+    {
+        $name = rawurldecode($encoded);
+        if ($name === '' || $name === '.' || $name === '..') return '';
+        if (strpos($name, '/') !== false || strpos($name, '\\') !== false || strpos($name, "\0") !== false) return '';
+        return $name;
+    }
+}
+
+if (!function_exists('videoDiskPath')) {
+    /** Best-effort absolute disk path for a media URL this app serves (uploads/ or /media/library/); '' for anything else. */
+    function videoDiskPath(string $url): string
+    {
+        [$roots, $path] = videoMediaRoots($url);
+        if ($path === '') return '';
+        $appRoot = dirname(__DIR__, 2);
         if (preg_match('#^/?uploads/([^/]+)$#', $path, $m)) {
-            return $appRoot . '/uploads/' . rawurldecode($m[1]);
+            $name = videoSafeFilename($m[1]);
+            return $name === '' ? '' : $appRoot . '/uploads/' . $name;
         }
         if (preg_match('#^/media/library/([^/]+)/([^/]+)$#', $path, $m) && function_exists('libraryDir')) {
-            $slug = preg_replace('/[^a-z0-9\-]/', '', strtolower(rawurldecode($m[1])));
-            if ($slug === '') return '';
-            return libraryDir($slug) . '/' . rawurldecode($m[2]);
+            $slug = videoLibrarySlug($m[1]);
+            $name = videoSafeFilename($m[2]);
+            if ($slug === '' || $name === '') return '';
+            return libraryDir($slug) . '/' . $name;
         }
         return '';
     }
 }
 
 if (!function_exists('videoTwinUrl')) {
-    /** URL of a transcoded .mp4 twin (same basename) if it exists on disk next to a .mov; '' otherwise. */
+    /**
+     * URL of a transcoded .mp4 twin (same basename) if it exists on disk next to a .mov; '' otherwise.
+     * The resolved twin must sit inside uploads/ or the brand's library folder (realpath containment) —
+     * a DB URL cannot make this probe, or the emitted <source>, point anywhere else.
+     */
     function videoTwinUrl(string $url, ?string $path = null): string
     {
         if (videoUrlExt($url) !== 'mov') return '';
         $disk = $path !== null && $path !== '' ? $path : videoDiskPath($url);
-        if ($disk === '' || strpos($disk, '..') !== false) return '';
+        // (libraryDir() itself is "…/../media/library/<slug>", so only the file name is checked for "..";
+        //  directory traversal in the rest of the path is what the realpath containment below catches.)
+        if ($disk === '' || strpos(basename($disk), '..') !== false || strpos($disk, "\0") !== false) return '';
         $twin = preg_replace('/\.mov$/i', '.mp4', $disk);
         if ($twin === $disk || !is_file($twin)) return '';
+        $real = realpath($twin);
+        if ($real === false) return '';
+        [$roots] = videoMediaRoots($url);
+        $contained = false;
+        foreach ($roots as $root) {
+            if (strpos($real, $root . '/') === 0) { $contained = true; break; }
+        }
+        if (!$contained) return '';
         return preg_replace('/\.mov(\?.*)?$/i', '.mp4$1', $url);
     }
 }

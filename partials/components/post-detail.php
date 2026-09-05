@@ -67,8 +67,8 @@ if (!function_exists('pdIsVideo')) {
         if ($type === 'video') return true;
         if ($type === 'image') return false;
         $ext = strtolower(pathinfo((string)($img['url'] ?? ''), PATHINFO_EXTENSION));
-        if (function_exists('isVideoExt')) return isVideoExt($ext) || $ext === 'm4v';
-        return in_array($ext, ['mp4', 'webm', 'mov', 'm4v'], true);
+        if (function_exists('isVideoExt')) return isVideoExt($ext);
+        return in_array($ext, ['mp4', 'webm', 'mov'], true);
     }
 }
 

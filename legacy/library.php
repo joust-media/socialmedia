@@ -37,7 +37,9 @@ $libTableReady = hasLibraryImagesTable($pdo);
 $images = [];
 $counts = ['pending' => 0, 'approved' => 0, 'denied' => 0];
 if ($client && $libTableReady) {
-    $images = syncLibraryImages($pdo, (int)$client['id'], $client['slug']);
+    // This legacy page only knows <img> + an image lightbox: leave videos to assets.php.
+    $images = array_values(array_filter(syncLibraryImages($pdo, (int)$client['id'], $client['slug']),
+        fn($img) => !isVideoExt(pathinfo((string)$img['filename'], PATHINFO_EXTENSION))));
     foreach ($images as $img) {
         if (isset($counts[$img['status']])) { $counts[$img['status']]++; }
     }

@@ -144,6 +144,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       <div class="error" style="background:#14532d;color:#bbf7d0;border-color:#166534;">
         ✓ Signed out. Sign in again to continue.
       </div>
+      <script>
+        // logout.php only redirects (no DOM), so the signed-out state of this page is the first
+        // same-origin document after sign-out: drop App.video's cached poster frames / durations
+        // (localStorage poster:* nopos:* duration:*) so client media does not linger on a shared device.
+        (function () {
+          try {
+            var drop = [];
+            for (var i = 0; i < localStorage.length; i++) {
+              var k = localStorage.key(i);
+              if (k && /^(poster|nopos|duration):/.test(k)) drop.push(k);
+            }
+            drop.forEach(function (k) { localStorage.removeItem(k); });
+          } catch (e) {}
+        })();
+      </script>
     <?php endif; ?>
 
     <div class="field">

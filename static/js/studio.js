@@ -572,7 +572,7 @@
       return;
     }
     if (!/^image\//.test(file.type) && !/^video\/(mp4|webm|quicktime)$/.test(file.type)) {
-      status.textContent = 'Unsupported type — use JPG, PNG, GIF, WebP, MP4 or WebM.'; status.classList.add('is-error'); return;
+      status.textContent = 'Unsupported type — use JPG, PNG, GIF, WebP, MP4, WebM or MOV.'; status.classList.add('is-error'); return;
     }
     this.enqueue(file, item);
   };
