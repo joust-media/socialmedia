@@ -30,8 +30,12 @@ jobs:
           password: ${{ secrets.FTP_PASSWORD }}
 
           # The folder on the GoDaddy server to deploy into.
-          # This project lives in the socialmedia subfolder of public_html; deploys are scoped there and never touch the rest of public_html.
-          server-dir: public_html/socialmedia/
+          # The FTP account's root IS the site's document root (its root listing
+          # contains css/, js/, images/, media/ and the live socialmedia/ folder),
+          # so paths here are relative to it. Do NOT prefix with public_html/ -
+          # that creates a bogus nested folder and never touches the live site.
+          # Deploys are scoped to socialmedia/ and never touch the rest of the site.
+          server-dir: socialmedia/
 
           # Upload from the repository root.
           local-dir: ./

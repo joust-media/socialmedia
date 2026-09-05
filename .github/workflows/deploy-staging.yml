@@ -2,7 +2,12 @@ name: Deploy to staging
 
 # Manually deploys ANY branch/tag to a separate "staging" folder on GoDaddy so a
 # redesign can be tested against a copy of the database without touching the
-# live site in public_html/socialmedia/.
+# live site in socialmedia/.
+#
+# The FTP account's root IS the site's document root (its root listing contains
+# css/, js/, images/, media/ and the live socialmedia/ folder), so server paths
+# are relative to it. Do NOT prefix with public_html/ - that creates a bogus
+# nested folder that is not served (joustmedia.com/socialmedia-staging -> 404).
 #
 # This file must live on the DEFAULT branch (main) before it shows up under
 # Actions > "Deploy to staging" > "Run workflow". The branch you pick in the
@@ -18,9 +23,9 @@ on:
         default: claude/portal-redesign
         type: string
       server_dir:
-        description: "Target folder on the server (must end with / and contain 'staging')"
+        description: "Target folder on the server, relative to the FTP root = document root (must end with / and contain 'staging')"
         required: true
-        default: public_html/socialmedia-staging/
+        default: socialmedia-staging/
         type: string
       confirm:
         description: "Type the word: staging"
@@ -49,9 +54,10 @@ jobs:
           if [ "$CONFIRM" != "staging" ]; then
             echo "::error::confirm must be exactly 'staging' (got '$CONFIRM')."; exit 1
           fi
-          if [ "$SERVER_DIR" = "public_html/socialmedia/" ]; then
-            echo "::error::server_dir is the PRODUCTION folder. Refusing."; exit 1
-          fi
+          case "$SERVER_DIR" in
+            socialmedia/|public_html/socialmedia/|/socialmedia/|./socialmedia/)
+              echo "::error::server_dir is the PRODUCTION folder. Refusing."; exit 1 ;;
+          esac
           case "$SERVER_DIR" in
             *staging*) ;;
             *) echo "::error::server_dir must contain 'staging' (got '$SERVER_DIR')."; exit 1 ;;
