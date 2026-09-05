@@ -23,7 +23,7 @@ $uiTabs = [
                    'scripts' => ['index']],
     'assets'   => ['label' => 'Assets',   'icon' => 'photo',     'page' => 'library.php',
                    'scripts' => ['library', 'features', 'tires', 'assets']],
-    'posts'    => ['label' => 'Posts',    'icon' => 'grid',      'page' => 'feed.php',
+    'posts'    => ['label' => 'Posts',    'icon' => 'grid',      'page' => 'posts.php',
                    'scripts' => ['feed', 'posts']],
     'projects' => ['label' => 'Projects', 'icon' => 'checklist', 'page' => 'projects.php',
                    'scripts' => ['projects', 'add-project']],
