@@ -631,11 +631,13 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
     $tireIds    = [];
     $postIds    = [];
     $libImgIds  = [];
+    $taskIds    = [];
     foreach ($grouped as $g) {
         if ($g['entity_type'] === 'tire_image')    { $imageIds[]  = (int)$g['entity_id']; }
         if ($g['entity_type'] === 'tire')          { $tireIds[]   = (int)$g['entity_id']; }
         if ($g['entity_type'] === 'post')          { $postIds[]   = (int)$g['entity_id']; }
         if ($g['entity_type'] === 'library_image') { $libImgIds[] = (int)$g['entity_id']; }
+        if ($g['entity_type'] === 'task')          { $taskIds[]   = (int)$g['entity_id']; }
     }
     $imageMeta = [];
     if ($imageIds) {
@@ -649,7 +651,7 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
         $nameSel = $hasDisplayName ? 'ti.display_name' : "'' AS display_name";
         $s = $pdo->prepare("
             SELECT ti.id AS image_id, ti.tire_id, ti.caption, {$nameSel},
-                   m.slug AS module_slug
+                   t.name AS tire_name, m.slug AS module_slug
               FROM tire_images ti
               INNER JOIN tires t ON t.id = ti.tire_id
               INNER JOIN modules m ON m.id = t.module_id
@@ -659,6 +661,7 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
         foreach ($s->fetchAll() as $r) {
             $imageMeta[(int)$r['image_id']] = [
                 'tire_id'      => (int)$r['tire_id'],
+                'tire_name'    => (string)($r['tire_name'] ?? ''),
                 'module_slug'  => $r['module_slug'],
                 'display_name' => $r['display_name'] ?? '',
                 'caption'      => $r['caption'] ?? '',
@@ -670,14 +673,31 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
         $tireIds = array_values(array_unique($tireIds));
         $ph = implode(',', array_fill(0, count($tireIds), '?'));
         $s = $pdo->prepare("
-            SELECT t.id AS tire_id, m.slug AS module_slug
+            SELECT t.id AS tire_id, t.name AS tire_name, m.slug AS module_slug
               FROM tires t
               INNER JOIN modules m ON m.id = t.module_id
              WHERE t.id IN ($ph)
         ");
         $s->execute($tireIds);
         foreach ($s->fetchAll() as $r) {
-            $tireMeta[(int)$r['tire_id']] = ['module_slug' => $r['module_slug']];
+            $tireMeta[(int)$r['tire_id']] = [
+                'module_slug' => $r['module_slug'],
+                'name'        => (string)($r['tire_name'] ?? ''),
+            ];
+        }
+    }
+    $taskMeta = [];
+    if ($taskIds) {
+        $taskIds = array_values(array_unique($taskIds));
+        $ph = implode(',', array_fill(0, count($taskIds), '?'));
+        try {
+            $s = $pdo->prepare("SELECT id, title FROM tasks WHERE id IN ($ph)");
+            $s->execute($taskIds);
+            foreach ($s->fetchAll() as $r) {
+                $taskMeta[(int)$r['id']] = ['title' => (string)($r['title'] ?? '')];
+            }
+        } catch (Throwable $e) {
+            $taskMeta = [];
         }
     }
     $postMeta = [];
@@ -715,6 +735,8 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
             $g['_meta'] = $postMeta[(int)$g['entity_id']];
         } elseif ($g['entity_type'] === 'library_image' && isset($libImgMeta[(int)$g['entity_id']])) {
             $g['_meta'] = $libImgMeta[(int)$g['entity_id']];
+        } elseif ($g['entity_type'] === 'task' && isset($taskMeta[(int)$g['entity_id']])) {
+            $g['_meta'] = $taskMeta[(int)$g['entity_id']];
         }
     }
     unset($g);
@@ -812,94 +834,440 @@ function activityLink($entry) {
     }
 }
 
+// =====================================================================
+// Humanized activity (spec §4.1 / §9: "Activity feed contains zero raw
+// filenames"). Every sentence is built from entity_type + action + actor +
+// the *parent's* name (post title, collection name, "Library", task title).
+// The stored `summary` string is never printed — old rows embed filenames.
+// `detail` is quoted only for `commented` rows.
+// =====================================================================
+
+/** True when a label is really a filename / upload stem (IMG_0042.jpg, hf-20260904-…, img_66f1…). */
+if (!function_exists('activityLooksLikeFilename')) {
+    function activityLooksLikeFilename(string $s): bool {
+        $s = trim($s);
+        if ($s === '') return false;
+        if (preg_match('/\.(jpe?g|png|gif|webp|heic|mp4|mov|m4v|webm|avi|mkv)$/i', $s)) return true;
+        if (preg_match('/^(img|vid|batch(_vid)?|feat|veh)_[0-9a-f.]+/i', $s)) return true;   // this app's upload prefixes
+        if (preg_match('/^hf-\d{8}-\d{6}/i', $s)) return true;                                 // Higgsfield export stems
+        if (preg_match('/^(IMG|DSC|DSCF|PXL|MVI|GOPR|DJI)[_-]?\d{3,}/i', $s)) return true;     // camera / phone stems
+        return false;
+    }
+}
+
+/**
+ * Resolve the human "thing + parent" for one recentActivity() entry.
+ *
+ * Returns ['thing' => 'post'|'image'|'collection'|'task'|'item',
+ *          'name'   => post title | task title | collection name | '' ,
+ *          'parent' => collection name | 'Library' | '' ,
+ *          'parent_key' => stable key used to collapse runs].
+ * Never returns a filename: library images have no name at all (their
+ * parent is "Library"), tire images are named by their collection.
+ */
+if (!function_exists('activityParentName')) {
+    function activityParentName(array $entry): array {
+        $meta = $entry['_meta'] ?? [];
+        $id   = (int)($entry['entity_id'] ?? 0);
+        $firstLine = static function ($s, $max = 60) {
+            $s = trim((string)$s);
+            if ($s === '') return '';
+            $s = preg_split('/\r\n|\r|\n/', $s)[0];
+            $s = trim(preg_replace('/\s+/', ' ', $s));
+            if (function_exists('mb_strlen') && mb_strlen($s) > $max) {
+                $s = rtrim(mb_substr($s, 0, $max - 1)) . '…';
+            }
+            return $s;
+        };
+        switch ($entry['entity_type'] ?? '') {
+            case 'post':
+                // Internal reference name first, then the caption's first line.
+                // Either could have been typed as an upload stem — never show one.
+                $name = trim((string)($meta['name'] ?? ''));
+                if ($name === '' || activityLooksLikeFilename($name)) $name = $firstLine($meta['caption'] ?? '');
+                if (activityLooksLikeFilename($name)) $name = '';
+                return ['thing' => 'post', 'name' => $name, 'parent' => '', 'parent_key' => 'post:' . $id];
+            case 'tire_image':
+                $tireId = (int)($meta['tire_id'] ?? 0);
+                return ['thing' => 'image', 'name' => '',
+                        'parent' => trim((string)($meta['tire_name'] ?? '')),
+                        'parent_key' => 'tire:' . ($tireId > 0 ? $tireId : 'unknown')];
+            case 'tire':
+                return ['thing' => 'collection', 'name' => trim((string)($meta['name'] ?? '')),
+                        'parent' => '', 'parent_key' => 'tire:' . $id];
+            case 'library_image':
+                return ['thing' => 'image', 'name' => '', 'parent' => 'Library', 'parent_key' => 'library'];
+            case 'task':
+                return ['thing' => 'task', 'name' => $firstLine($meta['title'] ?? '', 80),
+                        'parent' => '', 'parent_key' => 'task:' . $id];
+            default:
+                return ['thing' => 'item', 'name' => '', 'parent' => '',
+                        'parent_key' => (string)($entry['entity_type'] ?? 'item') . ':' . $id];
+        }
+    }
+}
+
+/**
+ * Deep link for an activity row using the redesign's URL contracts
+ * (Posts detail sheet, Assets viewer / collection, Projects task anchor).
+ * Cross-client feeds pass the entry's own company slug through clientUrl().
+ * $collapsed = true → link to the parent (collection / Library) instead of
+ * one item, because the row stands for several items.
+ */
+if (!function_exists('activityDeepLink')) {
+    function activityDeepLink(array $entry, bool $collapsed = false): string {
+        $slug = (string)($entry['company_slug'] ?? '');
+        $qs   = $slug !== '' ? ['client' => $slug] : [];
+        $id   = (int)($entry['entity_id'] ?? 0);
+        $meta = $entry['_meta'] ?? [];
+        switch ($entry['entity_type'] ?? '') {
+            case 'post':
+                return clientUrl('posts', $qs + ['post' => $id]);
+            case 'tire_image':
+                $tireId = (int)($meta['tire_id'] ?? 0);
+                $p = $qs + ['view' => 'collections'];
+                if ($tireId > 0) $p['item'] = $tireId;
+                if (!$collapsed && $tireId > 0) { $p['asset'] = $id; $p['kind'] = 'tire'; }
+                return clientUrl('assets', $p);
+            case 'tire':
+                return clientUrl('assets', $qs + ['view' => 'collections', 'item' => $id]);
+            case 'library_image':
+                $p = $qs + ['view' => 'library'];
+                if (!$collapsed) { $p['asset'] = $id; $p['kind'] = 'library'; }
+                return clientUrl('assets', $p);
+            case 'task':
+                return clientUrl('projects', $qs) . '#task-' . $id;
+            default:
+                return clientUrl('index.php', $qs);
+        }
+    }
+}
+
+/** Pick the action that describes a batch (deny + comment in one request → "denied"). */
+if (!function_exists('activityPrimaryAction')) {
+    function activityPrimaryAction(array $actions): string {
+        static $rank = [
+            'denied' => 1, 'approved' => 2, 'reset_pending' => 3, 'posted' => 4, 'unposted' => 5,
+            'created' => 6, 'deleted' => 7,
+            'task_created' => 8, 'task_toggled' => 9, 'task_deleted' => 10, 'task_updated' => 11,
+            'edited_schedule' => 12, 'renamed_post' => 13, 'renamed_image' => 14,
+            'edited_caption' => 15, 'edited_hashtags' => 16, 'edited_type' => 17,
+            'type_changed' => 18, 'edited_image_caption' => 19,
+            'commented' => 30, 'uncommented' => 31,
+        ];
+        $best = null; $bestRank = PHP_INT_MAX;
+        foreach ($actions as $a) {
+            $r = $rank[$a] ?? 25;
+            if ($r < $bestRank) { $bestRank = $r; $best = $a; }
+        }
+        return (string)($best ?? ($actions[0] ?? 'updated'));
+    }
+}
+
+/**
+ * Turn recentActivity() entries into humanized rows.
+ *
+ *   humanizeActivityRows($entries, $role, $client)  → array of rows:
+ *     text        plain sentence         "You denied 3 images in Warhawk renders"
+ *     html        escaped HTML sentence, names wrapped in <em>
+ *     href        deep link (see activityDeepLink)
+ *     icon        icon() name            checkmark | xmark | ellipsis | calendar | plus | grid | photo | checklist
+ *     tone        approve | deny | accent | scheduled | neutral
+ *     time        created_at of the newest merged row; time_rel / time_abs formatted
+ *     count       how many items the row stands for (1 unless collapsed)
+ *     children    [['text','who','time','time_rel','href'], …]  comment texts (for the disclosure)
+ *     edits       ['caption','schedule',…] for edit batches
+ *     who, is_you, actor, action, actions, verb, thing, name, parent, parent_key,
+ *     entity_type, entity_id, entity_ids, company_id, company_name, company_slug, batch_id
+ *
+ * $viewerRole is 'client' or 'admin'; the matching actor renders as "You".
+ * $client (the scoped company row) names the other party; cross-client
+ * feeds fall back to each entry's company_name.
+ */
+if (!function_exists('humanizeActivityRows')) {
+    function humanizeActivityRows(array $entries, string $viewerRole = 'client', ?array $client = null): array {
+        $rows = [];
+        foreach ($entries as $e) {
+            $actor   = (string)($e['actor'] ?? 'unknown');
+            $actions = array_values(array_unique((array)($e['actions'] ?? [])));
+            $action  = activityPrimaryAction($actions);
+            $pn      = activityParentName($e);
+            $isYou   = ($actor === $viewerRole);
+            if ($isYou) {
+                $who = 'You';
+            } elseif ($actor === 'admin') {
+                $who = 'Joust';
+            } elseif ($actor === 'client') {
+                $who = trim((string)(($client['name'] ?? '') ?: ($e['company_name'] ?? ''))) ?: 'Your team';
+            } else {
+                $who = 'Someone';
+            }
+
+            $children = [];
+            foreach ((array)($e['details'] ?? []) as $d) {
+                if (($d['action'] ?? '') === 'commented' && trim((string)($d['text'] ?? '')) !== '') {
+                    $children[] = [
+                        'text'     => trim((string)$d['text']),
+                        'who'      => $who,
+                        'time'     => (string)($e['created_at'] ?? ''),
+                        'time_rel' => relativeTime($e['created_at'] ?? null),
+                        'href'     => activityDeepLink($e, false),
+                    ];
+                }
+            }
+            $edits = [];
+            foreach ($actions as $a) {
+                if (strpos($a, 'edited_') === 0) $edits[] = str_replace('_', ' ', substr($a, 7));
+                elseif (strpos($a, 'renamed_') === 0) $edits[] = 'name';
+                elseif ($a === 'type_changed') $edits[] = 'type';
+            }
+            $edits = array_values(array_unique($edits));
+
+            $rows[] = [
+                'key'          => $actor . '|' . $action . '|' . ($e['entity_type'] ?? '') . '|' . $pn['parent_key'],
+                'entity_type'  => (string)($e['entity_type'] ?? ''),
+                'entity_id'    => (int)($e['entity_id'] ?? 0),
+                'entity_ids'   => [(int)($e['entity_id'] ?? 0)],
+                'action'       => $action,
+                'actions'      => $actions,
+                'actor'        => $actor,
+                'who'          => $who,
+                'is_you'       => $isYou,
+                'thing'        => $pn['thing'],
+                'name'         => $pn['name'],
+                'parent'       => $pn['parent'],
+                'parent_key'   => $pn['parent_key'],
+                'count'        => 1,
+                'children'     => $children,
+                'edits'        => $edits,
+                'time'         => (string)($e['created_at'] ?? ''),
+                'company_id'   => $e['company_id'] ?? null,
+                'company_name' => (string)($e['company_name'] ?? ''),
+                'company_slug' => (string)($e['company_slug'] ?? ''),
+                'batch_id'     => $e['batch_id'] ?? null,
+                '_entry'       => $e,
+            ];
+        }
+        return activityFinalizeRows($rows);
+    }
+}
+
+/**
+ * Collapse consecutive rows with the same actor + action + parent that fall
+ * within $windowSec of each other (default 10 minutes) into one row whose
+ * count is the number of items and whose children hold every comment.
+ * Input must be newest-first (recentActivity() order). Rows sharing a
+ * batch_id were already merged by recentActivity().
+ */
+if (!function_exists('collapseActivityRuns')) {
+    function collapseActivityRuns(array $rows, int $windowSec = 600): array {
+        $out = [];
+        $prev = null;
+        foreach ($rows as $r) {
+            if ($prev !== null && $prev['key'] === $r['key']) {
+                $tPrev = strtotime((string)$prev['_last_time']);
+                $tCur  = strtotime((string)$r['time']);
+                if ($tPrev !== false && $tCur !== false && abs($tPrev - $tCur) <= $windowSec) {
+                    $prev['entity_ids'] = array_values(array_unique(array_merge($prev['entity_ids'], $r['entity_ids'])));
+                    $prev['count']      = count($prev['entity_ids']);   // distinct items, not rows
+                    $prev['children']   = array_merge($prev['children'], $r['children']);
+                    $prev['edits']      = array_values(array_unique(array_merge($prev['edits'], $r['edits'])));
+                    $prev['_last_time'] = $r['time'];
+                    if ($prev['parent'] === '' && $r['parent'] !== '') $prev['parent'] = $r['parent'];
+                    if ($prev['name'] === '' && $r['name'] !== '')     $prev['name']   = $r['name'];
+                    continue;
+                }
+            }
+            if ($prev !== null) $out[] = $prev;
+            $prev = $r;
+            $prev['_last_time'] = $r['time'];
+        }
+        if ($prev !== null) $out[] = $prev;
+        foreach ($out as &$r) { unset($r['_last_time']); }
+        unset($r);
+        return activityFinalizeRows($out);
+    }
+}
+
+/** (internal) Build text/html/href/icon/tone for rows after humanize or collapse. */
+if (!function_exists('activityFinalizeRows')) {
+    function activityFinalizeRows(array $rows): array {
+        $h = static function ($s) {
+            return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        };
+        foreach ($rows as &$r) {
+            $n      = max(1, (int)$r['count']);
+            $many   = $n > 1;
+            // Object phrase, plain + html ("3 images in <em>Warhawk renders</em>", "<em>Dominator</em>")
+            $objT = ''; $objH = '';
+            switch ($r['thing']) {
+                case 'post':
+                    if (!$many && $r['name'] !== '')      { $objT = $r['name']; $objH = '<em>' . $h($r['name']) . '</em>'; }
+                    elseif ($many)                        { $objT = $objH = $n . ' posts'; }
+                    else                                  { $objT = $objH = 'a post'; }
+                    break;
+                case 'image':
+                    $lead = $many ? $n . ' images' : 'an image';
+                    if ($r['parent'] !== '') { $objT = $lead . ' in ' . $r['parent']; $objH = $h($lead) . ' in <em>' . $h($r['parent']) . '</em>'; }
+                    else                     { $objT = $objH = $lead; }
+                    break;
+                case 'collection':
+                    if (!$many && $r['name'] !== '') { $objT = 'the ' . $r['name'] . ' collection'; $objH = 'the <em>' . $h($r['name']) . '</em> collection'; }
+                    else                             { $objT = $objH = $many ? $n . ' collections' : 'a collection'; }
+                    break;
+                case 'task':
+                    if (!$many && $r['name'] !== '') { $objT = $r['name']; $objH = '<em>' . $h($r['name']) . '</em>'; }
+                    else                             { $objT = $objH = $many ? $n . ' tasks' : 'a task'; }
+                    break;
+                default:
+                    $objT = $objH = $many ? $n . ' items' : 'an item';
+            }
+            $who  = $r['who'];
+            $whoH = $h($who);
+            $a    = $r['action'];
+            $icon = 'ellipsis'; $tone = 'neutral';
+            switch ($a) {
+                case 'approved':
+                    $verb = 'approved'; $icon = 'checkmark'; $tone = 'approve';
+                    $t = "$who approved $objT"; $hh = "$whoH approved $objH"; break;
+                case 'denied':
+                    $verb = 'denied'; $icon = 'xmark'; $tone = 'deny';
+                    $t = "$who denied $objT"; $hh = "$whoH denied $objH"; break;
+                case 'reset_pending':
+                    $verb = 'reopened'; $icon = 'grid'; $tone = 'accent';
+                    $t = "$who reopened $objT for review"; $hh = "$whoH reopened $objH for review"; break;
+                case 'posted':
+                    $verb = 'scheduled'; $icon = 'calendar'; $tone = 'scheduled';
+                    $t = "$who scheduled $objT"; $hh = "$whoH scheduled $objH"; break;
+                case 'unposted':
+                    $verb = 'unscheduled'; $icon = 'calendar'; $tone = 'neutral';
+                    $t = "$who unscheduled $objT"; $hh = "$whoH unscheduled $objH"; break;
+                case 'commented':
+                    $verb = 'commented'; $icon = 'ellipsis'; $tone = 'accent';
+                    $t = "$who commented on $objT"; $hh = "$whoH commented on $objH"; break;
+                case 'uncommented':
+                    $verb = 'cleared a comment'; $icon = 'ellipsis'; $tone = 'neutral';
+                    $t = "$who cleared a comment on $objT"; $hh = "$whoH cleared a comment on $objH"; break;
+                case 'edited_schedule':
+                    $verb = 'rescheduled'; $icon = 'calendar'; $tone = 'scheduled';
+                    $t = "$who rescheduled $objT"; $hh = "$whoH rescheduled $objH"; break;
+                case 'created':
+                    $icon = 'plus'; $tone = 'accent';
+                    if ($r['thing'] === 'post')     { $verb = 'added'; $t = "$who added $objT for review"; $hh = "$whoH added $objH for review"; }
+                    elseif ($r['thing'] === 'task') { $verb = 'opened'; $t = "$who opened $objT"; $hh = "$whoH opened $objH"; }
+                    else                            { $verb = 'added'; $t = "$who added $objT"; $hh = "$whoH added $objH"; }
+                    break;
+                case 'deleted':
+                    $verb = 'removed'; $icon = 'xmark'; $tone = 'neutral';
+                    // The entity is gone, so no name resolves; say what kind of thing it was.
+                    $kind = $r['thing'] === 'image' ? ($many ? $n . ' images' : 'an image')
+                          : ($r['thing'] === 'collection' ? ($many ? $n . ' collections' : 'a collection')
+                          : ($r['thing'] === 'post' ? ($many ? $n . ' posts' : 'a post') : $objT));
+                    $t = "$who removed $kind"; $hh = "$whoH removed " . $h($kind); break;
+                case 'task_created':
+                    $verb = 'opened'; $icon = 'checklist'; $tone = 'accent';
+                    $t = "$who opened $objT"; $hh = "$whoH opened $objH"; break;
+                case 'task_updated':
+                    $verb = 'updated'; $icon = 'checklist'; $tone = 'neutral';
+                    $t = "$who updated $objT"; $hh = "$whoH updated $objH"; break;
+                case 'task_toggled':
+                    $icon = 'checklist'; $tone = 'approve';
+                    // Direction comes from the stored status token only (never the free text).
+                    $sum = implode(' ', (array)($r['_entry']['summaries'] ?? []));
+                    $reopened = (bool)preg_match('/→\s*(open|in_progress)\b/u', $sum);
+                    $verb = $reopened ? 'reopened' : 'completed';
+                    if ($reopened) $tone = 'neutral';
+                    $t = "$who $verb $objT"; $hh = "$whoH $verb $objH"; break;
+                case 'task_deleted':
+                    $verb = 'removed'; $icon = 'xmark'; $tone = 'neutral';
+                    $t = "$who removed a task"; $hh = "$whoH removed a task"; break;
+                default:
+                    if (strpos($a, 'edited_') === 0 || strpos($a, 'renamed_') === 0 || $a === 'type_changed') {
+                        $verb = 'updated'; $icon = 'ellipsis'; $tone = 'neutral';
+                        $t = "$who updated $objT"; $hh = "$whoH updated $objH";
+                    } else {
+                        $verb = actionLabel($a); $icon = 'ellipsis'; $tone = 'neutral';
+                        $t = "$who $verb $objT"; $hh = "$whoH " . $h($verb) . " $objH";
+                    }
+            }
+            if ($r['entity_type'] === 'task' && $icon === 'ellipsis') $icon = 'checklist';
+            // One comment → quote it inline; several → the disclosure lists them.
+            if (count($r['children']) === 1) {
+                $q = $r['children'][0]['text'];
+                $qShort = (function_exists('mb_strlen') && mb_strlen($q) > 240) ? rtrim(mb_substr($q, 0, 239)) . '…' : $q;
+                $t  .= " — '" . $qShort . "'";
+                $hh .= ' — <q>' . $h($qShort) . '</q>';
+            }
+            $r['verb']     = $verb;
+            $r['text']     = $t;
+            $r['html']     = $hh;
+            $r['icon']     = $icon;
+            $r['tone']     = $tone;
+            $r['href']     = activityDeepLink($r['_entry'], $many);
+            $r['time_rel'] = relativeTime($r['time']);
+            $r['time_abs'] = absoluteTime($r['time']);
+        }
+        unset($r);
+        return $rows;
+    }
+}
+
 /**
  * Render the activity feed panel HTML. $companyId optional (null = global).
  * Returns a string of HTML — caller is responsible for surrounding container.
+ *
+ * Signature unchanged (admin.php and index.php call it). Rows are now the
+ * humanized, run-collapsed sentences from humanizeActivityRows() +
+ * collapseActivityRuns(); the markup keeps the legacy class names
+ * (.activity-day / .activity-row / .activity-actor / .activity-text /
+ * .activity-detail / .activity-time) so existing page CSS still applies.
  */
 function renderActivityFeed(PDO $pdo, $companyId = null, $limit = 20) {
-    $entries = recentActivity($pdo, $companyId, $limit);
+    global $client;
+    $entries = recentActivity($pdo, $companyId, (int)$limit * 2);
     if (!$entries) {
         return '<div class="activity-empty">No activity yet. Approvals, comments, and edits will show up here.</div>';
     }
     $h = function ($s) {
         return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
     };
+    $viewerRole = isAdmin() ? 'admin' : 'client';
+    $scoped = $companyId ? (is_array($client) && (int)($client['id'] ?? 0) === (int)$companyId ? $client : null) : null;
+    $rows = collapseActivityRuns(humanizeActivityRows($entries, $viewerRole, $scoped));
+    $rows = array_slice($rows, 0, max(1, (int)$limit));
+
     $out = '';
     $lastBucket = null;
-    foreach ($entries as $e) {
-        $bucket = dayBucket($e['created_at']);
+    foreach ($rows as $r) {
+        $bucket = dayBucket($r['time']);
         if ($bucket !== $lastBucket) {
             $out .= '<div class="activity-day">' . $h($bucket) . '</div>';
             $lastBucket = $bucket;
         }
-        $actor   = $e['actor'] ?: 'unknown';
-        $actions = array_unique($e['actions']);
-        $primary = $actions[0];
-        $verb    = count($actions) > 1
-            ? 'made ' . count($actions) . ' edits'
-            : actionLabel($primary);
-        // Prefer human-readable labels (admin-set image display_name, then caption)
-        // before falling back to "image #42" or the bare entity_type id.
-        if ($e['entity_type'] === 'post') {
-            $meta = $e['_meta'] ?? [];
-            $entityLabel = postDisplayLabel([
-                'name'    => $meta['name'] ?? '',
-                'caption' => $meta['caption'] ?? '',
-                'id'      => (int)$e['entity_id'],
-            ]);
-        } elseif ($e['entity_type'] === 'tire_image') {
-            $meta = $e['_meta'] ?? [];
-            $named = imageDisplayLabel([
-                'display_name' => $meta['display_name'] ?? '',
-                'caption'      => $meta['caption'] ?? '',
-                'id'           => (int)$e['entity_id'],
-            ]);
-            // imageDisplayLabel already returns "image #N" when nothing better exists,
-            // so use it verbatim — no double prefix.
-            $entityLabel = $named;
-        } elseif ($e['entity_type'] === 'task') {
-            $entityLabel = 'task #' . (int)$e['entity_id'];
-        } elseif ($e['entity_type'] === 'library_image') {
-            $meta = $e['_meta'] ?? [];
-            $entityLabel = !empty($meta['filename']) ? $meta['filename'] : 'image #' . (int)$e['entity_id'];
-        } else {
-            $entityLabel = $e['entity_type'] . ' #' . (int)$e['entity_id'];
-        }
-        $companyLine = $e['company_name']
-            ? '<span class="activity-company">' . $h($e['company_name']) . '</span> '
+        $actor = $r['actor'] ?: 'unknown';
+        $pill  = $actor === 'admin' ? 'Joust' : ($actor === 'client' ? ($r['company_name'] !== '' ? $r['company_name'] : 'Client') : 'Unknown');
+        $companyLine = ($companyId === null && $r['company_name'] !== '' && $actor !== 'client')
+            ? '<span class="activity-company">' . $h($r['company_name']) . '</span> · '
             : '';
-        $rel  = relativeTime($e['created_at']);
-        $abs  = absoluteTime($e['created_at']);
-        $link = activityLink($e);
-
         $detailHtml = '';
-        if ($e['details']) {
-            foreach ($e['details'] as $d) {
-                if (in_array($d['action'], ['commented', 'uncommented'], true) && $d['text']) {
-                    $detailHtml .= '<div class="activity-detail">"' . $h(mb_substr($d['text'], 0, 240))
-                                . (mb_strlen($d['text']) > 240 ? '…' : '') . '"</div>';
-                }
+        if (count($r['children']) > 1) {
+            foreach ($r['children'] as $c) {
+                $q = $c['text'];
+                $detailHtml .= '<div class="activity-detail">"' . $h(mb_substr($q, 0, 240))
+                            . (mb_strlen($q) > 240 ? '…' : '') . '"</div>';
             }
         }
+        $editList = $r['edits'] ? '<span class="activity-verb"> — ' . $h(implode(', ', $r['edits'])) . '</span>' : '';
 
-        $editFields = [];
-        foreach ($actions as $a) {
-            if (strpos($a, 'edited_') === 0) {
-                $editFields[] = trim(str_replace('_', ' ', substr($a, 7)));
-            }
-        }
-        $editList = $editFields ? ' — ' . $h(implode(', ', $editFields)) : '';
-
-        $out .= '<a class="activity-row" href="' . $h($link) . '">'
-              . '<span class="activity-actor activity-actor-' . $h($actor) . '">' . $h($actor) . '</span>'
+        $out .= '<a class="activity-row" href="' . $h($r['href']) . '">'
+              . '<span class="activity-actor activity-actor-' . $h($actor) . '">' . $h($pill) . '</span>'
               . '<span class="activity-text">'
               . $companyLine
-              . '<span class="activity-verb">' . $h($verb) . '</span> '
-              . '<span class="activity-target">' . $h($entityLabel) . '</span>'
-              . $h($editList)
+              . '<span class="activity-target">' . $r['html'] . '</span>'
+              . $editList
               . $detailHtml
               . '</span>'
-              . '<span class="activity-time" title="' . $h($abs) . '">' . $h($rel) . '</span>'
+              . '<span class="activity-time" title="' . $h($r['time_abs']) . '">' . $h($r['time_rel']) . '</span>'
               . '</a>';
     }
     return $out;
