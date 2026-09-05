@@ -7,6 +7,23 @@
 require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';
 
+// Where the "Post" CTA opens. Mirrors the admin tile — same target for every client for now.
+$postCtaUrl = 'https://www.facebook.com/kendapowersports';
+
+/** Does the posts.posted column exist yet? (migrate.php may not have run) */
+function hasPostedColumn(PDO $pdo) {
+    static $cached = null;
+    if ($cached !== null) return $cached;
+    $s = $pdo->prepare("
+        SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'posts'
+          AND COLUMN_NAME = 'posted'
+    ");
+    $s->execute();
+    return $cached = (int)$s->fetchColumn() > 0;
+}
+
 // Available months (data-driven, populates the dropdown) — scoped to client if provided
 $monthSql    = "SELECT DISTINCT DATE_FORMAT(p.scheduled_date, '%Y-%m') AS ym FROM posts p";
 $monthParams = [];
@@ -61,8 +78,16 @@ if (!empty($selectedStatuses)) {
 }
 $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
 
+$postedSel = hasPostedColumn($pdo) ? 'p.posted,' : '0 AS posted,';
+$typeSel   = hasPostTypeColumn($pdo) ? 'p.post_type,' : "'post' AS post_type,";
+$hasPostUpdated  = $pdo->query("SHOW COLUMNS FROM posts LIKE 'updated_at'")->rowCount() > 0;
+$hasImageUpdated = $pdo->query("SHOW COLUMNS FROM post_images LIKE 'updated_at'")->rowCount() > 0;
+$postUpdatedSel  = $hasPostUpdated ? 'p.updated_at,' : 'NULL AS updated_at,';
 $postsStmt = $pdo->prepare("
     SELECT p.id, p.caption, p.hashtags, p.scheduled_date, p.status, p.client_comment,
+           $postedSel
+           $typeSel
+           $postUpdatedSel
            c.name AS company_name, c.logo_url AS company_logo
     FROM posts p
     INNER JOIN companies c ON c.id = p.company_id
@@ -105,25 +130,42 @@ $filteredCount   = count($posts);              // currently displayed
 if ($posts) {
     $postIds = array_column($posts, 'id');
     $placeholders = implode(',', array_fill(0, count($postIds), '?'));
+    $imgUpdatedCol = $hasImageUpdated ? ', updated_at' : '';
+    $hasMediaType  = $pdo->query("SHOW COLUMNS FROM post_images LIKE 'media_type'")->rowCount() > 0;
+    $mediaTypeCol  = $hasMediaType ? ', media_type' : '';
     $imgStmt = $pdo->prepare("
-        SELECT id, post_id, image_url
+        SELECT id, post_id, image_url{$mediaTypeCol}{$imgUpdatedCol}
         FROM post_images
         WHERE post_id IN ($placeholders)
         ORDER BY post_id, sort_order ASC
     ");
     $imgStmt->execute($postIds);
     $imagesByPost = [];
+    $maxImgUpdatedByPost = [];
     foreach ($imgStmt->fetchAll() as $row) {
         $imagesByPost[$row['post_id']][] = [
-            'id'  => (int)$row['id'],
-            'url' => $row['image_url'],
+            'id'    => (int)$row['id'],
+            'url'   => $row['image_url'],
+            'type'  => $row['media_type'] ?? mediaTypeFromUrl($row['image_url']),
         ];
+        $u = $row['updated_at'] ?? null;
+        if ($u && (!isset($maxImgUpdatedByPost[$row['post_id']]) || $u > $maxImgUpdatedByPost[$row['post_id']])) {
+            $maxImgUpdatedByPost[$row['post_id']] = $u;
+        }
     }
     foreach ($posts as &$p) {
         $p['images'] = $imagesByPost[$p['id']] ?? [];
+        // Effective "last updated" = max(post.updated_at, latest image edit)
+        $imgMax = $maxImgUpdatedByPost[$p['id']] ?? null;
+        $postMax = $p['updated_at'] ?? null;
+        if ($imgMax && (!$postMax || $imgMax > $postMax)) {
+            $p['updated_at'] = $imgMax;
+        }
     }
     unset($p);
 }
+
+$navItems = clientNavItems($pdo, $client);
 
 /** Escape helper */
 function h($s) {
@@ -151,30 +193,17 @@ function buildFilterUrl($cats, $month, $statuses = null) {
     if (!empty($cats))        { $qs['cats'] = implode(',', $cats); }
     if ($month !== '')        { $qs['month'] = $month; }
     if (!empty($statuses))    { $qs['status'] = implode(',', $statuses); }
-    return 'feed.php' . ($qs ? '?' . http_build_query($qs) : '');
+    return 'feed' . ($qs ? '?' . http_build_query($qs) : '');
 }
 ?>
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Social Approval Feed</title>
 <style>
   :root {
-    --bg: #f0f2f5;
-    --surface: #ffffff;
-    --surface-2: #f7f8fa;
-    --border: #dadde1;
-    --text: #050505;
-    --text-muted: #65676b;
-    --accent: #1877f2;
-    --accent-hover: #166fe5;
-    --shadow: 0 1px 2px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04);
-    --toast-bg: #050505;
-    --toast-text: #ffffff;
-  }
-  [data-theme="dark"] {
     --bg: #18191a;
     --surface: #242526;
     --surface-2: #3a3b3c;
@@ -207,43 +236,58 @@ function buildFilterUrl($cats, $month, $statuses = null) {
     box-shadow: var(--shadow);
   }
   .topbar-inner {
-    max-width: 680px; margin: 0 auto;
-    padding: 12px 16px;
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    max-width: 1100px; margin: 0 auto;
+    padding: 10px 20px;
+    display: flex; align-items: center; gap: 16px;
   }
   .brand {
     display: flex; align-items: center; gap: 10px;
-    font-weight: 700; font-size: 20px;
-    color: var(--accent); letter-spacing: -0.5px;
+    font-weight: 700; font-size: 18px;
+    color: var(--text); letter-spacing: -0.3px;
+    flex: 0 0 auto;
   }
   .brand-mark {
-    height: 32px; width: auto;
-    display: block;
+    width: 32px; height: 32px; border-radius: 8px;
+    background: var(--accent); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800;
+  }
+  .brand-logo {
+    width: 36px; height: 36px; border-radius: 8px;
     object-fit: contain;
-  }
-  .theme-toggle {
-    background: var(--surface-2);
+    background: #fff;
+    padding: 4px;
     border: 1px solid var(--border);
-    color: var(--text);
-    padding: 8px 14px; border-radius: 20px;
-    cursor: pointer; font-size: 14px; font-weight: 600;
-    display: flex; align-items: center; gap: 6px;
-    transition: background 0.15s;
   }
-  .theme-toggle:hover { background: var(--border); }
-  .top-actions { display: flex; align-items: center; gap: 8px; }
+  .brand-name { white-space: nowrap; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+
+  .client-nav {
+    display: flex; align-items: center; gap: 4px;
+    flex: 1; min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .client-nav::-webkit-scrollbar { display: none; }
   .nav-link {
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 8px 14px;
-    border-radius: 20px;
-    font-size: 14px;
-    font-weight: 600;
-    text-decoration: none;
-    transition: background 0.15s;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 12px; border-radius: 18px;
+    background: transparent; border: 1px solid transparent;
+    color: var(--text-muted);
+    font-size: 13px; font-weight: 600;
+    text-decoration: none; white-space: nowrap;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
   }
-  .nav-link:hover { background: var(--border); }
+  .nav-link:hover { background: var(--surface-2); color: var(--text); }
+  .nav-link.active {
+    background: var(--surface-2); color: var(--text);
+    border-color: var(--border);
+  }
+  .nav-link-icon { font-size: 14px; line-height: 1; }
+  @media (max-width: 600px) {
+    .nav-link-label { display: none; }
+    .nav-link { padding: 7px 10px; }
+    .brand-name { max-width: 120px; font-size: 15px; }
+  }
 
   .feed { max-width: 680px; margin: 0 auto; padding: 20px 16px 60px; }
 
@@ -370,12 +414,9 @@ function buildFilterUrl($cats, $month, $statuses = null) {
     font-weight: 800;
     margin-right: 2px;
   }
-  .status-pill.pending  { background: #fef3c7; color: #92400e; border-color: #fde68a; }
-  .status-pill.approved { background: #dcfce7; color: #166534; border-color: #86efac; }
-  .status-pill.denied   { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
-  [data-theme="dark"] .status-pill.pending  { background: #78350f; color: #fde68a; border-color: #a16207; }
-  [data-theme="dark"] .status-pill.approved { background: #14532d; color: #bbf7d0; border-color: #166534; }
-  [data-theme="dark"] .status-pill.denied   { background: #7f1d1d; color: #fecaca; border-color: #991b1b; }
+  .status-pill.pending  { background: #78350f; color: #fde68a; border-color: #a16207; }
+  .status-pill.approved { background: #14532d; color: #bbf7d0; border-color: #166534; }
+  .status-pill.denied   { background: #7f1d1d; color: #fecaca; border-color: #991b1b; }
 
   .status-pill-count {
     display: inline-flex;
@@ -386,16 +427,14 @@ function buildFilterUrl($cats, $month, $statuses = null) {
     min-width: 20px;
     height: 18px;
     border-radius: 9px;
-    background: rgba(0,0,0,0.12);
+    background: rgba(255,255,255,0.15);
     font-size: 11px;
     font-weight: 800;
     letter-spacing: 0;
   }
   .status-pill.active .status-pill-count {
-    background: rgba(0,0,0,0.18);
+    background: rgba(255,255,255,0.22);
   }
-  [data-theme="dark"] .status-pill-count { background: rgba(255,255,255,0.15); }
-  [data-theme="dark"] .status-pill.active .status-pill-count { background: rgba(255,255,255,0.22); }
 
   /* Total count summary at top of feed */
   .total-summary {
@@ -435,6 +474,13 @@ function buildFilterUrl($cats, $month, $statuses = null) {
     display: flex;
     align-items: center;
     gap: 6px;
+    flex-wrap: wrap;
+  }
+  .post-updated {
+    font-size: 12px;
+    color: var(--text-muted);
+    opacity: 0.85;
+    white-space: nowrap;
   }
   .date-display {
     cursor: pointer;
@@ -480,6 +526,24 @@ function buildFilterUrl($cats, $month, $statuses = null) {
     margin-bottom: 20px;
     overflow: hidden;
     border: 1px solid var(--border);
+    transition: opacity 0.25s, filter 0.25s;
+  }
+  /* Posted = greyed but still visible */
+  .post.is-posted {
+    opacity: 0.5;
+    filter: grayscale(0.6);
+  }
+  .post.is-posted:hover { opacity: 0.9; filter: grayscale(0); }
+  .post-status.posted   { background: #312e81; color: #c7d2fe; }
+  /* Briefly highlight the targeted post when arriving via #post-X anchor */
+  .post:target {
+    animation: target-pulse 2.4s ease-out;
+    scroll-margin-top: 72px;
+  }
+  @keyframes target-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(24,119,242,0.6); }
+    30%  { box-shadow: 0 0 0 6px rgba(24,119,242,0.25); }
+    100% { box-shadow: 0 0 0 0 rgba(24,119,242,0); }
   }
   .post-header {
     display: flex; align-items: center;
@@ -499,12 +563,57 @@ function buildFilterUrl($cats, $month, $statuses = null) {
     background: var(--surface-2); color: var(--text-muted);
     transition: background 0.2s, color 0.2s;
   }
-  .post-status.pending  { background: #fef3c7; color: #92400e; }
-  .post-status.approved { background: #dcfce7; color: #166534; }
-  .post-status.denied   { background: #fee2e2; color: #991b1b; }
-  [data-theme="dark"] .post-status.pending  { background: #78350f; color: #fde68a; }
-  [data-theme="dark"] .post-status.approved { background: #14532d; color: #bbf7d0; }
-  [data-theme="dark"] .post-status.denied   { background: #7f1d1d; color: #fecaca; }
+  .post-status.pending  { background: #78350f; color: #fde68a; }
+  .post-status.approved { background: #14532d; color: #bbf7d0; }
+  .post-status.denied   { background: #7f1d1d; color: #fecaca; }
+
+  /* Post-type badge (Post / Story / Reel) — sits in post header, click to change. */
+  .post-type-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    padding: 4px 10px; border-radius: 12px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--text-muted);
+    cursor: pointer; user-select: none;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+  }
+  .post-type-badge:hover { background: var(--border); color: var(--text); }
+  .post-type-badge::after { content: ' ▾'; opacity: 0.55; font-size: 9px; }
+  .post-type-badge.type-post  { background: #1e293b; color: #cbd5e1; border-color: #334155; }
+  .post-type-badge.type-story { background: #4a044e; color: #f5d0fe; border-color: #6b21a8; }
+  .post-type-badge.type-reel  { background: #134e4a; color: #99f6e4; border-color: #115e59; }
+
+  .post-type-picker {
+    position: absolute;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    padding: 6px;
+    z-index: 50;
+    display: flex; flex-direction: column;
+    min-width: 140px;
+  }
+  .post-type-picker button {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text);
+    font: inherit; font-size: 13px; font-weight: 600;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: left;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .post-type-picker button:hover { background: var(--surface-2); }
+  .post-type-picker button.current {
+    background: var(--surface-2); border-color: var(--border);
+  }
+  .post-type-picker button.current::after {
+    content: '✓'; margin-left: auto; color: var(--accent);
+  }
 
   .post-decision {
     display: flex; gap: 8px;
@@ -617,6 +726,32 @@ function buildFilterUrl($cats, $month, $statuses = null) {
     border-color: var(--border);
     cursor: not-allowed;
   }
+  /* Chat-style thread bubbles inside posts */
+  .comment-thread { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+  .comment-msg {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 14px;
+  }
+  .comment-msg-client { border-left: 3px solid var(--accent); }
+  .comment-msg-admin  { border-left: 3px solid #a855f7; }
+  .comment-msg-head {
+    display: flex; gap: 8px; align-items: baseline; margin-bottom: 4px;
+  }
+  .comment-msg-actor {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.4px; color: var(--text-muted);
+  }
+  .comment-msg-actor::before { content: '@'; opacity: 0.5; }
+  .comment-msg-time { font-size: 11px; color: var(--text-muted); margin-left: auto; }
+  .comment-msg-body {
+    font-size: 13px; color: var(--text);
+    white-space: pre-wrap; word-wrap: break-word;
+  }
+  .comment-empty {
+    padding: 10px; text-align: center;
+    color: var(--text-muted); font-size: 12px; font-style: italic;
+    background: var(--surface-2); border-radius: 6px; margin-bottom: 8px;
+  }
 
   .post-body { padding: 0 16px 12px; }
   .post-caption {
@@ -682,6 +817,16 @@ function buildFilterUrl($cats, $month, $statuses = null) {
   .post-hashtags { color: var(--accent); font-size: 14px; word-wrap: break-word; }
 
   .post-actions-top { padding: 0 16px 12px; display: flex; gap: 8px; }
+  .post-cta-btn {
+    flex: 1;
+    background: var(--accent); border: 1px solid var(--accent); color: #fff;
+    padding: 10px 14px; border-radius: 8px;
+    cursor: pointer; font-size: 14px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    transition: background 0.15s, transform 0.1s;
+  }
+  .post-cta-btn:hover { background: var(--accent-hover); }
+  .post-cta-btn:active { transform: scale(0.98); }
   .copy-btn {
     flex: 1;
     background: var(--surface-2);
@@ -705,29 +850,109 @@ function buildFilterUrl($cats, $month, $statuses = null) {
     transition: background 0.15s, color 0.15s, border-color 0.15s;
   }
   .delete-post-btn:hover {
-    background: #fee2e2; color: #991b1b; border-color: #fca5a5;
-  }
-  [data-theme="dark"] .delete-post-btn:hover {
     background: #7f1d1d; color: #fecaca; border-color: #991b1b;
   }
   .delete-post-btn:disabled { opacity: 0.5; cursor: wait; }
 
+  /* Mark as Posted button */
+  .mark-posted-btn {
+    flex: 1;
+    background: #14532d; border: 1px solid #166534; color: #bbf7d0;
+    padding: 10px 14px; border-radius: 8px;
+    cursor: pointer; font-size: 14px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    transition: background 0.15s, transform 0.1s;
+  }
+  .mark-posted-btn:hover { background: #166534; color: #fff; }
+  .mark-posted-btn:active { transform: scale(0.98); }
+  .mark-posted-btn:disabled { opacity: 0.6; cursor: wait; }
+  .unmark-posted-btn {
+    flex: 1;
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--text-muted);
+    padding: 10px 14px; border-radius: 8px;
+    cursor: pointer; font-size: 14px; font-weight: 600;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .unmark-posted-btn:hover {
+    background: var(--surface-2); color: var(--text); border-color: var(--text-muted);
+  }
+  .unmark-posted-btn:disabled { opacity: 0.5; cursor: wait; }
+
   .post-media {
+    position: relative;
+    background: var(--border);
+  }
+  /* The scrolling row. Single-image posts render exactly as before;
+     multi-image posts become a side-swiping carousel. */
+  .post-media-track {
     display: flex;
     flex-direction: column;
     gap: 2px;
-    background: var(--border);
   }
+  .post-media.is-carousel .post-media-track {
+    flex-direction: row;
+    gap: 0;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .post-media.is-carousel .post-media-track::-webkit-scrollbar { display: none; }
   .media-item {
     position: relative;
     background: var(--surface-2);
     overflow: hidden;
     width: 100%;
   }
+  .post-media.is-carousel .media-item {
+    flex: 0 0 100%;
+    scroll-snap-align: center;
+  }
   .media-item img {
     width: 100%;
     height: auto;
     display: block;
+  }
+
+  /* Carousel controls */
+  .carousel-nav {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    width: 36px; height: 36px; border-radius: 50%;
+    background: rgba(0,0,0,0.5); color: #fff; border: none;
+    font-size: 22px; line-height: 1; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 5; opacity: 0;
+    transition: opacity 0.2s, background 0.15s;
+    backdrop-filter: blur(2px);
+  }
+  .carousel-nav.prev { left: 10px; }
+  .carousel-nav.next { right: 10px; }
+  .post-media.is-carousel:hover .carousel-nav:not([disabled]) { opacity: 1; }
+  .carousel-nav:hover { background: rgba(0,0,0,0.75); }
+  .carousel-nav[disabled] { opacity: 0 !important; pointer-events: none; }
+  @media (hover: none) {
+    .post-media.is-carousel .carousel-nav:not([disabled]) { opacity: 0.85; }
+  }
+  .carousel-dots {
+    position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 6px; z-index: 5;
+    padding: 5px 9px; border-radius: 12px;
+    background: rgba(0,0,0,0.35); backdrop-filter: blur(4px);
+  }
+  .carousel-dot {
+    width: 7px; height: 7px; padding: 0; border: none; border-radius: 50%;
+    background: rgba(255,255,255,0.5); cursor: pointer;
+    transition: background 0.15s, transform 0.15s;
+  }
+  .carousel-dot.active { background: #fff; transform: scale(1.25); }
+  .carousel-counter {
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    z-index: 4; background: rgba(0,0,0,0.6); color: #fff;
+    font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 12px;
+    backdrop-filter: blur(4px); pointer-events: none;
   }
   .save-img-btn {
     position: absolute; top: 10px; right: 10px;
@@ -801,17 +1026,8 @@ function buildFilterUrl($cats, $month, $statuses = null) {
 
 <header class="topbar">
   <div class="topbar-inner">
-    <div class="brand">
-      <span><?= $client ? 'Joust — ' . h($client['name']) : 'Joust' ?></span>
-    </div>
-    <div class="top-actions">
-      <a class="nav-link" href="<?= h(clientUrl('index.php')) ?>">Home</a>
-      <a class="nav-link" href="<?= h(clientUrl('tires.php')) ?>"><?= $client ? h($client['feature_label']) : 'Tires' ?></a>
-      <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
-        <span id="themeIcon">🌙</span>
-        <span id="themeLabel">Dark</span>
-      </button>
-    </div>
+    <?= renderBrand($client) ?>
+    <nav class="client-nav"><?= renderClientNav($navItems, 'feed') ?></nav>
   </div>
 </header>
 
@@ -881,10 +1097,20 @@ function buildFilterUrl($cats, $month, $statuses = null) {
   </div>
 <?php else: ?>
   <?php foreach ($posts as $post):
-      $count = min(count($post['images']), 5);
+      $count = min(count($post['images']), 10);
       $fullText = $post['caption'] . "\n\n" . $post['hashtags'];
   ?>
-    <article class="post" data-id="<?= (int)$post['id'] ?>" data-status="<?= h($post['status']) ?>">
+    <?php
+      $isPosted = !empty($post['posted']);
+      $postType = strtolower((string)($post['post_type'] ?? 'post'));
+      if (!in_array($postType, allowedPostTypes(), true)) { $postType = 'post'; }
+    ?>
+    <article class="post <?= $isPosted ? 'is-posted' : '' ?>"
+             id="post-<?= (int)$post['id'] ?>"
+             data-id="<?= (int)$post['id'] ?>"
+             data-status="<?= h($post['status']) ?>"
+             data-posted="<?= $isPosted ? '1' : '0' ?>"
+             data-post-type="<?= h($postType) ?>">
       <div class="post-header">
         <img class="post-logo"
              src="<?= h($post['company_logo']) ?>"
@@ -896,9 +1122,29 @@ function buildFilterUrl($cats, $month, $statuses = null) {
                   data-date-display
                   data-iso="<?= h(date('Y-m-d\TH:i', strtotime($post['scheduled_date']))) ?>"
                   title="Click to edit"><?= h(formatDate($post['scheduled_date'])) ?></span>
+            <?php if (!empty($post['updated_at'])): ?>
+              <span class="post-updated" title="Last edited: <?= h(absoluteTime($post['updated_at'])) ?>">
+                · edited <?= h(relativeTime($post['updated_at'])) ?>
+              </span>
+            <?php endif; ?>
           </div>
         </div>
-        <div class="post-status <?= h($post['status']) ?>" data-status-pill><?= h(ucfirst($post['status'])) ?></div>
+        <?php if (hasPostTypeColumn($pdo)): ?>
+          <button class="post-type-badge type-<?= h($postType) ?>"
+                  data-post-type-badge
+                  type="button"
+                  title="Click to change content type">
+            <?php
+              $typeIcons = ['post' => '📄', 'story' => '⭕', 'reel' => '🎬'];
+              echo h($typeIcons[$postType] ?? '📄') . ' ' . h(postTypeLabel($postType));
+            ?>
+          </button>
+        <?php endif; ?>
+        <?php if ($isPosted): ?>
+          <div class="post-status posted" data-status-pill title="This post has been posted">Posted</div>
+        <?php else: ?>
+          <div class="post-status <?= h($post['status']) ?>" data-status-pill><?= h(ucfirst($post['status'])) ?></div>
+        <?php endif; ?>
       </div>
 
       <div class="post-body">
@@ -917,34 +1163,87 @@ function buildFilterUrl($cats, $month, $statuses = null) {
       </div>
 
       <div class="post-actions-top">
+        <?php if (!$isPosted): ?>
+          <button class="post-cta-btn"
+                  data-post-cta
+                  data-caption="<?= h($post['caption']) ?>"
+                  data-hashtags="<?= h($post['hashtags']) ?>"
+                  type="button"
+                  title="Copies caption + hashtags and opens Facebook in a new tab">
+            🚀 Post
+          </button>
+        <?php endif; ?>
         <button class="copy-btn" data-copy-post type="button">
           📋 Copy caption &amp; hashtags
         </button>
+        <?php if (hasPostedColumn($pdo)): ?>
+          <?php if (!$isPosted): ?>
+            <button class="mark-posted-btn" data-toggle-posted data-to="1" type="button"
+                    title="Mark this post as posted">
+              ✓ Mark as Posted
+            </button>
+          <?php else: ?>
+            <button class="unmark-posted-btn" data-toggle-posted data-to="0" type="button"
+                    title="Unmark this post">
+              ↺ Unmark
+            </button>
+          <?php endif; ?>
+        <?php endif; ?>
         <button class="delete-post-btn" data-delete-post type="button">
           🗑 Delete
         </button>
       </div>
 
       <?php if ($count > 0): ?>
-        <div class="post-media count-<?= $count ?>">
-          <?php foreach (array_slice($post['images'], 0, 5) as $i => $img):
+        <?php $isCarousel = $count > 1; ?>
+        <div class="post-media count-<?= $count ?> <?= $isCarousel ? 'is-carousel' : '' ?>"
+             <?= $isCarousel ? 'data-carousel' : '' ?>>
+          <div class="post-media-track">
+          <?php foreach (array_slice($post['images'], 0, 10) as $i => $img):
               $src      = $img['url'];
               $imgId    = $img['id'];
+              $mtype    = $img['type'] ?? mediaTypeFromUrl($src);
+              $isVid    = ($mtype === 'video');
+              $ext      = strtolower(pathinfo($src, PATHINFO_EXTENSION));
               $filename = preg_replace('/[^a-zA-Z0-9\-]/', '-', $post['company_name'])
                           . '-' . $post['id'] . '-' . ($i + 1);
           ?>
-            <div class="media-item" data-image-id="<?= (int)$imgId ?>">
-              <img src="<?= h($src) ?>" alt="Post image <?= $i + 1 ?>" loading="lazy" data-image-el>
+            <div class="media-item" data-image-id="<?= (int)$imgId ?>" data-media-type="<?= h($mtype) ?>">
+              <?php if ($isVid): ?>
+                <video src="<?= h($src) ?>"
+                       controls playsinline preload="metadata"
+                       data-image-el
+                       style="width:100%;height:100%;object-fit:contain;background:#000">
+                  Your browser can't play this video.
+                </video>
+              <?php else: ?>
+                <img src="<?= h($src) ?>" alt="Post image <?= $i + 1 ?>" loading="lazy" data-image-el>
+              <?php endif; ?>
               <button class="save-img-btn"
                       data-src="<?= h($src) ?>"
-                      data-filename="<?= h($filename) ?>">
+                      data-filename="<?= h($filename) ?>"
+                      data-ext="<?= h($ext) ?>">
                 ⬇ Save
               </button>
-              <button class="replace-img-btn" data-replace-img type="button" title="Replace this image">
+              <button class="replace-img-btn" data-replace-img type="button"
+                      title="Replace this <?= $isVid ? 'video' : 'image' ?>">
                 🔄 Replace
               </button>
             </div>
           <?php endforeach; ?>
+          </div><!-- /.post-media-track -->
+          <?php if ($isCarousel): ?>
+            <button class="carousel-nav prev" data-carousel-prev type="button" aria-label="Previous image" disabled>&#8249;</button>
+            <button class="carousel-nav next" data-carousel-next type="button" aria-label="Next image">&#8250;</button>
+            <div class="carousel-counter" data-carousel-counter>1/<?= $count ?></div>
+            <div class="carousel-dots">
+              <?php for ($d = 0; $d < $count; $d++): ?>
+                <button class="carousel-dot <?= $d === 0 ? 'active' : '' ?>"
+                        data-carousel-dot="<?= $d ?>" type="button"
+                        aria-label="Go to image <?= $d + 1 ?>"></button>
+              <?php endfor; ?>
+            </div>
+          <?php endif; ?>
         </div>
       <?php endif; ?>
 
@@ -966,17 +1265,23 @@ function buildFilterUrl($cats, $month, $statuses = null) {
 
       <div class="post-comment">
         <label class="comment-label" for="comment-<?= (int)$post['id'] ?>">
-          Comments / feedback
+          💬 Comments
         </label>
+        <?php $threadHtml = renderCommentThread($pdo, 'post', (int)$post['id']); ?>
+        <?php if ($threadHtml): ?>
+          <?= $threadHtml ?>
+        <?php else: ?>
+          <div class="comment-empty">No messages yet — start the thread below.</div>
+        <?php endif; ?>
         <textarea class="comment-textarea"
                   id="comment-<?= (int)$post['id'] ?>"
                   data-comment-input
-                  placeholder="Leave a note for the team — required if denying, optional otherwise."
-                  maxlength="2000"><?= h($post['client_comment'] ?? '') ?></textarea>
+                  placeholder="Type a message — required if denying, optional otherwise."
+                  maxlength="2000"></textarea>
         <div class="comment-meta">
           <span class="comment-status" data-comment-status></span>
           <button class="comment-save-btn" data-comment-save type="button" disabled>
-            Save comment
+            Send message
           </button>
         </div>
       </div>
@@ -998,6 +1303,33 @@ function buildFilterUrl($cats, $month, $statuses = null) {
     toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1800);
   }
 
+  const POST_CTA_URL = <?= json_encode($postCtaUrl) ?>;
+
+  async function copyTextFallback(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      try { await navigator.clipboard.writeText(text); return true; } catch {}
+    }
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.left = '-9999px';
+    document.body.appendChild(ta); ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch {}
+    document.body.removeChild(ta);
+    return ok;
+  }
+
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-post-cta]');
+    if (!btn) return;
+    e.preventDefault();
+    const caption  = btn.getAttribute('data-caption')  || '';
+    const hashtags = btn.getAttribute('data-hashtags') || '';
+    const text = (caption + (hashtags ? '\n\n' + hashtags : '')).trim();
+    window.open(POST_CTA_URL, '_blank', 'noopener');
+    const ok = await copyTextFallback(text);
+    showToast(ok ? '📋 Caption + hashtags copied' : 'Copy failed — please copy manually');
+  });
+
   document.getElementById('feed').addEventListener('click', async (e) => {
     // Approve / Deny buttons
     const decideBtn = e.target.closest('.decision-btn');
@@ -1014,6 +1346,7 @@ function buildFilterUrl($cats, $month, $statuses = null) {
         const formData = new FormData();
         formData.append('id', postId);
         formData.append('status', newStatus);
+        formData.append('actor', 'client');
         const res = await fetch('status.php', { method: 'POST', body: formData });
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || 'Failed');
@@ -1063,6 +1396,145 @@ function buildFilterUrl($cats, $month, $statuses = null) {
       return;
     }
 
+    // Post-type badge — open inline picker
+    const typeBadge = e.target.closest('[data-post-type-badge]');
+    if (typeBadge) {
+      // If a picker is already open for this badge, close it instead.
+      const existing = document.querySelector('.post-type-picker');
+      if (existing) {
+        existing.remove();
+        if (existing.dataset.badgeId === typeBadge.id) return;
+      }
+      const post = typeBadge.closest('.post');
+      const currentType = (post.getAttribute('data-post-type') || 'post').toLowerCase();
+      const opts = [
+        { v: 'post',  label: '📄 Post'  },
+        { v: 'story', label: '⭕ Story' },
+        { v: 'reel',  label: '🎬 Reel'  },
+      ];
+      const picker = document.createElement('div');
+      picker.className = 'post-type-picker';
+      opts.forEach(o => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = o.label;
+        b.dataset.value = o.v;
+        if (o.v === currentType) b.classList.add('current');
+        picker.appendChild(b);
+      });
+
+      // Position picker just below the badge.
+      document.body.appendChild(picker);
+      const r = typeBadge.getBoundingClientRect();
+      picker.style.top  = (window.scrollY + r.bottom + 6) + 'px';
+      picker.style.left = (window.scrollX + r.left) + 'px';
+
+      const close = () => { picker.remove(); document.removeEventListener('click', onDocClick, true); };
+      const onDocClick = (ev) => {
+        if (picker.contains(ev.target) || ev.target === typeBadge) return;
+        close();
+      };
+      // Defer so the current click doesn't immediately close it.
+      setTimeout(() => document.addEventListener('click', onDocClick, true), 0);
+
+      picker.addEventListener('click', async (pev) => {
+        const choice = pev.target.closest('button[data-value]');
+        if (!choice) return;
+        const newType = choice.dataset.value;
+        close();
+        if (newType === currentType) return;
+
+        try {
+          const fd = new FormData();
+          fd.append('id', post.getAttribute('data-id'));
+          fd.append('post_type', newType);
+          fd.append('actor', 'client');
+          const res = await fetch('status.php', { method: 'POST', body: fd });
+          const data = await res.json();
+          if (!data.ok) throw new Error(data.error || 'Failed');
+
+          // Update DOM
+          post.setAttribute('data-post-type', newType);
+          typeBadge.className = 'post-type-badge type-' + newType;
+          const icons = { post: '📄', story: '⭕', reel: '🎬' };
+          const label = newType.charAt(0).toUpperCase() + newType.slice(1);
+          typeBadge.textContent = (icons[newType] || '📄') + ' ' + label;
+          showToast('✓ Type set to ' + label);
+        } catch (err) {
+          showToast('Type save failed: ' + (err.message || 'try again'));
+        }
+      });
+      return;
+    }
+
+    // Toggle "posted" flag (Mark as Posted / Unmark)
+    const togglePostedBtn = e.target.closest('[data-toggle-posted]');
+    if (togglePostedBtn) {
+      const post = togglePostedBtn.closest('.post');
+      const postId = post.getAttribute('data-id');
+      const to = togglePostedBtn.getAttribute('data-to') === '1' ? '1' : '0';
+      togglePostedBtn.disabled = true;
+      const originalLabel = togglePostedBtn.textContent;
+      togglePostedBtn.textContent = to === '1' ? 'Marking…' : 'Unmarking…';
+      try {
+        const fd = new FormData();
+        fd.append('action', 'toggle_posted');
+        fd.append('id', postId);
+        fd.append('to', to);
+        fd.append('actor', 'client');
+        const res = await fetch('status.php', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || 'Failed');
+
+        // Flip the post's posted state in the DOM
+        const isNowPosted = to === '1';
+        post.setAttribute('data-posted', isNowPosted ? '1' : '0');
+        post.classList.toggle('is-posted', isNowPosted);
+
+        // Swap status pill
+        const pill = post.querySelector('[data-status-pill]');
+        if (pill) {
+          if (isNowPosted) {
+            pill.className = 'post-status posted';
+            pill.textContent = 'Posted';
+            pill.setAttribute('title', 'This post has been posted');
+          } else {
+            const currStatus = post.getAttribute('data-status') || 'pending';
+            pill.className = 'post-status ' + currStatus;
+            pill.textContent = currStatus.charAt(0).toUpperCase() + currStatus.slice(1);
+            pill.removeAttribute('title');
+          }
+        }
+
+        // Swap the action button itself: Mark <-> Unmark
+        if (isNowPosted) {
+          togglePostedBtn.className = 'unmark-posted-btn';
+          togglePostedBtn.setAttribute('data-to', '0');
+          togglePostedBtn.setAttribute('title', 'Unmark this post');
+          togglePostedBtn.textContent = '↺ Unmark';
+          // Hide the 🚀 Post CTA now that it's posted
+          const cta = post.querySelector('[data-post-cta]');
+          if (cta) cta.style.display = 'none';
+        } else {
+          togglePostedBtn.className = 'mark-posted-btn';
+          togglePostedBtn.setAttribute('data-to', '1');
+          togglePostedBtn.setAttribute('title', 'Mark this post as posted');
+          togglePostedBtn.textContent = '✓ Mark as Posted';
+          // Reveal the 🚀 Post CTA again
+          const cta = post.querySelector('[data-post-cta]');
+          if (cta) cta.style.display = '';
+        }
+
+        showToast(isNowPosted ? '✓ Marked as posted' : '↺ Unmarked');
+      } catch (err) {
+        togglePostedBtn.textContent = originalLabel;
+        showToast('Update failed — try again');
+      } finally {
+        togglePostedBtn.disabled = false;
+      }
+      return;
+    }
+
     // Delete post
     const deleteBtn = e.target.closest('[data-delete-post]');
     if (deleteBtn) {
@@ -1075,6 +1547,7 @@ function buildFilterUrl($cats, $month, $statuses = null) {
         const fd = new FormData();
         fd.append('action', 'delete_post');
         fd.append('id', postId);
+        fd.append('actor', 'client');
         const res = await fetch('status.php', { method: 'POST', body: fd });
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || 'Failed');
@@ -1093,8 +1566,12 @@ function buildFilterUrl($cats, $month, $statuses = null) {
 
     const saveBtn = e.target.closest('.save-img-btn');
     if (saveBtn) {
-      const src = saveBtn.getAttribute('data-src');
-      const filename = saveBtn.getAttribute('data-filename') + '.jpg';
+      const src      = saveBtn.getAttribute('data-src');
+      // Pick the right extension — videos shouldn't end in .jpg.
+      const ext      = (saveBtn.getAttribute('data-ext') || '').toLowerCase()
+                       || (src.match(/\.([a-z0-9]+)(\?|$)/i) || [, 'jpg'])[1].toLowerCase();
+      const filename = saveBtn.getAttribute('data-filename') + '.' + ext;
+      const isVideo  = ['mp4', 'webm', 'mov', 'm4v'].includes(ext);
       try {
         const res = await fetch(src, { mode: 'cors' });
         const blob = await res.blob();
@@ -1106,7 +1583,7 @@ function buildFilterUrl($cats, $month, $statuses = null) {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        showToast('✓ Image saved');
+        showToast(isVideo ? '✓ Video saved' : '✓ Image saved');
       } catch {
         window.open(src, '_blank');
         showToast('Opened in new tab');
@@ -1114,19 +1591,16 @@ function buildFilterUrl($cats, $month, $statuses = null) {
     }
   });
 
-  // ---- Comments --------------------------------------------------
-  // Track each textarea's "saved" value so we know when it's dirty
+  // ---- Comments (chat-style send) -------------------------------
   document.querySelectorAll('[data-comment-input]').forEach(ta => {
-    ta.dataset.savedValue = ta.value;
-
     ta.addEventListener('input', () => {
       const post = ta.closest('.post');
       const saveBtn = post.querySelector('[data-comment-save]');
       const status  = post.querySelector('[data-comment-status]');
-      const dirty = ta.value !== ta.dataset.savedValue;
-      saveBtn.disabled = !dirty;
-      status.className = 'comment-status' + (dirty ? ' dirty' : '');
-      status.textContent = dirty ? 'Unsaved changes' : '';
+      const hasText = ta.value.trim().length > 0;
+      saveBtn.disabled = !hasText;
+      status.className = 'comment-status' + (hasText ? ' dirty' : '');
+      status.textContent = hasText ? 'Press send to post' : '';
     });
   });
 
@@ -1138,34 +1612,27 @@ function buildFilterUrl($cats, $month, $statuses = null) {
     const postId = post.getAttribute('data-id');
     const ta     = post.querySelector('[data-comment-input]');
     const status = post.querySelector('[data-comment-status]');
+    const text   = ta.value.trim();
+    if (!text) { ta.focus(); return; }
 
     saveBtn.disabled = true;
     status.className = 'comment-status saving';
-    status.textContent = 'Saving…';
+    status.textContent = 'Sending…';
 
     try {
       const formData = new FormData();
       formData.append('id', postId);
-      formData.append('comment', ta.value);
+      formData.append('comment', text);
+      formData.append('actor', 'client');
       const res  = await fetch('status.php', { method: 'POST', body: formData });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Failed');
-
-      ta.dataset.savedValue = ta.value;
-      status.className = 'comment-status saved';
-      status.textContent = '✓ Saved';
-      showToast('✓ Comment saved');
-
-      // Clear the "saved" message after a couple seconds
-      setTimeout(() => {
-        if (ta.value === ta.dataset.savedValue) {
-          status.textContent = '';
-          status.className = 'comment-status';
-        }
-      }, 2500);
+      showToast('✓ Message sent');
+      // Reload so the thread above the input picks up the new bubble
+      setTimeout(() => window.location.reload(), 300);
     } catch (err) {
       status.className = 'comment-status error';
-      status.textContent = 'Save failed — try again';
+      status.textContent = 'Send failed — try again';
       saveBtn.disabled = false;
     }
   });
@@ -1227,6 +1694,7 @@ function buildFilterUrl($cats, $month, $statuses = null) {
         const formData = new FormData();
         formData.append('id', postId);
         formData.append('scheduled_date', newIso.replace('T', ' ') + ':00');
+        formData.append('actor', 'client');
         const res  = await fetch('status.php', { method: 'POST', body: formData });
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || 'Failed');
@@ -1304,6 +1772,7 @@ function buildFilterUrl($cats, $month, $statuses = null) {
         const fd = new FormData();
         fd.append('id', postId);
         fd.append('caption', newVal);
+        fd.append('actor', 'client');
         const res = await fetch('status.php', { method: 'POST', body: fd });
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || 'Failed');
@@ -1381,6 +1850,7 @@ function buildFilterUrl($cats, $month, $statuses = null) {
         const fd = new FormData();
         fd.append('id', postId);
         fd.append('hashtags', newVal);
+        fd.append('actor', 'client');
         const res = await fetch('status.php', { method: 'POST', body: fd });
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || 'Failed');
@@ -1401,11 +1871,11 @@ function buildFilterUrl($cats, $month, $statuses = null) {
     });
   });
 
-  // ---- Image replacement -----------------------------------------
+  // ---- Image / video replacement ---------------------------------
   // Hidden file input shared by all replace buttons
   const replaceInput = document.createElement('input');
   replaceInput.type = 'file';
-  replaceInput.accept = 'image/jpeg,image/png,image/gif,image/webp';
+  replaceInput.accept = 'image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm';
   replaceInput.style.display = 'none';
   document.body.appendChild(replaceInput);
 
@@ -1422,14 +1892,14 @@ function buildFilterUrl($cats, $month, $statuses = null) {
   replaceInput.addEventListener('change', async () => {
     if (!replaceInput.files.length || !pendingReplaceBtn) return;
     const file = replaceInput.files[0];
-    if (file.size > 10 * 1024 * 1024) {
-      showToast('Image exceeds 10 MB');
+    if (file.size > 25 * 1024 * 1024) {
+      showToast('File exceeds 25 MB');
       return;
     }
 
     const mediaItem = pendingReplaceBtn.closest('.media-item');
     const imageId   = mediaItem.getAttribute('data-image-id');
-    const imgEl     = mediaItem.querySelector('[data-image-el]');
+    const oldEl     = mediaItem.querySelector('[data-image-el]');
     const saveBtn   = mediaItem.querySelector('.save-img-btn');
 
     mediaItem.classList.add('replacing');
@@ -1444,11 +1914,37 @@ function buildFilterUrl($cats, $month, $statuses = null) {
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Failed');
 
-      // Swap image — add cache-bust param in case filename reused
-      const bust = data.image_url + (data.image_url.includes('?') ? '&' : '?') + 't=' + Date.now();
-      imgEl.src = bust;
-      if (saveBtn) { saveBtn.setAttribute('data-src', data.image_url); }
-      showToast('✓ Image replaced');
+      // Swap media — add cache-bust param in case filename reused.
+      // If the new file is a video and the old was an image (or vice versa),
+      // swap the element type entirely.
+      const bust   = data.image_url + (data.image_url.includes('?') ? '&' : '?') + 't=' + Date.now();
+      const newType = data.media_type || (oldEl.tagName === 'VIDEO' ? 'video' : 'image');
+      const sameType = (newType === 'video' && oldEl.tagName === 'VIDEO')
+                    || (newType === 'image' && oldEl.tagName === 'IMG');
+      if (sameType) {
+        oldEl.src = bust;
+      } else {
+        const fresh = document.createElement(newType === 'video' ? 'video' : 'img');
+        fresh.setAttribute('data-image-el', '');
+        fresh.src = bust;
+        if (newType === 'video') {
+          fresh.controls = true;
+          fresh.playsInline = true;
+          fresh.preload = 'metadata';
+          fresh.style.cssText = 'width:100%;height:100%;object-fit:contain;background:#000';
+        } else {
+          fresh.loading = 'lazy';
+          fresh.alt = '';
+        }
+        oldEl.replaceWith(fresh);
+      }
+      if (saveBtn) {
+        saveBtn.setAttribute('data-src', data.image_url);
+        const newExt = (data.image_url.match(/\.([a-z0-9]+)(\?|$)/i) || [, ''])[1].toLowerCase();
+        if (newExt) saveBtn.setAttribute('data-ext', newExt);
+      }
+      mediaItem.setAttribute('data-media-type', newType);
+      showToast(newType === 'video' ? '✓ Video replaced' : '✓ Image replaced');
     } catch (err) {
       showToast('Replace failed: ' + (err.message || 'unknown'));
     } finally {
@@ -1473,21 +1969,120 @@ function buildFilterUrl($cats, $month, $statuses = null) {
       // Always set the month so 'all' is respected over the default
       if (monthSelect.value) params.set('month', monthSelect.value);
       const qs = params.toString();
-      window.location.href = 'feed.php' + (qs ? '?' + qs : '');
+      window.location.href = 'feed' + (qs ? '?' + qs : '');
     });
   }
 
-  const themeBtn = document.getElementById('themeToggle');
-  const themeIcon = document.getElementById('themeIcon');
-  const themeLabel = document.getElementById('themeLabel');
-  let isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  function applyTheme() {
-    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
-    themeIcon.textContent = isDark ? '☀️' : '🌙';
-    themeLabel.textContent = isDark ? 'Light' : 'Dark';
+</script>
+
+<!-- Image carousels (multi-image posts) -->
+<script>
+(function() {
+  function initCarousel(carousel) {
+    const track = carousel.querySelector('.post-media-track');
+    if (!track) return;
+    const items   = Array.from(track.querySelectorAll('.media-item'));
+    if (items.length < 2) return;
+    const dots    = Array.from(carousel.querySelectorAll('[data-carousel-dot]'));
+    const prevBtn = carousel.querySelector('[data-carousel-prev]');
+    const nextBtn = carousel.querySelector('[data-carousel-next]');
+    const counter = carousel.querySelector('[data-carousel-counter]');
+
+    function indexFromScroll() {
+      const w = track.clientWidth || 1;
+      return Math.max(0, Math.min(items.length - 1, Math.round(track.scrollLeft / w)));
+    }
+    function update() {
+      const idx = indexFromScroll();
+      dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+      if (counter) counter.textContent = (idx + 1) + '/' + items.length;
+      if (prevBtn) prevBtn.disabled = idx <= 0;
+      if (nextBtn) nextBtn.disabled = idx >= items.length - 1;
+    }
+    function goTo(i) {
+      i = Math.max(0, Math.min(items.length - 1, i));
+      track.scrollTo({ left: i * track.clientWidth, behavior: 'smooth' });
+    }
+    if (prevBtn) prevBtn.addEventListener('click', () => goTo(indexFromScroll() - 1));
+    if (nextBtn) nextBtn.addEventListener('click', () => goTo(indexFromScroll() + 1));
+    dots.forEach((d, i) => d.addEventListener('click', () => goTo(i)));
+
+    let raf = null;
+    track.addEventListener('scroll', () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(update);
+    }, { passive: true });
+    window.addEventListener('resize', update);
+    update();
   }
-  applyTheme();
-  themeBtn.addEventListener('click', () => { isDark = !isDark; applyTheme(); });
+  document.querySelectorAll('[data-carousel]').forEach(initCarousel);
+})();
+</script>
+
+<!-- Fullscreen image lightbox -->
+<style>
+  .lightbox {
+    position: fixed; inset: 0; z-index: 2000;
+    background: rgba(0,0,0,0.96);
+    display: none;
+    align-items: center; justify-content: center;
+    padding: 20px;
+    cursor: zoom-out;
+    animation: lb-fade 0.18s ease-out;
+  }
+  .lightbox.show { display: flex; }
+  .lightbox img {
+    max-width: 100%; max-height: 100%;
+    object-fit: contain;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+    border-radius: 4px;
+  }
+  .lightbox-close {
+    position: absolute; top: 16px; right: 20px;
+    background: rgba(255,255,255,0.15); color: #fff;
+    border: none; width: 40px; height: 40px; border-radius: 50%;
+    font-size: 22px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .lightbox-close:hover { background: rgba(255,255,255,0.3); }
+  img[data-image-el] { cursor: zoom-in; }
+  video[data-image-el] { cursor: default; }
+  @keyframes lb-fade { from { opacity: 0; } to { opacity: 1; } }
+</style>
+<div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="Image viewer">
+  <button class="lightbox-close" type="button" aria-label="Close">×</button>
+  <img id="lightboxImg" alt="">
+</div>
+<script>
+(function() {
+  const lb    = document.getElementById('lightbox');
+  const lbImg = document.getElementById('lightboxImg');
+  function open(src, alt) {
+    lbImg.src = src;
+    lbImg.alt = alt || '';
+    lb.classList.add('show');
+    document.body.style.overflow = 'hidden';
+  }
+  function close() {
+    lb.classList.remove('show');
+    lbImg.src = '';
+    document.body.style.overflow = '';
+  }
+  // Click an image element to open the lightbox. Videos are skipped —
+  // the native <video controls> should handle play/pause.
+  document.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-image-el]');
+    if (!el || el.tagName !== 'IMG') return;
+    e.preventDefault();
+    open(el.getAttribute('src'), el.getAttribute('alt'));
+  });
+  // Click anywhere on backdrop, or the close button, to dismiss
+  lb.addEventListener('click', close);
+  // Escape closes
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && lb.classList.contains('show')) close();
+  });
+})();
 </script>
 
 </body>

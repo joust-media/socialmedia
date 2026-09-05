@@ -28,9 +28,12 @@ if (!$showDone) {
 }
 $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
 
+$hasTaskUpdated = $pdo->query("SHOW COLUMNS FROM tasks LIKE 'updated_at'")->rowCount() > 0;
+$updatedSel = $hasTaskUpdated ? 't.updated_at,' : 'NULL AS updated_at,';
 $tasksStmt = $pdo->prepare("
     SELECT t.id, t.company_id, t.title, t.description, t.status, t.priority,
            t.created_by, t.created_at, t.completed_at,
+           $updatedSel
            c.name AS company_name
     FROM tasks t
     INNER JOIN companies c ON c.id = t.company_id
@@ -64,30 +67,17 @@ foreach ($cntStmt->fetchAll() as $r) {
     else                         { $cntOpen += (int)$r['c']; }
 }
 ?>
+<?php
+$navItems = clientNavItems($pdo, $client);
+?>
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title><?= $client ? h($client['name']) . ' — Projects' : 'Projects' ?></title>
 <style>
   :root {
-    --bg: #f0f2f5;
-    --surface: #ffffff;
-    --surface-2: #f7f8fa;
-    --border: #dadde1;
-    --text: #050505;
-    --text-muted: #65676b;
-    --accent: #1877f2;
-    --accent-hover: #166fe5;
-    --danger: #dc2626;
-    --success: #16a34a;
-    --warn: #f59e0b;
-    --shadow: 0 1px 2px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04);
-    --toast-bg: #050505;
-    --toast-text: #ffffff;
-  }
-  [data-theme="dark"] {
     --bg: #18191a;
     --surface: #242526;
     --surface-2: #3a3b3c;
@@ -97,6 +87,8 @@ foreach ($cntStmt->fetchAll() as $r) {
     --accent: #2d88ff;
     --accent-hover: #4599ff;
     --danger: #ef4444;
+    --success: #16a34a;
+    --warn: #f59e0b;
     --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.3);
     --toast-bg: #e4e6eb;
     --toast-text: #050505;
@@ -121,14 +113,15 @@ foreach ($cntStmt->fetchAll() as $r) {
     box-shadow: var(--shadow);
   }
   .topbar-inner {
-    max-width: 760px; margin: 0 auto;
-    padding: 12px 20px;
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    max-width: 1100px; margin: 0 auto;
+    padding: 10px 20px;
+    display: flex; align-items: center; gap: 16px;
   }
   .brand {
     display: flex; align-items: center; gap: 10px;
-    font-weight: 700; font-size: 20px;
-    color: var(--accent); letter-spacing: -0.5px;
+    font-weight: 700; font-size: 18px;
+    color: var(--text); letter-spacing: -0.3px;
+    flex: 0 0 auto;
   }
   .brand-mark {
     width: 32px; height: 32px; border-radius: 8px;
@@ -136,28 +129,42 @@ foreach ($cntStmt->fetchAll() as $r) {
     display: flex; align-items: center; justify-content: center;
     font-weight: 800;
   }
-  .top-actions { display: flex; gap: 8px; align-items: center; }
+  .brand-logo {
+    width: 36px; height: 36px; border-radius: 8px;
+    object-fit: contain;
+    background: #fff;
+    padding: 4px;
+    border: 1px solid var(--border);
+  }
+  .brand-name { white-space: nowrap; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+
+  .client-nav {
+    display: flex; align-items: center; gap: 4px;
+    flex: 1; min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .client-nav::-webkit-scrollbar { display: none; }
   .nav-link {
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 8px 12px;
-    border-radius: 20px;
-    font-size: 13px;
-    font-weight: 600;
-    text-decoration: none;
-    transition: background 0.15s;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 12px; border-radius: 18px;
+    background: transparent; border: 1px solid transparent;
+    color: var(--text-muted);
+    font-size: 13px; font-weight: 600;
+    text-decoration: none; white-space: nowrap;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
   }
-  .nav-link:hover { background: var(--border); }
-  .theme-toggle {
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 8px 14px; border-radius: 20px;
-    cursor: pointer; font-size: 14px; font-weight: 600;
-    display: flex; align-items: center; gap: 6px;
+  .nav-link:hover { background: var(--surface-2); color: var(--text); }
+  .nav-link.active {
+    background: var(--surface-2); color: var(--text);
+    border-color: var(--border);
   }
-  .theme-toggle:hover { background: var(--border); }
+  .nav-link-icon { font-size: 14px; line-height: 1; }
+  @media (max-width: 600px) {
+    .nav-link-label { display: none; }
+    .nav-link { padding: 7px 10px; }
+    .brand-name { max-width: 120px; font-size: 15px; }
+  }
 
   .wrap { max-width: 760px; margin: 0 auto; padding: 20px 16px 80px; }
 
@@ -281,6 +288,19 @@ foreach ($cntStmt->fetchAll() as $r) {
   .task-item:first-child { border-top: none; }
   .task-item.done { opacity: 0.55; }
   .task-item.done .task-title { text-decoration: line-through; }
+  /* Highlight the task that an activity row deep-linked to (via #task-<id>) */
+  .task-item { scroll-margin-top: 80px; }
+  .task-item:target {
+    animation: task-target-pulse 2.4s ease-out;
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+  @keyframes task-target-pulse {
+    0%   { background: rgba(24,119,242,0.18); }
+    100% { background: transparent; }
+  }
+  [data-theme="dark"] .task-item:target {
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
 
   .task-check {
     margin-top: 2px;
@@ -338,12 +358,10 @@ foreach ($cntStmt->fetchAll() as $r) {
     border: 1px solid var(--border);
     font-weight: 600;
   }
-  .task-meta-pill.pri-high   { background: #fee2e2; color: #991b1b; border-color: transparent; }
-  .task-meta-pill.pri-low    { background: #eff6ff; color: #1e3a8a; border-color: transparent; }
-  [data-theme="dark"] .task-meta-pill.pri-high { background: #7f1d1d; color: #fecaca; }
-  [data-theme="dark"] .task-meta-pill.pri-low  { background: #1e3a8a; color: #bfdbfe; }
-  .task-meta-pill.creator-client { background: #ecfccb; color: #365314; border-color: transparent; }
-  [data-theme="dark"] .task-meta-pill.creator-client { background: #365314; color: #d9f99d; }
+  .task-meta-pill.pri-high { background: #7f1d1d; color: #fecaca; border-color: transparent; }
+  .task-meta-pill.pri-low  { background: #1e3a8a; color: #bfdbfe; border-color: transparent; }
+  .task-meta-pill.creator-client { background: #365314; color: #d9f99d; border-color: transparent; }
+  .task-updated { font-size: 12px; color: var(--text-muted); opacity: 0.85; white-space: nowrap; }
 
   .task-actions {
     display: flex;
@@ -363,8 +381,7 @@ foreach ($cntStmt->fetchAll() as $r) {
     transition: background 0.15s, color 0.15s;
   }
   .task-actions button:hover { background: var(--surface-2); color: var(--text); }
-  .task-actions button.danger:hover { background: #fee2e2; color: var(--danger); }
-  [data-theme="dark"] .task-actions button.danger:hover { background: #7f1d1d; color: #fca5a5; }
+  .task-actions button.danger:hover { background: #7f1d1d; color: #fca5a5; }
 
   .empty {
     padding: 60px 20px;
@@ -401,17 +418,8 @@ foreach ($cntStmt->fetchAll() as $r) {
 
 <header class="topbar">
   <div class="topbar-inner">
-    <div class="brand">
-      <div class="brand-mark">J</div>
-      <span><?= $client ? h($client['name']) : 'Joust Media' ?></span>
-    </div>
-    <div class="top-actions">
-      <a class="nav-link" href="<?= h(clientUrl('index.php')) ?>">Home</a>
-      <a class="nav-link" href="<?= h(clientUrl('feed.php')) ?>">Feed</a>
-      <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
-        <span id="themeIcon">🌙</span>
-      </button>
-    </div>
+    <?= renderBrand($client) ?>
+    <nav class="client-nav"><?= renderClientNav($navItems, 'projects') ?></nav>
   </div>
 </header>
 
@@ -472,6 +480,7 @@ foreach ($cntStmt->fetchAll() as $r) {
         $isDone = $t['status'] === 'done';
       ?>
         <div class="task-item <?= $isDone ? 'done' : '' ?>"
+             id="task-<?= (int)$t['id'] ?>"
              data-task-id="<?= (int)$t['id'] ?>"
              data-status="<?= h($t['status']) ?>">
           <input type="checkbox" class="task-check"
@@ -498,7 +507,15 @@ foreach ($cntStmt->fetchAll() as $r) {
               <?php if ($t['created_by'] === 'client'): ?>
                 <span class="task-meta-pill creator-client">From client</span>
               <?php endif; ?>
-              <span><?= h(date('M j', strtotime($t['created_at']))) ?></span>
+              <span title="Created <?= h(absoluteTime($t['created_at'])) ?>">
+                <?= h(date('M j', strtotime($t['created_at']))) ?>
+              </span>
+              <?php if (!empty($t['updated_at']) && $t['updated_at'] !== $t['created_at']): ?>
+                <span class="task-updated"
+                      title="Last edited: <?= h(absoluteTime($t['updated_at'])) ?>">
+                  · edited <?= h(relativeTime($t['updated_at'])) ?>
+                </span>
+              <?php endif; ?>
             </div>
           </div>
           <div class="task-actions">
@@ -550,6 +567,7 @@ foreach ($cntStmt->fetchAll() as $r) {
       fd.append('description', desc);
       fd.append('priority', pri);
       fd.append('created_by', CREATED_BY);
+      fd.append('actor', CREATED_BY);
       const res  = await fetch('task.php', { method: 'POST', body: fd });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Failed');
@@ -576,6 +594,7 @@ foreach ($cntStmt->fetchAll() as $r) {
       const fd = new FormData();
       fd.append('action', 'toggle');
       fd.append('id', taskId);
+      fd.append('actor', CREATED_BY);
       const res  = await fetch('task.php', { method: 'POST', body: fd });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Failed');
@@ -634,6 +653,7 @@ foreach ($cntStmt->fetchAll() as $r) {
         fd.append('action', 'update');
         fd.append('id', taskId);
         fd.append('title', newVal);
+        fd.append('actor', CREATED_BY);
         const res  = await fetch('task.php', { method: 'POST', body: fd });
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || 'Failed');
@@ -666,6 +686,7 @@ foreach ($cntStmt->fetchAll() as $r) {
       const fd = new FormData();
       fd.append('action', 'delete');
       fd.append('id', taskId);
+      fd.append('actor', CREATED_BY);
       const res  = await fetch('task.php', { method: 'POST', body: fd });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Failed');
@@ -680,16 +701,6 @@ foreach ($cntStmt->fetchAll() as $r) {
     }
   });
 
-  // Theme toggle
-  const themeBtn = document.getElementById('themeToggle');
-  const themeIcon = document.getElementById('themeIcon');
-  let isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  function applyTheme() {
-    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
-    themeIcon.textContent = isDark ? '☀️' : '🌙';
-  }
-  applyTheme();
-  themeBtn.addEventListener('click', () => { isDark = !isDark; applyTheme(); });
 </script>
 
 </body>

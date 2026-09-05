@@ -12,6 +12,7 @@
  */
 
 require __DIR__ . '/db.php';
+require_once __DIR__ . '/helpers.php';
 
 header('Content-Type: application/json');
 
@@ -56,6 +57,9 @@ try {
             ");
             $stmt->execute([$companyId, $title, $desc ?: null, $priority, $createdBy]);
             $newId = (int)$pdo->lastInsertId();
+
+            logActivity($pdo, $companyId, 'task', $newId, 'task_created', $createdBy,
+                'Opened task: ' . mb_substr($title, 0, 200), $desc ?: null);
 
             // Return the full task row for easy client-side rendering
             $row = $pdo->prepare("SELECT * FROM tasks WHERE id = ?");
@@ -105,9 +109,25 @@ try {
 
             if (!$sets) fail('Nothing to update');
 
+            // Capture company_id + before-status for logging.
+            $pre = $pdo->prepare("SELECT company_id, status, title FROM tasks WHERE id = ?");
+            $pre->execute([$id]);
+            $preRow = $pre->fetch();
+
             $params[] = $id;
             $stmt = $pdo->prepare('UPDATE tasks SET ' . implode(', ', $sets) . ' WHERE id = ?');
             $stmt->execute($params);
+
+            if ($preRow) {
+                $newStatus = $_POST['status'] ?? $preRow['status'];
+                $summary   = "Updated task #{$id}";
+                if (array_key_exists('status', $_POST) && $newStatus !== $preRow['status']) {
+                    $summary = "Task #{$id} {$preRow['status']} → {$newStatus}: "
+                             . mb_substr((string)$preRow['title'], 0, 200);
+                }
+                logActivity($pdo, (int)$preRow['company_id'], 'task', $id,
+                    'task_updated', actorFromPost(), $summary);
+            }
 
             echo json_encode(['ok' => true, 'id' => $id]);
             exit;
@@ -126,9 +146,16 @@ try {
             ");
             $stmt->execute([$id]);
 
-            $sel = $pdo->prepare("SELECT status FROM tasks WHERE id = ?");
+            $sel = $pdo->prepare("SELECT company_id, status, title FROM tasks WHERE id = ?");
             $sel->execute([$id]);
-            $newStatus = $sel->fetchColumn();
+            $row = $sel->fetch();
+            $newStatus = $row['status'] ?? null;
+
+            if ($row) {
+                logActivity($pdo, (int)$row['company_id'], 'task', $id,
+                    'task_toggled', actorFromPost(),
+                    "Task #{$id} → {$newStatus}: " . mb_substr((string)$row['title'], 0, 200));
+            }
 
             echo json_encode(['ok' => true, 'id' => $id, 'status' => $newStatus]);
             exit;
@@ -138,8 +165,19 @@ try {
             $id = (int)($_POST['id'] ?? 0);
             if ($id <= 0) fail('Invalid id');
 
+            // Capture company_id + title before deletion.
+            $pre = $pdo->prepare("SELECT company_id, title FROM tasks WHERE id = ?");
+            $pre->execute([$id]);
+            $preRow = $pre->fetch();
+
             $stmt = $pdo->prepare("DELETE FROM tasks WHERE id = ?");
             $stmt->execute([$id]);
+
+            if ($preRow) {
+                logActivity($pdo, (int)$preRow['company_id'], 'task', $id,
+                    'task_deleted', actorFromPost(),
+                    "Deleted task #{$id}: " . mb_substr((string)$preRow['title'], 0, 200));
+            }
 
             echo json_encode(['ok' => true, 'id' => $id]);
             exit;

@@ -1,11 +1,19 @@
 <?php
 require_once 'db.php';
 require_once 'helpers.php';
+require_once 'auth.php';
 
 header('Content-Type: application/json');
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     echo json_encode(['ok' => false, 'error' => 'POST only']);
+    exit;
+}
+
+// Admin-only API endpoint — JSON 401 instead of an HTML login redirect.
+if (!currentAdmin()) {
+    http_response_code(401);
+    echo json_encode(['ok' => false, 'error' => 'Not signed in']);
     exit;
 }
 

@@ -1,1055 +1,680 @@
 <?php
 /**
- * Social Media Approval Feed — Admin
- * List, create, edit, delete posts. Uploads images into /uploads/.
+ * Admin — client-scoped dashboard.
+ *
+ * No ?client= → client picker (list of all companies).
+ * With ?client=<slug> → dashboard for that client only.
+ *   Tiles: Add a Post + Add a Project (universal), plus one tile per
+ *   module that the client has enabled in company_modules.
+ *   Post list (oldest → newest) scoped to the client, with Mark Posted,
+ *   🚀 Post, ⬇ Save, 👁 View, Edit, Delete actions.
  */
 
 require __DIR__ . '/db.php';
+require __DIR__ . '/helpers.php';
+require __DIR__ . '/prompt-lib.php';
+require __DIR__ . '/auth.php';
 
-// -------------------------------------------------------------
-// Config
-// -------------------------------------------------------------
-$uploadsDir  = __DIR__ . '/uploads';
-$uploadsUrl  = 'uploads';
-$allowedExt  = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-$maxFileSize    = 10 * 1024 * 1024; // 10 MB
-$maxImages      = 5;
-$maxTireImages  = 6;
-
-$errors = [];
-$flash  = $_GET['msg'] ?? '';
+// Single admin gate — everything below assumes a signed-in admin.
+requireAdmin();
 
 function h($s) {
     return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
+// Where the "Post" CTA opens. Same for all clients for now.
+$postCtaUrl = 'https://www.facebook.com/kendapowersports';
+
+$errors = [];
+$flash  = $_GET['msg'] ?? '';
+
+function hasPostedColumn(PDO $pdo) {
+    static $cached = null;
+    if ($cached !== null) return $cached;
+    $s = $pdo->prepare("
+        SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'posts' AND COLUMN_NAME = 'posted'
+    ");
+    $s->execute();
+    return $cached = (int)$s->fetchColumn() > 0;
+}
+
+// hasActivityLog() lives in helpers.php so other pages (index.php) can share it.
+
 // -------------------------------------------------------------
-// POST handlers
+// Opportunistic digest trigger — fires AFTER the response is
+// flushed so the user-visible page render is never blocked.
+// digest.php gates itself with a 36h floor + lock, so this is
+// a no-op most of the time.
 // -------------------------------------------------------------
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $action = $_POST['action'] ?? '';
-
-    // ---- Delete -----------------------------------------------
-    if ($action === 'delete') {
-        $postId = (int)($_POST['id'] ?? 0);
-        if ($postId > 0) {
-            try {
-                $pdo->beginTransaction();
-                $imgs = $pdo->prepare("SELECT image_url FROM post_images WHERE post_id = ?");
-                $imgs->execute([$postId]);
-                foreach ($imgs->fetchAll() as $row) {
-                    if (strpos($row['image_url'], 'uploads/') === 0) {
-                        $path = __DIR__ . '/' . $row['image_url'];
-                        if (is_file($path)) { @unlink($path); }
-                    }
-                }
-                $pdo->prepare("DELETE FROM posts WHERE id = ?")->execute([$postId]);
-                $pdo->commit();
-                header('Location: admin.php?msg=' . urlencode('Post deleted.'));
-                exit;
-            } catch (Exception $e) {
-                $pdo->rollBack();
-                $errors[] = 'Delete failed: ' . $e->getMessage();
-            }
+if (hasActivityLog($pdo)) {
+    register_shutdown_function(function () {
+        if (function_exists('fastcgi_finish_request')) {
+            @fastcgi_finish_request();
         }
-    }
-
-    // ---- Create / Update --------------------------------------
-    if ($action === 'create' || $action === 'update') {
-        $company_id     = (int)($_POST['company_id'] ?? 0);
-        $caption        = trim($_POST['caption'] ?? '');
-        $hashtags       = trim($_POST['hashtags'] ?? '');
-        $scheduled_date = trim($_POST['scheduled_date'] ?? '');
-        $status         = $_POST['status'] ?? 'pending';
-
-        if (!$company_id)          { $errors[] = 'Company is required.'; }
-        if ($caption === '')       { $errors[] = 'Caption is required.'; }
-        if ($scheduled_date === ''){ $errors[] = 'Scheduled date is required.'; }
-        if (!in_array($status, ['pending', 'approved', 'denied'], true)) {
-            $status = 'pending';
+        $scheme  = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+        $host    = $_SERVER['HTTP_HOST'] ?? 'localhost';
+        $dir     = rtrim(dirname($_SERVER['SCRIPT_NAME'] ?? '/'), '/');
+        $url     = $scheme . '://' . $host . $dir . '/digest.php?source=opportunistic';
+        if (function_exists('curl_init')) {
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT        => 30,
+                CURLOPT_CONNECTTIMEOUT => 5,
+                CURLOPT_SSL_VERIFYPEER => false,
+            ]);
+            @curl_exec($ch);
+            curl_close($ch);
+        } else {
+            @file_get_contents($url, false, stream_context_create([
+                'http' => ['timeout' => 30, 'ignore_errors' => true],
+            ]));
         }
-
-        $dtFormatted = null;
-        if ($scheduled_date !== '') {
-            $ts = strtotime($scheduled_date);
-            if ($ts) { $dtFormatted = date('Y-m-d H:i:s', $ts); }
-            else     { $errors[] = 'Invalid date format.'; }
-        }
-
-        if (!$errors) {
-            try {
-                $pdo->beginTransaction();
-
-                if ($action === 'create') {
-                    $stmt = $pdo->prepare("
-                        INSERT INTO posts (company_id, caption, hashtags, scheduled_date, status)
-                        VALUES (?, ?, ?, ?, ?)
-                    ");
-                    $stmt->execute([$company_id, $caption, $hashtags, $dtFormatted, $status]);
-                    $postId = (int)$pdo->lastInsertId();
-                } else {
-                    $postId = (int)($_POST['id'] ?? 0);
-                    if ($postId <= 0) { throw new Exception('Invalid post id.'); }
-                    $stmt = $pdo->prepare("
-                        UPDATE posts
-                        SET company_id = ?, caption = ?, hashtags = ?, scheduled_date = ?, status = ?
-                        WHERE id = ?
-                    ");
-                    $stmt->execute([$company_id, $caption, $hashtags, $dtFormatted, $status, $postId]);
-                }
-
-                // Replace category assignments (works for both create and update)
-                $pdo->prepare("DELETE FROM post_categories WHERE post_id = ?")->execute([$postId]);
-                if (!empty($_POST['categories']) && is_array($_POST['categories'])) {
-                    $insCat = $pdo->prepare("INSERT IGNORE INTO post_categories (post_id, category_id) VALUES (?, ?)");
-                    foreach ($_POST['categories'] as $cid) {
-                        $cid = (int)$cid;
-                        if ($cid > 0) { $insCat->execute([$postId, $cid]); }
-                    }
-                }
-
-                if ($action === 'update') {
-                    // Remove any images the user ticked for deletion
-                    if (!empty($_POST['remove_images']) && is_array($_POST['remove_images'])) {
-                        $toRemove = array_values(array_filter(array_map('intval', $_POST['remove_images'])));
-                        if ($toRemove) {
-                            $ph  = implode(',', array_fill(0, count($toRemove), '?'));
-                            $sel = $pdo->prepare("
-                                SELECT id, image_url FROM post_images
-                                WHERE post_id = ? AND id IN ($ph)
-                            ");
-                            $sel->execute(array_merge([$postId], $toRemove));
-                            foreach ($sel->fetchAll() as $row) {
-                                if (strpos($row['image_url'], 'uploads/') === 0) {
-                                    $path = __DIR__ . '/' . $row['image_url'];
-                                    if (is_file($path)) { @unlink($path); }
-                                }
-                            }
-                            $del = $pdo->prepare("
-                                DELETE FROM post_images WHERE post_id = ? AND id IN ($ph)
-                            ");
-                            $del->execute(array_merge([$postId], $toRemove));
-                        }
-                    }
-                }
-
-                // Handle new image uploads
-                if (!empty($_FILES['images']) && is_array($_FILES['images']['name'])) {
-                    // How many images already exist on this post?
-                    $cnt = $pdo->prepare("SELECT COUNT(*) FROM post_images WHERE post_id = ?");
-                    $cnt->execute([$postId]);
-                    $existing = (int)$cnt->fetchColumn();
-
-                    $sortQ = $pdo->prepare("SELECT COALESCE(MAX(sort_order), 0) FROM post_images WHERE post_id = ?");
-                    $sortQ->execute([$postId]);
-                    $sortOrder = (int)$sortQ->fetchColumn();
-
-                    $slots = $maxImages - $existing;
-
-                    if (!is_dir($uploadsDir)) {
-                        @mkdir($uploadsDir, 0755, true);
-                    }
-
-                    $uploadedCount = 0;
-                    foreach ($_FILES['images']['name'] as $i => $origName) {
-                        if ($uploadedCount >= $slots) {
-                            $errors[] = "Max {$maxImages} images per post — some were skipped.";
-                            break;
-                        }
-                        $err = $_FILES['images']['error'][$i] ?? UPLOAD_ERR_NO_FILE;
-                        if ($err === UPLOAD_ERR_NO_FILE) { continue; }
-                        if ($err !== UPLOAD_ERR_OK) {
-                            $errors[] = "Upload error on '{$origName}' (code {$err}).";
-                            continue;
-                        }
-                        if ($_FILES['images']['size'][$i] > $maxFileSize) {
-                            $errors[] = "'{$origName}' exceeds 10 MB.";
-                            continue;
-                        }
-                        $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
-                        if (!in_array($ext, $allowedExt, true)) {
-                            $errors[] = "'{$origName}' has an unsupported file type.";
-                            continue;
-                        }
-
-                        // Real MIME check
-                        $finfo = @getimagesize($_FILES['images']['tmp_name'][$i]);
-                        if ($finfo === false) {
-                            $errors[] = "'{$origName}' is not a valid image.";
-                            continue;
-                        }
-
-                        $newName = uniqid('img_', true) . '.' . $ext;
-                        $newName = preg_replace('/[^a-zA-Z0-9_.\-]/', '', $newName);
-                        $dest    = $uploadsDir . '/' . $newName;
-
-                        if (move_uploaded_file($_FILES['images']['tmp_name'][$i], $dest)) {
-                            $sortOrder++;
-                            $ins = $pdo->prepare("
-                                INSERT INTO post_images (post_id, image_url, sort_order)
-                                VALUES (?, ?, ?)
-                            ");
-                            $ins->execute([$postId, $uploadsUrl . '/' . $newName, $sortOrder]);
-                            $uploadedCount++;
-                        } else {
-                            $errors[] = "Failed to save '{$origName}'. Check uploads/ permissions.";
-                        }
-                    }
-                }
-
-                $pdo->commit();
-                $msg = $action === 'create' ? 'Post created.' : 'Post updated.';
-                if ($errors) {
-                    $msg .= ' (Some warnings: ' . implode(' ', $errors) . ')';
-                }
-                header('Location: admin.php?msg=' . urlencode($msg));
-                exit;
-            } catch (Exception $e) {
-                $pdo->rollBack();
-                $errors[] = 'Save failed: ' . $e->getMessage();
-            }
-        }
-    }
+    });
 }
 
 // -------------------------------------------------------------
-// Batch upload handler (create multiple posts in one go)
+// POST handler — toggle_posted / save_default_hashtags
 // -------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
-    if ($action === 'batch_create') {
-        $company_id  = (int)($_POST['company_id'] ?? 0);
-        $spacingDays = max(1, min(30, (int)($_POST['spacing_days'] ?? 3)));
-
-        if (!$company_id) {
-            $errors[] = 'Company is required for batch upload.';
+    if ($action === 'save_default_hashtags' && $client) {
+        $newTags = trim((string)($_POST['default_hashtags'] ?? ''));
+        if (mb_strlen($newTags) > 4000) { $newTags = mb_substr($newTags, 0, 4000); }
+        try {
+            $pdo->prepare("UPDATE companies SET default_hashtags = ? WHERE id = ?")
+                ->execute([$newTags === '' ? null : $newTags, (int)$client['id']]);
+            $back = 'admin?client=' . urlencode($client['slug'])
+                  . '&msg=' . urlencode('Default hashtags saved.');
+            header('Location: ' . $back);
+            exit;
+        } catch (Exception $e) {
+            $errors[] = 'Save failed: ' . $e->getMessage();
         }
-        if (empty($_FILES['batch_images']) || !is_array($_FILES['batch_images']['name'])) {
-            $errors[] = 'No images uploaded.';
-        }
+    }
 
-        if (!$errors) {
-            // Find latest scheduled_date for this company; spacing starts from there
-            $dateStmt = $pdo->prepare("SELECT MAX(scheduled_date) FROM posts WHERE company_id = ?");
-            $dateStmt->execute([$company_id]);
-            $latest = $dateStmt->fetchColumn();
-            $baseDate = $latest ? new DateTime($latest) : new DateTime();
-
-            // Load categories for filename matching
-            $catRows = $pdo->query("SELECT id, name FROM categories ORDER BY sort_order")->fetchAll();
-            $catMap = [];
-            foreach ($catRows as $cat) {
-                $catMap[strtolower($cat['name'])] = (int)$cat['id'];
-            }
-            // Sort longest name first so "sport atv" matches before "atv"
-            uksort($catMap, function($a, $b) { return strlen($b) - strlen($a); });
-
-            // Common spelling variants → canonical category name
-            $aliases = [
-                'offroad'    => 'off-road',
-                'dualsport'  => 'dual sport',
-                'sportatv'   => 'sport atv',
-            ];
-
-            if (!is_dir($uploadsDir)) { @mkdir($uploadsDir, 0755, true); }
-
-            $createdCount = 0;
-            $fileNames = $_FILES['batch_images']['name'];
-
-            foreach ($fileNames as $i => $origName) {
-                $err = $_FILES['batch_images']['error'][$i] ?? UPLOAD_ERR_NO_FILE;
-                if ($err === UPLOAD_ERR_NO_FILE) { continue; }
-                if ($err !== UPLOAD_ERR_OK) {
-                    $errors[] = "Upload error on '{$origName}' (code {$err}).";
-                    continue;
-                }
-                if ($_FILES['batch_images']['size'][$i] > $maxFileSize) {
-                    $errors[] = "'{$origName}' exceeds 10 MB.";
-                    continue;
-                }
-                $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
-                if (!in_array($ext, $allowedExt, true)) {
-                    $errors[] = "'{$origName}' has an unsupported file type.";
-                    continue;
-                }
-                $finfo = @getimagesize($_FILES['batch_images']['tmp_name'][$i]);
-                if ($finfo === false) {
-                    $errors[] = "'{$origName}' is not a valid image.";
-                    continue;
-                }
-
-                $newName = uniqid('batch_', true) . '.' . $ext;
-                $newName = preg_replace('/[^a-zA-Z0-9_.\-]/', '', $newName);
-                $dest    = $uploadsDir . '/' . $newName;
-
-                if (!move_uploaded_file($_FILES['batch_images']['tmp_name'][$i], $dest)) {
-                    $errors[] = "Failed to save '{$origName}'.";
-                    continue;
-                }
-
-                // Match categories from filename.  Pad with spaces so we match
-                // whole words, not substrings (e.g. "utv" shouldn't match "cutv").
-                $nameKey = strtolower(pathinfo($origName, PATHINFO_FILENAME));
-                $nameKey = str_replace(['-', '_', '.'], ' ', $nameKey);
-                $nameKey = ' ' . preg_replace('/\s+/', ' ', $nameKey) . ' ';
-
-                $matchedCatIds = [];
-                foreach ($catMap as $catName => $catId) {
-                    if (strpos($nameKey, ' ' . $catName . ' ') !== false) {
-                        $matchedCatIds[$catId] = true;
-                    }
-                }
-                foreach ($aliases as $alias => $catName) {
-                    if (strpos($nameKey, ' ' . $alias . ' ') !== false && isset($catMap[$catName])) {
-                        $matchedCatIds[$catMap[$catName]] = true;
-                    }
-                }
-
-                // Advance scheduled date
-                $baseDate->modify('+' . $spacingDays . ' days');
-                $scheduledDate = $baseDate->format('Y-m-d H:i:s');
-
-                try {
-                    $pdo->beginTransaction();
-
-                    $ins = $pdo->prepare("
-                        INSERT INTO posts (company_id, caption, hashtags, scheduled_date, status)
-                        VALUES (?, 'Please insert caption here', '', ?, 'pending')
-                    ");
-                    $ins->execute([$company_id, $scheduledDate]);
-                    $postId = (int)$pdo->lastInsertId();
-
-                    $imgIns = $pdo->prepare("
-                        INSERT INTO post_images (post_id, image_url, sort_order)
-                        VALUES (?, ?, 1)
-                    ");
-                    $imgIns->execute([$postId, $uploadsUrl . '/' . $newName]);
-
-                    if ($matchedCatIds) {
-                        $catIns = $pdo->prepare("INSERT IGNORE INTO post_categories (post_id, category_id) VALUES (?, ?)");
-                        foreach (array_keys($matchedCatIds) as $cid) {
-                            $catIns->execute([$postId, $cid]);
-                        }
-                    }
-
-                    $pdo->commit();
-                    $createdCount++;
-                } catch (Exception $e) {
-                    $pdo->rollBack();
-                    $errors[] = "DB error on '{$origName}': " . $e->getMessage();
-                    if (is_file($dest)) { @unlink($dest); }
-                }
-            }
-
-            $msg = $createdCount . ' post' . ($createdCount !== 1 ? 's' : '') . ' created via batch upload.';
-            if ($errors) {
-                $msg .= ' (Warnings: ' . implode(' ', $errors) . ')';
-            }
-            header('Location: admin.php?msg=' . urlencode($msg));
+    if ($action === 'save_client_profile' && $client) {
+        if (!hasClientProfileColumns($pdo)) {
+            header('Location: admin?client=' . urlencode($client['slug'])
+                . '&msg=' . urlencode('Run migrate first to enable client profile fields.'));
             exit;
         }
-    }
-}
-
-// -------------------------------------------------------------
-// Tire POST handlers
-// -------------------------------------------------------------
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $action = $_POST['action'] ?? '';
-
-    // ---- Delete tire ------------------------------------------
-    if ($action === 'tire_delete') {
-        $tireId = (int)($_POST['id'] ?? 0);
-        if ($tireId > 0) {
-            try {
-                $pdo->beginTransaction();
-                $imgs = $pdo->prepare("SELECT image_url FROM tire_images WHERE tire_id = ?");
-                $imgs->execute([$tireId]);
-                foreach ($imgs->fetchAll() as $row) {
-                    if (strpos($row['image_url'], 'uploads/') === 0) {
-                        $path = __DIR__ . '/' . $row['image_url'];
-                        if (is_file($path)) { @unlink($path); }
-                    }
-                }
-                $pdo->prepare("DELETE FROM tires WHERE id = ?")->execute([$tireId]);
-                $pdo->commit();
-                header('Location: admin.php?msg=' . urlencode('Tire deleted.'));
-                exit;
-            } catch (Exception $e) {
-                $pdo->rollBack();
-                $errors[] = 'Tire delete failed: ' . $e->getMessage();
-            }
+        $productType = trim((string)($_POST['product_type'] ?? ''));
+        $industry    = trim((string)($_POST['industry'] ?? ''));
+        if (mb_strlen($productType) > 120) { $productType = mb_substr($productType, 0, 120); }
+        if (mb_strlen($industry) > 120)    { $industry    = mb_substr($industry, 0, 120); }
+        try {
+            $pdo->prepare("UPDATE companies SET product_type = ?, industry = ? WHERE id = ?")
+                ->execute([
+                    $productType === '' ? null : $productType,
+                    $industry    === '' ? null : $industry,
+                    (int)$client['id'],
+                ]);
+            header('Location: admin?client=' . urlencode($client['slug'])
+                . '&msg=' . urlencode('Client profile saved.'));
+            exit;
+        } catch (Exception $e) {
+            $errors[] = 'Save failed: ' . $e->getMessage();
         }
     }
 
-    // ---- Create / Update tire ---------------------------------
-    if ($action === 'tire_create' || $action === 'tire_update') {
-        $name = trim($_POST['tire_name'] ?? '');
-        if ($name === '') { $errors[] = 'Tire name is required.'; }
+    if ($action === 'toggle_posted') {
+        $postId = (int)($_POST['id'] ?? 0);
+        $target = ($_POST['to'] ?? '1') === '1' ? 1 : 0;
+        $returnSlug = trim((string)($_POST['return_client'] ?? ''));
+        $returnSlug = preg_replace('/[^a-z0-9\-]/', '', strtolower($returnSlug));
 
-        if (!$errors) {
+        if (!hasPostedColumn($pdo)) {
+            $back = 'admin' . ($returnSlug ? '?client=' . urlencode($returnSlug) : '');
+            header('Location: ' . $back . (strpos($back, '?') === false ? '?' : '&')
+                . 'msg=' . urlencode('Run migrate first to enable this.'));
+            exit;
+        }
+        if ($postId > 0) {
             try {
-                $pdo->beginTransaction();
-
-                if ($action === 'tire_create') {
-                    $stmt = $pdo->prepare("INSERT INTO tires (name) VALUES (?)");
-                    $stmt->execute([$name]);
-                    $tireId = (int)$pdo->lastInsertId();
+                if ($target === 1) {
+                    $stmt = $pdo->prepare("UPDATE posts SET posted = 1, posted_at = NOW() WHERE id = ?");
                 } else {
-                    $tireId = (int)($_POST['id'] ?? 0);
-                    if ($tireId <= 0) { throw new Exception('Invalid tire id.'); }
-                    $stmt = $pdo->prepare("UPDATE tires SET name = ? WHERE id = ?");
-                    $stmt->execute([$name, $tireId]);
+                    $stmt = $pdo->prepare("UPDATE posts SET posted = 0, posted_at = NULL WHERE id = ?");
+                }
+                $stmt->execute([$postId]);
 
-                    // Update captions on existing images
-                    if (!empty($_POST['captions']) && is_array($_POST['captions'])) {
-                        $capStmt = $pdo->prepare("
-                            UPDATE tire_images SET caption = ?
-                            WHERE id = ? AND tire_id = ?
-                        ");
-                        foreach ($_POST['captions'] as $imgId => $cap) {
-                            $capStmt->execute([trim($cap), (int)$imgId, $tireId]);
-                        }
-                    }
-
-                    // Remove any images the user ticked for deletion
-                    if (!empty($_POST['remove_tire_images']) && is_array($_POST['remove_tire_images'])) {
-                        $toRemove = array_values(array_filter(array_map('intval', $_POST['remove_tire_images'])));
-                        if ($toRemove) {
-                            $ph  = implode(',', array_fill(0, count($toRemove), '?'));
-                            $sel = $pdo->prepare("
-                                SELECT id, image_url FROM tire_images
-                                WHERE tire_id = ? AND id IN ($ph)
-                            ");
-                            $sel->execute(array_merge([$tireId], $toRemove));
-                            foreach ($sel->fetchAll() as $row) {
-                                if (strpos($row['image_url'], 'uploads/') === 0) {
-                                    $path = __DIR__ . '/' . $row['image_url'];
-                                    if (is_file($path)) { @unlink($path); }
-                                }
-                            }
-                            $del = $pdo->prepare("
-                                DELETE FROM tire_images WHERE tire_id = ? AND id IN ($ph)
-                            ");
-                            $del->execute(array_merge([$tireId], $toRemove));
-                        }
-                    }
+                // Log activity (look up the company so the row is correctly scoped).
+                $coStmt = $pdo->prepare("SELECT company_id FROM posts WHERE id = ?");
+                $coStmt->execute([$postId]);
+                $coId = (int)$coStmt->fetchColumn();
+                if ($coId > 0) {
+                    logActivity($pdo, $coId, 'post', $postId,
+                        $target === 1 ? 'posted' : 'unposted', 'admin',
+                        $target === 1 ? "Marked post #{$postId} as posted"
+                                      : "Unmarked post #{$postId}");
                 }
 
-                // Replace category assignments (works for both create and update)
-                $pdo->prepare("DELETE FROM tire_categories WHERE tire_id = ?")->execute([$tireId]);
-                if (!empty($_POST['tire_categories']) && is_array($_POST['tire_categories'])) {
-                    $insCat = $pdo->prepare("INSERT IGNORE INTO tire_categories (tire_id, category_id) VALUES (?, ?)");
-                    foreach ($_POST['tire_categories'] as $cid) {
-                        $cid = (int)$cid;
-                        if ($cid > 0) { $insCat->execute([$tireId, $cid]); }
-                    }
-                }
-
-                // Handle new image uploads
-                if (!empty($_FILES['tire_images']) && is_array($_FILES['tire_images']['name'])) {
-                    $cnt = $pdo->prepare("SELECT COUNT(*) FROM tire_images WHERE tire_id = ?");
-                    $cnt->execute([$tireId]);
-                    $existing = (int)$cnt->fetchColumn();
-
-                    $sortQ = $pdo->prepare("SELECT COALESCE(MAX(sort_order), 0) FROM tire_images WHERE tire_id = ?");
-                    $sortQ->execute([$tireId]);
-                    $sortOrder = (int)$sortQ->fetchColumn();
-
-                    $slots = $maxTireImages - $existing;
-
-                    if (!is_dir($uploadsDir)) { @mkdir($uploadsDir, 0755, true); }
-
-                    $uploadedCount = 0;
-                    foreach ($_FILES['tire_images']['name'] as $i => $origName) {
-                        if ($uploadedCount >= $slots) {
-                            $errors[] = "Max {$maxTireImages} images per tire — some were skipped.";
-                            break;
-                        }
-                        $err = $_FILES['tire_images']['error'][$i] ?? UPLOAD_ERR_NO_FILE;
-                        if ($err === UPLOAD_ERR_NO_FILE) { continue; }
-                        if ($err !== UPLOAD_ERR_OK) {
-                            $errors[] = "Upload error on '{$origName}' (code {$err}).";
-                            continue;
-                        }
-                        if ($_FILES['tire_images']['size'][$i] > $maxFileSize) {
-                            $errors[] = "'{$origName}' exceeds 10 MB.";
-                            continue;
-                        }
-                        $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
-                        if (!in_array($ext, $allowedExt, true)) {
-                            $errors[] = "'{$origName}' has an unsupported file type.";
-                            continue;
-                        }
-                        $finfo = @getimagesize($_FILES['tire_images']['tmp_name'][$i]);
-                        if ($finfo === false) {
-                            $errors[] = "'{$origName}' is not a valid image.";
-                            continue;
-                        }
-
-                        $newName = uniqid('tire_', true) . '.' . $ext;
-                        $newName = preg_replace('/[^a-zA-Z0-9_.\-]/', '', $newName);
-                        $dest    = $uploadsDir . '/' . $newName;
-
-                        if (move_uploaded_file($_FILES['tire_images']['tmp_name'][$i], $dest)) {
-                            $sortOrder++;
-                            $ins = $pdo->prepare("
-                                INSERT INTO tire_images (tire_id, image_url, caption, sort_order)
-                                VALUES (?, ?, '', ?)
-                            ");
-                            $ins->execute([$tireId, $uploadsUrl . '/' . $newName, $sortOrder]);
-                            $uploadedCount++;
-                        } else {
-                            $errors[] = "Failed to save '{$origName}'. Check uploads/ permissions.";
-                        }
-                    }
-                }
-
-                $pdo->commit();
-                $msg = $action === 'tire_create' ? 'Tire created.' : 'Tire updated.';
-                if ($errors) {
-                    $msg .= ' (Warnings: ' . implode(' ', $errors) . ')';
-                }
-                header('Location: admin.php?msg=' . urlencode($msg)
-                     . ($action === 'tire_update' ? '&edit_tire=' . $tireId : ''));
+                $msg = $target === 1 ? 'Marked as posted.' : 'Unmarked as posted.';
+                $back = 'admin' . ($returnSlug ? '?client=' . urlencode($returnSlug) : '');
+                header('Location: ' . $back . (strpos($back, '?') === false ? '?' : '&')
+                    . 'msg=' . urlencode($msg));
                 exit;
             } catch (Exception $e) {
-                $pdo->rollBack();
-                $errors[] = 'Tire save failed: ' . $e->getMessage();
+                $errors[] = 'Toggle failed: ' . $e->getMessage();
+            }
+        }
+    }
+
+    if ($action === 'set_post_type') {
+        $postId     = (int)($_POST['id'] ?? 0);
+        $newType    = strtolower(trim((string)($_POST['post_type'] ?? '')));
+        $returnSlug = preg_replace('/[^a-z0-9\-]/', '', strtolower(trim((string)($_POST['return_client'] ?? ''))));
+        $back = 'admin' . ($returnSlug ? '?client=' . urlencode($returnSlug) : '');
+        $sep  = strpos($back, '?') === false ? '?' : '&';
+
+        if (!hasPostTypeColumn($pdo)) {
+            header('Location: ' . $back . $sep . 'msg=' . urlencode('Run migrate first to enable content types.'));
+            exit;
+        }
+        if (!in_array($newType, allowedPostTypes(), true)) {
+            header('Location: ' . $back . $sep . 'msg=' . urlencode('Invalid content type.'));
+            exit;
+        }
+        if ($postId > 0) {
+            try {
+                // Capture previous value for the activity log.
+                $prevStmt = $pdo->prepare("SELECT company_id, post_type FROM posts WHERE id = ?");
+                $prevStmt->execute([$postId]);
+                $prev = $prevStmt->fetch();
+
+                $stmt = $pdo->prepare("UPDATE posts SET post_type = ? WHERE id = ?");
+                $stmt->execute([$newType, $postId]);
+
+                $coId = (int)($prev['company_id'] ?? 0);
+                if ($coId > 0) {
+                    logActivity($pdo, $coId, 'post', $postId, 'type_changed', 'admin',
+                        'Content type: ' . ($prev['post_type'] ?? 'post') . ' → ' . $newType);
+                }
+
+                header('Location: ' . $back . $sep . 'msg=' . urlencode('Content type set to ' . postTypeLabel($newType) . '.'));
+                exit;
+            } catch (Exception $e) {
+                $errors[] = 'Type change failed: ' . $e->getMessage();
             }
         }
     }
 }
 
-// -------------------------------------------------------------
-// Fetch for display
-// -------------------------------------------------------------
-$companies = $pdo->query("SELECT id, name FROM companies ORDER BY name")->fetchAll();
-$allCategories = $pdo->query("SELECT id, name FROM categories ORDER BY sort_order, name")->fetchAll();
+// =============================================================
+// MODE A — no client selected: show the picker
+// =============================================================
+if (!$client) {
+    // Pull every company + quick counts for display
+    $companies = $pdo->query("
+        SELECT c.id, c.name, c.slug,
+               (SELECT COUNT(*) FROM posts WHERE posts.company_id = c.id) AS post_count,
+               (SELECT COUNT(*) FROM tires WHERE tires.company_id = c.id) AS feature_count,
+               (SELECT COUNT(*) FROM company_modules cm WHERE cm.company_id = c.id) AS module_count
+        FROM companies c
+        ORDER BY c.name ASC
+    ")->fetchAll();
+    ?>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pick a client — Joust Admin</title>
+    <style>
+      :root { --bg:#f0f2f5; --surface:#fff; --surface-2:#f7f8fa; --border:#dadde1;
+              --text:#050505; --text-muted:#65676b; --accent:#1877f2; --accent-hover:#166fe5;
+              --shadow: 0 1px 2px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04); }
+      [data-theme="dark"] { --bg:#18191a; --surface:#242526; --surface-2:#3a3b3c;
+              --border:#3e4042; --text:#e4e6eb; --text-muted:#b0b3b8;
+              --accent:#2d88ff; --accent-hover:#4599ff;
+              --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.3); }
+      *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);
+        font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+        font-size:15px;line-height:1.4;min-height:100vh}
+      .topbar{position:sticky;top:0;z-index:100;background:var(--surface);
+              border-bottom:1px solid var(--border);box-shadow:var(--shadow)}
+      .topbar-inner{max-width:900px;margin:0 auto;padding:12px 20px;display:flex;
+                    align-items:center;justify-content:space-between;gap:12px}
+      .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:20px;
+             color:var(--accent);letter-spacing:-.5px}
+      .brand-mark{width:32px;height:32px;border-radius:8px;background:var(--accent);
+                  color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800}
+      .btn{padding:8px 14px;border-radius:8px;font-size:14px;font-weight:600;
+           border:1px solid var(--border);background:var(--surface-2);color:var(--text);
+           text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+      .btn:hover{background:var(--border)}
+      .wrap{max-width:900px;margin:0 auto;padding:30px 20px 80px}
+      h1{margin:0 0 6px;font-size:26px;letter-spacing:-.3px}
+      .subtitle{color:var(--text-muted);margin:0 0 28px}
+      .flash { padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; font-size: 14px;
+               background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+      [data-theme="dark"] .flash { background: #14532d; color: #bbf7d0; border-color: #166534; }
 
-$editPost   = null;
-$editImages = [];
-$editId     = (int)($_GET['edit'] ?? 0);
-if ($editId > 0) {
-    $stmt = $pdo->prepare("SELECT * FROM posts WHERE id = ?");
-    $stmt->execute([$editId]);
-    $editPost = $stmt->fetch();
-    if ($editPost) {
-        $imgStmt = $pdo->prepare("
-            SELECT id, image_url FROM post_images
-            WHERE post_id = ?
-            ORDER BY sort_order ASC
-        ");
-        $imgStmt->execute([$editId]);
-        $editImages = $imgStmt->fetchAll();
+      .client-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+      .client-card{background:var(--surface);border:1px solid var(--border);border-radius:14px;
+                   padding:20px;box-shadow:var(--shadow);text-decoration:none;color:var(--text);
+                   transition:transform .15s,border-color .15s,box-shadow .15s;display:flex;
+                   flex-direction:column;gap:12px}
+      .client-card:hover{transform:translateY(-2px);border-color:var(--accent);
+                         box-shadow:0 4px 12px rgba(0,0,0,.12),0 2px 6px rgba(0,0,0,.08)}
+      .client-name{font-size:20px;font-weight:700;letter-spacing:-.2px;margin:0}
+      .client-slug{font-size:12px;color:var(--text-muted);font-family:ui-monospace,Menlo,monospace}
+      .client-counts{display:flex;gap:16px;font-size:13px;color:var(--text-muted);margin-top:auto}
+      .client-counts span strong{color:var(--text);font-size:15px;display:block}
+      .empty{padding:40px 20px;text-align:center;color:var(--text-muted);
+             background:var(--surface);border:1px dashed var(--border);border-radius:12px}
 
-        $catStmt = $pdo->prepare("SELECT category_id FROM post_categories WHERE post_id = ?");
-        $catStmt->execute([$editId]);
-        $editPostCategories = array_map('intval', array_column($catStmt->fetchAll(), 'category_id'));
-    }
+      /* Activity feed (picker mode) */
+      .activity-card { background: var(--surface); border: 1px solid var(--border);
+                       border-radius: 12px; box-shadow: var(--shadow); margin-bottom: 24px;
+                       overflow: hidden; }
+      .activity-card-header { padding: 14px 18px; border-bottom: 1px solid var(--border);
+                              display: flex; align-items: center; justify-content: space-between;
+                              gap: 8px; flex-wrap: wrap; }
+      .activity-card-title  { font-size: 16px; font-weight: 700; margin: 0; }
+      .activity-list { max-height: 320px; overflow-y: auto; }
+      .activity-day  { padding: 8px 18px; font-size: 11px; font-weight: 700;
+                       text-transform: uppercase; letter-spacing: 0.5px;
+                       color: var(--text-muted); background: var(--surface-2);
+                       border-top: 1px solid var(--border); position: sticky; top: 0; }
+      .activity-day:first-child { border-top: none; }
+      .activity-row  { display: grid; grid-template-columns: auto 1fr auto;
+                       gap: 12px; padding: 12px 18px; border-top: 1px solid var(--border);
+                       align-items: start; text-decoration: none; color: var(--text); }
+      .activity-row:hover { background: var(--surface-2); }
+      .activity-actor { font-size: 10px; font-weight: 700; text-transform: uppercase;
+                        letter-spacing: 0.4px; padding: 3px 7px; border-radius: 10px;
+                        background: var(--surface-2); color: var(--text-muted);
+                        border: 1px solid var(--border); white-space: nowrap; }
+      .activity-actor-client { background: #dbeafe; color: #1e40af; border-color: #93c5fd; }
+      .activity-actor-admin  { background: #f3e8ff; color: #6b21a8; border-color: #d8b4fe; }
+      [data-theme="dark"] .activity-actor-client { background: #1e3a8a; color: #bfdbfe; border-color: #1e40af; }
+      [data-theme="dark"] .activity-actor-admin  { background: #581c87; color: #e9d5ff; border-color: #6b21a8; }
+      .activity-text    { font-size: 14px; line-height: 1.5; min-width: 0; }
+      .activity-company { font-weight: 700; }
+      .activity-verb    { color: var(--text-muted); }
+      .activity-target  { color: var(--accent); }
+      .activity-detail  { margin-top: 4px; font-size: 13px; color: var(--text-muted);
+                          font-style: italic; }
+      .activity-time    { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+      .activity-empty   { padding: 24px 18px; text-align: center; color: var(--text-muted); font-size: 14px; }
+      .digest-btn       { font-size: 12px; padding: 4px 10px; }
+    </style>
+    </head>
+    <body>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="brand"><div class="brand-mark">J</div><span>Joust Media — Admin</span></div>
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center;">
+          <span style="font-size:12px;color:var(--text-muted);"><?= h(currentAdmin()) ?></span>
+          <a class="btn" href="prompts">🎨 Prompt Library</a>
+          <a class="btn" href="vehicles">🚗 Vehicle Library</a>
+          <a class="btn" href="<?= h(clientUrl('index.php')) ?>" target="_blank">View site ↗</a>
+          <a class="btn" href="logout">Sign out</a>
+        </div>
+      </div>
+    </header>
+
+    <div class="wrap">
+      <?php if ($flash): ?><div class="flash">✓ <?= h($flash) ?></div><?php endif; ?>
+
+      <?php if (hasActivityLog($pdo)): ?>
+        <div class="activity-card">
+          <div class="activity-card-header">
+            <h2 class="activity-card-title">📡 Recent activity (all clients)</h2>
+            <form method="POST" action="digest.php" target="digest_iframe" class="inline-form"
+                  onsubmit="setTimeout(()=>this.querySelector('button').textContent='✓ Sent',300);">
+              <input type="hidden" name="source" value="manual">
+              <button type="submit" class="btn digest-btn" title="Send a digest email to lance@joustmedia.com right now">
+                📧 Send digest now
+              </button>
+            </form>
+          </div>
+          <div class="activity-list">
+            <?= renderActivityFeed($pdo, null, 20) ?>
+          </div>
+        </div>
+        <iframe name="digest_iframe" style="display:none" aria-hidden="true"></iframe>
+      <?php endif; ?>
+
+      <h1>Pick a client</h1>
+      <p class="subtitle">Each client has their own posts, projects, and modules. Pick one to start.</p>
+
+      <?php if (empty($companies)): ?>
+        <div class="empty">
+          No clients in the <code>companies</code> table yet. Add one in phpMyAdmin to get started.
+        </div>
+      <?php else: ?>
+        <div class="client-grid">
+          <?php foreach ($companies as $c): ?>
+            <a class="client-card" href="admin?client=<?= h($c['slug']) ?>">
+              <h2 class="client-name"><?= h($c['name']) ?></h2>
+              <div class="client-slug">/<?= h($c['slug']) ?></div>
+              <div class="client-counts">
+                <span><strong><?= (int)$c['post_count'] ?></strong>posts</span>
+                <span><strong><?= (int)$c['module_count'] ?></strong>modules</span>
+                <span><strong><?= (int)$c['feature_count'] ?></strong>items</span>
+              </div>
+            </a>
+          <?php endforeach; ?>
+        </div>
+      <?php endif; ?>
+    </div>
+    </body></html>
+    <?php
+    exit;
 }
-$editPostCategories = $editPostCategories ?? [];
 
-$listStmt = $pdo->query("
-    SELECT p.id, p.caption, p.scheduled_date, p.status, p.company_id,
+// =============================================================
+// MODE B — client selected: dashboard
+// =============================================================
+
+// Quick counts for the Posts tile (scoped)
+$s = $pdo->prepare("SELECT COUNT(*) FROM posts WHERE company_id = ?");
+$s->execute([$client['id']]);
+$totalPosts = (int)$s->fetchColumn();
+
+$s = $pdo->prepare("SELECT COUNT(*) FROM tasks WHERE company_id = ? AND status <> 'done'");
+$s->execute([$client['id']]);
+$openTasks = (int)$s->fetchColumn();
+
+// Modules enabled on this client
+$modStmt = $pdo->prepare("
+    SELECT m.id, m.slug, m.singular_label, m.plural_label, m.icon,
+           (SELECT COUNT(*) FROM tires t
+            WHERE t.company_id = ? AND t.module_id = m.id) AS item_count
+    FROM company_modules cm
+    INNER JOIN modules m ON m.id = cm.module_id
+    WHERE cm.company_id = ?
+    ORDER BY cm.sort_order, m.plural_label
+");
+$modStmt->execute([$client['id'], $client['id']]);
+$clientModules = $modStmt->fetchAll();
+
+// Posts list — oldest → newest — scoped
+$postedCol = hasPostedColumn($pdo) ? 'p.posted, p.posted_at,' : '0 AS posted, NULL AS posted_at,';
+// Only reference media_type if the migration has run; otherwise hard-code 0.
+$videoCountSubq = hasMediaTypeColumn($pdo)
+    ? "(SELECT COUNT(*) FROM post_images pi WHERE pi.post_id = p.id AND pi.media_type = 'video')"
+    : "0";
+$nameCol = hasPostsNameColumn($pdo) ? 'p.name AS post_name,' : "'' AS post_name,";
+$typeCol = hasPostTypeColumn($pdo) ? 'p.post_type,' : "'post' AS post_type,";
+$listStmt = $pdo->prepare("
+    SELECT p.id, {$nameCol} p.caption, p.hashtags, p.scheduled_date, p.status, p.company_id, p.client_comment,
+           $postedCol
+           $typeCol
            c.name AS company_name,
            (SELECT COUNT(*) FROM post_images pi WHERE pi.post_id = p.id) AS image_count,
+           {$videoCountSubq} AS video_count,
+           (SELECT GROUP_CONCAT(image_url ORDER BY sort_order SEPARATOR '|')
+            FROM post_images pi WHERE pi.post_id = p.id) AS image_urls,
            (SELECT GROUP_CONCAT(cat.name ORDER BY cat.sort_order SEPARATOR ', ')
             FROM post_categories pc
             INNER JOIN categories cat ON cat.id = pc.category_id
             WHERE pc.post_id = p.id) AS category_names
     FROM posts p
     INNER JOIN companies c ON c.id = p.company_id
-    ORDER BY p.scheduled_date DESC
+    WHERE p.company_id = ?
+    ORDER BY p.scheduled_date ASC
 ");
+$listStmt->execute([$client['id']]);
 $allPosts = $listStmt->fetchAll();
 
-// Tire list + optional edit target
-$allTires = $pdo->query("
-    SELECT t.id, t.name,
-           (SELECT COUNT(*) FROM tire_images ti WHERE ti.tire_id = t.id) AS image_count,
-           (SELECT GROUP_CONCAT(cat.name ORDER BY cat.sort_order SEPARATOR ', ')
-            FROM tire_categories tc
-            INNER JOIN categories cat ON cat.id = tc.category_id
-            WHERE tc.tire_id = t.id) AS category_names
-    FROM tires t
-    ORDER BY t.name ASC
-")->fetchAll();
+// Comment dates — one query covers every post on the page.
+$commentDates = hasActivityLog($pdo)
+    ? latestCommentDates($pdo, 'post', array_column($allPosts, 'id'))
+    : [];
 
-$editTire       = null;
-$editTireImages = [];
-$editTireId     = (int)($_GET['edit_tire'] ?? 0);
-if ($editTireId > 0) {
-    $stmt = $pdo->prepare("SELECT * FROM tires WHERE id = ?");
-    $stmt->execute([$editTireId]);
-    $editTire = $stmt->fetch();
-    if ($editTire) {
-        $imgStmt = $pdo->prepare("
-            SELECT id, image_url, caption FROM tire_images
-            WHERE tire_id = ?
-            ORDER BY sort_order ASC
-        ");
-        $imgStmt->execute([$editTireId]);
-        $editTireImages = $imgStmt->fetchAll();
-
-        $catStmt = $pdo->prepare("SELECT category_id FROM tire_categories WHERE tire_id = ?");
-        $catStmt->execute([$editTireId]);
-        $editTireCategories = array_map('intval', array_column($catStmt->fetchAll(), 'category_id'));
-    }
-}
-$editTireCategories = $editTireCategories ?? [];
-
-$isTireEdit         = (bool)$editTire;
-$tireFormAction     = $isTireEdit ? 'tire_update' : 'tire_create';
-$tireFormTitle      = $isTireEdit ? 'Edit tire — ' . $editTire['name'] : 'New tire';
-$tireFormSubmitText = $isTireEdit ? 'Save changes' : 'Create tire';
-$val_tire_name      = $isTireEdit ? $editTire['name'] : '';
-
-$isEdit         = (bool)$editPost;
-$formAction     = $isEdit ? 'update' : 'create';
-$formTitle      = $isEdit ? 'Edit post #' . (int)$editPost['id'] : 'New post';
-$formSubmitText = $isEdit ? 'Save changes' : 'Create post';
-
-// Prefill values
-$val_company_id = $isEdit ? (int)$editPost['company_id'] : '';
-$val_caption    = $isEdit ? $editPost['caption']          : '';
-$val_hashtags   = $isEdit ? $editPost['hashtags']         : '';
-$val_status     = $isEdit ? $editPost['status']           : 'pending';
-$val_datetime   = $isEdit
-    ? date('Y-m-d\TH:i', strtotime($editPost['scheduled_date']))
-    : date('Y-m-d\TH:i');
+$clientQs = 'client=' . urlencode($client['slug']);
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Admin — Social Approval Feed</title>
+<title><?= h($client['name']) ?> — Admin</title>
 <style>
-  :root {
-    --bg: #f0f2f5;
-    --surface: #ffffff;
-    --surface-2: #f7f8fa;
-    --border: #dadde1;
-    --text: #050505;
-    --text-muted: #65676b;
-    --accent: #1877f2;
-    --accent-hover: #166fe5;
-    --danger: #dc2626;
-    --danger-hover: #b91c1c;
-    --success: #16a34a;
-    --warn: #f59e0b;
-    --shadow: 0 1px 2px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04);
-  }
-  [data-theme="dark"] {
-    --bg: #18191a;
-    --surface: #242526;
-    --surface-2: #3a3b3c;
-    --border: #3e4042;
-    --text: #e4e6eb;
-    --text-muted: #b0b3b8;
-    --accent: #2d88ff;
-    --accent-hover: #4599ff;
-    --danger: #ef4444;
-    --danger-hover: #dc2626;
-    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.3);
-  }
-
+  :root { --bg:#f0f2f5; --surface:#fff; --surface-2:#f7f8fa; --border:#dadde1;
+          --text:#050505; --text-muted:#65676b;
+          --accent:#1877f2; --accent-hover:#166fe5;
+          --danger:#dc2626; --success:#16a34a; --warn:#f59e0b;
+          --shadow: 0 1px 2px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04); }
+  [data-theme="dark"] { --bg:#18191a; --surface:#242526; --surface-2:#3a3b3c;
+          --border:#3e4042; --text:#e4e6eb; --text-muted:#b0b3b8;
+          --accent:#2d88ff; --accent-hover:#4599ff;
+          --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.3); }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    font-size: 15px;
-    line-height: 1.4;
-    -webkit-font-smoothing: antialiased;
-    min-height: 100vh;
-  }
+  body { background: var(--bg); color: var(--text);
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         font-size: 15px; line-height: 1.4; min-height: 100vh; }
 
-  /* Top bar */
-  .topbar {
-    position: sticky; top: 0; z-index: 100;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    box-shadow: var(--shadow);
-  }
-  .topbar-inner {
-    max-width: 900px; margin: 0 auto;
-    padding: 12px 20px;
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  }
-  .brand {
-    display: flex; align-items: center; gap: 10px;
-    font-weight: 700; font-size: 20px;
-    color: var(--accent); letter-spacing: -0.5px;
-  }
-  .brand-mark {
-    width: 32px; height: 32px; border-radius: 8px;
-    background: var(--accent); color: #fff;
-    display: flex; align-items: center; justify-content: center;
-    font-weight: 800;
-  }
-  .brand-sub {
-    font-size: 12px; font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase; letter-spacing: 1px;
-    padding: 3px 8px; border-radius: 4px;
-    background: var(--surface-2); border: 1px solid var(--border);
-  }
+  .topbar { position: sticky; top: 0; z-index: 100;
+            background: var(--surface); border-bottom: 1px solid var(--border);
+            box-shadow: var(--shadow); }
+  .topbar-inner { max-width: 900px; margin: 0 auto; padding: 12px 20px;
+                  display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700;
+           font-size: 20px; color: var(--accent); letter-spacing: -0.5px; }
+  .brand-mark { width: 32px; height: 32px; border-radius: 8px; background: var(--accent);
+                color: #fff; display: flex; align-items: center; justify-content: center;
+                font-weight: 800; }
+  .brand-sub { font-size: 12px; font-weight: 600; color: var(--text-muted);
+               text-transform: uppercase; letter-spacing: 1px;
+               padding: 3px 8px; border-radius: 4px;
+               background: var(--surface-2); border: 1px solid var(--border); }
   .top-actions { display: flex; gap: 8px; align-items: center; }
-  .btn {
-    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-    padding: 8px 14px; border-radius: 8px;
-    font-size: 14px; font-weight: 600;
-    cursor: pointer;
-    border: 1px solid var(--border);
-    background: var(--surface-2);
-    color: var(--text);
-    text-decoration: none;
-    transition: background 0.15s, transform 0.1s;
-  }
-  .btn:hover { background: var(--border); }
-  .btn:active { transform: scale(0.98); }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+         padding: 8px 14px; border-radius: 8px; font-size: 14px; font-weight: 600;
+         cursor: pointer; border: 1px solid var(--border);
+         background: var(--surface-2); color: var(--text);
+         text-decoration: none; transition: background 0.15s, transform 0.1s; }
+  .btn:hover { background: var(--border); } .btn:active { transform: scale(0.98); }
   .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
   .btn.primary:hover { background: var(--accent-hover); }
   .btn.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
-  .btn.danger:hover { background: var(--danger-hover); }
-  .btn.ghost { background: transparent; }
-  .btn.sm { padding: 6px 10px; font-size: 13px; }
+  .btn.success { background: var(--success); color: #fff; border-color: var(--success); }
+  .btn.ghost { background: transparent; } .btn.sm { padding: 6px 10px; font-size: 13px; }
 
   .wrap { max-width: 900px; margin: 0 auto; padding: 24px 20px 80px; }
 
-  .flash, .errors {
-    padding: 12px 16px;
-    border-radius: 8px;
-    margin-bottom: 20px;
-    font-size: 14px;
-    font-weight: 500;
-  }
+  .flash, .errors { padding: 12px 16px; border-radius: 8px; margin-bottom: 20px;
+                    font-size: 14px; font-weight: 500; }
   .flash  { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
   .errors { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
   [data-theme="dark"] .flash  { background: #14532d; color: #bbf7d0; border-color: #166534; }
   [data-theme="dark"] .errors { background: #7f1d1d; color: #fecaca; border-color: #991b1b; }
 
-  .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    box-shadow: var(--shadow);
-    margin-bottom: 24px;
-    overflow: hidden;
-  }
-  .card-header {
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  }
+  .welcome h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.3px; margin: 0 0 6px; }
+  .welcome p  { color: var(--text-muted); margin: 0 0 18px; }
+  .tile-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px;
+               margin-bottom: 36px; }
+  @media (min-width: 720px) { .tile-grid { grid-template-columns: repeat(4, 1fr); } }
+  .tile { aspect-ratio: 1 / 1; background: var(--surface); border: 1px solid var(--border);
+          border-radius: 16px; box-shadow: var(--shadow); padding: 20px;
+          display: flex; flex-direction: column; justify-content: space-between;
+          text-decoration: none; color: var(--text); position: relative; overflow: hidden;
+          transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s; }
+  .tile:hover { transform: translateY(-2px);
+                box-shadow: 0 4px 12px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.08);
+                border-color: var(--accent); }
+  .tile-icon { font-size: 40px; line-height: 1; }
+  .tile-title { font-size: 19px; font-weight: 700; letter-spacing: -0.2px; margin: 0 0 4px; }
+  .tile-meta { font-size: 13px; color: var(--text-muted); }
+  .tile-badge { position: absolute; top: 14px; right: 14px;
+                min-width: 26px; height: 26px; padding: 0 8px;
+                border-radius: 13px; background: var(--accent); color: #fff;
+                font-size: 13px; font-weight: 700;
+                display: flex; align-items: center; justify-content: center; }
+  .tile-badge.zero { background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
+
+  .card { background: var(--surface); border: 1px solid var(--border);
+          border-radius: 12px; box-shadow: var(--shadow);
+          margin-bottom: 24px; overflow: hidden; }
+  .card-header { padding: 16px 20px; border-bottom: 1px solid var(--border);
+                 display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .card-title { font-size: 17px; font-weight: 700; margin: 0; }
-  .card-body { padding: 20px; }
 
-  /* Form */
-  .form-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
-  }
-  .form-grid .full { grid-column: 1 / -1; }
-  .field { display: flex; flex-direction: column; gap: 6px; }
-  .field label {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-  .field input[type="text"],
-  .field input[type="datetime-local"],
-  .field select,
-  .field textarea {
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 10px 12px;
-    border-radius: 8px;
-    font: inherit;
-    width: 100%;
-    font-size: 15px;
-  }
-  .field textarea { resize: vertical; min-height: 80px; font-family: inherit; }
-  .field textarea.caption { min-height: 120px; }
-  .field input:focus,
-  .field select:focus,
-  .field textarea:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(24,119,242,0.15);
-  }
-  .field .help { font-size: 12px; color: var(--text-muted); }
-
-  /* Existing images (edit mode) */
-  .existing-images {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-    gap: 10px;
-    margin-top: 8px;
-  }
-  .existing-img {
-    position: relative;
-    aspect-ratio: 1/1;
-    border-radius: 8px;
-    overflow: hidden;
-    border: 2px solid var(--border);
-    background: var(--surface-2);
-  }
-  .existing-img img {
-    width: 100%; height: 100%; object-fit: cover; display: block;
-  }
-  .existing-img.marked { opacity: 0.35; border-color: var(--danger); }
-  .existing-img label {
-    position: absolute; inset: 0;
-    display: flex; align-items: flex-end; justify-content: center;
-    padding: 8px; cursor: pointer;
-    background: linear-gradient(to top, rgba(0,0,0,0.7), transparent 50%);
-    color: #fff; font-size: 12px; font-weight: 600;
-    text-transform: uppercase;
-  }
-  .existing-img input[type="checkbox"] {
-    position: absolute; top: 8px; right: 8px;
-    width: 20px; height: 20px; cursor: pointer;
-  }
-
-  /* File input styled */
-  .file-drop {
-    border: 2px dashed var(--border);
-    border-radius: 8px;
-    padding: 24px;
-    text-align: center;
-    background: var(--surface-2);
-    cursor: pointer;
-    transition: border-color 0.15s, background 0.15s;
-  }
-  .file-drop:hover { border-color: var(--accent); background: var(--surface); }
-  .file-drop input[type="file"] { display: none; }
-  .file-drop-label {
-    font-weight: 600;
-    color: var(--accent);
-    display: block;
-    margin-bottom: 4px;
-  }
-  .file-drop-hint { font-size: 12px; color: var(--text-muted); }
-  .file-list { margin-top: 10px; font-size: 13px; color: var(--text-muted); }
-  .file-list-item { padding: 2px 0; }
-
-  .form-actions {
-    display: flex;
-    gap: 10px;
-    justify-content: flex-end;
-    margin-top: 20px;
-    padding-top: 20px;
-    border-top: 1px solid var(--border);
-  }
-
-  /* Post list */
-  .post-list {
-    display: flex; flex-direction: column;
-  }
-  .post-row {
-    display: grid;
-    grid-template-columns: 1.2fr 1.6fr auto auto auto;
-    gap: 16px;
-    padding: 14px 20px;
-    border-top: 1px solid var(--border);
-    align-items: center;
-  }
+  .post-list { display: flex; flex-direction: column; }
+  .post-row { display: grid; grid-template-columns: 1.2fr 1.6fr auto auto auto auto;
+              gap: 14px; padding: 14px 20px; border-top: 1px solid var(--border);
+              align-items: center; transition: opacity 0.2s, background 0.2s; }
   .post-row:first-child { border-top: none; }
-  .post-row .meta-company { font-weight: 600; }
+  .post-row.is-posted { opacity: 0.45; background: var(--surface-2); }
+  .post-row.is-posted .caption-preview { text-decoration: line-through; }
+  /* Hide posted rows by default — header toggle reveals them. */
+  .post-list.hide-posted .post-row.is-posted { display: none; }
+  .toggle-posted-btn {
+    font-size: 12px; padding: 4px 10px;
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--text-muted);
+    border-radius: 6px; cursor: pointer; font-weight: 600;
+  }
+  .toggle-posted-btn:hover { background: var(--border); color: var(--text); }
+  .toggle-posted-btn.showing { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .post-row.is-posted-only-shown {}
   .post-row .meta-date    { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
-  .post-row .caption-preview {
-    color: var(--text-muted);
-    font-size: 14px;
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    text-overflow: ellipsis;
+  .post-row .post-name-tag {
+    font-size: 14px; font-weight: 700; color: var(--text);
+    letter-spacing: -0.1px; margin-bottom: 4px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .pill {
-    font-size: 11px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.5px;
-    padding: 4px 10px; border-radius: 20px;
-    background: var(--surface-2);
-    color: var(--text-muted);
-    white-space: nowrap;
-  }
+  .post-row .caption-preview { color: var(--text-muted); font-size: 14px;
+                               overflow: hidden; display: -webkit-box;
+                               -webkit-line-clamp: 2; -webkit-box-orient: vertical; text-overflow: ellipsis; }
+  .cat-list { font-size: 12px; color: var(--text-muted); margin-top: 3px; font-style: italic; }
+  .pill { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+          padding: 4px 10px; border-radius: 20px;
+          background: var(--surface-2); color: var(--text-muted); white-space: nowrap; }
   .pill.pending  { background: #fef3c7; color: #92400e; }
   .pill.approved { background: #dcfce7; color: #166534; }
   .pill.denied   { background: #fee2e2; color: #991b1b; }
+  .pill.posted   { background: #e0e7ff; color: #3730a3; }
   [data-theme="dark"] .pill.pending  { background: #78350f; color: #fde68a; }
   [data-theme="dark"] .pill.approved { background: #14532d; color: #bbf7d0; }
   [data-theme="dark"] .pill.denied   { background: #7f1d1d; color: #fecaca; }
-  .img-count {
-    font-size: 12px;
-    color: var(--text-muted);
-    white-space: nowrap;
-  }
-  .row-actions { display: flex; gap: 6px; }
+  [data-theme="dark"] .pill.posted   { background: #312e81; color: #c7d2fe; }
+
+  .img-count { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+  .row-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
   .inline-form { display: inline; }
+  .empty { padding: 40px 20px; text-align: center; color: var(--text-muted); }
 
-  /* Category checkbox group (used in both post & tire forms) */
-  .cat-group {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding: 4px 0;
-  }
-  .cat-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: 20px;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    user-select: none;
-    transition: background 0.15s, border-color 0.15s, color 0.15s;
-  }
-  .cat-chip input { display: none; }
-  .cat-chip:hover { background: var(--border); }
-  .cat-chip.checked {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #fff;
-  }
-  .cat-chip.checked::before {
-    content: '✓ ';
-    font-weight: 700;
-  }
-  .cat-list {
-    font-size: 12px;
-    color: var(--text-muted);
-    margin-top: 3px;
-    font-style: italic;
-  }
-  .cat-list:empty::before {
-    content: 'No categories';
-    opacity: 0.5;
-  }
+  .toast { position: fixed; left: 50%; bottom: 32px;
+           transform: translateX(-50%) translateY(12px);
+           background: #050505; color: #fff;
+           padding: 10px 18px; border-radius: 24px;
+           font-size: 14px; font-weight: 600;
+           box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+           opacity: 0; pointer-events: none;
+           transition: opacity 0.18s, transform 0.18s; z-index: 1000; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  [data-theme="dark"] .toast { background: #e4e6eb; color: #050505; }
 
-  /* Section divider */
-  .section-divider {
-    margin: 40px 0 20px;
-    padding-top: 24px;
-    border-top: 2px solid var(--border);
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-  .section-divider h2 {
-    margin: 0;
-    font-size: 22px;
-    letter-spacing: -0.3px;
-  }
-  .section-divider-sub {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    padding: 3px 8px;
-    border-radius: 4px;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-  }
+  .client-switch { font-size: 12px; color: var(--text-muted); }
+  .client-switch a { color: var(--accent); text-decoration: none; }
+  .client-switch a:hover { text-decoration: underline; }
 
-  /* Tire image edit rows */
-  .tire-edit-images {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    margin-top: 8px;
+  /* Collapsible default-hashtags editor */
+  .hashtag-card { padding: 0; }
+  .hashtag-card summary {
+    list-style: none; cursor: pointer; padding: 14px 20px;
+    display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap;
+    border-bottom: 1px solid transparent;
   }
-  .tire-edit-row {
-    display: grid;
-    grid-template-columns: 100px 1fr auto;
-    gap: 12px;
-    align-items: center;
-    padding: 10px;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    transition: opacity 0.15s, border-color 0.15s;
+  .hashtag-card[open] summary { border-bottom-color: var(--border); }
+  .hashtag-card summary::-webkit-details-marker { display: none; }
+  .hashtag-card summary::after {
+    content: '▾'; margin-left: auto; color: var(--text-muted);
+    font-size: 13px; transition: transform 0.15s;
   }
-  .tire-edit-row.marked { opacity: 0.4; border-color: var(--danger); }
-  .tire-edit-row img {
-    width: 100px;
-    height: 100px;
-    object-fit: cover;
-    border-radius: 6px;
-    display: block;
-    background: var(--border);
+  .hashtag-card[open] summary::after { transform: rotate(180deg); }
+  .hashtag-summary-title { font-size: 15px; font-weight: 700; }
+  .hashtag-summary-meta {
+    font-size: 13px; color: var(--text-muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    flex: 1; min-width: 200px;
   }
-  .tire-edit-row input[type="text"] {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text);
-    padding: 10px 12px;
-    border-radius: 6px;
-    font: inherit;
-    width: 100%;
-  }
-  .tire-edit-row input[type="text"]:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(24,119,242,0.15);
-  }
-  .tire-edit-row label.remove {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    cursor: pointer;
-  }
-  .tire-edit-row input[type="checkbox"] {
-    width: 18px;
-    height: 18px;
-    cursor: pointer;
-  }
-  @media (max-width: 600px) {
-    .tire-edit-row {
-      grid-template-columns: 80px 1fr;
-      grid-template-rows: auto auto;
-    }
-    .tire-edit-row img { width: 80px; height: 80px; }
-    .tire-edit-row label.remove {
-      grid-column: 1 / -1;
-      flex-direction: row;
-      justify-content: flex-start;
-    }
-  }
-
-  .empty {
-    padding: 40px 20px;
-    text-align: center;
+  .hashtag-card .card-body { padding: 16px 20px 20px; }
+  .hashtag-card .field { display: flex; flex-direction: column; gap: 6px; }
+  .hashtag-card .field label {
+    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
     color: var(--text-muted);
   }
+  .hashtag-card textarea {
+    width: 100%; background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--text); padding: 10px 12px; border-radius: 8px;
+    font: inherit; font-size: 14px; resize: vertical; line-height: 1.5;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .hashtag-card textarea:focus {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(24,119,242,0.15);
+  }
+  .hashtag-card input[type="text"] {
+    width: 100%; background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--text); padding: 10px 12px; border-radius: 8px;
+    font: inherit; font-size: 14px;
+  }
+  .hashtag-card input[type="text"]:focus {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(24,119,242,0.15);
+  }
+  .hashtag-card .field + .field { margin-top: 14px; }
+  .hashtag-card code {
+    background: var(--surface-2); border-radius: 4px; padding: 1px 5px;
+    font-size: 12px; color: var(--accent);
+  }
+  .hashtag-card .help { font-size: 12px; color: var(--text-muted); }
+  .hashtag-card .form-actions {
+    display: flex; justify-content: flex-end; margin-top: 12px;
+  }
+
+  /* Activity feed */
+  .activity-card { margin-bottom: 24px; }
+  .activity-card .card-header { gap: 8px; flex-wrap: wrap; }
+  .activity-list { max-height: 360px; overflow-y: auto; }
+  .activity-day  { padding: 8px 20px; font-size: 11px; font-weight: 700;
+                   text-transform: uppercase; letter-spacing: 0.5px;
+                   color: var(--text-muted); background: var(--surface-2);
+                   border-top: 1px solid var(--border); position: sticky; top: 0; }
+  .activity-day:first-child { border-top: none; }
+  .activity-row  { display: grid; grid-template-columns: auto 1fr auto;
+                   gap: 12px; padding: 12px 20px; border-top: 1px solid var(--border);
+                   align-items: start; text-decoration: none; color: var(--text);
+                   transition: background 0.15s; }
+  .activity-row:hover { background: var(--surface-2); }
+  .activity-actor { font-size: 10px; font-weight: 700; text-transform: uppercase;
+                    letter-spacing: 0.4px; padding: 3px 7px; border-radius: 10px;
+                    background: var(--surface-2); color: var(--text-muted);
+                    border: 1px solid var(--border); white-space: nowrap; }
+  .activity-actor-client { background: #dbeafe; color: #1e40af; border-color: #93c5fd; }
+  .activity-actor-admin  { background: #f3e8ff; color: #6b21a8; border-color: #d8b4fe; }
+  [data-theme="dark"] .activity-actor-client { background: #1e3a8a; color: #bfdbfe; border-color: #1e40af; }
+  [data-theme="dark"] .activity-actor-admin  { background: #581c87; color: #e9d5ff; border-color: #6b21a8; }
+  .activity-text    { font-size: 14px; line-height: 1.5; min-width: 0; }
+  .activity-company { font-weight: 700; }
+  .activity-verb    { color: var(--text-muted); }
+  .activity-target  { color: var(--accent); }
+  .activity-detail  { margin-top: 4px; font-size: 13px; color: var(--text-muted);
+                      font-style: italic; overflow: hidden;
+                      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .activity-time    { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+  .activity-empty   { padding: 24px 20px; text-align: center; color: var(--text-muted); font-size: 14px; }
+  .digest-btn       { font-size: 12px; padding: 4px 10px; }
+  .post-comment     { margin-top: 6px; padding: 8px 10px; background: var(--surface-2);
+                      border-left: 3px solid var(--accent); border-radius: 4px;
+                      font-size: 13px; color: var(--text); }
+  .post-comment-date { font-size: 11px; color: var(--text-muted); font-weight: 600;
+                       margin-right: 6px; }
 
   @media (max-width: 720px) {
-    .form-grid { grid-template-columns: 1fr; }
-    .post-row {
-      grid-template-columns: 1fr;
-      gap: 8px;
-    }
+    .post-row { grid-template-columns: 1fr; gap: 8px; }
     .row-actions { justify-content: flex-start; }
+    .activity-row { grid-template-columns: auto 1fr; }
+    .activity-time { grid-column: 1 / -1; padding-left: 32px; }
   }
 </style>
 </head>
@@ -1059,15 +684,18 @@ $val_datetime   = $isEdit
   <div class="topbar-inner">
     <div class="brand">
       <div class="brand-mark">J</div>
-      <span>Approval Feed</span>
+      <span><?= h($client['name']) ?></span>
       <span class="brand-sub">Admin</span>
     </div>
     <div class="top-actions">
       <button class="btn ghost sm" id="themeToggle" type="button" aria-label="Toggle theme">
         <span id="themeIcon">🌙</span>
       </button>
-      <a class="btn sm" href="index.php" target="_blank">View feed ↗</a>
-      <a class="btn sm" href="tires.php" target="_blank">View tires ↗</a>
+      <a class="btn sm" href="admin">⇆ Switch client</a>
+      <a class="btn sm" href="prompts">🎨 Prompt Library</a>
+      <a class="btn sm" href="vehicles">🚗 Vehicle Library</a>
+      <a class="btn sm" href="<?= h(clientUrl('index.php')) ?>" target="_blank">View site ↗</a>
+      <a class="btn sm" href="logout" title="Signed in as <?= h(currentAdmin()) ?>">Sign out</a>
     </div>
   </div>
 </header>
@@ -1077,369 +705,315 @@ $val_datetime   = $isEdit
   <?php if ($flash): ?>
     <div class="flash">✓ <?= h($flash) ?></div>
   <?php endif; ?>
-
   <?php if ($errors): ?>
     <div class="errors">
-      <?php foreach ($errors as $err): ?>
-        <div>⚠ <?= h($err) ?></div>
-      <?php endforeach; ?>
+      <?php foreach ($errors as $err): ?><div>⚠ <?= h($err) ?></div><?php endforeach; ?>
     </div>
   <?php endif; ?>
 
-  <!-- ADD / EDIT FORM ------------------------------------------------ -->
-  <div class="card">
-    <div class="card-header">
-      <h2 class="card-title"><?= h($formTitle) ?></h2>
-      <?php if ($isEdit): ?>
-        <a class="btn sm ghost" href="admin.php">Cancel edit</a>
-      <?php endif; ?>
+  <?php if (!hasPostedColumn($pdo)): ?>
+    <div class="errors">
+      ⚠ Database needs a one-time update. Visit
+      <a href="migrate" style="color:inherit;text-decoration:underline;">migrate</a>
+      to add the new columns, then come back.
     </div>
+  <?php endif; ?>
+
+  <?php if (hasActivityLog($pdo)): ?>
+    <div class="card activity-card">
+      <div class="card-header">
+        <h2 class="card-title">📡 Recent activity</h2>
+        <form method="POST" action="digest.php" target="digest_iframe" class="inline-form"
+              onsubmit="setTimeout(()=>this.querySelector('button').textContent='✓ Sent',300);">
+          <input type="hidden" name="source" value="manual">
+          <button type="submit" class="btn sm digest-btn" title="Send a digest email to lance@joustmedia.com right now">
+            📧 Send digest now
+          </button>
+        </form>
+      </div>
+      <div class="activity-list">
+        <?= renderActivityFeed($pdo, $client['id'], 20) ?>
+      </div>
+    </div>
+    <iframe name="digest_iframe" style="display:none" aria-hidden="true"></iframe>
+  <?php endif; ?>
+
+  <div class="welcome">
+    <h1>What would you like to do?</h1>
+    <p class="client-switch">
+      Working in <strong><?= h($client['name']) ?></strong>. Not the right one?
+      <a href="admin">Switch client</a>.
+    </p>
+  </div>
+
+  <details class="card hashtag-card" <?= empty($client['default_hashtags']) ? 'open' : '' ?>>
+    <summary class="hashtag-summary">
+      <span class="hashtag-summary-title">🏷 Default hashtags for <?= h($client['name']) ?></span>
+      <span class="hashtag-summary-meta">
+        <?= !empty($client['default_hashtags'])
+              ? mb_strimwidth((string)$client['default_hashtags'], 0, 80, '…')
+              : 'None set yet — click to add' ?>
+      </span>
+    </summary>
     <div class="card-body">
-      <form method="POST" action="admin.php" enctype="multipart/form-data" id="postForm">
-        <input type="hidden" name="action" value="<?= h($formAction) ?>">
-        <?php if ($isEdit): ?>
-          <input type="hidden" name="id" value="<?= (int)$editPost['id'] ?>">
-        <?php endif; ?>
-
-        <div class="form-grid">
-          <div class="field">
-            <label for="company_id">Company</label>
-            <select name="company_id" id="company_id" required>
-              <option value="">— Select company —</option>
-              <?php foreach ($companies as $c): ?>
-                <option value="<?= (int)$c['id'] ?>" <?= $val_company_id == $c['id'] ? 'selected' : '' ?>>
-                  <?= h($c['name']) ?>
-                </option>
-              <?php endforeach; ?>
-            </select>
-            <span class="help">Manage companies in phpMyAdmin → `companies` table.</span>
-          </div>
-
-          <div class="field">
-            <label for="scheduled_date">Scheduled date &amp; time</label>
-            <input type="datetime-local" name="scheduled_date" id="scheduled_date"
-                   value="<?= h($val_datetime) ?>" required>
-          </div>
-
-          <div class="field full">
-            <label for="caption">Caption</label>
-            <textarea name="caption" id="caption" class="caption" required
-                      placeholder="What's the post say?"><?= h($val_caption) ?></textarea>
-          </div>
-
-          <div class="field full">
-            <label for="hashtags">Hashtags</label>
-            <textarea name="hashtags" id="hashtags"
-                      placeholder="#Brand #Campaign #Keyword"><?= h($val_hashtags) ?></textarea>
-          </div>
-
-          <div class="field">
-            <label for="status">Status</label>
-            <select name="status" id="status">
-              <option value="pending"  <?= $val_status === 'pending'  ? 'selected' : '' ?>>Pending</option>
-              <option value="approved" <?= $val_status === 'approved' ? 'selected' : '' ?>>Approved</option>
-              <option value="denied"   <?= $val_status === 'denied'   ? 'selected' : '' ?>>Denied</option>
-            </select>
-          </div>
-
-          <div class="field full">
-            <label>Categories</label>
-            <div class="cat-group">
-              <?php foreach ($allCategories as $cat):
-                $checked = in_array((int)$cat['id'], $editPostCategories, true);
-              ?>
-                <label class="cat-chip <?= $checked ? 'checked' : '' ?>" data-cat-chip>
-                  <input type="checkbox"
-                         name="categories[]"
-                         value="<?= (int)$cat['id'] ?>"
-                         <?= $checked ? 'checked' : '' ?>>
-                  <?= h($cat['name']) ?>
-                </label>
-              <?php endforeach; ?>
-            </div>
-            <span class="help">Click chips to toggle. Multiple categories allowed.</span>
-          </div>
-
-          <div class="field">
-            <label>Images</label>
-            <span class="help">
-              Max <?= $maxImages ?> per post, up to 10 MB each. JPG, PNG, GIF, or WebP.
-            </span>
-          </div>
-
-          <?php if ($isEdit && $editImages): ?>
-            <div class="field full">
-              <label>Existing images — tick to remove on save</label>
-              <div class="existing-images">
-                <?php foreach ($editImages as $img): ?>
-                  <div class="existing-img" data-img-wrap>
-                    <img src="<?= h($img['image_url']) ?>" alt="">
-                    <input type="checkbox" name="remove_images[]"
-                           value="<?= (int)$img['id'] ?>"
-                           data-remove-checkbox
-                           title="Remove this image">
-                  </div>
-                <?php endforeach; ?>
-              </div>
-              <span class="help">Currently <?= count($editImages) ?> of <?= $maxImages ?> slots used.</span>
-            </div>
-          <?php endif; ?>
-
-          <div class="field full">
-            <label for="images">
-              <?= $isEdit ? 'Add more images' : 'Upload images' ?>
-            </label>
-            <label class="file-drop">
-              <input type="file" name="images[]" id="images"
-                     accept="image/jpeg,image/png,image/gif,image/webp" multiple>
-              <span class="file-drop-label">Click to choose files</span>
-              <span class="file-drop-hint">or drag &amp; drop them here</span>
-            </label>
-            <div class="file-list" id="fileList"></div>
-          </div>
+      <form method="POST" action="admin?<?= h($clientQs) ?>">
+        <input type="hidden" name="action" value="save_default_hashtags">
+        <div class="field">
+          <label for="default_hashtags">
+            Applied to every new post for this client
+          </label>
+          <textarea name="default_hashtags" id="default_hashtags"
+                    placeholder="#Brand #Campaign #Keyword"
+                    rows="3"><?= h($client['default_hashtags'] ?? '') ?></textarea>
+          <span class="help">
+            New posts pre-fill with these. On existing posts, you'll see a one-click
+            "Append client defaults" button on the edit form.
+          </span>
         </div>
-
-        <div class="form-actions">
-          <?php if ($isEdit): ?>
-            <a class="btn" href="admin.php">Cancel</a>
-          <?php endif; ?>
-          <button type="submit" class="btn primary"><?= h($formSubmitText) ?></button>
+        <div class="form-actions" style="border-top: none; padding-top: 4px;">
+          <button type="submit" class="btn primary">Save defaults</button>
         </div>
       </form>
     </div>
-  </div>
+  </details>
 
-  <!-- BATCH UPLOAD --------------------------------------------------- -->
-  <div class="card">
-    <div class="card-header">
-      <h2 class="card-title">⚡ Batch upload</h2>
-      <span class="brand-sub">Quick post creator</span>
-    </div>
+  <?php if (hasClientProfileColumns($pdo)): ?>
+  <details class="card hashtag-card"
+           <?= (empty($client['product_type']) && empty($client['industry'])) ? 'open' : '' ?>>
+    <summary class="hashtag-summary">
+      <span class="hashtag-summary-title">🎬 AI Builder profile for <?= h($client['name']) ?></span>
+      <span class="hashtag-summary-meta">
+        <?php
+          $profileBits = [];
+          if (!empty($client['product_type'])) { $profileBits[] = 'Product: ' . $client['product_type']; }
+          if (!empty($client['industry']))     { $profileBits[] = 'Industry: ' . $client['industry']; }
+          echo $profileBits
+                ? h(implode('  ·  ', $profileBits))
+                : 'Not set — feeds the {{product_type}} & {{industry}} prompt variables';
+        ?>
+      </span>
+    </summary>
     <div class="card-body">
-      <p class="help" style="margin: 0 0 16px; font-size: 13px; line-height: 1.5;">
-        Upload multiple images to create one post per image, spaced <strong>3 days apart</strong> from the latest scheduled post for the selected company.
-        Caption defaults to <code>Please insert caption here</code> — edit later in the feed.
-        Name files with category keywords (e.g. <code>yamaha_atv_trail.jpg</code>) to auto-tag.
-      </p>
-      <form method="POST" action="admin.php" enctype="multipart/form-data" id="batchForm">
-        <input type="hidden" name="action" value="batch_create">
-
-        <div class="form-grid">
-          <div class="field">
-            <label for="batch_company_id">Company</label>
-            <select name="company_id" id="batch_company_id" required>
-              <option value="">— Select company —</option>
-              <?php foreach ($companies as $c): ?>
-                <option value="<?= (int)$c['id'] ?>"><?= h($c['name']) ?></option>
-              <?php endforeach; ?>
-            </select>
-          </div>
-
-          <div class="field">
-            <label for="spacing_days">Days between posts</label>
-            <input type="number" name="spacing_days" id="spacing_days"
-                   value="3" min="1" max="30" style="width:100%;">
-            <span class="help">Spacing starts from the selected company's latest scheduled post.</span>
-          </div>
-
-          <div class="field full">
-            <label>Category keywords for filenames</label>
-            <div class="cat-group" style="pointer-events: none;">
-              <?php foreach ($allCategories as $cat): ?>
-                <span class="cat-chip" style="opacity: 0.75;"><?= h(strtolower($cat['name'])) ?></span>
-              <?php endforeach; ?>
-            </div>
-            <span class="help">
-              Include any of these words in the filename and the post will be auto-tagged.
-              Also accepts <code>offroad</code>, <code>dualsport</code>, <code>sportatv</code>.
-            </span>
-          </div>
-
-          <div class="field full">
-            <label for="batch_images">Images</label>
-            <label class="file-drop">
-              <input type="file" name="batch_images[]" id="batch_images"
-                     accept="image/jpeg,image/png,image/gif,image/webp" multiple>
-              <span class="file-drop-label">Click to choose files</span>
-              <span class="file-drop-hint">or drag &amp; drop them here — up to 10 MB each</span>
-            </label>
-            <div class="file-list" id="batchFileList"></div>
-          </div>
+      <form method="POST" action="admin?<?= h($clientQs) ?>">
+        <input type="hidden" name="action" value="save_client_profile">
+        <div class="field">
+          <label for="product_type">Product type</label>
+          <input type="text" name="product_type" id="product_type" maxlength="120"
+                 value="<?= h($client['product_type'] ?? '') ?>"
+                 placeholder="e.g. tires, apparel, software">
+          <span class="help">Fills the <code>{{product_type}}</code> variable in AI prompts.</span>
         </div>
-
-        <div class="form-actions">
-          <button type="submit" class="btn primary" id="batchSubmit">🚀 Create batch</button>
+        <div class="field">
+          <label for="industry">Industry</label>
+          <input type="text" name="industry" id="industry" maxlength="120"
+                 value="<?= h($client['industry'] ?? '') ?>"
+                 placeholder="e.g. powersports, retail, SaaS">
+          <span class="help">Fills the <code>{{industry}}</code> variable in AI prompts.</span>
+        </div>
+        <div class="form-actions" style="border-top: none; padding-top: 4px;">
+          <button type="submit" class="btn primary">Save profile</button>
         </div>
       </form>
     </div>
-  </div>
+  </details>
+  <?php endif; ?>
 
-  <!-- POST LIST ------------------------------------------------------ -->
-  <div class="card">
-    <div class="card-header">
-      <h2 class="card-title">All posts (<?= count($allPosts) ?>)</h2>
-    </div>
-    <?php if (empty($allPosts)): ?>
-      <div class="empty">No posts yet. Create your first one above.</div>
-    <?php else: ?>
-      <div class="post-list">
-        <?php foreach ($allPosts as $p): ?>
-          <div class="post-row">
-            <div>
-              <div class="meta-company"><?= h($p['company_name']) ?></div>
-              <div class="meta-date">
-                <?= h(date('M j, Y · g:i A', strtotime($p['scheduled_date']))) ?>
-              </div>
-              <div class="cat-list"><?= h($p['category_names'] ?? '') ?></div>
-            </div>
-            <div class="caption-preview"><?= h($p['caption']) ?></div>
-            <div class="img-count">🖼 <?= (int)$p['image_count'] ?></div>
-            <div>
-              <span class="pill <?= h($p['status']) ?>"><?= h($p['status']) ?></span>
-            </div>
-            <div class="row-actions">
-              <a class="btn sm" href="admin.php?edit=<?= (int)$p['id'] ?>">Edit</a>
-              <form method="POST" action="admin.php" class="inline-form"
-                    onsubmit="return confirm('Delete this post and all its images? This cannot be undone.');">
-                <input type="hidden" name="action" value="delete">
-                <input type="hidden" name="id" value="<?= (int)$p['id'] ?>">
-                <button type="submit" class="btn sm danger">Delete</button>
-              </form>
-            </div>
+  <div class="tile-grid">
+    <!-- Universal tiles -->
+    <a class="tile" href="add-post?<?= h($clientQs) ?>">
+      <div class="tile-badge <?= $totalPosts === 0 ? 'zero' : '' ?>"><?= $totalPosts ?></div>
+      <div class="tile-icon">📰</div>
+      <div>
+        <div class="tile-title">Add a Post</div>
+        <div class="tile-meta"><?= $totalPosts === 1 ? '1 post' : $totalPosts . ' posts' ?></div>
+      </div>
+    </a>
+
+    <a class="tile" href="<?= h(clientUrl('projects.php')) ?>">
+      <div class="tile-badge <?= $openTasks === 0 ? 'zero' : '' ?>"><?= $openTasks ?></div>
+      <div class="tile-icon">📋</div>
+      <div>
+        <div class="tile-title">Add a Project</div>
+        <div class="tile-meta">
+          <?= $openTasks === 0 ? 'No open tasks' : ($openTasks === 1 ? '1 open task' : $openTasks . ' open tasks') ?>
+        </div>
+      </div>
+    </a>
+
+    <!-- AI Builder (universal) -->
+    <a class="tile" href="build?<?= h($clientQs) ?>">
+      <div class="tile-icon">🎨</div>
+      <div>
+        <div class="tile-title">AI Builder</div>
+        <div class="tile-meta">Compose a prompt &amp; gather refs</div>
+      </div>
+    </a>
+
+    <!-- Dynamic module tiles -->
+    <?php foreach ($clientModules as $mod): ?>
+      <a class="tile" href="add-feature?<?= h($clientQs) ?>&module=<?= h($mod['slug']) ?>">
+        <div class="tile-badge <?= (int)$mod['item_count'] === 0 ? 'zero' : '' ?>">
+          <?= (int)$mod['item_count'] ?>
+        </div>
+        <div class="tile-icon"><?= h($mod['icon']) ?></div>
+        <div>
+          <div class="tile-title">Add <?= h(preg_match('/^[aeiouAEIOU]/', $mod['singular_label']) ? 'an' : 'a') ?> <?= h($mod['singular_label']) ?></div>
+          <div class="tile-meta">
+            <?= (int)$mod['item_count'] === 1
+                  ? '1 ' . h(strtolower($mod['singular_label']))
+                  : (int)$mod['item_count'] . ' ' . h(strtolower($mod['plural_label'])) ?>
           </div>
-        <?php endforeach; ?>
+        </div>
+      </a>
+    <?php endforeach; ?>
+
+    <?php if (empty($clientModules)): ?>
+      <div class="tile" style="cursor:default;opacity:.7">
+        <div class="tile-icon">➕</div>
+        <div>
+          <div class="tile-title">No modules yet</div>
+          <div class="tile-meta">
+            Add a row to <code>company_modules</code> to enable one.
+          </div>
+        </div>
       </div>
     <?php endif; ?>
   </div>
 
-  <!-- ============================================================ -->
-  <!-- TIRES SECTION                                                 -->
-  <!-- ============================================================ -->
-  <div class="section-divider">
-    <h2>Tires</h2>
-    <span class="section-divider-sub">Gallery content</span>
-  </div>
-
-  <!-- TIRE ADD / EDIT FORM ------------------------------------------ -->
+  <?php
+    $postedCount    = 0;
+    $unpostedCount  = 0;
+    foreach ($allPosts as $_p) { empty($_p['posted']) ? $unpostedCount++ : $postedCount++; }
+  ?>
   <div class="card">
     <div class="card-header">
-      <h2 class="card-title"><?= h($tireFormTitle) ?></h2>
-      <?php if ($isTireEdit): ?>
-        <a class="btn sm ghost" href="admin.php">Cancel edit</a>
+      <h2 class="card-title">
+        <?= h($client['name']) ?>'s posts
+        (<span id="postCountVisible"><?= $unpostedCount ?></span><?php if ($postedCount): ?> of <?= count($allPosts) ?><?php endif; ?>)
+        — oldest first
+      </h2>
+      <?php if ($postedCount > 0): ?>
+        <button type="button" class="toggle-posted-btn" id="togglePostedBtn"
+                data-shown="0"
+                data-hidden-count="<?= $postedCount ?>"
+                data-total-count="<?= count($allPosts) ?>"
+                data-unposted-count="<?= $unpostedCount ?>">
+          👁 Show all (+<?= $postedCount ?> posted)
+        </button>
       <?php endif; ?>
     </div>
-    <div class="card-body">
-      <form method="POST" action="admin.php" enctype="multipart/form-data" id="tireForm">
-        <input type="hidden" name="action" value="<?= h($tireFormAction) ?>">
-        <?php if ($isTireEdit): ?>
-          <input type="hidden" name="id" value="<?= (int)$editTire['id'] ?>">
-        <?php endif; ?>
-
-        <div class="form-grid">
-          <div class="field full">
-            <label for="tire_name">Tire name</label>
-            <input type="text" name="tire_name" id="tire_name"
-                   value="<?= h($val_tire_name) ?>"
-                   placeholder="e.g. Kenda Klever R/T" required>
-          </div>
-
-          <div class="field full">
-            <label>Categories</label>
-            <div class="cat-group">
-              <?php foreach ($allCategories as $cat):
-                $checked = in_array((int)$cat['id'], $editTireCategories, true);
-              ?>
-                <label class="cat-chip <?= $checked ? 'checked' : '' ?>" data-cat-chip>
-                  <input type="checkbox"
-                         name="tire_categories[]"
-                         value="<?= (int)$cat['id'] ?>"
-                         <?= $checked ? 'checked' : '' ?>>
-                  <?= h($cat['name']) ?>
-                </label>
-              <?php endforeach; ?>
-            </div>
-            <span class="help">Click chips to toggle. Multiple categories allowed.</span>
-          </div>
-
-          <?php if ($isTireEdit && $editTireImages): ?>
-            <div class="field full">
-              <label>Existing images — edit captions or tick to remove</label>
-              <div class="tire-edit-images">
-                <?php foreach ($editTireImages as $img): ?>
-                  <div class="tire-edit-row" data-tire-row>
-                    <img src="<?= h($img['image_url']) ?>" alt="">
-                    <input type="text"
-                           name="captions[<?= (int)$img['id'] ?>]"
-                           value="<?= h($img['caption']) ?>"
-                           placeholder="Caption for this image">
-                    <label class="remove">
-                      <input type="checkbox"
-                             name="remove_tire_images[]"
-                             value="<?= (int)$img['id'] ?>"
-                             data-tire-remove>
-                      Remove
-                    </label>
-                  </div>
-                <?php endforeach; ?>
-              </div>
-              <span class="help">
-                Currently <?= count($editTireImages) ?> of <?= $maxTireImages ?> slots used.
-              </span>
-            </div>
-          <?php endif; ?>
-
-          <?php if ($isTireEdit): ?>
-            <div class="field full">
-              <label for="tire_images">Add more images</label>
-              <label class="file-drop">
-                <input type="file" name="tire_images[]" id="tire_images"
-                       accept="image/jpeg,image/png,image/gif,image/webp" multiple>
-                <span class="file-drop-label">Click to choose files</span>
-                <span class="file-drop-hint">
-                  Max <?= $maxTireImages ?> per tire, 10 MB each. Captions editable after upload.
-                </span>
-              </label>
-              <div class="file-list" id="tireFileList"></div>
-            </div>
-          <?php else: ?>
-            <div class="field full">
-              <span class="help">Create the tire first, then add images on the edit screen.</span>
-            </div>
-          <?php endif; ?>
-        </div>
-
-        <div class="form-actions">
-          <?php if ($isTireEdit): ?>
-            <a class="btn" href="admin.php">Cancel</a>
-          <?php endif; ?>
-          <button type="submit" class="btn primary"><?= h($tireFormSubmitText) ?></button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- TIRE LIST ------------------------------------------------------ -->
-  <div class="card">
-    <div class="card-header">
-      <h2 class="card-title">All tires (<?= count($allTires) ?>)</h2>
-    </div>
-    <?php if (empty($allTires)): ?>
-      <div class="empty">No tires yet. Create your first one above.</div>
+    <?php if (empty($allPosts)): ?>
+      <div class="empty">No posts for <?= h($client['name']) ?> yet. Click "Add a Post" to create one.</div>
     <?php else: ?>
-      <div class="post-list">
-        <?php foreach ($allTires as $t): ?>
-          <div class="post-row" style="grid-template-columns: 1fr auto auto;">
+      <div class="post-list hide-posted" id="postList">
+        <?php foreach ($allPosts as $p):
+          $isPosted = !empty($p['posted']);
+          $feedMonth = date('Y-m', strtotime($p['scheduled_date']));
+        ?>
+          <div class="post-row <?= $isPosted ? 'is-posted' : '' ?>" id="post-<?= (int)$p['id'] ?>">
             <div>
-              <div class="meta-company"><?= h($t['name']) ?></div>
-              <div class="cat-list"><?= h($t['category_names'] ?? '') ?></div>
+              <div class="meta-company"><?= h($p['company_name']) ?></div>
+              <div class="meta-date">
+                <?= h(date('M j, Y · g:i A', strtotime($p['scheduled_date']))) ?>
+                <?php if ($isPosted && !empty($p['posted_at'])): ?>
+                  · <span title="Marked posted" style="color:var(--success);">posted <?= h(date('M j', strtotime($p['posted_at']))) ?></span>
+                <?php endif; ?>
+              </div>
+              <div class="cat-list"><?= h($p['category_names'] ?? '') ?></div>
             </div>
-            <div class="img-count">🖼 <?= (int)$t['image_count'] ?> / <?= $maxTireImages ?></div>
+            <div>
+              <?php if (!empty($p['post_name'])): ?>
+                <div class="post-name-tag" title="Reference name"><?= h($p['post_name']) ?></div>
+              <?php endif; ?>
+              <div class="caption-preview"><?= h($p['caption']) ?></div>
+              <?php if (!empty($p['client_comment'])): ?>
+                <div class="post-comment">
+                  <span class="post-comment-date" title="<?= h(absoluteTime($commentDates[(int)$p['id']] ?? null)) ?>">
+                    💬 <?= h(relativeTime($commentDates[(int)$p['id']] ?? null) ?: '—') ?>
+                  </span>
+                  <?= h($p['client_comment']) ?>
+                </div>
+              <?php endif; ?>
+            </div>
+            <div class="img-count">
+              <?php
+                $imgN = (int)$p['image_count'];
+                $vidN = (int)($p['video_count'] ?? 0);
+                $picN = $imgN - $vidN;
+              ?>
+              <?php if ($picN > 0): ?>🖼 <?= $picN ?><?php endif; ?>
+              <?php if ($vidN > 0): ?> 🎬 <?= $vidN ?><?php endif; ?>
+              <?php if ($imgN === 0): ?>—<?php endif; ?>
+            </div>
+            <div>
+              <?php if ($isPosted): ?>
+                <span class="pill posted">Posted</span>
+              <?php else: ?>
+                <span class="pill <?= h($p['status']) ?>"><?= h($p['status']) ?></span>
+              <?php endif; ?>
+              <?php if (hasPostTypeColumn($pdo)):
+                $pt = strtolower((string)($p['post_type'] ?? 'post'));
+              ?>
+                <form method="POST" action="admin?<?= h($clientQs) ?>" class="inline-form" style="display:inline;margin-left:4px;">
+                  <input type="hidden" name="action" value="set_post_type">
+                  <input type="hidden" name="id" value="<?= (int)$p['id'] ?>">
+                  <input type="hidden" name="return_client" value="<?= h($client['slug']) ?>">
+                  <input type="hidden" name="actor" value="admin">
+                  <select name="post_type" title="Change content type" onchange="this.form.submit()"
+                          style="font-size:12px;padding:2px 6px;border-radius:10px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;">
+                    <option value="post"  <?= $pt === 'post'  ? 'selected' : '' ?>>📄 Post</option>
+                    <option value="story" <?= $pt === 'story' ? 'selected' : '' ?>>⭕ Story</option>
+                    <option value="reel"  <?= $pt === 'reel'  ? 'selected' : '' ?>>🎬 Reel</option>
+                  </select>
+                </form>
+              <?php endif; ?>
+            </div>
             <div class="row-actions">
-              <a class="btn sm" href="admin.php?edit_tire=<?= (int)$t['id'] ?>">Edit</a>
-              <form method="POST" action="admin.php" class="inline-form"
-                    onsubmit="return confirm('Delete this tire and all its images? This cannot be undone.');">
-                <input type="hidden" name="action" value="tire_delete">
-                <input type="hidden" name="id" value="<?= (int)$t['id'] ?>">
+              <?php if (!$isPosted): ?>
+                <button type="button" class="btn sm primary"
+                        data-post-cta
+                        data-caption="<?= h($p['caption']) ?>"
+                        data-hashtags="<?= h($p['hashtags']) ?>"
+                        title="Copies caption + hashtags and opens Facebook in a new tab">
+                  🚀 Post
+                </button>
+              <?php endif; ?>
+              <?php if ((int)$p['image_count'] > 0): ?>
+                <button type="button" class="btn sm"
+                        data-save-images
+                        data-urls="<?= h($p['image_urls'] ?? '') ?>"
+                        data-company="<?= h($p['company_name']) ?>"
+                        data-post-id="<?= (int)$p['id'] ?>"
+                        title="Download <?= (int)$p['image_count'] ?> image<?= (int)$p['image_count'] === 1 ? '' : 's' ?>">
+                  ⬇ Save<?= (int)$p['image_count'] > 1 ? ' (' . (int)$p['image_count'] . ')' : '' ?>
+                </button>
+              <?php endif; ?>
+              <a class="btn sm"
+                 href="feed?<?= h($clientQs) ?>&month=<?= h($feedMonth) ?>#post-<?= (int)$p['id'] ?>"
+                 target="_blank"
+                 title="Open this post in the public feed">
+                👁 View
+              </a>
+              <?php if (hasPostedColumn($pdo)): ?>
+                <form method="POST" action="admin?<?= h($clientQs) ?>" class="inline-form">
+                  <input type="hidden" name="action" value="toggle_posted">
+                  <input type="hidden" name="id" value="<?= (int)$p['id'] ?>">
+                  <input type="hidden" name="to" value="<?= $isPosted ? '0' : '1' ?>">
+                  <input type="hidden" name="return_client" value="<?= h($client['slug']) ?>">
+                  <input type="hidden" name="actor" value="admin">
+                  <?php if ($isPosted): ?>
+                    <button type="submit" class="btn sm">↺ Unmark</button>
+                  <?php else: ?>
+                    <button type="submit" class="btn sm success">✓ Mark posted</button>
+                  <?php endif; ?>
+                </form>
+              <?php endif; ?>
+              <a class="btn sm" href="add-post?<?= h($clientQs) ?>&edit=<?= (int)$p['id'] ?>">Edit</a>
+              <form method="POST" action="add-post?<?= h($clientQs) ?>" class="inline-form"
+                    onsubmit="return confirm('Delete this post and all its images? This cannot be undone.');">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="id" value="<?= (int)$p['id'] ?>">
+                <input type="hidden" name="actor" value="admin">
                 <button type="submit" class="btn sm danger">Delete</button>
               </form>
             </div>
@@ -1451,8 +1025,30 @@ $val_datetime   = $isEdit
 
 </div>
 
+<div class="toast" id="toast">Copied!</div>
+
 <script>
-  // Theme toggle
+  // Show / hide posted-rows toggle on the post list
+  const toggleBtn = document.getElementById('togglePostedBtn');
+  const postList  = document.getElementById('postList');
+  if (toggleBtn && postList) {
+    toggleBtn.addEventListener('click', () => {
+      const showing = toggleBtn.dataset.shown === '1';
+      const next    = showing ? '0' : '1';
+      toggleBtn.dataset.shown = next;
+      postList.classList.toggle('hide-posted', next === '0');
+      toggleBtn.classList.toggle('showing', next === '1');
+      const hidden    = parseInt(toggleBtn.dataset.hiddenCount, 10) || 0;
+      const total     = parseInt(toggleBtn.dataset.totalCount, 10) || 0;
+      const unposted  = parseInt(toggleBtn.dataset.unpostedCount, 10) || 0;
+      toggleBtn.textContent = next === '1'
+        ? '🙈 Hide ' + hidden + ' posted'
+        : '👁 Show all (+' + hidden + ' posted)';
+      const visibleEl = document.getElementById('postCountVisible');
+      if (visibleEl) visibleEl.textContent = next === '1' ? total : unposted;
+    });
+  }
+
   const themeBtn  = document.getElementById('themeToggle');
   const themeIcon = document.getElementById('themeIcon');
   let isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -1463,136 +1059,82 @@ $val_datetime   = $isEdit
   applyTheme();
   themeBtn.addEventListener('click', () => { isDark = !isDark; applyTheme(); });
 
-  // File list preview
-  const fileInput = document.getElementById('images');
-  const fileList  = document.getElementById('fileList');
-  if (fileInput) {
-    fileInput.addEventListener('change', () => {
-      if (!fileInput.files.length) {
-        fileList.innerHTML = '';
-        return;
-      }
-      fileList.innerHTML = '<strong>Selected:</strong>';
-      [...fileInput.files].forEach(f => {
-        const div = document.createElement('div');
-        div.className = 'file-list-item';
-        div.textContent = '• ' + f.name + ' (' + (f.size / 1024 / 1024).toFixed(2) + ' MB)';
-        fileList.appendChild(div);
-      });
-    });
+  const POST_CTA_URL = <?= json_encode($postCtaUrl) ?>;
+  const toastEl = document.getElementById('toast');
+  let toastTimer;
+  function showToast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1800);
   }
 
-  // Drag & drop — wire up every .file-drop on the page
-  document.querySelectorAll('.file-drop').forEach(drop => {
-    const input = drop.querySelector('input[type="file"]');
-    if (!input) return;
-    ['dragenter','dragover'].forEach(ev =>
-      drop.addEventListener(ev, e => { e.preventDefault(); drop.style.borderColor = 'var(--accent)'; })
-    );
-    ['dragleave','drop'].forEach(ev =>
-      drop.addEventListener(ev, e => { e.preventDefault(); drop.style.borderColor = ''; })
-    );
-    drop.addEventListener('drop', e => {
-      if (e.dataTransfer.files.length) {
-        input.files = e.dataTransfer.files;
-        input.dispatchEvent(new Event('change'));
-      }
-    });
-  });
-
-  // Tire file list preview
-  const tireFileInput = document.getElementById('tire_images');
-  const tireFileList  = document.getElementById('tireFileList');
-  if (tireFileInput && tireFileList) {
-    tireFileInput.addEventListener('change', () => {
-      if (!tireFileInput.files.length) {
-        tireFileList.innerHTML = '';
-        return;
-      }
-      tireFileList.innerHTML = '<strong>Selected:</strong>';
-      [...tireFileInput.files].forEach(f => {
-        const div = document.createElement('div');
-        div.className = 'file-list-item';
-        div.textContent = '• ' + f.name + ' (' + (f.size / 1024 / 1024).toFixed(2) + ' MB)';
-        tireFileList.appendChild(div);
-      });
-    });
-  }
-
-  // Visual feedback on "remove image" checkboxes (posts)
-  document.querySelectorAll('[data-remove-checkbox]').forEach(cb => {
-    cb.addEventListener('change', () => {
-      cb.closest('[data-img-wrap]').classList.toggle('marked', cb.checked);
-    });
-  });
-
-  // Visual feedback on tire "remove" checkboxes
-  document.querySelectorAll('[data-tire-remove]').forEach(cb => {
-    cb.addEventListener('change', () => {
-      cb.closest('[data-tire-row]').classList.toggle('marked', cb.checked);
-    });
-  });
-
-  // Batch uploader — live file preview with category matching
-  const batchFileInput = document.getElementById('batch_images');
-  const batchFileList  = document.getElementById('batchFileList');
-  const allCatNames = <?= json_encode(array_map(fn($c) => strtolower($c['name']), $allCategories)) ?>;
-
-  function matchCategoriesFromFilename(filename) {
-    const base = ' ' + filename.replace(/\.[^.]+$/, '').toLowerCase().replace(/[-_.]+/g, ' ').replace(/\s+/g, ' ').trim() + ' ';
-    const matched = new Set();
-    // Sort longest first so "sport atv" matches before "atv"
-    const sorted = [...allCatNames].sort((a, b) => b.length - a.length);
-    for (const cat of sorted) {
-      if (base.includes(' ' + cat + ' ')) { matched.add(cat); }
+  async function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      try { await navigator.clipboard.writeText(text); return true; } catch {}
     }
-    const aliases = { 'offroad': 'off-road', 'dualsport': 'dual sport', 'sportatv': 'sport atv' };
-    for (const [alias, cat] of Object.entries(aliases)) {
-      if (base.includes(' ' + alias + ' ') && allCatNames.includes(cat)) { matched.add(cat); }
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.left = '-9999px';
+    document.body.appendChild(ta); ta.select();
+    let ok = false; try { ok = document.execCommand('copy'); } catch {}
+    document.body.removeChild(ta); return ok;
+  }
+
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-post-cta]');
+    if (!btn) return;
+    e.preventDefault();
+    const caption  = btn.getAttribute('data-caption')  || '';
+    const hashtags = btn.getAttribute('data-hashtags') || '';
+    const text = (caption + (hashtags ? '\n\n' + hashtags : '')).trim();
+    window.open(POST_CTA_URL, '_blank', 'noopener');
+    const ok = await copyText(text);
+    showToast(ok ? '📋 Caption + hashtags copied' : 'Copy failed — please copy manually');
+  });
+
+  async function downloadOne(url, filename) {
+    try {
+      const res  = await fetch(url, { mode: 'cors' });
+      const blob = await res.blob();
+      const obj  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = obj; a.download = filename;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(obj);
+      return true;
+    } catch {
+      window.open(url, '_blank');
+      return false;
     }
-    return [...matched];
   }
-
-  if (batchFileInput && batchFileList) {
-    batchFileInput.addEventListener('change', () => {
-      if (!batchFileInput.files.length) {
-        batchFileList.innerHTML = '';
-        return;
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-save-images]');
+    if (!btn) return;
+    e.preventDefault();
+    const urls = (btn.getAttribute('data-urls') || '').split('|').filter(Boolean);
+    if (!urls.length) { showToast('No images to save'); return; }
+    const company = (btn.getAttribute('data-company') || 'post').replace(/[^a-zA-Z0-9\-]/g, '-');
+    const postId  = btn.getAttribute('data-post-id') || '0';
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = urls.length > 1 ? `⏳ Saving 0/${urls.length}…` : '⏳ Saving…';
+    let ok = 0;
+    for (let i = 0; i < urls.length; i++) {
+      const url = urls[i];
+      const extMatch = url.match(/\.(jpe?g|png|gif|webp|mp4|webm|mov|m4v)(\?|$)/i);
+      const ext = extMatch ? extMatch[1].toLowerCase().replace('jpeg', 'jpg') : 'jpg';
+      const name = `${company}-${postId}-${i + 1}.${ext}`;
+      if (await downloadOne(url, name)) ok++;
+      if (urls.length > 1) {
+        btn.textContent = `⏳ Saving ${ok}/${urls.length}…`;
+        await new Promise(r => setTimeout(r, 250));
       }
-      const count = batchFileInput.files.length;
-      batchFileList.innerHTML = '<strong>Selected ' + count + ' image' + (count !== 1 ? 's' : '') + ':</strong>';
-      [...batchFileInput.files].forEach(f => {
-        const cats = matchCategoriesFromFilename(f.name);
-        const div = document.createElement('div');
-        div.className = 'file-list-item';
-        const sizeStr = (f.size / 1024 / 1024).toFixed(2) + ' MB';
-        const catsStr = cats.length
-          ? ' → ' + cats.join(', ')
-          : ' → no category match';
-        div.textContent = '• ' + f.name + ' (' + sizeStr + ')' + catsStr;
-        if (!cats.length) { div.style.opacity = '0.7'; }
-        batchFileList.appendChild(div);
-      });
-    });
-  }
-
-  // Disable batch submit button once clicked to prevent double-submits
-  const batchForm   = document.getElementById('batchForm');
-  const batchSubmit = document.getElementById('batchSubmit');
-  if (batchForm && batchSubmit) {
-    batchForm.addEventListener('submit', () => {
-      batchSubmit.disabled = true;
-      batchSubmit.textContent = 'Uploading…';
-    });
-  }
-
-  // Category chip toggle (visual state)
-  document.querySelectorAll('[data-cat-chip]').forEach(chip => {
-    const cb = chip.querySelector('input[type="checkbox"]');
-    if (!cb) return;
-    cb.addEventListener('change', () => {
-      chip.classList.toggle('checked', cb.checked);
-    });
+    }
+    btn.disabled = false;
+    btn.textContent = originalText;
+    showToast(ok === urls.length
+      ? `⬇ Saved ${ok} image${ok === 1 ? '' : 's'}`
+      : `Saved ${ok} of ${urls.length} — opened the rest in tabs`);
   });
 </script>
 

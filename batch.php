@@ -1,6 +1,8 @@
 <?php
 require_once 'db.php';
 require_once 'helpers.php';
+require_once 'auth.php';
+requireAdmin();
 
 $client = resolveClient($pdo);
 $clientSlug = $_GET['client'] ?? '';
