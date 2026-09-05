@@ -6,7 +6,10 @@
  *   - comment (string, max 2000 chars; '' clears it)
  *   - scheduled_date (datetime string, parseable by strtotime)
  *   - caption (string, max 10000 chars)
+ *   - hashtags (string, max 2000 chars)
+ *   - post_type (post|story|reel; only when the migration-gated column exists)
  * At least one must be provided.
+ * Role: status + comment are open; everything else needs the admin session (403 otherwise).
  * Returns JSON.
  */
 
@@ -22,6 +25,22 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 $action = $_POST['action'] ?? '';
+
+// ---- Role gate (server-side) ----
+// Clients may change `status` and `comment` only. Everything Joust does —
+// toggle_posted, delete_post, and edits to caption / hashtags / scheduled_date /
+// post_type — requires the admin session (auth.php via helpers.php).
+$isAdminSession = function_exists('currentAdmin') && currentAdmin() !== null;
+$adminOnlyFields = ['scheduled_date', 'caption', 'hashtags', 'post_type'];
+$needsAdmin = in_array($action, ['toggle_posted', 'delete_post'], true);
+foreach ($adminOnlyFields as $f) {
+    if (array_key_exists($f, $_POST)) { $needsAdmin = true; }
+}
+if ($needsAdmin && !$isAdminSession) {
+    http_response_code(403);
+    echo json_encode(['ok' => false, 'error' => 'Admin sign-in required']);
+    exit;
+}
 
 // ---- Toggle posted flag ----
 if ($action === 'toggle_posted') {
@@ -125,18 +144,20 @@ $hasCmt  = array_key_exists('comment', $_POST);
 $hasDate = array_key_exists('scheduled_date', $_POST);
 $hasCap  = array_key_exists('caption', $_POST);
 $hasTag  = array_key_exists('hashtags', $_POST);
+$hasType = array_key_exists('post_type', $_POST);
 $status  = $_POST['status']  ?? null;
 $comment = $_POST['comment'] ?? null;
 $date    = $_POST['scheduled_date'] ?? null;
 $caption = $_POST['caption'] ?? null;
 $hashtags = $_POST['hashtags'] ?? null;
+$postType = $hasType ? strtolower(trim((string)$_POST['post_type'])) : null;
 
 if ($id <= 0) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'Invalid id']);
     exit;
 }
-if (!$hasStat && !$hasCmt && !$hasDate && !$hasCap && !$hasTag) {
+if (!$hasStat && !$hasCmt && !$hasDate && !$hasCap && !$hasTag && !$hasType) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'Nothing to update']);
     exit;
@@ -187,13 +208,27 @@ if ($hasTag) {
     }
 }
 
+if ($hasType) {
+    if (!hasPostTypeColumn($pdo)) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'post_type not supported — run migrate.php']);
+        exit;
+    }
+    if (!in_array($postType, allowedPostTypes(), true)) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'Invalid post_type']);
+        exit;
+    }
+}
+
 try {
     $pdo->beginTransaction();
 
-    // Capture before-values for diff logging. posts.name is optional (migration-gated).
+    // Capture before-values for diff logging. posts.name / post_type are optional (migration-gated).
     $nameSel = hasPostsNameColumn($pdo) ? 'name' : "'' AS name";
+    $typeSel = hasPostTypeColumn($pdo) ? 'post_type' : "'post' AS post_type";
     $before = $pdo->prepare("
-        SELECT company_id, status, client_comment, scheduled_date, caption, hashtags, {$nameSel}
+        SELECT company_id, status, client_comment, scheduled_date, caption, hashtags, {$nameSel}, {$typeSel}
           FROM posts WHERE id = ? FOR UPDATE
     ");
     $before->execute([$id]);
@@ -218,6 +253,7 @@ try {
     if ($hasDate) { $sets[] = 'scheduled_date = ?'; $params[] = $dateFormatted; }
     if ($hasCap)  { $sets[] = 'caption = ?';        $params[] = $caption; }
     if ($hasTag)  { $sets[] = 'hashtags = ?';       $params[] = $hashtags; }
+    if ($hasType) { $sets[] = 'post_type = ?';      $params[] = $postType; }
     $params[] = $id;
 
     $sql  = 'UPDATE posts SET ' . implode(', ', $sets) . ' WHERE id = ?';
@@ -268,6 +304,13 @@ try {
             $batchId);
     }
 
+    if ($hasType && (string)($prev['post_type'] ?? 'post') !== $postType) {
+        logActivity($pdo, $companyId, 'post', $id, 'edited_type', $actor,
+            "Changed type on post #{$id}",
+            ($prev['post_type'] ?? 'post') . ' → ' . $postType,
+            $batchId);
+    }
+
     $pdo->commit();
 
     echo json_encode([
@@ -278,6 +321,7 @@ try {
         'scheduled_date' => $hasDate ? $dateFormatted  : null,
         'caption'        => $hasCap  ? $caption        : null,
         'hashtags'       => $hasTag  ? $hashtags       : null,
+        'post_type'      => $hasType ? $postType       : null,
     ]);
 } catch (Exception $e) {
     if ($pdo->inTransaction()) { $pdo->rollBack(); }
