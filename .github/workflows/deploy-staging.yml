@@ -1,0 +1,110 @@
+name: Deploy to staging
+
+# Manually deploys ANY branch/tag to a separate "staging" folder on GoDaddy so a
+# redesign can be tested against a copy of the database without touching the
+# live site in public_html/socialmedia/.
+#
+# This file must live on the DEFAULT branch (main) before it shows up under
+# Actions > "Deploy to staging" > "Run workflow". The branch you pick in the
+# `ref` input is what actually gets deployed.
+#
+# It never runs on push - only when a person clicks "Run workflow".
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or tag to deploy to staging"
+        required: true
+        default: claude/portal-redesign
+        type: string
+      server_dir:
+        description: "Target folder on the server (must end with / and contain 'staging')"
+        required: true
+        default: public_html/socialmedia-staging/
+        type: string
+      confirm:
+        description: "Type the word: staging"
+        required: true
+        type: string
+
+# Only one staging deploy at a time. Deliberately a different group from the
+# production workflow (deploy-production) so the two never queue behind each other.
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Sync files to the staging folder via FTP
+    runs-on: ubuntu-latest
+    steps:
+      # Refuse to run unless the inputs unambiguously point at staging.
+      # Guards against typing the production path into server_dir by accident.
+      - name: Guard against deploying to production
+        env:
+          SERVER_DIR: ${{ inputs.server_dir }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -eu
+          if [ "$CONFIRM" != "staging" ]; then
+            echo "::error::confirm must be exactly 'staging' (got '$CONFIRM')."; exit 1
+          fi
+          if [ "$SERVER_DIR" = "public_html/socialmedia/" ]; then
+            echo "::error::server_dir is the PRODUCTION folder. Refusing."; exit 1
+          fi
+          case "$SERVER_DIR" in
+            *staging*) ;;
+            *) echo "::error::server_dir must contain 'staging' (got '$SERVER_DIR')."; exit 1 ;;
+          esac
+          case "$SERVER_DIR" in
+            */) ;;
+            *) echo "::error::server_dir must end with '/' (got '$SERVER_DIR')."; exit 1 ;;
+          esac
+          echo "Deploying ref '${{ inputs.ref }}' to '$SERVER_DIR'"
+
+      # Check out the branch/tag chosen in the "ref" input, not the branch this
+      # workflow file happens to live on.
+      - name: Check out the requested ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      # Same action, same secrets, same exclude list as the production workflow
+      # (.github/workflows/deploy.yml). Only server-dir and state-name differ.
+      - name: Deploy via FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          # Same FTP account as production (Settings > Secrets and variables > Actions).
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+
+          # The staging folder chosen at run time (validated by the guard step above).
+          server-dir: ${{ inputs.server_dir }}
+
+          # Upload from the repository root.
+          local-dir: ./
+
+          # The action keeps a JSON file on the server to know what it uploaded
+          # last time. Use a different name from production
+          # (default .ftp-deploy-sync-state.json) so the two folders never
+          # share or clobber each other's sync state.
+          state-name: .ftp-deploy-sync-state-staging.json
+
+          # Files that must NEVER be overwritten or deleted on the server.
+          # Keep this in sync with deploy.yml. It is a block-scalar STRING
+          # (one glob per line), not a YAML list - GitHub rejects a sequence here.
+          #   - .git and CI files (not part of the site)
+          #   - config.php holds the STAGING database credentials (hand-copied, edited)
+          #   - uploads/ holds client-uploaded images, copied by hand from production
+          #   - .htaccess lives on the server (routing / PHP config) and is not in git
+          exclude: |
+            **/.git*
+            **/.git*/**
+            .github/**
+            config.php
+            uploads/**
+            .htaccess
+            **/.htaccess
+            error_log
+            README.md
