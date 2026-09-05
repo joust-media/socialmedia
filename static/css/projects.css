@@ -61,6 +61,11 @@
 
 /* "In progress" pill next to the circle */
 .pj-pill { margin-right: 2px; }
+/* Narrow phones: the pill + tap target leave little width, so let the title wrap to two lines */
+@media (max-width: 400px) {
+  .pj-open { white-space: normal; }
+  .pj-open-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+}
 
 /* ---------------------------------------------------------------------
    Tap target — 22px ring inside a 44px hit area

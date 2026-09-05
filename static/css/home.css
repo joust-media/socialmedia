@@ -102,9 +102,15 @@
 .home-upcoming:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .home-upcoming-thumb {
   position: relative; aspect-ratio: 5 / 4; background: var(--fill-tertiary);
+  min-height: 0; overflow: hidden;          /* flex item: intrinsic media height must not beat the ratio */
   display: flex; align-items: center; justify-content: center; color: var(--label-tertiary);
 }
-.home-upcoming-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.home-upcoming-thumb img, .home-upcoming-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Poster-less video tile sits on true black in dark mode: a hairline ring keeps the card edge visible */
+.home-upcoming-video::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  box-shadow: inset 0 0 0 0.5px var(--separator);
+}
 .home-upcoming-thumb .ui-icon { width: 28px; height: 28px; }
 .home-upcoming-thumb .ui-pill { position: absolute; left: 8px; bottom: 8px; }
 .home-upcoming-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 3px; }
@@ -139,7 +145,7 @@
 .activity-icon--deny      { background: var(--deny); }
 .activity-icon--accent    { background: var(--accent); }
 .activity-icon--scheduled { background: var(--scheduled); }
-.activity-icon--neutral   { background: var(--label-tertiary); }
+.activity-icon--neutral   { background: var(--fill-tertiary); color: var(--label-secondary); }   /* ≥ 4.5:1 glyph in both themes */
 .activity-title { white-space: normal; }
 .activity-title em { font-style: normal; font-weight: 600; }
 .activity-title q { quotes: "\201C" "\201D"; color: var(--label-secondary); }

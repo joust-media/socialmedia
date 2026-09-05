@@ -666,6 +666,7 @@ $pageTitle   = $formTitle;
 $navSubtitle = 'Studio · ' . ($isEdit ? $editLabel : $client['name']);
 $activeTab   = 'studio';
 $pageWide    = true;
+$navWide     = true;
 $navBack     = ['href' => clientUrl('studio.php'), 'label' => 'Studio'];
 $bodyClass   = 'page-studio page-composer';
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">' . "\n"

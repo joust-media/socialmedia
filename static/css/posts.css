@@ -81,6 +81,7 @@ li + li > .pl-card::before { left: 100px; }
   font-size: var(--text-footnote); line-height: 18px; letter-spacing: var(--ls-footnote);
   color: var(--label-secondary);
 }
+.pl-meta-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }   /* "·" wraps with its item */
 .pl-meta-sep { color: var(--label-tertiary); }
 .pl-card .ui-row-chevron { align-self: center; }
 
@@ -312,6 +313,11 @@ li + li > .pl-card::before { left: 100px; }
   .page-posts .ui-sheet-root.is-detail .ui-sheet { box-shadow: var(--shadow-panel), -0.5px 0 0 var(--separator); }
   .page-posts .pl-item.is-open .pl-card { background: var(--fill-tertiary); }
   .pd-slide { max-height: 520px; }
+}
+/* ≥1440 there is room for the 720px column beside the 480px panel: keep the list and its toolbar clear of it */
+@media (min-width: 1440px) {
+  .page-posts:has(.ui-sheet-root.is-detail.is-open) .ui-nav-inner,
+  .page-posts:has(.ui-sheet-root.is-detail.is-open) .ui-page { margin-right: 480px; }
 }
 
 /* ---------------------------------------------------------------------

@@ -25,7 +25,7 @@
  *   videoAbsUrl(string $url): string                          — root-rooted URL (basePath()-aware).
  *   videoThumbAttrs(string $url): string                      — ` data-video-thumb data-video-url="…"`
  *                                                               for any thumbnail App.video may give a poster.
- *   videoDurationBadge(string $class = ''): string            — play glyph + "--:--" ([data-video-duration]).
+ *   videoDurationBadge(string $class = ''): string            — play glyph + empty text until known ([data-video-duration]).
  *   videoTile(string $url, array $opts = []): string          — grid/list thumbnail for a video: poster
  *                                                               when known, else a dark tile + play glyph;
  *                                                               $opts: 'poster', 'badge' (default true),
@@ -222,7 +222,7 @@ if (!function_exists('videoDurationBadge')) {
     {
         return '<span class="ui-video-duration' . ($class !== '' ? ' ' . videoEsc($class) : '') . '" data-video-duration>'
              . (function_exists('icon') ? icon('play') : '')
-             . '<span data-video-duration-text>--:--</span></span>';
+             . '<span data-video-duration-text></span></span>';   // empty (icon-only) until App.video knows the duration
     }
 }
 

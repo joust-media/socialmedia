@@ -9,6 +9,7 @@
    Controls under the large title
    --------------------------------------------------------------------- */
 .as-controls { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 16px; }
+.as-controls .ui-segmented { max-width: 560px; }   /* same cap as Studio's control */
 .as-filters {
   display: flex; gap: 6px; flex-wrap: nowrap;
   overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;

@@ -44,88 +44,92 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     usleep(400 * 1000);
 }
 ?>
+<?php
+// Shared tokens + base (system font, --bg / --bg-elevated, light/dark by system preference) — same
+// cache-busting as helpers.php staticUrl(), which this page does not load.
+$cssUrl = static function (string $name) use ($base): string {
+    $file = __DIR__ . '/static/css/' . $name;
+    return $base . '/static/css/' . $name . (is_file($file) ? '?v=' . filemtime($file) : '');
+};
+?>
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
 <title>Sign in — Joust Admin</title>
+<link rel="stylesheet" href="<?= h($cssUrl('tokens.css')) ?>">
+<link rel="stylesheet" href="<?= h($cssUrl('base.css')) ?>">
 <style>
-  :root {
-    --bg:#18191a; --surface:#242526; --surface-2:#3a3b3c; --border:#3e4042;
-    --text:#e4e6eb; --text-muted:#b0b3b8; --accent:#2d88ff; --accent-hover:#4599ff;
-    --danger:#ef4444;
-    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.3);
-  }
-  * { box-sizing: border-box; }
-  html, body { margin:0; padding:0; background:var(--bg); color:var(--text);
-    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    min-height: 100vh; }
   .wrap {
     display: flex; align-items: center; justify-content: center;
-    min-height: 100vh; padding: 24px;
+    min-height: 100vh; min-height: 100dvh; padding: 24px;
   }
   .card {
     width: 100%; max-width: 380px;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 16px; box-shadow: var(--shadow);
+    background: var(--bg-elevated);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card), 0 0 0 0.5px var(--separator);
     padding: 28px 28px 24px;
   }
   .brand {
     display: flex; align-items: center; gap: 10px;
-    font-weight: 700; font-size: 18px; color: var(--text);
     margin-bottom: 18px;
+    font-size: var(--text-headline); line-height: var(--lh-headline);
+    letter-spacing: var(--ls-headline); font-weight: var(--fw-headline);
   }
   .brand-mark {
-    width: 36px; height: 36px; border-radius: 8px;
-    background: var(--accent); color: #fff;
+    width: 36px; height: 36px; border-radius: 9px;
+    background: var(--joust); color: #fff;
     display: flex; align-items: center; justify-content: center;
-    font-weight: 800; font-size: 18px;
+    font-weight: 800; font-size: 18px; letter-spacing: 0;
   }
   h1 {
-    font-size: 20px; font-weight: 700; margin: 0 0 6px;
-    letter-spacing: -0.3px;
+    margin: 0 0 4px;
+    font-size: var(--text-title2); line-height: var(--lh-title2);
+    letter-spacing: var(--ls-title2); font-weight: var(--fw-title2);
   }
   .sub {
-    color: var(--text-muted); font-size: 13px;
-    margin: 0 0 18px;
+    margin: 0 0 18px; color: var(--label-secondary);
+    font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead);
   }
-  .field { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
   label {
-    font-size: 11px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.5px;
-    color: var(--text-muted);
+    font-size: var(--text-footnote); line-height: var(--lh-footnote);
+    font-weight: 600; text-transform: uppercase; letter-spacing: 0.2px;
+    color: var(--label-secondary);
   }
   input[type="email"], input[type="password"] {
-    background: var(--surface-2); border: 1px solid var(--border);
-    color: var(--text); padding: 11px 12px; border-radius: 8px;
-    font: inherit; font-size: 15px;
+    width: 100%; min-height: 44px; padding: 10px 12px;
+    border: 0; border-radius: var(--radius-ctl);
+    background: var(--fill-tertiary); color: var(--label);
+    font-size: var(--text-body); line-height: var(--lh-body); letter-spacing: var(--ls-body);
   }
-  input:focus {
-    outline: none; border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(45,136,255,0.15);
-  }
+  input:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; border-radius: var(--radius-ctl); }
   button[type="submit"] {
-    width: 100%; padding: 11px 14px;
+    width: 100%; min-height: 44px; margin-top: 6px; padding: 10px 14px;
+    border: 0; border-radius: var(--radius-ctl);
     background: var(--accent); color: #fff;
-    border: 1px solid var(--accent); border-radius: 8px;
-    font-size: 15px; font-weight: 700; letter-spacing: 0.1px;
-    cursor: pointer; transition: background 0.15s, transform 0.1s;
-    margin-top: 6px;
+    font-size: var(--text-body); font-weight: 600; letter-spacing: var(--ls-body);
+    transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
   }
-  button[type="submit"]:hover { background: var(--accent-hover); }
-  button[type="submit"]:active { transform: scale(0.99); }
-  .error {
-    background: #7f1d1d; color: #fecaca; border: 1px solid #991b1b;
-    padding: 10px 12px; border-radius: 8px;
-    font-size: 13px; margin-bottom: 14px;
+  button[type="submit"]:hover { opacity: .9; }
+  button[type="submit"]:active { transform: scale(0.98); }
+  .notice {
+    margin-bottom: 14px; padding: 10px 12px; border-radius: 12px;
+    font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead); font-weight: 600;
   }
+  .notice--error { background: rgba(255,59,48,.14); color: var(--deny); }
+  .notice--ok    { background: rgba(52,199,89,.15); color: var(--approve); }
   .footnote {
-    margin-top: 18px; padding-top: 14px;
-    border-top: 1px solid var(--border);
-    font-size: 12px; color: var(--text-muted);
-    text-align: center;
+    margin-top: 18px; padding-top: 14px; text-align: center;
+    box-shadow: inset 0 0.5px 0 var(--separator);
+    font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary);
   }
+  @media (prefers-reduced-motion: reduce) { button[type="submit"]:active { transform: none; } }
 </style>
 </head>
 <body>
@@ -139,11 +143,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <p class="sub">Admin access only.</p>
 
     <?php if ($error): ?>
-      <div class="error">⚠ <?= h($error) ?></div>
+      <div class="notice notice--error" role="alert"><?= h($error) ?></div>
     <?php elseif (!empty($_GET['signed_out'])): ?>
-      <div class="error" style="background:#14532d;color:#bbf7d0;border-color:#166534;">
-        ✓ Signed out. Sign in again to continue.
-      </div>
+      <div class="notice notice--ok" role="status">Signed out. Sign in again to continue.</div>
       <script>
         // logout.php only redirects (no DOM), so the signed-out state of this page is the first
         // same-origin document after sign-out: drop App.video's cached poster frames / durations

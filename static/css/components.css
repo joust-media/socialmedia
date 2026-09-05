@@ -283,6 +283,11 @@ a.ui-row:active, button.ui-row:active { background: var(--fill-tertiary); }
 }
 .ui-segmented-count { color: var(--label-secondary); font-weight: 500; }
 .ui-segmented-item.is-active .ui-segmented-count { color: var(--label-secondary); }
+/* 4+ segments (admin Posts): keep every label inside a 375px phone — tighter padding, smaller type, no counts */
+@media (max-width: 420px) {
+  .ui-segmented--dense .ui-segmented-item { padding-inline: 4px; font-size: var(--text-caption); letter-spacing: 0; gap: 3px; }
+  .ui-segmented--dense .ui-segmented-count { display: none; }
+}
 
 /* ---------------------------------------------------------------------
    Buttons
@@ -506,6 +511,7 @@ html:not(:has(.ui-tabbar)) .ui-toast { bottom: calc(24px + env(safe-area-inset-b
   font-size: 11px; font-weight: 600; letter-spacing: 0; font-variant-numeric: tabular-nums;
 }
 .ui-video-duration .ui-icon { width: 10px; height: 10px; }
+.ui-video-duration [data-video-duration-text]:empty { display: none; }   /* unknown duration: play glyph only */
 
 @media (prefers-reduced-motion: reduce) {
   .ui-video-mute { transition-property: opacity, background-color; }

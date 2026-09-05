@@ -407,10 +407,8 @@ include __DIR__ . '/partials/layout-top.php';
             <?php endif; ?>
             <div class="pl-meta">
               <?= statusPill($post['status'], $posted) ?>
-              <span class="pl-meta-sep">·</span>
-              <span><?= $nImg ?> <?= $nImg === 1 ? ($isVid ? 'video' : 'image') : 'media' ?></span>
-              <span class="pl-meta-sep">·</span>
-              <span data-comment-count-for="<?= $pid ?>"><?= $nCmt ?> <?= $nCmt === 1 ? 'comment' : 'comments' ?></span>
+              <span class="pl-meta-item"><span class="pl-meta-sep">·</span><span><?= $nImg ?> <?= $nImg === 1 ? ($isVid ? 'video' : 'image') : 'media' ?></span></span>
+              <span class="pl-meta-item"><span class="pl-meta-sep">·</span><span data-comment-count-for="<?= $pid ?>"><?= $nCmt ?> <?= $nCmt === 1 ? 'comment' : 'comments' ?></span></span>
             </div>
           </div>
           <?= icon('chevron-right', 'ui-row-chevron') ?>
@@ -421,7 +419,9 @@ include __DIR__ . '/partials/layout-top.php';
       </li>
     <?php endforeach; ?>
   </ul>
-  <p class="ui-list-footer posts-hint">Swipe right to approve, left to deny. Tap a post for the full preview.</p>
+  <?php if ($segment === 'pending'): ?>
+    <p class="ui-list-footer posts-hint">Swipe right to approve, left to deny. Tap a post for the full preview.</p>
+  <?php endif; ?>
 </section>
 
 <?php if ($directPost): ?>

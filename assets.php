@@ -266,6 +266,13 @@ if ($view === 'library') {
         ");
         $s->execute([$cid]);
         $collections = $s->fetchAll();
+        // Clients never see denied items, so a collection with nothing else in it would only open onto the
+        // empty state — skip it. The admin list keeps every collection (with its needs-changes count).
+        if (!$isAdmin) {
+            $collections = array_values(array_filter($collections, static function ($c) {
+                return ((int)$c['total_count'] - (int)$c['denied_count']) > 0;
+            }));
+        }
 
         // 56px thumbnail = the reference image (lowest sort_order; never a denied one for clients)
         $thumbs = [];

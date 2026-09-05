@@ -60,6 +60,7 @@ $pageTitle   = 'Batch';
 $navSubtitle = 'Studio · ' . $client['name'];
 $activeTab   = 'studio';
 $pageWide    = true;
+$navWide     = true;
 $navBack     = ['href' => clientUrl('studio.php', ['tab' => 'batch']), 'label' => 'Studio'];
 $bodyClass   = 'page-studio page-batch';
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">' . "\n"
@@ -85,7 +86,7 @@ include __DIR__ . '/partials/layout-top.php';
       <label class="studio-dropzone studio-dropzone--sm" data-file-drop>
         <input type="file" data-batch-files accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov" multiple>
         <span class="studio-dropzone-label">Choose files</span>
-        <span class="studio-dropzone-hint">up to 10 MB each · name files with a category keyword to auto-tag</span>
+        <span class="studio-dropzone-hint">up to 10 MB each here (Compose takes single files up to 25 MB) · name files with a category keyword to auto-tag</span>
       </label>
       <ul class="studio-filelist" data-batch-filelist role="list"></ul>
       <?php if ($categories): ?>

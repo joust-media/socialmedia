@@ -20,6 +20,7 @@ if (!function_exists('segmented')) {
         };
         $cls = 'ui-segmented';
         if (!empty($opts['auto']))  $cls .= ' ui-segmented--auto';
+        if (count($items) >= 4)     $cls .= ' ui-segmented--dense';   // 4+ segments: tighter on narrow phones (components.css)
         if (!empty($opts['class'])) $cls .= ' ' . $opts['class'];
         $aria = !empty($opts['label']) ? ' aria-label="' . $esc($opts['label']) . '"' : '';
 

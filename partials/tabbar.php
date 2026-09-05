@@ -93,7 +93,7 @@ $uiBrandHref = clientUrl($uiIsAdmin && empty($client) ? 'admin.php' : 'index.php
           <?= icon($uiTab['icon']) ?>
           <span class="ui-tab-label"><?= esc($uiTab['label']) ?></span>
           <?php if ($uiCount > 0): ?>
-            <span class="ui-badge" aria-label="<?= esc($uiCount . ' to review') ?>"><?= $uiCount > 99 ? '99+' : (int)$uiCount ?></span>
+            <span class="ui-badge ui-tab-badge" aria-label="<?= esc($uiCount . ' to review') ?>"><?= $uiCount > 99 ? '99+' : (int)$uiCount ?></span>
           <?php endif; ?>
         </a>
       </li>

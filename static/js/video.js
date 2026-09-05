@@ -155,6 +155,7 @@
     },
     applyDuration: function (url, seconds) {
       var key = absUrl(url), text = format(seconds);
+      if (text === '--:--') text = '';                     // unknown → keep the badge icon-only
       $$('[data-video-thumb][data-video-url], [data-video][data-video-url]').forEach(function (el) {
         if (absUrl(el.getAttribute('data-video-url')) !== key) return;
         var badge = $('[data-video-duration]', el) || (el.parentNode && $('[data-video-duration]', el.parentNode));
@@ -332,7 +333,7 @@
       var dur = V.getDuration(url);
       var badge = $('[data-video-duration]', tile) || (tile.parentNode && $('[data-video-duration]', tile.parentNode));
       if (dur != null) V.applyDuration(url, dur);
-      else if (badge) { var t = $('[data-video-duration-text]', badge); (t || badge).textContent = '--:--'; }
+      else if (badge) { var t = $('[data-video-duration-text]', badge); if (t) t.textContent = ''; }   // icon-only until known (never "--:--")
       // Probe once for a missing duration/poster — but not again for a URL that already yielded no poster.
       if (((dur == null && badge) || !poster) && !V.hasNoPoster(url)) V.probe(url);
     },

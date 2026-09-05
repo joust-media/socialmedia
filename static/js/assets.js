@@ -726,7 +726,7 @@
       var tab = $('.ui-tab--assets');
       if (tab) {
         var badge = $('.ui-badge', tab), n = Math.max(0, (badge ? (parseInt(badge.textContent, 10) || 0) : 0) + delta);
-        if (n > 0) { if (!badge) { badge = document.createElement('span'); badge.className = 'ui-badge'; tab.appendChild(badge); } badge.textContent = n > 99 ? '99+' : String(n); badge.setAttribute('aria-label', n + ' to review'); }
+        if (n > 0) { if (!badge) { badge = document.createElement('span'); badge.className = 'ui-badge ui-tab-badge'; tab.appendChild(badge); } badge.textContent = n > 99 ? '99+' : String(n); badge.setAttribute('aria-label', n + ' to review'); }
         else if (badge) badge.remove();
       }
     },

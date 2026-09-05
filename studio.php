@@ -175,6 +175,7 @@ $pageTitle   = 'Studio';
 $navSubtitle = $client['name'];
 $activeTab   = 'studio';
 $pageWide    = true;
+$navWide     = true;        // header column matches the 1200px body (as assets.php)
 $bodyClass   = 'page-studio page-studio-hub';
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">' . "\n"
              . '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">';
@@ -217,7 +218,7 @@ include __DIR__ . '/partials/layout-top.php';
       <input type="file" data-upload-input accept="image/*,video/mp4,video/quicktime,.mov" multiple>
       <span class="studio-dropzone-icon"><?= icon('download') ?></span>
       <span class="studio-dropzone-label">Drop images or video here</span>
-      <span class="studio-dropzone-hint">image/*, MP4, QuickTime · up to 10 MB each · each file becomes a draft post in <?= h($client['name']) ?>'s queue (placeholder caption, spaced 3 days apart) that you can finish in Compose or Posts.</span>
+      <span class="studio-dropzone-hint">image/*, MP4, QuickTime · up to 10 MB each here (Compose takes single files up to 25 MB) · each file becomes a draft post in <?= h($client['name']) ?>'s queue (placeholder caption, spaced 3 days apart) that you can finish in Compose or Posts.</span>
     </label>
     <ul class="studio-uploadlist" data-upload-list role="list"></ul>
     <template data-upload-item-template>
