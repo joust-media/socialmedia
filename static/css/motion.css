@@ -1,0 +1,56 @@
+/* =====================================================================
+   Joust client portal — motion
+   Animate only transform and opacity. Springs (bounce:0, ~350ms) for
+   sheets and swipe actions; --ease-out for everything else.
+   prefers-reduced-motion → crossfades only.
+   ===================================================================== */
+
+/* Sheet / side panel */
+.ui-sheet-backdrop { transition: opacity var(--dur-sheet) var(--ease-out); }
+.ui-sheet          { transition: transform var(--dur-sheet) var(--ease-spring), opacity var(--dur-sheet) var(--ease-out); will-change: transform; }
+
+/* Toast */
+.ui-toast { transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-spring); }
+
+/* Buttons / rows: instant press feedback (on pointer-down, not release) */
+.ui-btn, .ui-tab, a.ui-row, button.ui-row, .ui-segmented-item, .ui-card--link {
+  transition: transform var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
+}
+.ui-btn:active, .ui-card--link:active { transform: scale(0.97); }
+.ui-tab:active .ui-icon { transform: scale(0.9); }
+.ui-tab .ui-icon { transition: transform var(--dur-fast) var(--ease-out); }
+
+/* Segmented control thumb */
+.ui-segmented-item { transition: background-color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+
+/* Denied-item removal: scale 0.9 + fade, 220ms, then reflow */
+.ui-leave {
+  animation: ui-leave var(--dur-base) var(--ease-out) forwards;
+  pointer-events: none;
+}
+@keyframes ui-leave {
+  to { opacity: 0; transform: scale(0.9); }
+}
+
+/* Simple entrance for injected content */
+.ui-enter { animation: ui-enter var(--dur-base) var(--ease-out); }
+@keyframes ui-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Reduced motion: keep instant tap feedback, replace movement with crossfades */
+@media (prefers-reduced-motion: reduce) {
+  .ui-sheet, .ui-sheet-backdrop, .ui-toast, .ui-segmented-item, .ui-nav {
+    transition-duration: var(--dur-fast);
+    transition-property: opacity, background-color, box-shadow;
+  }
+  .ui-sheet { transform: none !important; }
+  .ui-sheet-root:not(.is-visible) .ui-sheet { opacity: 0; }
+  .ui-toast { transform: translate(-50%, 0) !important; }
+  .ui-btn:active, .ui-card--link:active, .ui-tab:active .ui-icon { transform: none; }
+  .ui-leave { animation: ui-fade-out var(--dur-fast) linear forwards; }
+  .ui-enter { animation: ui-fade-in var(--dur-fast) linear; }
+  @keyframes ui-fade-out { to { opacity: 0; } }
+  @keyframes ui-fade-in { from { opacity: 0; } to { opacity: 1; } }
+}

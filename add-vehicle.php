@@ -7,7 +7,7 @@
 require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';
 require __DIR__ . '/prompt-lib.php';
-require __DIR__ . '/auth.php';
+require_once __DIR__ . '/auth.php';
 requireAdmin();
 
 function h($s) {
@@ -15,7 +15,7 @@ function h($s) {
 }
 
 if (!hasVehiclesTable($pdo)) {
-    header('Location: vehicles?msg=' . urlencode('Run migrate first — the vehicles table is missing.'));
+    header('Location: vehicles.php?msg=' . urlencode('Run migrate first — the vehicles table is missing.'));
     exit;
 }
 
@@ -52,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
                 $pdo->prepare("DELETE FROM vehicles WHERE id = ?")->execute([$vehicleId]);
-                header('Location: vehicles?msg=' . urlencode('Vehicle deleted.'));
+                header('Location: vehicles.php?msg=' . urlencode('Vehicle deleted.'));
                 exit;
             } catch (Exception $e) {
                 $errors[] = 'Delete failed: ' . $e->getMessage();
@@ -200,7 +200,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->commit();
                 $msg = $action === 'create' ? 'Vehicle created.' : 'Vehicle updated.';
                 if ($errors) { $msg .= ' (Warnings: ' . implode(' ', $errors) . ')'; }
-                header('Location: vehicles?msg=' . urlencode($msg));
+                header('Location: vehicles.php?msg=' . urlencode($msg));
                 exit;
             } catch (Exception $e) {
                 if ($pdo->inTransaction()) { $pdo->rollBack(); }
@@ -247,11 +247,12 @@ $formTitle      = $isEdit ? 'Edit vehicle' : 'New vehicle';
 $formSubmitText = $isEdit ? 'Save changes' : 'Create vehicle';
 ?>
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title><?= $isEdit ? 'Edit vehicle' : 'Add a vehicle' ?> — Joust Admin</title>
+<?= renderAppHead() ?>
 <style>
   :root {
     --bg: #f0f2f5; --surface: #ffffff; --surface-2: #f7f8fa;
@@ -354,19 +355,16 @@ $formSubmitText = $isEdit ? 'Save changes' : 'Create vehicle';
 </head>
 <body>
 
-<header class="topbar">
-  <div class="topbar-inner">
-    <div class="brand">
-      <div class="brand-mark">J</div>
-      <span>Vehicle Library</span>
-      <span class="brand-sub"><?= $isEdit ? 'Edit' : 'New' ?></span>
-    </div>
-    <div class="top-actions">
-      <a class="btn sm" href="vehicles">← Back to library</a>
-      <a class="btn sm" href="logout" title="Signed in as <?= h(currentAdmin()) ?>">Sign out</a>
-    </div>
-  </div>
-</header>
+<?= renderAppChrome($isEdit ? 'Edit vehicle' : 'New vehicle', [
+      'subtitle' => 'Vehicle Library',
+      'active'   => 'studio',
+      'width'    => '860px',
+      'trailing' => '',
+      'back'     => ['href' => 'vehicles.php', 'label' => 'Vehicles'],
+      'links'    => [
+        ['label' => 'Sign out', 'href' => 'logout.php', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
+      ],
+    ]) ?>
 
 <div class="wrap">
 
@@ -383,11 +381,11 @@ $formSubmitText = $isEdit ? 'Save changes' : 'Create vehicle';
     <div class="card-header">
       <h2 class="card-title"><?= h($formTitle) ?></h2>
       <?php if ($isEdit): ?>
-        <a class="btn sm" href="add-vehicle">+ New instead</a>
+        <a class="btn sm" href="add-vehicle.php">+ New instead</a>
       <?php endif; ?>
     </div>
     <div class="card-body">
-      <form method="POST" action="add-vehicle<?= $isEdit ? '?edit=' . (int)$editVehicle['id'] : '' ?>"
+      <form method="POST" action="add-vehicle.php<?= $isEdit ? '?edit=' . (int)$editVehicle['id'] : '' ?>"
             enctype="multipart/form-data" id="vehicleForm">
         <input type="hidden" name="action" value="<?= h($formAction) ?>">
         <?php if ($isEdit): ?>
@@ -453,7 +451,7 @@ $formSubmitText = $isEdit ? 'Save changes' : 'Create vehicle';
         </div>
 
         <div class="form-actions">
-          <a class="btn" href="vehicles">Cancel</a>
+          <a class="btn" href="vehicles.php">Cancel</a>
           <button type="submit" class="btn primary"><?= h($formSubmitText) ?></button>
         </div>
       </form>
@@ -461,7 +459,7 @@ $formSubmitText = $isEdit ? 'Save changes' : 'Create vehicle';
   </div>
 
   <?php if ($isEdit): ?>
-    <form method="POST" action="add-vehicle"
+    <form method="POST" action="add-vehicle.php"
           onsubmit="return confirm('Delete this vehicle and all its images? This cannot be undone.');"
           style="text-align:right;">
       <input type="hidden" name="action" value="delete">

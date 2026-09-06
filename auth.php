@@ -13,15 +13,20 @@
  */
 
 const ADMIN_EMAIL         = 'lance@joustmedia.com';
-// Hash of the plaintext password "Wrst!551", generated once with
-// password_hash($pw, PASSWORD_BCRYPT). Rotate the password by re-hashing.
+// bcrypt hash generated with password_hash($pw, PASSWORD_BCRYPT). Rotate the
+// password by re-hashing; never record the plaintext here.
 const ADMIN_PASSWORD_HASH = '$2y$12$hQcjKIHKxzi7IXBJewJ9TuNHO89QsG.SF3eXHTCFzcDl3/vaXmUcy';
 
-/** Start a session with safe cookie flags. Idempotent. */
+/** Start a session with safe cookie flags. Idempotent.
+ *  Only starts one when the jsm_admin cookie is already present (or login.php
+ *  defines JSM_FORCE_SESSION for the sign-in POST) — anonymous client visits
+ *  and JSON calls get no Set-Cookie and no session file. */
 function startAdminSession() {
     if (session_status() === PHP_SESSION_ACTIVE) return;
+    if (empty($_COOKIE['jsm_admin']) && !defined('JSM_FORCE_SESSION')) return;
     $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-           || (($_SERVER['SERVER_PORT'] ?? '') === '443');
+           || (($_SERVER['SERVER_PORT'] ?? '') === '443')
+           || (strtolower((string)($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https');
     session_set_cookie_params([
         'lifetime' => 0,
         'path'     => '/',
@@ -46,8 +51,11 @@ function requireAdmin() {
     $script = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
     $base   = rtrim(str_replace('\\', '/', dirname($script)), '/');
     if ($base === '.' || $base === '') { $base = ''; }
-    $return = $_SERVER['REQUEST_URI'] ?? ($base . '/admin');
-    header('Location: ' . $base . '/login?return=' . urlencode($return));
+    // Explicit .php targets (unless CLEAN_URLS is on, see helpers.php) so the redirect works
+    // on a folder with no extension-less rewrite. auth.php is loaded standalone by login.php.
+    $ext    = (defined('CLEAN_URLS') && CLEAN_URLS) ? '' : '.php';
+    $return = $_SERVER['REQUEST_URI'] ?? ($base . '/admin' . $ext);
+    header('Location: ' . $base . '/login' . $ext . '?return=' . urlencode($return));
     exit;
 }
 
@@ -66,6 +74,7 @@ function adminLogin($email, $password) {
 /** Tear down the session entirely. */
 function adminLogout() {
     startAdminSession();
+    if (session_status() !== PHP_SESSION_ACTIVE) return;   // nothing to tear down (no cookie)
     $_SESSION = [];
     if (ini_get('session.use_cookies')) {
         $p = session_get_cookie_params();

@@ -6,7 +6,10 @@
  *   - comment (string, max 2000 chars; '' clears it)
  *   - scheduled_date (datetime string, parseable by strtotime)
  *   - caption (string, max 10000 chars)
+ *   - hashtags (string, max 2000 chars)
+ *   - post_type (post|story|reel; only when the migration-gated column exists)
  * At least one must be provided.
+ * Role: status + comment are open; everything else needs the admin session (403 otherwise).
  * Returns JSON.
  */
 
@@ -20,8 +23,25 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     echo json_encode(['ok' => false, 'error' => 'Method not allowed']);
     exit;
 }
+requireSameSiteFetch();   // cross-site POSTs get a JSON 403 (helpers.php)
 
 $action = $_POST['action'] ?? '';
+
+// ---- Role gate (server-side) ----
+// Clients may change `status` and `comment` only. Everything Joust does —
+// toggle_posted, delete_post, and edits to caption / hashtags / scheduled_date /
+// post_type — requires the admin session (auth.php via helpers.php).
+$isAdminSession = function_exists('currentAdmin') && currentAdmin() !== null;
+$adminOnlyFields = ['scheduled_date', 'caption', 'hashtags', 'post_type'];
+$needsAdmin = in_array($action, ['toggle_posted', 'delete_post'], true);
+foreach ($adminOnlyFields as $f) {
+    if (array_key_exists($f, $_POST)) { $needsAdmin = true; }
+}
+if ($needsAdmin && !$isAdminSession) {
+    http_response_code(403);
+    echo json_encode(['ok' => false, 'error' => 'Admin sign-in required']);
+    exit;
+}
 
 // ---- Toggle posted flag ----
 if ($action === 'toggle_posted') {
@@ -46,6 +66,18 @@ if ($action === 'toggle_posted') {
         exit;
     }
     try {
+        // Spec §4.3: only an approved post can be marked as scheduled (a stale tab
+        // must not schedule a post the client has since denied / reset).
+        if ($target === 1) {
+            $stStmt = $pdo->prepare("SELECT status FROM posts WHERE id = ?");
+            $stStmt->execute([$postId]);
+            $curStatus = $stStmt->fetchColumn();
+            if ($curStatus !== false && $curStatus !== 'approved') {
+                http_response_code(409);
+                echo json_encode(['ok' => false, 'error' => 'Only an approved post can be marked as scheduled']);
+                exit;
+            }
+        }
         if ($target === 1) {
             $stmt = $pdo->prepare("UPDATE posts SET posted = 1, posted_at = NOW() WHERE id = ?");
         } else {
@@ -97,10 +129,8 @@ if ($action === 'delete_post') {
         $imgs = $pdo->prepare("SELECT image_url FROM post_images WHERE post_id = ?");
         $imgs->execute([$postId]);
         foreach ($imgs->fetchAll() as $row) {
-            if (strpos($row['image_url'], 'uploads/') === 0) {
-                $path = __DIR__ . '/' . $row['image_url'];
-                if (is_file($path)) { @unlink($path); }
-            }
+            $path = uploadsPathOrNull((string)$row['image_url']);   // realpath-contained in uploads/
+            if ($path !== null) { @unlink($path); }
         }
         // CASCADE deletes post_images and post_categories
         $pdo->prepare("DELETE FROM posts WHERE id = ?")->execute([$postId]);
@@ -125,18 +155,20 @@ $hasCmt  = array_key_exists('comment', $_POST);
 $hasDate = array_key_exists('scheduled_date', $_POST);
 $hasCap  = array_key_exists('caption', $_POST);
 $hasTag  = array_key_exists('hashtags', $_POST);
+$hasType = array_key_exists('post_type', $_POST);
 $status  = $_POST['status']  ?? null;
 $comment = $_POST['comment'] ?? null;
 $date    = $_POST['scheduled_date'] ?? null;
 $caption = $_POST['caption'] ?? null;
 $hashtags = $_POST['hashtags'] ?? null;
+$postType = $hasType ? strtolower(trim((string)$_POST['post_type'])) : null;
 
 if ($id <= 0) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'Invalid id']);
     exit;
 }
-if (!$hasStat && !$hasCmt && !$hasDate && !$hasCap && !$hasTag) {
+if (!$hasStat && !$hasCmt && !$hasDate && !$hasCap && !$hasTag && !$hasType) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'Nothing to update']);
     exit;
@@ -144,6 +176,18 @@ if (!$hasStat && !$hasCmt && !$hasDate && !$hasCap && !$hasTag) {
 if ($hasStat && !in_array($status, ['pending', 'approved', 'denied'], true)) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'Invalid status']);
+    exit;
+}
+// Client verbs are Approve / Deny / Comment only (spec §2): resetting to review is Joust's.
+if ($hasStat && $status === 'pending' && !$isAdminSession) {
+    http_response_code(403);
+    echo json_encode(['ok' => false, 'error' => 'Admin sign-in required']);
+    exit;
+}
+// Denying requires a reason — a note of at least 3 characters (spec §4.2 / §9), for every seat.
+if ($hasStat && $status === 'denied' && mb_strlen(trim((string)($_POST['comment'] ?? '')), 'UTF-8') < 3) {
+    http_response_code(422);
+    echo json_encode(['ok' => false, 'error' => 'Please add a short note (at least 3 characters) explaining what should change.']);
     exit;
 }
 if ($hasCmt) {
@@ -187,13 +231,28 @@ if ($hasTag) {
     }
 }
 
+if ($hasType) {
+    if (!hasPostTypeColumn($pdo)) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'post_type not supported — run migrate.php']);
+        exit;
+    }
+    if (!in_array($postType, allowedPostTypes(), true)) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'Invalid post_type']);
+        exit;
+    }
+}
+
 try {
     $pdo->beginTransaction();
 
-    // Capture before-values for diff logging. posts.name is optional (migration-gated).
-    $nameSel = hasPostsNameColumn($pdo) ? 'name' : "'' AS name";
+    // Capture before-values for diff logging. posts.name / post_type are optional (migration-gated).
+    $nameSel   = hasPostsNameColumn($pdo) ? 'name' : "'' AS name";
+    $typeSel   = hasPostTypeColumn($pdo) ? 'post_type' : "'post' AS post_type";
+    $postedSel = hasPostedColumn($pdo) ? 'posted' : '0 AS posted';
     $before = $pdo->prepare("
-        SELECT company_id, status, client_comment, scheduled_date, caption, hashtags, {$nameSel}
+        SELECT company_id, status, client_comment, scheduled_date, caption, hashtags, {$nameSel}, {$typeSel}, {$postedSel}
           FROM posts WHERE id = ? FOR UPDATE
     ");
     $before->execute([$id]);
@@ -202,6 +261,20 @@ try {
         $pdo->rollBack();
         http_response_code(404);
         echo json_encode(['ok' => false, 'error' => 'Post not found']);
+        exit;
+    }
+    // Tenant scope: a client seat may only act on its own company's posts (admin bypasses).
+    if (!clientOwnsCompany($pdo, (int)$prev['company_id'])) {
+        $pdo->rollBack();
+        http_response_code(403);
+        echo json_encode(['ok' => false, 'error' => 'This post belongs to another client']);
+        exit;
+    }
+    // A client cannot re-decide a post that is already scheduled or that they denied (spec §2).
+    if ($hasStat && !$isAdminSession && (!empty($prev['posted']) || $prev['status'] === 'denied')) {
+        $pdo->rollBack();
+        http_response_code(403);
+        echo json_encode(['ok' => false, 'error' => 'This post can no longer be changed here — add a comment instead']);
         exit;
     }
     // Friendly label used in activity-log summaries.
@@ -218,6 +291,7 @@ try {
     if ($hasDate) { $sets[] = 'scheduled_date = ?'; $params[] = $dateFormatted; }
     if ($hasCap)  { $sets[] = 'caption = ?';        $params[] = $caption; }
     if ($hasTag)  { $sets[] = 'hashtags = ?';       $params[] = $hashtags; }
+    if ($hasType) { $sets[] = 'post_type = ?';      $params[] = $postType; }
     $params[] = $id;
 
     $sql  = 'UPDATE posts SET ' . implode(', ', $sets) . ' WHERE id = ?';
@@ -268,6 +342,13 @@ try {
             $batchId);
     }
 
+    if ($hasType && (string)($prev['post_type'] ?? 'post') !== $postType) {
+        logActivity($pdo, $companyId, 'post', $id, 'edited_type', $actor,
+            "Changed type on post #{$id}",
+            ($prev['post_type'] ?? 'post') . ' → ' . $postType,
+            $batchId);
+    }
+
     $pdo->commit();
 
     echo json_encode([
@@ -278,6 +359,7 @@ try {
         'scheduled_date' => $hasDate ? $dateFormatted  : null,
         'caption'        => $hasCap  ? $caption        : null,
         'hashtags'       => $hasTag  ? $hashtags       : null,
+        'post_type'      => $hasType ? $postType       : null,
     ]);
 } catch (Exception $e) {
     if ($pdo->inTransaction()) { $pdo->rollBack(); }

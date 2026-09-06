@@ -1,425 +1,366 @@
 <?php
 /**
- * Landing page — square tile dashboard.
- * Shows Projects / Feed / [Feature] tiles with count badges.
+ * Home — "Today" (spec §4.1).
  *
- * ?client=hmf scopes counts + tile labels to one company.
+ *   ?client=kenda   → the client's Today screen:
+ *                     1. Needs your attention — up to three stacked action cards
+ *                        (pending posts / Library images / collections with new renders),
+ *                        or one quiet "all caught up" card.
+ *                     2. Coming up — the next three approved or scheduled posts.
+ *                     3. Activity — humanized, run-collapsed, never a filename.
+ *                     Admin additionally sees "Client responses" (last 7 days) and
+ *                     a Studio quick-action row. Role is enforced with isAdmin().
+ *   (no client)     → a client chooser; admin also sees cross-client activity.
+ *
+ * No database changes. Counts use the same queries as the tab-bar badges
+ * (partials/tabbar.php) so the numbers always agree.
  */
 
 require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';
+require_once __DIR__ . '/partials/components/action-card.php';
+require_once __DIR__ . '/partials/components/activity-feed.php';
 
 function h($s) {
     return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
-// Count fetchers (scoped to client if provided)
-$pendingPosts   = 0;
-$openTasks      = 0;
-$pendingLibrary = 0;
-$totalLibrary   = 0;
-$libTableReady  = hasLibraryImagesTable($pdo);
+// hasPostedColumn() (posts.posted is migration-gated) lives in helpers.php.
 
-if ($client) {
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM posts WHERE company_id = ? AND status = 'pending'");
-    $stmt->execute([$client['id']]);
-    $pendingPosts = (int)$stmt->fetchColumn();
-
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM tasks WHERE company_id = ? AND status <> 'done'");
-    $stmt->execute([$client['id']]);
-    $openTasks = (int)$stmt->fetchColumn();
-
-    if ($libTableReady) {
-        $stmt = $pdo->prepare("SELECT COUNT(*) FROM library_images WHERE company_id = ?");
-        $stmt->execute([$client['id']]);
-        $totalLibrary = (int)$stmt->fetchColumn();
-
-        $stmt = $pdo->prepare("SELECT COUNT(*) FROM library_images WHERE company_id = ? AND status = 'pending'");
-        $stmt->execute([$client['id']]);
-        $pendingLibrary = (int)$stmt->fetchColumn();
-    }
-} else {
-    $pendingPosts = (int)$pdo->query("SELECT COUNT(*) FROM posts WHERE status = 'pending'")->fetchColumn();
-    $openTasks    = (int)$pdo->query("SELECT COUNT(*) FROM tasks WHERE status <> 'done'")->fetchColumn();
-    if ($libTableReady) {
-        $totalLibrary   = (int)$pdo->query("SELECT COUNT(*) FROM library_images")->fetchColumn();
-        $pendingLibrary = (int)$pdo->query("SELECT COUNT(*) FROM library_images WHERE status = 'pending'")->fetchColumn();
-    }
+/** First line of a caption, clipped, for the Coming up cards. */
+function homeFirstLine($s, $max = 90) {
+    $s = trim((string)$s);
+    if ($s === '') return '';
+    $s = preg_split('/\r\n|\r|\n/', $s)[0];
+    $s = trim(preg_replace('/\s+/', ' ', $s));
+    if (mb_strlen($s) > $max) $s = rtrim(mb_substr($s, 0, $max - 1)) . '…';
+    return $s;
 }
 
-// Total post count for fallback tile text
-$postCountSql  = "SELECT COUNT(*) FROM posts" . ($client ? " WHERE company_id = ?" : '');
-$postCountStmt = $pdo->prepare($postCountSql);
-$postCountStmt->execute($client ? [$client['id']] : []);
-$totalPosts = (int)$postCountStmt->fetchColumn();
+$isAdmin    = isAdmin();
+$viewerRole = $isAdmin ? 'admin' : 'client';
+$hasLog     = hasActivityLog($pdo);
+$hasLib     = hasLibraryImagesTable($pdo);
 
-// Modules enabled on the scoped client (empty array if unscoped)
-$clientModules = [];
-if ($client) {
-    $s = $pdo->prepare("
-        SELECT m.id, m.slug, m.singular_label, m.plural_label, m.icon,
-               (SELECT COUNT(*) FROM tires t
-                WHERE t.company_id = ? AND t.module_id = m.id) AS item_count
-        FROM company_modules cm
-        INNER JOIN modules m ON m.id = cm.module_id
-        WHERE cm.company_id = ?
-        ORDER BY cm.sort_order, m.plural_label
-    ");
-    $s->execute([$client['id'], $client['id']]);
-    $clientModules = $s->fetchAll();
+// =====================================================================
+// Unscoped — the admin chooses a client (and gets the cross-client feed).
+// A client seat never sees the client list (slug = tenant key): same
+// "missing client" state assets.php uses, HTTP 400.
+// =====================================================================
+if (!$client && !$isAdmin) {
+    http_response_code(400);
+    $pageTitle    = 'Joust';
+    $htmlTitle    = 'Joust Media — Client portal';
+    $navTrailing  = '';
+    $showTabs     = false;
+    $includeSheet = false;
+    $activeTab    = 'home';
+    include __DIR__ . '/partials/layout-top.php';
+    echo '<div class="ui-empty">This link is missing its client. Please use the review link Joust sent you.</div>';
+    include __DIR__ . '/partials/layout-bottom.php';
+    exit;
 }
-?>
-<?php
-$navItems = clientNavItems($pdo, $client);
-?>
-<!DOCTYPE html>
-<html lang="en" data-theme="dark">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title><?= $client ? h($client['name']) . ' — Dashboard' : 'Dashboard' ?></title>
-<style>
-  :root {
-    --bg: #18191a;
-    --surface: #242526;
-    --surface-2: #3a3b3c;
-    --border: #3e4042;
-    --text: #e4e6eb;
-    --text-muted: #b0b3b8;
-    --accent: #2d88ff;
-    --accent-hover: #4599ff;
-    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.3);
-  }
+if (!$client) {
+    $companies = [];
+    try {
+        $companies = $pdo->query("SELECT id, name, slug, logo_url FROM companies ORDER BY name")->fetchAll();
+    } catch (Throwable $e) {
+        error_log('index chooser query failed: ' . $e->getMessage());
+    }
+    $allRows = [];
+    if ($isAdmin && $hasLog) {
+        $allRows = collapseActivityRuns(humanizeActivityRows(recentActivity($pdo, null, 40), $viewerRole, null));
+    }
 
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    font-size: 15px;
-    line-height: 1.34;
-    -webkit-font-smoothing: antialiased;
-    min-height: 100vh;
-  }
-
-  .topbar {
-    position: sticky; top: 0; z-index: 100;
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    box-shadow: var(--shadow);
-  }
-  .topbar-inner {
-    max-width: 1100px; margin: 0 auto;
-    padding: 10px 20px;
-    display: flex; align-items: center; gap: 16px;
-  }
-  .brand {
-    display: flex; align-items: center; gap: 10px;
-    font-weight: 700; font-size: 18px;
-    color: var(--text); letter-spacing: -0.3px;
-    flex: 0 0 auto;
-  }
-  .brand-mark {
-    width: 32px; height: 32px; border-radius: 8px;
-    background: var(--accent); color: #fff;
-    display: flex; align-items: center; justify-content: center;
-    font-weight: 800;
-  }
-  .brand-logo {
-    width: 36px; height: 36px; border-radius: 8px;
-    object-fit: contain;
-    background: #fff;
-    padding: 4px;
-    border: 1px solid var(--border);
-  }
-  .brand-name { white-space: nowrap; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
-
-  .client-nav {
-    display: flex; align-items: center; gap: 4px;
-    flex: 1; min-width: 0;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .client-nav::-webkit-scrollbar { display: none; }
-  .nav-link {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 7px 12px; border-radius: 18px;
-    background: transparent; border: 1px solid transparent;
-    color: var(--text-muted);
-    font-size: 13px; font-weight: 600;
-    text-decoration: none; white-space: nowrap;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
-  }
-  .nav-link:hover { background: var(--surface-2); color: var(--text); }
-  .nav-link.active {
-    background: var(--surface-2); color: var(--text);
-    border-color: var(--border);
-  }
-  .nav-link-icon { font-size: 14px; line-height: 1; }
-  @media (max-width: 600px) {
-    .nav-link-label { display: none; }
-    .nav-link { padding: 7px 10px; }
-    .brand-name { max-width: 120px; font-size: 15px; }
-  }
-
-  .wrap { max-width: 900px; margin: 0 auto; padding: 28px 20px 80px; }
-
-  .welcome { margin-bottom: 24px; text-align: center; }
-  .welcome h1 {
-    font-size: 28px;
-    font-weight: 700;
-    letter-spacing: -0.5px;
-    margin: 0 0 6px;
-    color: var(--text);
-  }
-  .welcome p {
-    font-size: 15px;
-    color: var(--text-muted);
-    margin: 0;
-  }
-
-  .tile-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 16px;
-  }
-  @media (min-width: 720px) {
-    .tile-grid { grid-template-columns: repeat(3, 1fr); }
-  }
-
-  .tile {
-    aspect-ratio: 1 / 1;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    box-shadow: var(--shadow);
-    padding: 20px;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    text-decoration: none;
-    color: var(--text);
-    position: relative;
-    overflow: hidden;
-    transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
-  }
-  .tile:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.5), 0 2px 6px rgba(0,0,0,0.3);
-    border-color: var(--accent);
-  }
-  .tile:active { transform: translateY(0); }
-
-  .tile-icon { font-size: 40px; line-height: 1; }
-  .tile-title {
-    font-size: 22px;
-    font-weight: 700;
-    letter-spacing: -0.3px;
-    margin: 0 0 4px;
-  }
-  .tile-meta { font-size: 13px; color: var(--text-muted); }
-  .tile-badge {
-    position: absolute;
-    top: 16px; right: 16px;
-    min-width: 26px;
-    height: 26px;
-    padding: 0 8px;
-    border-radius: 13px;
-    background: var(--accent);
-    color: #fff;
-    font-size: 13px;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .tile-badge.zero {
-    background: var(--surface-2);
-    color: var(--text-muted);
-    border: 1px solid var(--border);
-  }
-
-  @media (max-width: 480px) {
-    .tile { padding: 16px; }
-    .tile-title { font-size: 18px; }
-    .tile-icon { font-size: 32px; }
-    .welcome h1 { font-size: 22px; }
-  }
-
-  /* Recent activity card — placed above the tile grid */
-  .activity-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    box-shadow: var(--shadow);
-    margin-bottom: 24px;
-    overflow: hidden;
-  }
-  .activity-card-header {
-    padding: 14px 18px;
-    border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  }
-  .activity-card-title {
-    font-size: 15px; font-weight: 700; margin: 0;
-    letter-spacing: -0.2px;
-  }
-  .activity-card-meta {
-    font-size: 11px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.6px;
-    color: var(--text-muted);
-  }
-  .activity-list {
-    max-height: 320px; overflow-y: auto;
-  }
-  .activity-day {
-    padding: 8px 18px; font-size: 11px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.5px;
-    color: var(--text-muted);
-    background: var(--surface-2);
-    border-top: 1px solid var(--border);
-    position: sticky; top: 0;
-  }
-  .activity-day:first-child { border-top: none; }
-  .activity-row {
-    display: grid; grid-template-columns: auto 1fr auto;
-    gap: 12px; padding: 12px 18px;
-    border-top: 1px solid var(--border);
-    align-items: start;
-    text-decoration: none; color: var(--text);
-    transition: background 0.15s;
-  }
-  .activity-row:hover { background: var(--surface-2); }
-  .activity-actor {
-    font-size: 10px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.4px;
-    padding: 3px 7px; border-radius: 10px;
-    background: var(--surface-2); color: var(--text-muted);
-    border: 1px solid var(--border);
-    white-space: nowrap;
-  }
-  .activity-actor-client { background: #1e3a8a; color: #bfdbfe; border-color: #1e40af; }
-  .activity-actor-admin  { background: #581c87; color: #e9d5ff; border-color: #6b21a8; }
-  .activity-text { font-size: 13px; line-height: 1.45; min-width: 0; }
-  .activity-company { font-weight: 700; }
-  .activity-verb    { color: var(--text-muted); }
-  .activity-target  { color: var(--accent); }
-  .activity-detail {
-    margin-top: 4px; font-size: 12px;
-    color: var(--text-muted); font-style: italic;
-    overflow: hidden;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-  }
-  .activity-time {
-    font-size: 11px; color: var(--text-muted); white-space: nowrap;
-  }
-  .activity-empty {
-    padding: 20px 18px; text-align: center;
-    color: var(--text-muted); font-size: 13px;
-  }
-  @media (max-width: 480px) {
-    .activity-row { grid-template-columns: auto 1fr; }
-    .activity-time { grid-column: 1 / -1; padding-left: 36px; }
-  }
-</style>
-</head>
-<body>
-
-<header class="topbar">
-  <div class="topbar-inner">
-    <?= renderBrand($client) ?>
-    <nav class="client-nav"><?= renderClientNav($navItems, 'index') ?></nav>
-  </div>
-</header>
-
-<div class="wrap">
-
-  <div class="welcome">
-    <?php if ($client): ?>
-      <h1>Welcome, <?= h($client['name']) ?></h1>
-      <p>Choose where you'd like to go.</p>
-    <?php else: ?>
-      <h1>Dashboard</h1>
-      <p>Showing totals across all clients.</p>
+    $pageTitle  = $isAdmin ? 'Today' : 'Joust';
+    $htmlTitle  = 'Joust Media — Client portal';
+    $navSubtitle = $isAdmin ? 'All clients' : '';
+    $activeTab  = 'home';
+    $headExtra  = '<link rel="stylesheet" href="' . h(staticUrl('css/home.css')) . '">' . "\n";
+    include __DIR__ . '/partials/layout-top.php';
+    ?>
+    <section class="home-section home-chooser">
+      <?= insetListOpen('Choose a client') ?>
+      <?php foreach ($companies as $co): ?>
+        <?= insetRow([
+            'href'    => clientUrl('index.php', ['client' => $co['slug']]),
+            'leading' => clientAvatar($co, 'ui-avatar--lg'),
+            'title'   => $co['name'],
+            'subtitle'=> $isAdmin ? 'Open Today for ' . $co['name'] : 'Open portal',
+            'chevron' => true,
+        ]) ?>
+      <?php endforeach; ?>
+      <?php if (!$companies): ?>
+        <li><div class="ui-empty">No clients yet.</div></li>
+      <?php endif; ?>
+      <?= insetListClose() ?>
+    </section>
+    <?php if ($isAdmin && $hasLog): ?>
+      <?= activityFeed($allRows, ['header' => 'Activity across clients', 'limit' => 20, 'showCompany' => true]) ?>
     <?php endif; ?>
+    <?php
+    include __DIR__ . '/partials/layout-bottom.php';
+    exit;
+}
+
+// =====================================================================
+// Scoped — counts (identical to the tab-bar badge queries)
+// =====================================================================
+$cid = (int)$client['id'];
+
+$st = $pdo->prepare("SELECT COUNT(*) FROM posts WHERE company_id = ? AND status = 'pending'");
+$st->execute([$cid]);
+$pendingPosts = (int)$st->fetchColumn();
+
+$st = $pdo->prepare("
+    SELECT COUNT(*) AS images, COUNT(DISTINCT t.id) AS collections
+      FROM tire_images ti
+     INNER JOIN tires t ON t.id = ti.tire_id
+     WHERE t.company_id = ? AND ti.status = 'pending'
+");
+$st->execute([$cid]);
+$tireRow = $st->fetch();
+$pendingTireImages  = (int)($tireRow['images'] ?? 0);
+$pendingCollections = (int)($tireRow['collections'] ?? 0);
+
+$pendingLibrary = 0;
+if ($hasLib) {
+    $st = $pdo->prepare("SELECT COUNT(*) FROM library_images WHERE company_id = ? AND status = 'pending'");
+    $st->execute([$cid]);
+    $pendingLibrary = (int)$st->fetchColumn();
+}
+
+// ---------------------------------------------------------------------
+// Coming up — next 3 approved or scheduled posts from today onwards
+// ---------------------------------------------------------------------
+$hasPosted = hasPostedColumn($pdo);
+$hasName   = hasPostsNameColumn($pdo);
+$hasMedia  = hasMediaTypeColumn($pdo);
+$postedSel = $hasPosted ? 'p.posted' : '0 AS posted';
+$nameSel   = $hasName ? 'p.name' : "'' AS name";
+$thumbType = $hasMedia
+    ? "(SELECT pi2.media_type FROM post_images pi2 WHERE pi2.post_id = p.id ORDER BY pi2.sort_order ASC, pi2.id ASC LIMIT 1) AS thumb_type"
+    : "'image' AS thumb_type";
+$readyWhere = $hasPosted ? "(p.status = 'approved' OR p.posted = 1)" : "p.status = 'approved'";
+$st = $pdo->prepare("
+    SELECT p.id, p.caption, p.scheduled_date, p.status, {$postedSel}, {$nameSel},
+           (SELECT pi.image_url FROM post_images pi WHERE pi.post_id = p.id ORDER BY pi.sort_order ASC, pi.id ASC LIMIT 1) AS thumb_url,
+           {$thumbType}
+      FROM posts p
+     WHERE p.company_id = ? AND {$readyWhere} AND p.scheduled_date >= CURDATE()
+     ORDER BY p.scheduled_date ASC, p.id ASC
+     LIMIT 3
+");
+$st->execute([$cid]);
+$upcoming = array_slice($st->fetchAll(), 0, 3);
+
+// ---------------------------------------------------------------------
+// Activity — humanized + run-collapsed (helpers.php)
+// ---------------------------------------------------------------------
+$activityRows = [];
+if ($hasLog) {
+    $activityRows = collapseActivityRuns(humanizeActivityRows(recentActivity($pdo, $cid, 40), $viewerRole, $client));
+}
+
+// ---------------------------------------------------------------------
+// Admin only — client responses over the last 7 days
+// ---------------------------------------------------------------------
+$denied = ['post' => 0, 'image' => 0, 'notes' => 0];
+$denyNotes = [];
+if ($isAdmin && $hasLog) {
+    try {
+        $st = $pdo->prepare("
+            SELECT d.entity_type, COUNT(*) AS n,
+                   SUM(EXISTS (SELECT 1 FROM activity_log c
+                                WHERE c.batch_id = d.batch_id AND c.id <> d.id
+                                  AND c.action = 'commented' AND c.detail IS NOT NULL AND c.detail <> '')) AS with_notes
+              FROM activity_log d
+             WHERE d.company_id = ? AND d.actor = 'client' AND d.action = 'denied'
+               AND d.created_at >= (NOW() - INTERVAL 7 DAY)
+             GROUP BY d.entity_type
+        ");
+        $st->execute([$cid]);
+        foreach ($st->fetchAll() as $r) {
+            $bucket = ($r['entity_type'] === 'post') ? 'post' : 'image';
+            $denied[$bucket] += (int)$r['n'];
+            $denied['notes'] += (int)$r['with_notes'];
+        }
+        $noteNameSel = $hasName ? 'p.name AS post_name' : "'' AS post_name";
+        $st = $pdo->prepare("
+            SELECT c.entity_type, c.entity_id, c.detail, c.created_at,
+                   p.caption AS post_caption, {$noteNameSel},
+                   ti.tire_id, t.name AS tire_name
+              FROM activity_log c
+             INNER JOIN activity_log d ON d.batch_id = c.batch_id AND d.id <> c.id AND d.action = 'denied'
+              LEFT JOIN posts p ON c.entity_type = 'post' AND p.id = c.entity_id
+              LEFT JOIN tire_images ti ON c.entity_type = 'tire_image' AND ti.id = c.entity_id
+              LEFT JOIN tires t ON t.id = ti.tire_id
+             WHERE c.company_id = ? AND c.actor = 'client' AND c.action = 'commented'
+               AND c.batch_id IS NOT NULL AND c.detail IS NOT NULL AND c.detail <> ''
+               AND c.created_at >= (NOW() - INTERVAL 7 DAY)
+             ORDER BY c.created_at DESC
+             LIMIT 3
+        ");
+        $st->execute([$cid]);
+        foreach ($st->fetchAll() as $r) {
+            $entry = [
+                'entity_type'  => $r['entity_type'],
+                'entity_id'    => (int)$r['entity_id'],
+                'company_slug' => $client['slug'],
+                '_meta'        => [
+                    'name'      => $r['post_name'] ?? '',
+                    'caption'   => $r['post_caption'] ?? '',
+                    'tire_id'   => (int)($r['tire_id'] ?? 0),
+                    'tire_name' => $r['tire_name'] ?? '',
+                ],
+            ];
+            $pn = activityParentName($entry);
+            if ($pn['thing'] === 'post')        $on = $pn['name'] !== '' ? $pn['name'] : 'a post';
+            elseif ($pn['parent'] !== '')       $on = 'an image in ' . $pn['parent'];
+            else                                $on = 'an image';
+            $denyNotes[] = [
+                'text' => trim((string)$r['detail']),
+                'on'   => $on,
+                'when' => relativeTime($r['created_at']),
+                'href' => activityDeepLink($entry, false),
+            ];
+        }
+    } catch (Throwable $e) {
+        error_log('index client-responses query failed: ' . $e->getMessage());
+        $denied = ['post' => 0, 'image' => 0, 'notes' => 0];
+        $denyNotes = [];
+    }
+}
+
+// =====================================================================
+// Render
+// =====================================================================
+$pageTitle   = $client['name'];
+$htmlTitle   = $client['name'] . ' — Today';
+$navSubtitle = date('l, F j');
+$activeTab   = 'home';
+$headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/home.css')) . '">' . "\n";
+include __DIR__ . '/partials/layout-top.php';
+
+// --- 1. Needs your attention -------------------------------------------
+$cards = [];
+if ($pendingPosts > 0) {
+    $cards[] = actionCard([
+        'count' => $pendingPosts, 'noun' => 'post',
+        'one'   => 'is ready for your review', 'many' => 'ready for your review',
+        'href'  => clientUrl('posts', ['status' => 'pending']),
+        'icon'  => 'grid', 'subtitle' => 'Posts · To Review', 'tone' => 'accent',
+        'index' => count($cards),
+    ]);
+}
+if ($pendingLibrary > 0) {
+    $cards[] = actionCard([
+        'count' => $pendingLibrary, 'noun' => 'image',
+        'one'   => 'to approve in Library', 'many' => 'to approve in Library',
+        'href'  => clientUrl('assets', ['view' => 'library', 'filter' => 'pending']),
+        'icon'  => 'photo', 'subtitle' => 'Assets · Library', 'tone' => 'accent',
+        'index' => count($cards),
+    ]);
+}
+if ($pendingCollections > 0) {
+    $cards[] = actionCard([
+        'count' => $pendingCollections, 'noun' => 'collection',
+        'one'   => 'has new renders', 'many' => 'have new renders',
+        'href'  => clientUrl('assets', ['view' => 'collections']),
+        'icon'  => 'photo',
+        'subtitle' => 'Assets · Collections · ' . $pendingTireImages . ' ' . ($pendingTireImages === 1 ? 'image' : 'images') . ' to review',
+        'tone'  => 'accent',
+        'index' => count($cards),
+    ]);
+}
+?>
+<section class="home-section" aria-labelledby="home-attention">
+  <h2 class="ui-list-header" id="home-attention">Needs your attention</h2>
+  <?= $cards ? actionCardStack(array_slice($cards, 0, 3)) : actionCardCaughtUp() ?>
+</section>
+
+<?php // --- 2. Coming up ----------------------------------------------- ?>
+<?php if ($upcoming): ?>
+<section class="home-section" aria-labelledby="home-upcoming">
+  <div class="home-section-head">
+    <h2 class="ui-list-header" id="home-upcoming">Coming up</h2>
+    <a href="<?= h(clientUrl('posts', ['status' => 'approved'])) ?>">See all</a>
   </div>
-
-  <?php if (hasActivityLog($pdo)): ?>
-    <div class="activity-card">
-      <div class="activity-card-header">
-        <h2 class="activity-card-title">📡 Recent activity</h2>
-        <span class="activity-card-meta">
-          <?= $client ? h($client['name']) : 'All clients' ?>
+  <div class="home-scroller" role="list">
+    <?php foreach ($upcoming as $p):
+      $ts       = $p['scheduled_date'] ? strtotime((string)$p['scheduled_date']) : false;
+      $whenDay  = $ts ? date('D, M j', $ts) : 'Unscheduled';
+      $whenTime = $ts ? date('g:i A', $ts) : '';
+      $isSched  = (int)($p['posted'] ?? 0) === 1;
+      $thumb    = (string)($p['thumb_url'] ?? '');
+      $isVideo  = (($p['thumb_type'] ?? 'image') === 'video') || ($thumb !== '' && mediaTypeFromUrl($thumb) === 'video');
+      $thumbSrc = $thumb !== '' ? (preg_match('#^(https?:)?//#', $thumb) ? $thumb : basePath() . '/' . ltrim($thumb, '/')) : '';
+      $line     = homeFirstLine($p['caption'] ?? '');
+      $title    = trim((string)($p['name'] ?? '')) ?: $line;
+    ?>
+      <a class="home-upcoming" role="listitem" href="<?= h(clientUrl('posts', ['post' => (int)$p['id']])) ?>">
+        <span class="home-upcoming-thumb">
+          <?php if ($thumbSrc !== '' && !$isVideo): ?>
+            <img src="<?= h($thumbSrc) ?>" alt="" loading="lazy">
+          <?php elseif ($isVideo && $thumbSrc !== ''): ?>
+            <?= videoTile($thumbSrc, ['badge' => false, 'class' => 'home-upcoming-video']) ?>
+          <?php else: ?>
+            <?= icon('photo') ?>
+          <?php endif; ?>
+          <?= statusPill('approved', $isSched, ['class' => 'ui-pill--glass']) ?>
         </span>
-      </div>
-      <div class="activity-list">
-        <?= renderActivityFeed($pdo, $client ? (int)$client['id'] : null, 15) ?>
-      </div>
-    </div>
-  <?php endif; ?>
-
-  <div class="tile-grid">
-
-    <a class="tile" href="<?= h(clientUrl('projects.php')) ?>">
-      <div class="tile-badge <?= $openTasks === 0 ? 'zero' : '' ?>"><?= $openTasks ?></div>
-      <div class="tile-icon">📋</div>
-      <div>
-        <div class="tile-title">Projects</div>
-        <div class="tile-meta">
-          <?= $openTasks === 0 ? 'No open tasks' : ($openTasks . ' open ' . ($openTasks === 1 ? 'task' : 'tasks')) ?>
-        </div>
-      </div>
-    </a>
-
-    <a class="tile" href="<?= h(clientUrl('feed.php')) ?>">
-      <div class="tile-badge <?= $pendingPosts === 0 ? 'zero' : '' ?>"><?= $pendingPosts ?></div>
-      <div class="tile-icon">📰</div>
-      <div>
-        <div class="tile-title">Feed</div>
-        <div class="tile-meta">
-          <?= $pendingPosts === 0
-              ? $totalPosts . ' ' . ($totalPosts === 1 ? 'post' : 'posts')
-              : $pendingPosts . ' pending approval' ?>
-        </div>
-      </div>
-    </a>
-
-    <a class="tile" href="<?= h(clientUrl('library.php')) ?>">
-      <div class="tile-badge <?= $pendingLibrary === 0 ? 'zero' : '' ?>"><?= $pendingLibrary ?></div>
-      <div class="tile-icon">🖼️</div>
-      <div>
-        <div class="tile-title">Library</div>
-        <div class="tile-meta">
-          <?= $pendingLibrary === 0
-              ? $totalLibrary . ' ' . ($totalLibrary === 1 ? 'image' : 'images')
-              : $pendingLibrary . ' pending review' ?>
-        </div>
-      </div>
-    </a>
-
-    <?php foreach ($clientModules as $mod): ?>
-      <a class="tile" href="<?= h(clientUrl('features.php', ['module' => $mod['slug']])) ?>">
-        <div class="tile-badge <?= (int)$mod['item_count'] === 0 ? 'zero' : '' ?>">
-          <?= (int)$mod['item_count'] ?>
-        </div>
-        <div class="tile-icon"><?= h($mod['icon']) ?></div>
-        <div>
-          <div class="tile-title"><?= h($mod['plural_label']) ?></div>
-          <div class="tile-meta">
-            <?= (int)$mod['item_count'] === 0
-                  ? 'Nothing here yet'
-                  : (int)$mod['item_count'] . ' ' . h(strtolower(
-                      (int)$mod['item_count'] === 1 ? $mod['singular_label'] : $mod['plural_label']
-                    )) ?>
-          </div>
-        </div>
+        <span class="home-upcoming-body">
+          <span class="home-upcoming-date"><?= icon('calendar') ?><span><?= h($whenDay) ?></span><?php if ($whenTime !== ''): ?><span class="home-upcoming-time"><?= h($whenTime) ?></span><?php endif; ?></span>
+          <span class="home-upcoming-caption"><?= h($title !== '' ? $title : 'Untitled post') ?></span>
+        </span>
       </a>
     <?php endforeach; ?>
-
   </div>
+</section>
+<?php endif; ?>
 
-</div>
+<?php // --- 3. Activity ------------------------------------------------ ?>
+<?php if ($hasLog): ?>
+  <?= activityFeed($activityRows, ['header' => 'Activity', 'limit' => 20, 'id' => 'home-activity']) ?>
+<?php endif; ?>
 
-</body>
-</html>
+<?php // --- 4. Admin variant (server-side gated) ------------------------ ?>
+<?php if ($isAdmin): ?>
+<section class="home-section" aria-labelledby="home-responses">
+  <h2 class="ui-list-header" id="home-responses">Client responses</h2>
+  <?php
+    $totalDenied = $denied['post'] + $denied['image'];
+    if ($totalDenied === 0) {
+        $lead = '<p class="home-responses-lead">No denials from ' . h($client['name']) . ' this week.</p>';
+    } else {
+        $parts = [];
+        if ($denied['post'] > 0)  $parts[] = '<strong>' . (int)$denied['post'] . ' ' . ($denied['post'] === 1 ? 'post' : 'posts') . '</strong>';
+        if ($denied['image'] > 0) $parts[] = '<strong>' . (int)$denied['image'] . ' ' . ($denied['image'] === 1 ? 'image' : 'images') . '</strong>';
+        $lead = '<p class="home-responses-lead">' . h($client['name']) . ' denied ' . implode(' and ', $parts)
+              . ' this week · <strong>' . (int)$denied['notes'] . '</strong> with notes</p>';
+    }
+    $notesHtml = '';
+    if ($denyNotes) {
+        $notesHtml .= '<ul class="home-notes" role="list">';
+        foreach ($denyNotes as $n) {
+            $q = mb_strlen($n['text']) > 160 ? rtrim(mb_substr($n['text'], 0, 159)) . '…' : $n['text'];
+            $notesHtml .= '<li><a class="home-note" href="' . h($n['href']) . '"><q>' . h($q) . '</q>'
+                        . '<span class="home-note-meta">on ' . h($n['on']) . ' · ' . h($n['when']) . '</span></a></li>';
+        }
+        $notesHtml .= '</ul>';
+    }
+    echo card($lead . $notesHtml, ['subtitle' => 'Last 7 days']);
+  ?>
+</section>
+
+<section class="home-section" aria-labelledby="home-studio">
+  <h2 class="ui-list-header" id="home-studio">Studio</h2>
+  <div class="home-quick">
+    <a class="ui-btn ui-btn--gray" href="<?= h(clientUrl('add-post.php')) ?>"><?= icon('plus') ?><span>Compose</span></a>
+    <a class="ui-btn ui-btn--gray" href="<?= h(clientUrl('batch.php')) ?>"><?= icon('grid') ?><span>Batch</span></a>
+    <a class="ui-btn ui-btn--gray" href="<?= h(clientUrl('admin.php')) ?>"><?= icon('photo') ?><span>Upload</span></a>
+  </div>
+</section>
+<?php endif; ?>
+
+<?php include __DIR__ . '/partials/layout-bottom.php'; ?>

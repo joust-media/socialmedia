@@ -21,6 +21,14 @@ $source = $_REQUEST['source'] ?? 'manual';
 if (!in_array($source, ['cron', 'manual', 'opportunistic'], true)) {
     $source = 'manual';
 }
+// Manual / opportunistic triggers need the admin session; only cron stays open
+// (protecting it with a shared secret from config.php is a follow-up).
+if ($source !== 'cron' && !(function_exists('currentAdmin') && currentAdmin())) {
+    http_response_code(403);
+    header('Content-Type: text/plain; charset=utf-8');
+    echo "forbidden: admin sign-in required\n";
+    exit;
+}
 
 // --- Lock --------------------------------------------------------------
 // Acquire a 5-minute lock so two concurrent triggers can't double-send.
@@ -170,6 +178,7 @@ function digest_response($source, $status, $message) {
 
 /** Group activity rows by company → entity → batch and render text + HTML. */
 function render_summary(array $rows, int $leftover, array $config) {
+    global $pdo;   // used below to label post entities
     $companies = [];
     foreach ($rows as $r) {
         $cid = (int)$r['company_id'];

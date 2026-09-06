@@ -1,0 +1,215 @@
+/* =====================================================================
+   Home — "Today" (spec §4.1)
+   Loads after tokens/base/components/motion. Uses tokens only.
+   ===================================================================== */
+
+.home-section { margin: 0 0 28px; }
+.home-section .ui-list-header { margin-bottom: 8px; }
+.home-section-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  padding: 0 16px; margin: 0 0 8px;
+}
+.home-section-head .ui-list-header { margin: 0; padding: 0; }
+.home-section-head a {
+  color: var(--accent); text-decoration: none;
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote); font-weight: 600;
+}
+
+/* ---------------------------------------------------------------------
+   Needs your attention — Wallet-style stack of large action cards.
+   Each card sits 12px over the one above it; later cards are on top, so
+   the stack reads as physical cards fanned down a table.
+   --------------------------------------------------------------------- */
+.home-stack { display: flex; flex-direction: column; padding-top: 2px; }
+.action-card {
+  position: relative; z-index: calc(var(--i, 0) + 1);
+  display: flex; align-items: center; gap: 14px;
+  min-height: 84px; padding: 18px 16px 18px 18px;
+  background: var(--bg-elevated); color: var(--label);
+  border-radius: var(--radius-card);
+  box-shadow:
+    inset 0 1px 0 var(--glass-highlight),        /* lit top edge */
+    0 0.5px 0 var(--separator),
+    0 -1px 0 rgba(0,0,0,.02),
+    var(--shadow-card);
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+  transform-origin: 50% 0;
+  transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+.action-card:not(:last-child) { padding-bottom: 30px; }   /* the next card overlaps this one's bottom 12px */
+.action-card + .action-card { margin-top: -12px; }
+.action-card:active { transform: scale(0.985); }
+.action-card:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.action-card-icon {
+  flex: 0 0 auto; width: 44px; height: 44px; border-radius: 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent); color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.25);
+}
+.action-card-icon .ui-icon { width: 24px; height: 24px; }
+.action-card--pending .action-card-icon   { background: var(--pending); }
+.action-card--scheduled .action-card-icon { background: var(--scheduled); }
+.action-card--approve .action-card-icon   { background: var(--approve); }
+.action-card-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.action-card-title {
+  font-size: var(--text-headline); line-height: var(--lh-headline); letter-spacing: var(--ls-headline); font-weight: 400;
+}
+.action-card-title strong {
+  font-size: var(--text-title2); line-height: var(--lh-title2); letter-spacing: var(--ls-title2); font-weight: var(--fw-title2);
+  margin-right: 2px;
+}
+.action-card-sub {
+  color: var(--label-secondary);
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote);
+}
+.action-card-chevron { flex: 0 0 auto; width: 14px; height: 14px; color: var(--label-tertiary); stroke-width: 2.4; }
+
+/* Zero state — one quiet card with the checkmark icon */
+.home-caught-up { display: flex; align-items: center; gap: 14px; padding: 18px; }
+.home-caught-up-icon {
+  flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--approve); box-shadow: inset 0 0 0 2px var(--approve);
+}
+.home-caught-up-icon .ui-icon { width: 20px; height: 20px; stroke-width: 2.6; }
+.home-caught-up-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.home-caught-up-title { font-size: var(--text-headline); line-height: var(--lh-headline); letter-spacing: var(--ls-headline); font-weight: var(--fw-headline); }
+.home-caught-up-sub { color: var(--label-secondary); font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead); }
+
+/* ---------------------------------------------------------------------
+   Coming up — compact horizontal scroller, scroll-snap, bleeds to the
+   page edges on narrow screens.
+   --------------------------------------------------------------------- */
+.home-scroller {
+  display: flex; gap: 12px;
+  margin: 0 -16px; padding: 2px 16px 10px;
+  overflow-x: auto; overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory; scroll-padding-inline: 16px;
+  -webkit-overflow-scrolling: touch; scrollbar-width: none;
+}
+.home-scroller::-webkit-scrollbar { display: none; }
+.home-upcoming {
+  flex: 0 0 auto; width: 200px; scroll-snap-align: start;
+  display: flex; flex-direction: column;
+  background: var(--bg-elevated); color: var(--label);
+  border-radius: var(--radius-card); box-shadow: var(--shadow-card);
+  overflow: hidden; text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.home-upcoming:active { transform: scale(0.97); }
+.home-upcoming:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.home-upcoming-thumb {
+  position: relative; aspect-ratio: 5 / 4; background: var(--fill-tertiary);
+  min-height: 0; overflow: hidden;          /* flex item: intrinsic media height must not beat the ratio */
+  display: flex; align-items: center; justify-content: center; color: var(--label-tertiary);
+}
+.home-upcoming-thumb img, .home-upcoming-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Poster-less video tile sits on true black in dark mode: a hairline ring keeps the card edge visible */
+.home-upcoming-video::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  box-shadow: inset 0 0 0 0.5px var(--separator);
+}
+.home-upcoming-thumb .ui-icon { width: 28px; height: 28px; }
+.home-upcoming-thumb .ui-pill { position: absolute; left: 8px; bottom: 8px; }
+.home-upcoming-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 3px; }
+.home-upcoming-date {
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--label-secondary);
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote); font-weight: 600;
+}
+.home-upcoming-date { flex-wrap: wrap; row-gap: 0; }
+.home-upcoming-date .ui-icon { width: 14px; height: 14px; }
+.home-upcoming-date > span { white-space: nowrap; }
+.home-upcoming-time { font-weight: 400; color: var(--label-tertiary); }
+.home-upcoming-time::before { content: "·"; margin-right: 5px; }
+.home-upcoming-caption {
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  overflow-wrap: anywhere;
+}
+@media (min-width: 720px) {
+  .home-scroller { margin: 0; padding-inline: 0; scroll-padding-inline: 0; }
+  .home-upcoming { width: 220px; }
+}
+
+/* ---------------------------------------------------------------------
+   Activity — grouped inset list with tinted leading icons and a native
+   <details> disclosure for collapsed comment runs.
+   --------------------------------------------------------------------- */
+.activity-item { align-items: flex-start; padding-top: 11px; padding-bottom: 11px; }
+.activity-item .ui-row-trailing { align-self: center; }
+.activity-icon { margin-top: 1px; }
+.activity-icon--approve   { background: var(--approve); }
+.activity-icon--deny      { background: var(--deny); }
+.activity-icon--accent    { background: var(--accent); }
+.activity-icon--scheduled { background: var(--scheduled); }
+.activity-icon--neutral   { background: var(--fill-tertiary); color: var(--label-secondary); }   /* ≥ 4.5:1 glyph in both themes */
+.activity-title { white-space: normal; }
+.activity-title em { font-style: normal; font-weight: 600; }
+.activity-title q { quotes: "\201C" "\201D"; color: var(--label-secondary); }
+.activity-link { color: inherit; text-decoration: none; display: block; }
+.activity-link:active { opacity: .6; }
+.activity-meta { white-space: normal; }
+
+.activity-disclosure { margin-top: 6px; }
+.activity-disclosure summary {
+  display: inline-flex; align-items: center; gap: 4px;
+  list-style: none; cursor: pointer; user-select: none;
+  min-height: 28px; padding: 2px 0;
+  color: var(--accent);
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote); font-weight: 600;
+  -webkit-tap-highlight-color: transparent;
+}
+.activity-disclosure summary::-webkit-details-marker { display: none; }
+.activity-disclosure summary::marker { content: ""; }
+.activity-disclosure summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.activity-disclosure-chevron { width: 12px; height: 12px; stroke-width: 2.6; transition: transform var(--dur-base) var(--ease-out); }
+.activity-disclosure[open] .activity-disclosure-chevron { transform: rotate(180deg); }
+.activity-comments {
+  list-style: none; margin: 4px 0 2px; padding: 0 0 0 10px;
+  border-left: 2px solid var(--separator);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.activity-comments li { animation: ui-enter var(--dur-base) var(--ease-out) both; }
+.activity-comment {
+  display: flex; flex-direction: column; gap: 1px;
+  color: var(--label); text-decoration: none;
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead);
+  overflow-wrap: anywhere;
+}
+.activity-comment q { quotes: "\201C" "\201D"; }
+.activity-comment-time { color: var(--label-tertiary); font-size: var(--text-caption); line-height: var(--lh-caption); }
+
+/* ---------------------------------------------------------------------
+   Admin variant — "Client responses" + Studio quick actions
+   --------------------------------------------------------------------- */
+.home-responses-lead {
+  margin: 0 0 10px;
+  font-size: var(--text-body); line-height: var(--lh-body); letter-spacing: var(--ls-body);
+}
+.home-responses-lead strong { font-weight: 600; }
+.home-notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.home-note {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 8px 12px; border-radius: var(--radius-list);
+  background: var(--fill-tertiary); color: var(--label); text-decoration: none;
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead);
+  -webkit-tap-highlight-color: transparent;
+}
+.home-note:active { opacity: .6; }
+.home-note q { quotes: "\201C" "\201D"; }
+.home-note-meta { color: var(--label-secondary); font-size: var(--text-caption); line-height: var(--lh-caption); }
+.home-quick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.home-quick .ui-btn { flex-direction: column; gap: 6px; min-height: 68px; padding: 10px 8px; border-radius: 14px; }
+.home-quick .ui-btn .ui-icon { width: 22px; height: 22px; }
+
+/* Unscoped: client chooser */
+.home-chooser .ui-row-leading { display: flex; align-items: center; justify-content: center; }
+
+@media (prefers-reduced-motion: reduce) {
+  .action-card:active, .home-upcoming:active { transform: none; }
+  .activity-disclosure-chevron { transition: none; }
+  .activity-comments li { animation: ui-fade-in var(--dur-fast) linear both; }
+}

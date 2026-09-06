@@ -11,6 +11,7 @@
 
 require __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
+if (!function_exists('currentAdmin')) { require_once __DIR__ . '/auth.php'; }   // helpers.php already loads it; belt and braces
 
 header('Content-Type: application/json');
 
@@ -19,11 +20,19 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     echo json_encode(['ok' => false, 'error' => 'Method not allowed']);
     exit;
 }
+requireSameSiteFetch();   // cross-site POSTs get a JSON 403 (helpers.php)
+
+// Replacing a file is an admin verb (spec §2) — never available to a client seat.
+if (!currentAdmin()) {
+    http_response_code(403);
+    echo json_encode(['ok' => false, 'error' => 'Admin sign-in required']);
+    exit;
+}
 
 $uploadsDir  = __DIR__ . '/uploads';
 $uploadsUrl  = 'uploads';
-$allowedExt  = array_merge(imageExts(), videoExts()); // jpg/png/gif/webp + mp4/webm
-$rejectedExt = ['mov', 'm4v', 'avi', 'mkv'];
+$allowedExt  = array_merge(imageExts(), videoExts()); // jpg/png/gif/webp + mp4/webm/mov (spec §6)
+$rejectedExt = ['m4v', 'avi', 'mkv'];
 $maxFileSize = 25 * 1024 * 1024; // 25 MB — matches add-post.php
 
 // Determine target table
@@ -75,15 +84,15 @@ if (in_array($ext, $rejectedExt, true)) {
 }
 if (!in_array($ext, $allowedExt, true)) {
     http_response_code(400);
-    echo json_encode(['ok' => false, 'error' => 'Unsupported file type — use JPG, PNG, GIF, WebP, MP4, or WebM.']);
+    echo json_encode(['ok' => false, 'error' => 'Unsupported file type — use JPG, PNG, GIF, WebP, MP4, WebM, or MOV.']);
     exit;
 }
 
 $isVideo = isVideoExt($ext);
 if ($isVideo) {
-    if (!is_file($tmpName) || filesize($tmpName) === 0) {
+    if (!videoFileLooksValid((string)$tmpName, $ext)) {
         http_response_code(400);
-        echo json_encode(['ok' => false, 'error' => 'Video file appears to be empty']);
+        echo json_encode(['ok' => false, 'error' => 'Not a valid video file']);
         exit;
     }
 } else {

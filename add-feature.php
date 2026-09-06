@@ -10,7 +10,7 @@
 
 require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';
-require __DIR__ . '/auth.php';
+require_once __DIR__ . '/auth.php';
 requireAdmin();
 
 $uploadsDir    = __DIR__ . '/uploads';
@@ -29,7 +29,7 @@ function h($s) {
 // --- Require client ---
 if (!$client) {
     http_response_code(400);
-    echo 'Missing ?client= — go to <a href="admin">admin</a>.';
+    echo 'Missing ?client= — go to <a href="admin.php">admin</a>.';
     exit;
 }
 
@@ -62,7 +62,7 @@ function redirectHere($extra = [], $msg = null) {
         'module' => $module['slug'],
     ], $extra);
     if ($msg !== null) { $qs['msg'] = $msg; }
-    header('Location: add-feature?' . http_build_query(array_filter(
+    header('Location: add-feature.php?' . http_build_query(array_filter(
         $qs, fn($v) => $v !== null && $v !== ''
     )));
     exit;
@@ -356,11 +356,12 @@ function selfUrl($extra = []) {
 }
 ?>
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title><?= $isEdit ? 'Edit' : 'Add' ?> <?= h($sLabel) ?> — <?= h($client['name']) ?></title>
+<?= renderAppHead() ?>
 <style>
   :root {
     --bg: #f0f2f5; --surface: #ffffff; --surface-2: #f7f8fa;
@@ -603,28 +604,22 @@ function selfUrl($extra = []) {
 </head>
 <body>
 
-<header class="topbar">
-  <div class="topbar-inner">
-    <div class="brand">
-      <div class="brand-mark">J</div>
-      <span><?= h($module['icon']) ?> <?= h($pLabel) ?></span>
-      <span class="brand-sub"><?= h($client['name']) ?></span>
-    </div>
-    <div class="top-actions">
-      <a class="btn sm" href="admin?client=<?= h($client['slug']) ?>">← Admin home</a>
-      <?php
-        // When editing a specific tire, point at its review page (detail view) instead of the gallery.
-        $viewQs = ['client' => $client['slug'], 'module' => $module['slug']];
-        if ($isEdit) { $viewQs['item'] = (int)$editItem['id']; }
-        $viewLabel = $isEdit ? 'Review on site' : 'View ' . $pLower;
-      ?>
-      <a class="btn sm" href="<?= h('features?' . http_build_query($viewQs)) ?>" target="_blank">
-        <?= h($viewLabel) ?> ↗
-      </a>
-      <a class="btn sm" href="logout" title="Signed in as <?= h(currentAdmin()) ?>">Sign out</a>
-    </div>
-  </div>
-</header>
+<?php
+  // When editing a specific tire, point at its review page (detail view) instead of the gallery.
+  $viewQs = ['client' => $client['slug'], 'module' => $module['slug']];
+  if ($isEdit) { $viewQs['item'] = (int)$editItem['id']; }
+  $viewLabel = $isEdit ? 'Review on site' : 'View ' . $pLower;
+?>
+<?= renderAppChrome(($isEdit ? 'Edit ' : 'Add ') . $sLabel, [
+      'subtitle' => $client['name'],
+      'active'   => 'studio',
+      'width'    => '900px',
+      'back'     => ['href' => 'admin.php?client=' . rawurlencode($client['slug']), 'label' => 'Studio'],
+      'links'    => [
+        ['label' => $viewLabel, 'href' => 'features.php?' . http_build_query($viewQs), 'attrs' => ['target' => '_blank']],
+        ['label' => 'Sign out', 'href' => 'logout.php', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
+      ],
+    ]) ?>
 
 <div class="wrap">
 
@@ -745,7 +740,7 @@ function selfUrl($extra = []) {
               <span class="help">
                 Currently <?= count($editImages) ?> of <?= $maxItemImages ?> slots used.
                 Status changes save instantly. To reply to comments, open the
-                <a href="<?= h('features?' . http_build_query(['client' => $client['slug'], 'module' => $module['slug'], 'item' => (int)$editItem['id']])) ?>"
+                <a href="<?= h('features.php?' . http_build_query(['client' => $client['slug'], 'module' => $module['slug'], 'item' => (int)$editItem['id']])) ?>"
                    target="_blank">review page</a>.
               </span>
             </div>
@@ -772,7 +767,7 @@ function selfUrl($extra = []) {
         </div>
 
         <div class="form-actions">
-          <a class="btn" href="admin?client=<?= h($client['slug']) ?>">Cancel</a>
+          <a class="btn" href="admin.php?client=<?= h($client['slug']) ?>">Cancel</a>
           <button type="submit" class="btn primary"><?= h($formSubmit) ?></button>
         </div>
       </form>
@@ -797,7 +792,7 @@ function selfUrl($extra = []) {
             <div class="row-actions">
               <a class="btn sm" href="<?= h(selfUrl(['edit_item' => (int)$t['id']])) ?>">Edit</a>
               <a class="btn sm"
-                 href="<?= h('features?' . http_build_query(['client' => $client['slug'], 'module' => $module['slug'], 'item' => (int)$t['id']])) ?>"
+                 href="<?= h('features.php?' . http_build_query(['client' => $client['slug'], 'module' => $module['slug'], 'item' => (int)$t['id']])) ?>"
                  target="_blank">Review ↗</a>
               <form method="POST" action="<?= h(selfUrl()) ?>" class="inline-form"
                     onsubmit="return confirm('Delete this <?= h($sLower) ?> and all its images? This cannot be undone.');">

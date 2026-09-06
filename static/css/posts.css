@@ -1,0 +1,330 @@
+/* =====================================================================
+   Joust client portal — Posts (spec §4.3)
+   Loads after tokens/base/components/motion. Prefixes:
+     .posts-*  page chrome (toolbar, month pill, month sheet)
+     .pl-*     the compact post list + swipe layers
+     .pd-*     the post detail (sheet body + sticky footer)
+     .ig-*     the Instagram-style caption preview (Studio reuses this)
+   Only transform/opacity are animated.
+   ===================================================================== */
+
+/* ---------------------------------------------------------------------
+   Page chrome
+   --------------------------------------------------------------------- */
+.posts-toolbar { margin: 2px 0 16px; }
+.posts-month-pill { gap: 4px; padding-right: 10px; }
+.posts-month-pill .ui-icon { width: 14px; height: 14px; stroke-width: 2.4; }
+.posts-empty { padding-top: 56px; }
+.posts-empty-sub { margin-top: 6px; color: var(--label-tertiary); }
+.posts-hint { text-align: center; }
+@media (hover: hover) and (pointer: fine) { .posts-hint { display: none; } }
+
+.posts-month-nav { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0 12px; }
+.posts-month-nav .ui-btn .ui-icon { width: 14px; height: 14px; stroke-width: 2.4; }
+.posts-chevron-left { transform: rotate(180deg); }
+.posts-month-list .ui-row.is-active .ui-row-title { font-weight: 600; }
+.posts-month-list .ui-row-trailing .ui-icon { width: 18px; height: 18px; stroke-width: 2.4; }
+
+/* ---------------------------------------------------------------------
+   Post list — compact cards in a grouped inset list
+   --------------------------------------------------------------------- */
+.posts-list { overflow: hidden; }
+.pl-item {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-elevated);
+}
+.pl-item.is-busy { opacity: .7; }
+.pl-card {
+  --row-inset: 100px;                          /* 16 + 72 thumb + 12 gap */
+  position: relative; z-index: 1;
+  align-items: flex-start;
+  padding: 12px 16px;
+  background: var(--bg-elevated);
+  touch-action: pan-y;                         /* vertical scroll stays native; horizontal is ours */
+  -webkit-user-select: none; user-select: none;
+  will-change: transform;
+}
+li + li > .pl-card::before { left: 100px; }
+.pl-item.is-swiping .pl-card { transition: none; }
+.pl-item.is-settling .pl-card { transition: transform var(--dur-sheet) var(--ease-spring); }
+.pl-thumb {
+  width: 72px; height: 72px;
+  border-radius: var(--radius-thumb);
+  background: var(--fill-tertiary);
+  color: var(--label-tertiary);
+}
+.pl-thumb--video { background: #111; color: #fff; overflow: hidden; }
+.pl-thumb-play { width: 26px; height: 26px; }
+.pl-thumb-video { border-radius: inherit; }
+.pl-thumb-video .ui-video-glyph .ui-icon { width: 24px; height: 24px; }
+.pl-thumb-badge { left: 4px; right: auto; bottom: 4px; padding: 1px 5px; min-height: 16px; line-height: 12px; }
+.pl-thumb-badge .ui-video-duration { font-size: 10px; }
+.pl-thumb-badge .ui-icon { width: 8px; height: 8px; }
+.pl-thumb .ui-icon--photo { width: 26px; height: 26px; }
+.pl-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.pl-title { font-weight: 600; }
+.pl-date {
+  flex: 0 0 auto;
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote);
+  color: var(--label-secondary);
+}
+.pl-caption {
+  margin-top: 1px;
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead);
+  color: var(--label-secondary);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.pl-meta {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px;
+  margin-top: 5px;
+  font-size: var(--text-footnote); line-height: 18px; letter-spacing: var(--ls-footnote);
+  color: var(--label-secondary);
+}
+.pl-meta-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }   /* "·" wraps with its item */
+.pl-meta-sep { color: var(--label-tertiary); }
+.pl-card .ui-row-chevron { align-self: center; }
+
+/* Swipe layers (iOS Mail): revealed under the card while dragging */
+.pl-swipe {
+  position: absolute; inset: 0; z-index: 0;
+  display: flex; align-items: center; gap: 6px;
+  padding: 0 22px;
+  color: #fff; font-weight: 600;
+  font-size: var(--text-subhead); letter-spacing: var(--ls-subhead);
+  opacity: 0;
+}
+.pl-swipe .ui-icon { width: 22px; height: 22px; stroke-width: 2.4; transition: transform var(--dur-fast) var(--ease-out); }
+.pl-swipe--approve { background: var(--approve); justify-content: flex-start; }
+.pl-swipe--deny    { background: var(--deny);    justify-content: flex-end; }
+.pl-item[data-swipe-dir="right"] .pl-swipe--approve,
+.pl-item[data-swipe-dir="left"]  .pl-swipe--deny { opacity: 1; }
+.pl-item.is-past .pl-swipe .ui-icon { transform: scale(1.25); }
+.pl-item.is-blocked .pl-swipe { opacity: .35; }
+.pl-item.ui-leave { z-index: 0; }
+
+/* ---------------------------------------------------------------------
+   Post detail — sheet body
+   --------------------------------------------------------------------- */
+.pd-body { padding-bottom: 8px; }
+.pd-meta { display: flex; align-items: center; gap: 8px; padding: 2px 0 10px; min-height: 34px; }
+.pd-type {
+  font-size: var(--text-footnote); line-height: 18px; letter-spacing: 0.2px;
+  font-weight: 600; text-transform: uppercase; color: var(--label-secondary);
+}
+.pd-edited { font-size: var(--text-footnote); }
+.pd-more { position: relative; margin-left: auto; }
+.pd-menu {
+  position: absolute; right: 0; top: 36px; z-index: 5;
+  min-width: 200px; padding: 6px;
+  background: var(--bg-elevated);
+  border-radius: 12px;
+  box-shadow: var(--shadow-card), 0 0 0 0.5px var(--separator);
+}
+.pd-menu[hidden] { display: none; }
+.pd-menu button {
+  display: block; width: 100%; padding: 10px 12px;
+  border: 0; border-radius: 8px; background: transparent; text-align: left;
+  color: var(--label);
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead);
+}
+.pd-menu button:hover, .pd-menu button:focus-visible { background: var(--fill-tertiary); outline: none; }
+.pd-menu button:disabled { opacity: .4; }
+.pd-menu button.is-destructive { color: var(--deny); }
+
+/* 1. Media carousel */
+.pd-media {
+  position: relative;
+  margin: 0 -16px;
+  background: #000;
+  border-radius: 0;
+  overflow: hidden;
+}
+.pd-media--empty {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 160px; background: var(--fill-tertiary);
+}
+.pd-track {
+  display: flex;
+  overflow-x: auto; overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.pd-track::-webkit-scrollbar { display: none; }
+.pd-slide {
+  position: relative;
+  flex: 0 0 100%; min-width: 0;
+  margin: 0;
+  scroll-snap-align: start; scroll-snap-stop: always;
+  aspect-ratio: 4 / 5;
+  max-height: 62vh;
+  display: flex; align-items: center; justify-content: center;
+}
+.pd-slide img, .pd-slide video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+.pd-slide .ui-video { width: 100%; height: 100%; }
+.pd-slide-btn {
+  display: block; width: 100%; height: 100%;
+  padding: 0; border: 0; background: transparent; cursor: zoom-in;
+}
+.pd-dots {
+  position: absolute; left: 0; right: 0; bottom: 10px;
+  display: flex; justify-content: center; gap: 6px;
+  pointer-events: none;
+}
+.pd-dot {
+  width: 6px; height: 6px; padding: 0; border: 0; border-radius: 50%;
+  background: rgba(255,255,255,.45);
+  pointer-events: auto;
+  transition: transform var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
+}
+.pd-dot.is-active { background: #fff; transform: scale(1.25); }
+.pd-counter { position: absolute; top: 10px; right: 10px; }
+
+/* 2. Instagram-style caption preview (shared with Studio) */
+.ig { padding: 12px 0 2px; }
+.ig-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.ig-avatar { border-radius: 50%; }
+.ig-name { font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead); font-weight: 600; }
+.ig-name--inline { margin-right: 2px; }
+.ig-caption, .ig-tags {
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead);
+  overflow-wrap: anywhere;
+}
+.ig-tag, .ig-tags { color: var(--accent); }
+.ig-tags { margin-top: 6px; }
+.ig-tags[hidden] { display: none; }
+.ig-copy { margin: 4px 0 0 -8px; }
+
+/* Inline editors (admin caption/date, client date request, deny note) */
+.pd-editor, .pd-deny {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px; margin: 8px 0;
+  background: var(--fill-tertiary); border-radius: 12px;
+}
+.pd-editor[hidden], .pd-deny[hidden] { display: none; }
+.pd-editor .ui-input, .pd-editor .ui-textarea, .pd-deny .ui-textarea { background: var(--bg-elevated); }
+.pd-editor-tags { min-height: 60px; }
+.pd-editor-label {
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: 0.2px;
+  font-weight: 600; text-transform: uppercase; color: var(--label-secondary);
+}
+.pd-editor-hint { margin: 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary); }
+.pd-editor-hint.is-error { color: var(--deny); }
+
+/* 3. Scheduled date row */
+.pd-when { margin: 12px 0 4px; }
+.pd-when-row {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; padding: 12px 14px;
+  border: 0; border-radius: 12px;
+  background: var(--fill-tertiary); color: var(--label);
+  text-align: left; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.pd-when-row:active { opacity: .7; }
+.pd-when-icon { width: 24px; height: 24px; color: var(--accent); }
+.pd-when-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.pd-when-label { font-size: var(--text-caption); line-height: var(--lh-caption); color: var(--label-secondary); }
+.pd-when-date { font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead); font-weight: 600; }
+.pd-when-cta { flex: 0 0 auto; font-size: var(--text-footnote); font-weight: 600; color: var(--accent); }
+.pd-when-row[aria-expanded="true"] .pd-when-cta { color: var(--label-tertiary); }
+
+/* 4. Comments thread */
+.pd-section-title {
+  margin: 16px 0 8px;
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: 0.2px;
+  font-weight: 600; text-transform: uppercase; color: var(--label-secondary);
+}
+.pd-comment-count { font-weight: 500; }
+.pd-thread { gap: 8px; }
+.pd-msg { display: flex; flex-direction: column; }
+.pd-msg--client { align-items: flex-end; }
+.pd-msg--joust  { align-items: flex-start; }
+.pd-msg .ui-bubble { white-space: pre-wrap; overflow-wrap: anywhere; }
+.pd-msg .ui-bubble-meta { padding: 0 6px; }
+.pd-thread-empty {
+  margin: 0; padding: 10px 0;
+  text-align: center;
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary);
+}
+.pd-thread-empty[hidden] { display: none; }
+
+/* 5. Sticky footer: composer + deny note + state rows + action bar */
+.pd-composer { display: flex; align-items: flex-end; gap: 8px; margin-bottom: 10px; }
+/* Timestamp chip (spec §6): shown by App.video when the sheet contains a video; inserts "m:ss — " */
+.pd-composer-stamp {
+  flex: 0 0 auto; align-self: center; gap: 4px; padding: 4px 10px; min-height: 26px;
+  border: 0; cursor: pointer; font: inherit; font-size: var(--text-footnote); font-weight: 600;
+  font-variant-numeric: tabular-nums; -webkit-tap-highlight-color: transparent;
+  transition: transform var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+}
+.pd-composer-stamp[hidden] { display: none; }
+.pd-composer-stamp:active { transform: scale(0.96); }
+.pd-composer-stamp:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pd-composer-stamp .ui-icon { width: 10px; height: 10px; }
+@media (prefers-reduced-motion: reduce) { .pd-composer-stamp:active { transform: none; } }
+.pd-composer-input {
+  flex: 1 1 auto; min-height: 38px; max-height: 120px;
+  padding: 8px 14px; border-radius: 19px; resize: none;
+  font-size: var(--text-subhead); line-height: var(--lh-subhead);
+}
+.pd-composer-send { width: 38px; height: 38px; min-height: 38px; flex: 0 0 auto; }
+.pd-composer-send .ui-icon { width: 20px; height: 20px; }
+.pd-deny { margin: 0 0 10px; }
+.pd-state {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 14px; border-radius: 12px;
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead); font-weight: 600;
+}
+.pd-state[hidden] { display: none; }
+.pd-state .ui-icon { width: 20px; height: 20px; stroke-width: 2.6; }
+.pd-state--approved  { color: var(--approve);   background: rgba(52,199,89,.15); }
+.pd-state--scheduled { color: var(--scheduled); background: rgba(88,86,214,.15); }
+.pd-state--denied    { color: var(--deny);      background: rgba(255,59,48,.14); }
+.pd-state:not([hidden]) ~ .pd-actions:has(> :not([hidden])) { margin-top: 8px; }
+.pd-actions > [hidden] { display: none; }
+.pd-actions .ui-btn-group > .ui-btn { min-width: 0; }
+
+/* Full-screen image viewer (tap a slide) */
+.pd-viewer {
+  position: fixed; inset: 0; z-index: 1200;
+  display: flex; align-items: center; justify-content: center;
+  background: #000;
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+.pd-viewer.is-visible { opacity: 1; }
+.pd-viewer img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.pd-viewer-close {
+  position: absolute; top: max(12px, env(safe-area-inset-top)); right: 12px;
+  width: 36px; height: 36px; border: 0; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,.18); color: #fff;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+}
+.pd-viewer-close .ui-icon { width: 18px; height: 18px; stroke-width: 2.4; }
+
+/* ---------------------------------------------------------------------
+   Desktop: the detail is a right panel and the list stays usable
+   --------------------------------------------------------------------- */
+@media (min-width: 1024px) {
+  .page-posts .ui-sheet-root.is-detail .ui-sheet-backdrop { background: transparent; pointer-events: none; }
+  .page-posts .ui-sheet-root.is-detail .ui-sheet { box-shadow: var(--shadow-panel), -0.5px 0 0 var(--separator); }
+  .page-posts .pl-item.is-open .pl-card { background: var(--fill-tertiary); }
+  .pd-slide { max-height: 520px; }
+}
+/* ≥1440 there is room for the 720px column beside the 480px panel: keep the list and its toolbar clear of it */
+@media (min-width: 1440px) {
+  .page-posts:has(.ui-sheet-root.is-detail.is-open) .ui-nav-inner,
+  .page-posts:has(.ui-sheet-root.is-detail.is-open) .ui-page { margin-right: 480px; }
+}
+
+/* ---------------------------------------------------------------------
+   Reduced motion: no springs, keep crossfades
+   --------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .pl-item.is-settling .pl-card { transition-duration: var(--dur-fast); transition-timing-function: linear; }
+  .pl-swipe .ui-icon, .pd-dot { transition: none; }
+  .pd-viewer { transition-duration: var(--dur-fast); }
+}

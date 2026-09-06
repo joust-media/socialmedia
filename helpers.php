@@ -6,8 +6,11 @@
  * Exposes:
  *   $client         → company row (id, name, slug, feature_label) or null if unscoped
  *   $clientSlug     → string or ''
+ *   $role           → 'admin' (signed-in jsm_admin session) or 'client'; see isAdmin()
  *   clientQs()      → 'client=hmf' or '' for URL building
  *   clientUrl($page, $extra = []) → builds "page.php?client=hmf&…"
+ *   renderClientNav() / renderAppChrome() / renderAppHead() → the shared iOS-style shell
+ *   icon(), statusPill(), segmented(), insetRow(), card() → partials/components/*
  */
 
 // $pdo must be included before this file.
@@ -48,6 +51,39 @@ if (!empty($_GET['client'])) {
     }
 }
 
+// ---------------------------------------------------------------------
+// Role — resolved once, server-side, next to the client scoping so every
+// page and partial can branch on it. auth.php only declares constants and
+// functions when included; currentAdmin() starts the jsm_admin session,
+// which is safe here because helpers.php is included before any output.
+// Pages that also include auth.php must use require_once (they do).
+// ---------------------------------------------------------------------
+require_once __DIR__ . '/auth.php';
+$role = currentAdmin() ? 'admin' : 'client';
+
+/** True when the visitor is the signed-in admin (session-based). */
+if (!function_exists('isAdmin')) {
+    function isAdmin(): bool {
+        return function_exists('currentAdmin') && currentAdmin() !== null;
+    }
+}
+
+/** Shared escaper for partials. Pages keep their own page-local h(); this
+ *  name is unique so nothing can collide. */
+if (!function_exists('esc')) {
+    function esc($s): string {
+        return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    }
+}
+
+// Shared UI component helpers (all function_exists-guarded, no output).
+require_once __DIR__ . '/partials/components/icon.php';
+require_once __DIR__ . '/partials/components/status-pill.php';
+require_once __DIR__ . '/partials/components/segmented.php';
+require_once __DIR__ . '/partials/components/inset-list.php';
+require_once __DIR__ . '/partials/components/card.php';
+require_once __DIR__ . '/partials/components/video.php';
+
 /** Return "client=hmf" or "" for building URLs */
 function clientQs() {
     global $clientSlug;
@@ -66,9 +102,31 @@ function basePath() {
     return $cached = $dir;
 }
 
+/** URL style switch for clientUrl() / pagePath().
+ *
+ *  false (default) → explicit script URLs: '/socialmedia/posts.php?client=hmf'. Works on
+ *                    any Apache folder with or without an extension-less rewrite, so the
+ *                    portal never depends on the host's .htaccess being in place.
+ *  true            → pretty URLs: '/socialmedia/posts?client=hmf'. Only flip this once the
+ *                    server's .htaccess rewrite (name → name.php) is confirmed working.
+ *  Home is the folder root ('/socialmedia/') in both modes. Guarded so a config.php or a
+ *  test harness can define it first. */
+if (!defined('CLEAN_URLS')) { define('CLEAN_URLS', false); }
+
+/** Root-rooted path for a page name honouring CLEAN_URLS:
+ *    pagePath('posts') / pagePath('posts.php') → '/socialmedia/posts.php' (or '/socialmedia/posts')
+ *    pagePath('index') / pagePath('index.php') / pagePath('') → '/socialmedia/'
+ *  Paths with a directory component ('legacy/admin.php') are treated the same way. */
+function pagePath($page) {
+    $name = preg_replace('/\.php$/', '', (string)$page);
+    if ($name === '' || $name === 'index') { return basePath() . '/'; }   // homepage = folder root
+    return basePath() . '/' . $name . (CLEAN_URLS ? '' : '.php');
+}
+
 /** Build URL to a page preserving client scope and merging extras.
- *  Output is always root-rooted ('/feed?client=hmf', '/socialmedia/feed?client=hmf'),
- *  so the same href works from any page in the app. .htaccess handles the .php rewrite. */
+ *  Output is always root-rooted ('/posts.php?client=hmf', '/socialmedia/posts.php?client=hmf'),
+ *  so the same href works from any page in the app. The page name may be given with or
+ *  without '.php' — see pagePath() / CLEAN_URLS for the emitted form. */
 function clientUrl($page, $extra = []) {
     global $clientSlug;
     $qs = [];
@@ -76,10 +134,7 @@ function clientUrl($page, $extra = []) {
     foreach ($extra as $k => $v) {
         if ($v !== null && $v !== '') { $qs[$k] = $v; }
     }
-    $clean = preg_replace('/\.php$/', '', $page);
-    if ($clean === 'index') { $clean = ''; }   // homepage = "/"
-    $path = basePath() . '/' . $clean;          // "/" or "/feed" or "/socialmedia/feed"
-    return $path . ($qs ? '?' . http_build_query($qs) : '');
+    return pagePath($page) . ($qs ? '?' . http_build_query($qs) : '');
 }
 
 /**
@@ -156,19 +211,54 @@ function clientNavItems(PDO $pdo, $client) {
     return $items;
 }
 
-/** Render the nav links built by clientNavItems(). $current marks the active link. */
-function renderClientNav(array $items, $current = '') {
-    if (!$items) return '';
-    $out = '';
-    foreach ($items as $it) {
-        $active = $it['page'] === $current ? ' active' : '';
-        $out .= '<a class="nav-link' . $active . '" href="'
-             . htmlspecialchars($it['url'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '">'
-             . '<span class="nav-link-icon">' . htmlspecialchars($it['icon'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</span>'
-             . '<span class="nav-link-label">' . htmlspecialchars($it['label'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '</span>'
-             . '</a>';
+/**
+ * Render the page chrome for a client page: the large-title nav bar plus the
+ * role-aware tab bar (partials/navbar.php + partials/tabbar.php).
+ *
+ * Kept as the single call every existing page already makes, so the whole
+ * site moved to the new shell at once. $items (from clientNavItems()) is only
+ * used to look up a module label; $current is the legacy page key
+ * ('index', 'feed', 'library', 'projects', 'module:<slug>') and is mapped to a
+ * tab by appTabForPage(). $opts are passed through to renderAppChrome()
+ * ('title', 'subtitle', 'back', 'trailing', 'links', 'wide', 'active', 'tabs').
+ */
+function renderClientNav(array $items, $current = '', array $opts = []) {
+    global $client;
+    if (!isset($opts['active'])) { $opts['active'] = appTabForPage((string)$current); }
+    if (!isset($opts['width'])) {
+        // Match each legacy page's own content column so the nav edges line up.
+        $widths = ['index' => '900px', 'feed' => '680px', 'library' => '1200px', 'projects' => '760px'];
+        $opts['width'] = $widths[$current] ?? (strpos((string)$current, 'module:') === 0 ? '1100px' : null);
     }
-    return $out;
+    $title = isset($opts['title']) ? (string)$opts['title'] : appPageTitle((string)$current, $items, $client);
+    unset($opts['title']);
+    return renderAppChrome($title, $opts);
+}
+
+/** Map a legacy page key to a tab id ('home'|'assets'|'posts'|'projects'|'studio'|null). */
+function appTabForPage(string $current) {
+    if ($current === 'index')    return 'home';
+    if ($current === 'feed')     return 'posts';
+    if ($current === 'library')  return 'assets';
+    if (strpos($current, 'module:') === 0) return 'assets';
+    if ($current === 'projects') return 'projects';
+    if ($current === 'admin' || $current === 'studio') return 'studio';
+    return null;
+}
+
+/** Default large title for a legacy page key. */
+function appPageTitle(string $current, array $items, $client): string {
+    switch ($current) {
+        case 'index':    return $client ? (string)$client['name'] : 'Dashboard';
+        case 'feed':     return 'Posts';
+        case 'library':  return 'Assets';
+        case 'projects': return 'Projects';
+        case 'admin':    return 'Studio';
+    }
+    foreach ($items as $it) {
+        if (($it['page'] ?? '') === $current && !empty($it['label'])) return (string)$it['label'];
+    }
+    return $client ? (string)$client['name'] : 'Joust';
 }
 
 /** Produce a human-friendly label for a tire_images row (admin-set display_name preferred,
@@ -198,6 +288,23 @@ function hasPostsNameColumn(PDO $pdo) {
     ");
     $s->execute();
     return $cached = (int)$s->fetchColumn() > 0;
+}
+
+/** Does posts.posted exist yet? (migrate.php may not have run.) Cached for the request.
+ *  The single shared copy — pages must not redeclare it. */
+if (!function_exists('hasPostedColumn')) {
+    function hasPostedColumn(PDO $pdo) {
+        static $cached = null;
+        if ($cached !== null) return $cached;
+        $s = $pdo->prepare("
+            SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'posts'
+              AND COLUMN_NAME = 'posted'
+        ");
+        $s->execute();
+        return $cached = (int)$s->fetchColumn() > 0;
+    }
 }
 
 /** Sanitize a display_name into a safe filename stem (no extension).
@@ -264,13 +371,14 @@ function hasMediaTypeColumn(PDO $pdo) {
 }
 
 /**
- * Allowed media extensions for post uploads.
- * .mov is intentionally NOT here — Chrome/Firefox don't reliably play it
- * even inside a <video> tag. We surface a friendly "please convert to mp4"
- * error to the user instead of silently uploading a file that won't work.
+ * Allowed media extensions for uploads (spec §6).
+ * .mov (QuickTime) is accepted and kept as-is: it plays natively in Safari /
+ * iOS; other browsers get the "Open video / Download" card from App.video.
+ * Video-ness for library_images and tire_images (no media_type column) is
+ * decided by extension through isVideoExt().
  */
 function imageExts() { return ['jpg', 'jpeg', 'png', 'gif', 'webp']; }
-function videoExts() { return ['mp4', 'webm']; }
+function videoExts() { return ['mp4', 'webm', 'mov']; }
 
 /** True if the given file extension is one of our supported video formats. */
 function isVideoExt($ext) {
@@ -279,15 +387,68 @@ function isVideoExt($ext) {
 
 /** Returns 'video' or 'image' based on the URL's extension. */
 function mediaTypeFromUrl($url) {
-    $ext = strtolower(pathinfo((string)$url, PATHINFO_EXTENSION));
+    $path = parse_url((string)$url, PHP_URL_PATH);
+    $ext  = strtolower(pathinfo($path !== null && $path !== false ? $path : (string)$url, PATHINFO_EXTENSION));
     return isVideoExt($ext) ? 'video' : 'image';
 }
 
-/** MIME type for the <video> source tag (defaults to mp4 if unknown). */
+if (!function_exists('videoMime')) {
+    /** MIME type for a <source type> by extension: mp4 → video/mp4, webm → video/webm, mov → video/quicktime. */
+    function videoMime(string $ext): string {
+        $ext = strtolower(trim($ext));
+        if ($ext === 'webm') return 'video/webm';
+        if ($ext === 'mov')  return 'video/quicktime';
+        return 'video/mp4'; // mp4 / unknown
+    }
+}
+
+/** Legacy name — same table as videoMime(). */
 function videoMimeForExt($ext) {
-    $ext = strtolower((string)$ext);
-    if ($ext === 'webm') return 'video/webm';
-    return 'video/mp4'; // mp4 / m4v / etc.
+    return videoMime((string)$ext);
+}
+
+if (!function_exists('videoFileLooksValid')) {
+    /**
+     * Container sniff for an uploaded video. $ext is the extension the file
+     * will be stored under (mp4 / webm / mov; the upload's tmp_name has none) —
+     * the container must agree with it:
+     *   webm      → EBML magic 1A 45 DF A3 at offset 0.
+     *   mp4 / mov → an ISO-BMFF/QuickTime `ftyp` box: big-endian box size ≥ 8
+     *               and a known major brand (isom, iso2, iso5, iso6, mp41, mp42,
+     *               avc1, "qt  ", "M4V ", mp71, dash). A file that starts with
+     *               `ftyp` but fails that is rejected outright (no finfo rescue).
+     *               Legacy QuickTime layouts without a leading ftyp (wide/mdat/
+     *               moov first) may still pass when finfo says
+     *               video/mp4 | video/quicktime | video/x-m4v.
+     * Anything else (other video/* MIMEs, other extensions) → false.
+     */
+    function videoFileLooksValid(string $path, string $ext = ''): bool {
+        if (!is_file($path) || filesize($path) === 0) return false;
+        $h = (string)@file_get_contents($path, false, null, 0, 64);
+        if (strlen($h) < 12) return false;
+        $ext = strtolower(trim($ext));
+        if ($ext === '') $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        if (!in_array($ext, ['mp4', 'webm', 'mov'], true)) return false;
+
+        if ($ext === 'webm') {
+            return strncmp($h, "\x1A\x45\xDF\xA3", 4) === 0;                          // EBML (WebM / Matroska)
+        }
+        if (strncmp($h, "\x1A\x45\xDF\xA3", 4) === 0) return false;                  // EBML under an mp4/mov name
+        $size = unpack('N', substr($h, 0, 4))[1];
+        if (substr($h, 4, 4) === 'ftyp') {
+            $brands = ['isom', 'iso2', 'iso5', 'iso6', 'mp41', 'mp42', 'avc1', 'qt  ', 'M4V ', 'mp71', 'dash'];
+            return $size >= 8 && in_array(substr($h, 8, 4), $brands, true);
+        }
+        if (function_exists('finfo_open')) {
+            $f = @finfo_open(FILEINFO_MIME_TYPE);
+            if ($f) {
+                $mime = (string)@finfo_file($f, $path);
+                finfo_close($f);
+                return in_array($mime, ['video/mp4', 'video/quicktime', 'video/x-m4v'], true);
+            }
+        }
+        return false;
+    }
 }
 
 /**
@@ -308,18 +469,23 @@ function libraryFileUrl($slug, $filename) {
     return '/media/library/' . rawurlencode($slug) . '/' . rawurlencode($filename);
 }
 
-/** List image filenames sitting directly in a brand's library folder,
- *  natural-sorted. Skips dotfiles (.DS_Store etc.), subfolders, and
- *  anything that isn't a recognized image extension. */
+/** List media filenames (images + videos, spec §6) sitting directly in a
+ *  brand's library folder, natural-sorted. Skips dotfiles (.DS_Store etc.),
+ *  subfolders, anything that isn't a recognized media extension, and the
+ *  transcoded .mp4 twin of a .mov (surfaced through videoTwinUrl() instead). */
 function scanLibraryDir($dir) {
     if (!is_dir($dir)) return [];
-    $exts = imageExts();
+    $exts = array_merge(imageExts(), videoExts());
     $out = [];
-    foreach (scandir($dir) as $f) {
+    $names = scandir($dir);
+    $set = array_flip($names);
+    foreach ($names as $f) {
         if ($f === '.' || $f === '..' || strpos($f, '.') === 0) continue;
         if (!is_file($dir . '/' . $f)) continue;
         $ext = strtolower(pathinfo($f, PATHINFO_EXTENSION));
         if (!in_array($ext, $exts, true)) continue;
+        // X.mp4 next to X.mov is the transcoded twin videoTwinUrl() serves as the second <source>, not its own asset.
+        if ($ext === 'mp4' && (isset($set[substr($f, 0, -3) . 'mov']) || isset($set[substr($f, 0, -3) . 'MOV']))) continue;
         $out[] = $f;
     }
     natcasesort($out);
@@ -404,10 +570,78 @@ function newBatchId() {
     return bin2hex(random_bytes(8));
 }
 
-/** Read POST['actor'] with a whitelist; default 'unknown'. */
+/** Actor for activity rows. The seat is decided by the session, never by the
+ *  request: a non-admin session is always 'client' (POST['actor'] is ignored, so
+ *  the feed cannot be spoofed). The admin may pass actor=client|admin (Studio's
+ *  "reply as client"); anything else → 'admin'. */
 function actorFromPost() {
-    $a = $_POST['actor'] ?? 'unknown';
-    return in_array($a, ['client', 'admin'], true) ? $a : 'unknown';
+    if (function_exists('currentAdmin') && currentAdmin()) {
+        $a = $_POST['actor'] ?? 'admin';
+        return in_array($a, ['client', 'admin'], true) ? $a : 'admin';
+    }
+    return 'client';
+}
+
+/** Client slug sent with a state-changing request (POST `client`, falling back
+ *  to the ?client= scope), sanitised to [a-z0-9-]; '' when absent. */
+if (!function_exists('postedClientSlug')) {
+    function postedClientSlug(): string {
+        $raw = $_POST['client'] ?? $_GET['client'] ?? '';
+        if (!is_string($raw)) return '';
+        return preg_replace('/[^a-z0-9\-]/', '', strtolower(trim($raw)));
+    }
+}
+
+/** Tenant scoping for the client seat. Admin sessions always pass. A non-admin
+ *  request passes only when the posted client slug resolves to $companyId
+ *  (one companies lookup per request). Callers answer 403 on false. */
+if (!function_exists('clientOwnsCompany')) {
+    function clientOwnsCompany(PDO $pdo, int $companyId): bool {
+        if (function_exists('currentAdmin') && currentAdmin()) return true;
+        $slug = postedClientSlug();
+        if ($slug === '' || $companyId <= 0) return false;
+        try {
+            $st = $pdo->prepare("SELECT slug FROM companies WHERE id = ?");
+            $st->execute([$companyId]);
+            $have = $st->fetchColumn();
+        } catch (Throwable $e) {
+            return false;
+        }
+        return is_string($have) && $have !== '' && $have === $slug;
+    }
+}
+
+/** Refuse cross-site requests on state-changing endpoints. Uses the browser's
+ *  Sec-Fetch-Site header only when present (absent = older client = allow);
+ *  same-origin / same-site / none pass, anything else gets a JSON 403. */
+if (!function_exists('requireSameSiteFetch')) {
+    function requireSameSiteFetch(): void {
+        $sfs = $_SERVER['HTTP_SEC_FETCH_SITE'] ?? '';
+        if ($sfs === '') return;
+        if (in_array(strtolower(trim($sfs)), ['same-origin', 'same-site', 'none'], true)) return;
+        http_response_code(403);
+        header('Content-Type: application/json');
+        echo json_encode(['ok' => false, 'error' => 'Cross-site request refused']);
+        exit;
+    }
+}
+
+/** Absolute path of a stored media URL ('uploads/x.jpg') ONLY when the file
+ *  really lives directly inside this app's uploads/ directory (realpath
+ *  containment — 'uploads/../config.php' and symlink tricks return null).
+ *  Use before every unlink of a DB-supplied path. */
+if (!function_exists('uploadsPathOrNull')) {
+    function uploadsPathOrNull(string $url): ?string {
+        $url = trim($url);
+        if ($url === '' || strpos($url, 'uploads/') !== 0) return null;
+        $uploadsDir = realpath(__DIR__ . '/uploads');
+        if ($uploadsDir === false) return null;
+        $path = __DIR__ . '/' . $url;
+        if (!is_file($path)) return null;
+        $real = realpath($path);
+        if ($real === false || realpath(dirname($path)) !== $uploadsDir || dirname($real) !== $uploadsDir) return null;
+        return $real;
+    }
 }
 
 /**
@@ -561,11 +795,13 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
     $tireIds    = [];
     $postIds    = [];
     $libImgIds  = [];
+    $taskIds    = [];
     foreach ($grouped as $g) {
         if ($g['entity_type'] === 'tire_image')    { $imageIds[]  = (int)$g['entity_id']; }
         if ($g['entity_type'] === 'tire')          { $tireIds[]   = (int)$g['entity_id']; }
         if ($g['entity_type'] === 'post')          { $postIds[]   = (int)$g['entity_id']; }
         if ($g['entity_type'] === 'library_image') { $libImgIds[] = (int)$g['entity_id']; }
+        if ($g['entity_type'] === 'task')          { $taskIds[]   = (int)$g['entity_id']; }
     }
     $imageMeta = [];
     if ($imageIds) {
@@ -579,7 +815,7 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
         $nameSel = $hasDisplayName ? 'ti.display_name' : "'' AS display_name";
         $s = $pdo->prepare("
             SELECT ti.id AS image_id, ti.tire_id, ti.caption, {$nameSel},
-                   m.slug AS module_slug
+                   t.name AS tire_name, m.slug AS module_slug
               FROM tire_images ti
               INNER JOIN tires t ON t.id = ti.tire_id
               INNER JOIN modules m ON m.id = t.module_id
@@ -589,6 +825,7 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
         foreach ($s->fetchAll() as $r) {
             $imageMeta[(int)$r['image_id']] = [
                 'tire_id'      => (int)$r['tire_id'],
+                'tire_name'    => (string)($r['tire_name'] ?? ''),
                 'module_slug'  => $r['module_slug'],
                 'display_name' => $r['display_name'] ?? '',
                 'caption'      => $r['caption'] ?? '',
@@ -600,14 +837,31 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
         $tireIds = array_values(array_unique($tireIds));
         $ph = implode(',', array_fill(0, count($tireIds), '?'));
         $s = $pdo->prepare("
-            SELECT t.id AS tire_id, m.slug AS module_slug
+            SELECT t.id AS tire_id, t.name AS tire_name, m.slug AS module_slug
               FROM tires t
               INNER JOIN modules m ON m.id = t.module_id
              WHERE t.id IN ($ph)
         ");
         $s->execute($tireIds);
         foreach ($s->fetchAll() as $r) {
-            $tireMeta[(int)$r['tire_id']] = ['module_slug' => $r['module_slug']];
+            $tireMeta[(int)$r['tire_id']] = [
+                'module_slug' => $r['module_slug'],
+                'name'        => (string)($r['tire_name'] ?? ''),
+            ];
+        }
+    }
+    $taskMeta = [];
+    if ($taskIds) {
+        $taskIds = array_values(array_unique($taskIds));
+        $ph = implode(',', array_fill(0, count($taskIds), '?'));
+        try {
+            $s = $pdo->prepare("SELECT id, title FROM tasks WHERE id IN ($ph)");
+            $s->execute($taskIds);
+            foreach ($s->fetchAll() as $r) {
+                $taskMeta[(int)$r['id']] = ['title' => (string)($r['title'] ?? '')];
+            }
+        } catch (Throwable $e) {
+            $taskMeta = [];
         }
     }
     $postMeta = [];
@@ -645,6 +899,8 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
             $g['_meta'] = $postMeta[(int)$g['entity_id']];
         } elseif ($g['entity_type'] === 'library_image' && isset($libImgMeta[(int)$g['entity_id']])) {
             $g['_meta'] = $libImgMeta[(int)$g['entity_id']];
+        } elseif ($g['entity_type'] === 'task' && isset($taskMeta[(int)$g['entity_id']])) {
+            $g['_meta'] = $taskMeta[(int)$g['entity_id']];
         }
     }
     unset($g);
@@ -690,12 +946,11 @@ function dayBucket($datetime) {
 }
 
 /** Build a deep-link URL for an activity row.
- *  Root-rooted via basePath() so it resolves the same from any page. Aims to land the
+ *  Root-rooted via pagePath() so it resolves the same from any page. Aims to land the
  *  user *on the exact entity* — the post editor, the specific tire's review with the
  *  image anchored, the task highlighted in the project list — never a generic gallery. */
 function activityLink($entry) {
     $slug = $entry['company_slug'] ?? '';
-    $base = basePath();
     $meta = $entry['_meta'] ?? null;
 
     $clientPair = $slug !== '' ? ['client' => $slug] : [];
@@ -704,7 +959,7 @@ function activityLink($entry) {
         case 'post':
             // Land in the post editor with the comment thread visible.
             $qs = http_build_query(array_merge($clientPair, ['edit' => (int)$entry['entity_id']]));
-            return $base . '/add-post?' . $qs;
+            return pagePath('add-post') . '?' . $qs;
 
         case 'tire_image':
             // Per-image review: features?client=X&module=<slug>&item=<tire_id>#image-<id>
@@ -712,7 +967,7 @@ function activityLink($entry) {
             $tireId     = (int)($meta['tire_id'] ?? 0);
             $params     = array_merge($clientPair, ['module' => $moduleSlug]);
             if ($tireId > 0) { $params['item'] = $tireId; }
-            $url = $base . '/features?' . http_build_query($params);
+            $url = pagePath('features') . '?' . http_build_query($params);
             if ($tireId > 0) { $url .= '#image-' . (int)$entry['entity_id']; }
             return $url;
 
@@ -723,113 +978,459 @@ function activityLink($entry) {
                 'module' => $moduleSlug,
                 'item'   => (int)$entry['entity_id'],
             ]);
-            return $base . '/features?' . http_build_query($params);
+            return pagePath('features') . '?' . http_build_query($params);
 
         case 'task':
             // Anchor straight to the task in the project list.
-            $url = $base . '/projects';
+            $url = pagePath('projects');
             if ($clientPair) { $url .= '?' . http_build_query($clientPair); }
             return $url . '#task-' . (int)$entry['entity_id'];
 
         case 'library_image':
             // Anchor straight to the tile in the brand's library gallery.
-            $url = $base . '/library';
+            $url = pagePath('library');
             if ($clientPair) { $url .= '?' . http_build_query($clientPair); }
             return $url . '#lib-' . (int)$entry['entity_id'];
 
         default:
-            return $base . '/admin' . ($clientPair ? '?' . http_build_query($clientPair) : '');
+            return pagePath('admin') . ($clientPair ? '?' . http_build_query($clientPair) : '');
+    }
+}
+
+// =====================================================================
+// Humanized activity (spec §4.1 / §9: "Activity feed contains zero raw
+// filenames"). Every sentence is built from entity_type + action + actor +
+// the *parent's* name (post title, collection name, "Library", task title).
+// The stored `summary` string is never printed — old rows embed filenames.
+// `detail` is quoted only for `commented` rows.
+// =====================================================================
+
+/** True when a label is really a filename / upload stem (IMG_0042.jpg, hf-20260904-…, img_66f1…). */
+if (!function_exists('activityLooksLikeFilename')) {
+    function activityLooksLikeFilename(string $s): bool {
+        $s = trim($s);
+        if ($s === '') return false;
+        if (preg_match('/\.(jpe?g|png|gif|webp|heic|mp4|mov|m4v|webm|avi|mkv)$/i', $s)) return true;
+        if (preg_match('/^(img|vid|batch(_vid)?|feat|veh)_[0-9a-f.]+/i', $s)) return true;   // this app's upload prefixes
+        if (preg_match('/^hf-\d{8}-\d{6}/i', $s)) return true;                                 // Higgsfield export stems
+        if (preg_match('/^(IMG|DSC|DSCF|PXL|MVI|GOPR|DJI)[_-]?\d{3,}/i', $s)) return true;     // camera / phone stems
+        return false;
+    }
+}
+
+/**
+ * Resolve the human "thing + parent" for one recentActivity() entry.
+ *
+ * Returns ['thing' => 'post'|'image'|'collection'|'task'|'item',
+ *          'name'   => post title | task title | collection name | '' ,
+ *          'parent' => collection name | 'Library' | '' ,
+ *          'parent_key' => stable key used to collapse runs].
+ * Never returns a filename: library images have no name at all (their
+ * parent is "Library"), tire images are named by their collection.
+ */
+if (!function_exists('activityParentName')) {
+    function activityParentName(array $entry): array {
+        $meta = $entry['_meta'] ?? [];
+        $id   = (int)($entry['entity_id'] ?? 0);
+        $firstLine = static function ($s, $max = 60) {
+            $s = trim((string)$s);
+            if ($s === '') return '';
+            $s = preg_split('/\r\n|\r|\n/', $s)[0];
+            $s = trim(preg_replace('/\s+/', ' ', $s));
+            if (function_exists('mb_strlen') && mb_strlen($s) > $max) {
+                $s = rtrim(mb_substr($s, 0, $max - 1)) . '…';
+            }
+            return $s;
+        };
+        switch ($entry['entity_type'] ?? '') {
+            case 'post':
+                // Internal reference name first, then the caption's first line.
+                // Either could have been typed as an upload stem — never show one.
+                $name = trim((string)($meta['name'] ?? ''));
+                if ($name === '' || activityLooksLikeFilename($name)) $name = $firstLine($meta['caption'] ?? '');
+                if (activityLooksLikeFilename($name)) $name = '';
+                return ['thing' => 'post', 'name' => $name, 'parent' => '', 'parent_key' => 'post:' . $id];
+            case 'tire_image':
+                $tireId = (int)($meta['tire_id'] ?? 0);
+                return ['thing' => 'image', 'name' => '',
+                        'parent' => trim((string)($meta['tire_name'] ?? '')),
+                        'parent_key' => 'tire:' . ($tireId > 0 ? $tireId : 'unknown')];
+            case 'tire':
+                return ['thing' => 'collection', 'name' => trim((string)($meta['name'] ?? '')),
+                        'parent' => '', 'parent_key' => 'tire:' . $id];
+            case 'library_image':
+                return ['thing' => 'image', 'name' => '', 'parent' => 'Library', 'parent_key' => 'library'];
+            case 'task':
+                return ['thing' => 'task', 'name' => $firstLine($meta['title'] ?? '', 80),
+                        'parent' => '', 'parent_key' => 'task:' . $id];
+            default:
+                return ['thing' => 'item', 'name' => '', 'parent' => '',
+                        'parent_key' => (string)($entry['entity_type'] ?? 'item') . ':' . $id];
+        }
+    }
+}
+
+/**
+ * Deep link for an activity row using the redesign's URL contracts
+ * (Posts detail sheet, Assets viewer / collection, Projects task anchor).
+ * Cross-client feeds pass the entry's own company slug through clientUrl().
+ * $collapsed = true → link to the parent (collection / Library) instead of
+ * one item, because the row stands for several items.
+ */
+if (!function_exists('activityDeepLink')) {
+    function activityDeepLink(array $entry, bool $collapsed = false): string {
+        $slug = (string)($entry['company_slug'] ?? '');
+        $qs   = $slug !== '' ? ['client' => $slug] : [];
+        $id   = (int)($entry['entity_id'] ?? 0);
+        $meta = $entry['_meta'] ?? [];
+        switch ($entry['entity_type'] ?? '') {
+            case 'post':
+                return clientUrl('posts', $qs + ['post' => $id]);
+            case 'tire_image':
+                $tireId = (int)($meta['tire_id'] ?? 0);
+                $p = $qs + ['view' => 'collections'];
+                if ($tireId > 0) $p['item'] = $tireId;
+                if (!$collapsed && $tireId > 0) { $p['asset'] = $id; $p['kind'] = 'tire'; }
+                return clientUrl('assets', $p);
+            case 'tire':
+                return clientUrl('assets', $qs + ['view' => 'collections', 'item' => $id]);
+            case 'library_image':
+                $p = $qs + ['view' => 'library'];
+                if (!$collapsed) { $p['asset'] = $id; $p['kind'] = 'library'; }
+                return clientUrl('assets', $p);
+            case 'task':
+                return clientUrl('projects', $qs) . '#task-' . $id;
+            default:
+                return clientUrl('index.php', $qs);
+        }
+    }
+}
+
+/** Pick the action that describes a batch (deny + comment in one request → "denied"). */
+if (!function_exists('activityPrimaryAction')) {
+    function activityPrimaryAction(array $actions): string {
+        static $rank = [
+            'denied' => 1, 'approved' => 2, 'reset_pending' => 3, 'posted' => 4, 'unposted' => 5,
+            'created' => 6, 'deleted' => 7,
+            'task_created' => 8, 'task_toggled' => 9, 'task_deleted' => 10, 'task_updated' => 11,
+            'edited_schedule' => 12, 'renamed_post' => 13, 'renamed_image' => 14,
+            'edited_caption' => 15, 'edited_hashtags' => 16, 'edited_type' => 17,
+            'type_changed' => 18, 'edited_image_caption' => 19,
+            'commented' => 30, 'uncommented' => 31,
+        ];
+        $best = null; $bestRank = PHP_INT_MAX;
+        foreach ($actions as $a) {
+            $r = $rank[$a] ?? 25;
+            if ($r < $bestRank) { $bestRank = $r; $best = $a; }
+        }
+        return (string)($best ?? ($actions[0] ?? 'updated'));
+    }
+}
+
+/**
+ * Turn recentActivity() entries into humanized rows.
+ *
+ *   humanizeActivityRows($entries, $role, $client)  → array of rows:
+ *     text        plain sentence         "You denied 3 images in Warhawk renders"
+ *     html        escaped HTML sentence, names wrapped in <em>
+ *     href        deep link (see activityDeepLink)
+ *     icon        icon() name            checkmark | xmark | ellipsis | calendar | plus | grid | photo | checklist
+ *     tone        approve | deny | accent | scheduled | neutral
+ *     time        created_at of the newest merged row; time_rel / time_abs formatted
+ *     count       how many items the row stands for (1 unless collapsed)
+ *     children    [['text','who','time','time_rel','href'], …]  comment texts (for the disclosure)
+ *     edits       ['caption','schedule',…] for edit batches
+ *     who, is_you, actor, action, actions, verb, thing, name, parent, parent_key,
+ *     entity_type, entity_id, entity_ids, company_id, company_name, company_slug, batch_id
+ *
+ * $viewerRole is 'client' or 'admin'; the matching actor renders as "You".
+ * $client (the scoped company row) names the other party; cross-client
+ * feeds fall back to each entry's company_name.
+ */
+if (!function_exists('humanizeActivityRows')) {
+    function humanizeActivityRows(array $entries, string $viewerRole = 'client', ?array $client = null): array {
+        $rows = [];
+        foreach ($entries as $e) {
+            $actor   = (string)($e['actor'] ?? 'unknown');
+            $actions = array_values(array_unique((array)($e['actions'] ?? [])));
+            $action  = activityPrimaryAction($actions);
+            $pn      = activityParentName($e);
+            $isYou   = ($actor === $viewerRole);
+            if ($isYou) {
+                $who = 'You';
+            } elseif ($actor === 'admin') {
+                $who = 'Joust';
+            } elseif ($actor === 'client') {
+                $who = trim((string)(($client['name'] ?? '') ?: ($e['company_name'] ?? ''))) ?: 'Your team';
+            } else {
+                $who = 'Someone';
+            }
+
+            $children = [];
+            foreach ((array)($e['details'] ?? []) as $d) {
+                if (($d['action'] ?? '') === 'commented' && trim((string)($d['text'] ?? '')) !== '') {
+                    $children[] = [
+                        'text'     => trim((string)$d['text']),
+                        'who'      => $who,
+                        'time'     => (string)($e['created_at'] ?? ''),
+                        'time_rel' => relativeTime($e['created_at'] ?? null),
+                        'href'     => activityDeepLink($e, false),
+                    ];
+                }
+            }
+            $edits = [];
+            foreach ($actions as $a) {
+                if (strpos($a, 'edited_') === 0) $edits[] = str_replace('_', ' ', substr($a, 7));
+                elseif (strpos($a, 'renamed_') === 0) $edits[] = 'name';
+                elseif ($a === 'type_changed') $edits[] = 'type';
+            }
+            $edits = array_values(array_unique($edits));
+
+            $rows[] = [
+                'key'          => $actor . '|' . $action . '|' . ($e['entity_type'] ?? '') . '|' . $pn['parent_key'],
+                'entity_type'  => (string)($e['entity_type'] ?? ''),
+                'entity_id'    => (int)($e['entity_id'] ?? 0),
+                'entity_ids'   => [(int)($e['entity_id'] ?? 0)],
+                'action'       => $action,
+                'actions'      => $actions,
+                'actor'        => $actor,
+                'who'          => $who,
+                'is_you'       => $isYou,
+                'thing'        => $pn['thing'],
+                'name'         => $pn['name'],
+                'parent'       => $pn['parent'],
+                'parent_key'   => $pn['parent_key'],
+                'count'        => 1,
+                'children'     => $children,
+                'edits'        => $edits,
+                'time'         => (string)($e['created_at'] ?? ''),
+                'company_id'   => $e['company_id'] ?? null,
+                'company_name' => (string)($e['company_name'] ?? ''),
+                'company_slug' => (string)($e['company_slug'] ?? ''),
+                'batch_id'     => $e['batch_id'] ?? null,
+                '_entry'       => $e,
+            ];
+        }
+        return activityFinalizeRows($rows);
+    }
+}
+
+/**
+ * Collapse consecutive rows with the same actor + action + parent that fall
+ * within $windowSec of each other (default 10 minutes) into one row whose
+ * count is the number of items and whose children hold every comment.
+ * Input must be newest-first (recentActivity() order). Rows sharing a
+ * batch_id were already merged by recentActivity().
+ */
+if (!function_exists('collapseActivityRuns')) {
+    function collapseActivityRuns(array $rows, int $windowSec = 600): array {
+        $out = [];
+        $prev = null;
+        foreach ($rows as $r) {
+            if ($prev !== null && $prev['key'] === $r['key']) {
+                $tPrev = strtotime((string)$prev['_last_time']);
+                $tCur  = strtotime((string)$r['time']);
+                if ($tPrev !== false && $tCur !== false && abs($tPrev - $tCur) <= $windowSec) {
+                    $prev['entity_ids'] = array_values(array_unique(array_merge($prev['entity_ids'], $r['entity_ids'])));
+                    $prev['count']      = count($prev['entity_ids']);   // distinct items, not rows
+                    $prev['children']   = array_merge($prev['children'], $r['children']);
+                    $prev['edits']      = array_values(array_unique(array_merge($prev['edits'], $r['edits'])));
+                    $prev['_last_time'] = $r['time'];
+                    if ($prev['parent'] === '' && $r['parent'] !== '') $prev['parent'] = $r['parent'];
+                    if ($prev['name'] === '' && $r['name'] !== '')     $prev['name']   = $r['name'];
+                    continue;
+                }
+            }
+            if ($prev !== null) $out[] = $prev;
+            $prev = $r;
+            $prev['_last_time'] = $r['time'];
+        }
+        if ($prev !== null) $out[] = $prev;
+        foreach ($out as &$r) { unset($r['_last_time']); }
+        unset($r);
+        return activityFinalizeRows($out);
+    }
+}
+
+/** (internal) Build text/html/href/icon/tone for rows after humanize or collapse. */
+if (!function_exists('activityFinalizeRows')) {
+    function activityFinalizeRows(array $rows): array {
+        $h = static function ($s) {
+            return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        };
+        foreach ($rows as &$r) {
+            $n      = max(1, (int)$r['count']);
+            $many   = $n > 1;
+            // Object phrase, plain + html ("3 images in <em>Warhawk renders</em>", "<em>Dominator</em>")
+            $objT = ''; $objH = '';
+            switch ($r['thing']) {
+                case 'post':
+                    if (!$many && $r['name'] !== '')      { $objT = $r['name']; $objH = '<em>' . $h($r['name']) . '</em>'; }
+                    elseif ($many)                        { $objT = $objH = $n . ' posts'; }
+                    else                                  { $objT = $objH = 'a post'; }
+                    break;
+                case 'image':
+                    $lead = $many ? $n . ' images' : 'an image';
+                    if ($r['parent'] !== '') { $objT = $lead . ' in ' . $r['parent']; $objH = $h($lead) . ' in <em>' . $h($r['parent']) . '</em>'; }
+                    else                     { $objT = $objH = $lead; }
+                    break;
+                case 'collection':
+                    if (!$many && $r['name'] !== '') { $objT = 'the ' . $r['name'] . ' collection'; $objH = 'the <em>' . $h($r['name']) . '</em> collection'; }
+                    else                             { $objT = $objH = $many ? $n . ' collections' : 'a collection'; }
+                    break;
+                case 'task':
+                    if (!$many && $r['name'] !== '') { $objT = $r['name']; $objH = '<em>' . $h($r['name']) . '</em>'; }
+                    else                             { $objT = $objH = $many ? $n . ' tasks' : 'a task'; }
+                    break;
+                default:
+                    $objT = $objH = $many ? $n . ' items' : 'an item';
+            }
+            $who  = $r['who'];
+            $whoH = $h($who);
+            $a    = $r['action'];
+            $icon = 'ellipsis'; $tone = 'neutral';
+            switch ($a) {
+                case 'approved':
+                    $verb = 'approved'; $icon = 'checkmark'; $tone = 'approve';
+                    $t = "$who approved $objT"; $hh = "$whoH approved $objH"; break;
+                case 'denied':
+                    $verb = 'denied'; $icon = 'xmark'; $tone = 'deny';
+                    $t = "$who denied $objT"; $hh = "$whoH denied $objH"; break;
+                case 'reset_pending':
+                    $verb = 'reopened'; $icon = 'grid'; $tone = 'accent';
+                    $t = "$who reopened $objT for review"; $hh = "$whoH reopened $objH for review"; break;
+                case 'posted':
+                    $verb = 'scheduled'; $icon = 'calendar'; $tone = 'scheduled';
+                    $t = "$who scheduled $objT"; $hh = "$whoH scheduled $objH"; break;
+                case 'unposted':
+                    $verb = 'unscheduled'; $icon = 'calendar'; $tone = 'neutral';
+                    $t = "$who unscheduled $objT"; $hh = "$whoH unscheduled $objH"; break;
+                case 'commented':
+                    $verb = 'commented'; $icon = 'ellipsis'; $tone = 'accent';
+                    $t = "$who commented on $objT"; $hh = "$whoH commented on $objH"; break;
+                case 'uncommented':
+                    $verb = 'cleared a comment'; $icon = 'ellipsis'; $tone = 'neutral';
+                    $t = "$who cleared a comment on $objT"; $hh = "$whoH cleared a comment on $objH"; break;
+                case 'edited_schedule':
+                    $verb = 'rescheduled'; $icon = 'calendar'; $tone = 'scheduled';
+                    $t = "$who rescheduled $objT"; $hh = "$whoH rescheduled $objH"; break;
+                case 'created':
+                    $icon = 'plus'; $tone = 'accent';
+                    if ($r['thing'] === 'post')     { $verb = 'added'; $t = "$who added $objT for review"; $hh = "$whoH added $objH for review"; }
+                    elseif ($r['thing'] === 'task') { $verb = 'opened'; $t = "$who opened $objT"; $hh = "$whoH opened $objH"; }
+                    else                            { $verb = 'added'; $t = "$who added $objT"; $hh = "$whoH added $objH"; }
+                    break;
+                case 'deleted':
+                    $verb = 'removed'; $icon = 'xmark'; $tone = 'neutral';
+                    // The entity is gone, so no name resolves; say what kind of thing it was.
+                    $kind = $r['thing'] === 'image' ? ($many ? $n . ' images' : 'an image')
+                          : ($r['thing'] === 'collection' ? ($many ? $n . ' collections' : 'a collection')
+                          : ($r['thing'] === 'post' ? ($many ? $n . ' posts' : 'a post') : $objT));
+                    $t = "$who removed $kind"; $hh = "$whoH removed " . $h($kind); break;
+                case 'task_created':
+                    $verb = 'opened'; $icon = 'checklist'; $tone = 'accent';
+                    $t = "$who opened $objT"; $hh = "$whoH opened $objH"; break;
+                case 'task_updated':
+                    $verb = 'updated'; $icon = 'checklist'; $tone = 'neutral';
+                    $t = "$who updated $objT"; $hh = "$whoH updated $objH"; break;
+                case 'task_toggled':
+                    $icon = 'checklist'; $tone = 'approve';
+                    // Direction comes from the stored status token only (never the free text).
+                    $sum = implode(' ', (array)($r['_entry']['summaries'] ?? []));
+                    $reopened = (bool)preg_match('/→\s*(open|in_progress)\b/u', $sum);
+                    $verb = $reopened ? 'reopened' : 'completed';
+                    if ($reopened) $tone = 'neutral';
+                    $t = "$who $verb $objT"; $hh = "$whoH $verb $objH"; break;
+                case 'task_deleted':
+                    $verb = 'removed'; $icon = 'xmark'; $tone = 'neutral';
+                    $t = "$who removed a task"; $hh = "$whoH removed a task"; break;
+                default:
+                    if (strpos($a, 'edited_') === 0 || strpos($a, 'renamed_') === 0 || $a === 'type_changed') {
+                        $verb = 'updated'; $icon = 'ellipsis'; $tone = 'neutral';
+                        $t = "$who updated $objT"; $hh = "$whoH updated $objH";
+                    } else {
+                        $verb = actionLabel($a); $icon = 'ellipsis'; $tone = 'neutral';
+                        $t = "$who $verb $objT"; $hh = "$whoH " . $h($verb) . " $objH";
+                    }
+            }
+            if ($r['entity_type'] === 'task' && $icon === 'ellipsis') $icon = 'checklist';
+            // One comment → quote it inline; several → the disclosure lists them.
+            if (count($r['children']) === 1) {
+                $q = $r['children'][0]['text'];
+                $qShort = (function_exists('mb_strlen') && mb_strlen($q) > 240) ? rtrim(mb_substr($q, 0, 239)) . '…' : $q;
+                $t  .= " — '" . $qShort . "'";
+                $hh .= ' — <q>' . $h($qShort) . '</q>';
+            }
+            $r['verb']     = $verb;
+            $r['text']     = $t;
+            $r['html']     = $hh;
+            $r['icon']     = $icon;
+            $r['tone']     = $tone;
+            $r['href']     = activityDeepLink($r['_entry'], $many);
+            $r['time_rel'] = relativeTime($r['time']);
+            $r['time_abs'] = absoluteTime($r['time']);
+        }
+        unset($r);
+        return $rows;
     }
 }
 
 /**
  * Render the activity feed panel HTML. $companyId optional (null = global).
  * Returns a string of HTML — caller is responsible for surrounding container.
+ *
+ * Signature unchanged (admin.php and index.php call it). Rows are now the
+ * humanized, run-collapsed sentences from humanizeActivityRows() +
+ * collapseActivityRuns(); the markup keeps the legacy class names
+ * (.activity-day / .activity-row / .activity-actor / .activity-text /
+ * .activity-detail / .activity-time) so existing page CSS still applies.
  */
 function renderActivityFeed(PDO $pdo, $companyId = null, $limit = 20) {
-    $entries = recentActivity($pdo, $companyId, $limit);
+    global $client;
+    $entries = recentActivity($pdo, $companyId, (int)$limit * 2);
     if (!$entries) {
         return '<div class="activity-empty">No activity yet. Approvals, comments, and edits will show up here.</div>';
     }
     $h = function ($s) {
         return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
     };
+    $viewerRole = isAdmin() ? 'admin' : 'client';
+    $scoped = $companyId ? (is_array($client) && (int)($client['id'] ?? 0) === (int)$companyId ? $client : null) : null;
+    $rows = collapseActivityRuns(humanizeActivityRows($entries, $viewerRole, $scoped));
+    $rows = array_slice($rows, 0, max(1, (int)$limit));
+
     $out = '';
     $lastBucket = null;
-    foreach ($entries as $e) {
-        $bucket = dayBucket($e['created_at']);
+    foreach ($rows as $r) {
+        $bucket = dayBucket($r['time']);
         if ($bucket !== $lastBucket) {
             $out .= '<div class="activity-day">' . $h($bucket) . '</div>';
             $lastBucket = $bucket;
         }
-        $actor   = $e['actor'] ?: 'unknown';
-        $actions = array_unique($e['actions']);
-        $primary = $actions[0];
-        $verb    = count($actions) > 1
-            ? 'made ' . count($actions) . ' edits'
-            : actionLabel($primary);
-        // Prefer human-readable labels (admin-set image display_name, then caption)
-        // before falling back to "image #42" or the bare entity_type id.
-        if ($e['entity_type'] === 'post') {
-            $meta = $e['_meta'] ?? [];
-            $entityLabel = postDisplayLabel([
-                'name'    => $meta['name'] ?? '',
-                'caption' => $meta['caption'] ?? '',
-                'id'      => (int)$e['entity_id'],
-            ]);
-        } elseif ($e['entity_type'] === 'tire_image') {
-            $meta = $e['_meta'] ?? [];
-            $named = imageDisplayLabel([
-                'display_name' => $meta['display_name'] ?? '',
-                'caption'      => $meta['caption'] ?? '',
-                'id'           => (int)$e['entity_id'],
-            ]);
-            // imageDisplayLabel already returns "image #N" when nothing better exists,
-            // so use it verbatim — no double prefix.
-            $entityLabel = $named;
-        } elseif ($e['entity_type'] === 'task') {
-            $entityLabel = 'task #' . (int)$e['entity_id'];
-        } elseif ($e['entity_type'] === 'library_image') {
-            $meta = $e['_meta'] ?? [];
-            $entityLabel = !empty($meta['filename']) ? $meta['filename'] : 'image #' . (int)$e['entity_id'];
-        } else {
-            $entityLabel = $e['entity_type'] . ' #' . (int)$e['entity_id'];
-        }
-        $companyLine = $e['company_name']
-            ? '<span class="activity-company">' . $h($e['company_name']) . '</span> '
+        $actor = $r['actor'] ?: 'unknown';
+        $pill  = $actor === 'admin' ? 'Joust' : ($actor === 'client' ? ($r['company_name'] !== '' ? $r['company_name'] : 'Client') : 'Unknown');
+        $companyLine = ($companyId === null && $r['company_name'] !== '' && $actor !== 'client')
+            ? '<span class="activity-company">' . $h($r['company_name']) . '</span> · '
             : '';
-        $rel  = relativeTime($e['created_at']);
-        $abs  = absoluteTime($e['created_at']);
-        $link = activityLink($e);
-
         $detailHtml = '';
-        if ($e['details']) {
-            foreach ($e['details'] as $d) {
-                if (in_array($d['action'], ['commented', 'uncommented'], true) && $d['text']) {
-                    $detailHtml .= '<div class="activity-detail">"' . $h(mb_substr($d['text'], 0, 240))
-                                . (mb_strlen($d['text']) > 240 ? '…' : '') . '"</div>';
-                }
+        if (count($r['children']) > 1) {
+            foreach ($r['children'] as $c) {
+                $q = $c['text'];
+                $detailHtml .= '<div class="activity-detail">"' . $h(mb_substr($q, 0, 240))
+                            . (mb_strlen($q) > 240 ? '…' : '') . '"</div>';
             }
         }
+        $editList = $r['edits'] ? '<span class="activity-verb"> — ' . $h(implode(', ', $r['edits'])) . '</span>' : '';
 
-        $editFields = [];
-        foreach ($actions as $a) {
-            if (strpos($a, 'edited_') === 0) {
-                $editFields[] = trim(str_replace('_', ' ', substr($a, 7)));
-            }
-        }
-        $editList = $editFields ? ' — ' . $h(implode(', ', $editFields)) : '';
-
-        $out .= '<a class="activity-row" href="' . $h($link) . '">'
-              . '<span class="activity-actor activity-actor-' . $h($actor) . '">' . $h($actor) . '</span>'
+        $out .= '<a class="activity-row" href="' . $h($r['href']) . '">'
+              . '<span class="activity-actor activity-actor-' . $h($actor) . '">' . $h($pill) . '</span>'
               . '<span class="activity-text">'
               . $companyLine
-              . '<span class="activity-verb">' . $h($verb) . '</span> '
-              . '<span class="activity-target">' . $h($entityLabel) . '</span>'
-              . $h($editList)
+              . '<span class="activity-target">' . $r['html'] . '</span>'
+              . $editList
               . $detailHtml
               . '</span>'
-              . '<span class="activity-time" title="' . $h($abs) . '">' . $h($rel) . '</span>'
+              . '<span class="activity-time" title="' . $h($r['time_abs']) . '">' . $h($r['time_rel']) . '</span>'
               . '</a>';
     }
     return $out;
@@ -853,4 +1454,94 @@ function renderBrand($client, $sub = '') {
     $subHtml = $sub !== '' ? '<span class="brand-sub">' . $h($sub) . '</span>' : '';
 
     return '<div class="brand">' . $mark . '<span class="brand-name">' . $h($name) . '</span>' . $subHtml . '</div>';
+}
+
+// =====================================================================
+// New shell (static/ + partials/) — see partials/layout-top.php for the
+// page-level usage; the functions below are what the legacy pages call.
+// =====================================================================
+
+/**
+ * 36px rounded-square client avatar: the logo when the company has one,
+ * otherwise the first letter of the name on a tertiary fill. Unscoped → "J".
+ */
+if (!function_exists('clientAvatar')) {
+    function clientAvatar($client, string $class = ''): string {
+        $name = !empty($client['name']) ? (string)$client['name'] : 'Joust Media';
+        $logo = !empty($client['logo_url']) ? (string)$client['logo_url'] : '';
+        $cls  = trim('ui-avatar ' . $class);
+        if ($logo !== '') {
+            return '<img class="' . esc($cls) . '" src="' . esc($logo) . '" alt="' . esc($name) . '" width="36" height="36" loading="lazy">';
+        }
+        $initial = function_exists('mb_substr') ? mb_substr($name, 0, 1, 'UTF-8') : substr($name, 0, 1);
+        $initial = function_exists('mb_strtoupper') ? mb_strtoupper($initial, 'UTF-8') : strtoupper($initial);
+        return '<span class="' . esc($cls . ' ui-avatar--initial') . '" aria-label="' . esc($name) . '">' . esc($initial) . '</span>';
+    }
+}
+
+/** Root-rooted URL for a file under static/, cache-busted by mtime. */
+function staticUrl(string $path): string {
+    $path = ltrim($path, '/');
+    $file = __DIR__ . '/static/' . $path;
+    $v    = is_file($file) ? (string)filemtime($file) : '';
+    return basePath() . '/static/' . $path . ($v !== '' ? '?v=' . $v : '');
+}
+
+/** The four shared stylesheets, in cascade order. */
+function appStylesheets(): string {
+    $out = '';
+    foreach (['tokens', 'base', 'components', 'motion'] as $name) {
+        $out .= '<link rel="stylesheet" href="' . esc(staticUrl('css/' . $name . '.css')) . '">' . "\n";
+    }
+    return $out;
+}
+
+/** app.js — deferred so it can sit in <head> on legacy pages. */
+function appScript(): string {
+    return '<script src="' . esc(staticUrl('js/app.js')) . '" defer></script>' . "\n";
+}
+
+/**
+ * Everything a legacy page needs in its existing <head> to render inside the
+ * new shell: color-scheme/theme-color metas, the stylesheets and app.js.
+ * (New pages use partials/layout-top.php instead.)
+ */
+function renderAppHead(): string {
+    return "\n" . '<meta name="color-scheme" content="light dark">' . "\n"
+         . '<meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">' . "\n"
+         . '<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">' . "\n"
+         . '<meta name="format-detection" content="telephone=no">' . "\n"
+         . appStylesheets()
+         . appScript();
+}
+
+/**
+ * Nav bar + role-aware tab bar as one HTML string. Safe to call from any
+ * page scope: the partials get $pdo/$client/$role via `global` here.
+ *
+ *   $opts: 'subtitle' (eyebrow), 'back' (['href','label']), 'leading' (HTML),
+ *          'trailing' (HTML; default client avatar; '' hides),
+ *          'links' ([['label','href','primary']]), 'wide' (bool),
+ *          'width' ('900px' — content column to align the nav with),
+ *          'active' (tab id), 'tabs' (bool; default: client scoped or admin)
+ */
+function renderAppChrome(string $pageTitle, array $opts = []): string {
+    global $pdo, $client, $clientSlug, $role;
+
+    $navSubtitle = isset($opts['subtitle']) ? (string)$opts['subtitle'] : '';
+    $navBack     = isset($opts['back']) && is_array($opts['back']) ? $opts['back'] : null;
+    $navLeading  = isset($opts['leading']) ? (string)$opts['leading'] : '';
+    $navTrailing = array_key_exists('trailing', $opts) ? $opts['trailing'] : null;
+    $navLinks    = isset($opts['links']) && is_array($opts['links']) ? $opts['links'] : [];
+    $navWide     = !empty($opts['wide']);
+    $navWidth    = isset($opts['width']) && preg_match('/^\d{2,4}px$/', (string)$opts['width']) ? (string)$opts['width'] : '';
+    $activeTab   = isset($opts['active']) ? $opts['active'] : null;
+    $showTabs    = array_key_exists('tabs', $opts) ? (bool)$opts['tabs'] : (!empty($client) || isAdmin());
+
+    ob_start();
+    include __DIR__ . '/partials/navbar.php';
+    if ($showTabs) {
+        include __DIR__ . '/partials/tabbar.php';
+    }
+    return (string)ob_get_clean();
 }

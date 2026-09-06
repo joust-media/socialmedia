@@ -1,0 +1,404 @@
+/* =====================================================================
+   Studio (admin only) — composer, Approved Pool picker, batch builder,
+   uploads zone, hub. Loads after tokens/base/components/motion + posts.css
+   (posts.css owns the .ig-* / .pd-* preview rules so the composer preview
+   is the very same markup + CSS the client sees in Posts).
+   Only transform/opacity are animated. --joust is used ONLY on the large
+   title here (and the Studio tab, in components.css).
+   ===================================================================== */
+
+/* Large title in Joust orange — Studio is the one admin-only surface */
+.page-studio .ui-nav-title { color: var(--joust); }
+
+/* ---------------------------------------------------------------------
+   Shared bits
+   --------------------------------------------------------------------- */
+.studio-toolbar { margin: 4px 0 18px; }
+.studio-toolbar .ui-segmented { max-width: 560px; }
+.studio-section[hidden] { display: none; }
+.studio-section-title {
+  margin: 0;
+  font-size: var(--text-title2); line-height: var(--lh-title2);
+  letter-spacing: var(--ls-title2); font-weight: var(--fw-title2);
+}
+.studio-section-title--sm {
+  font-size: var(--text-headline); line-height: var(--lh-headline);
+  letter-spacing: var(--ls-headline); font-weight: var(--fw-headline);
+  margin-bottom: 8px;
+}
+.studio-alert {
+  margin: 0 0 16px; padding: 12px 16px;
+  border-radius: var(--radius-list);
+  background: var(--bg-elevated);
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.studio-alert--ok    { box-shadow: inset 3px 0 0 var(--approve); }
+.studio-alert--error { box-shadow: inset 3px 0 0 var(--deny); }
+.studio-alert ul { margin: 0; padding-left: 18px; }
+.studio-alert li + li { margin-top: 4px; }
+.studio-help {
+  margin: 6px 0 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote);
+  color: var(--label-secondary);
+}
+.studio-help a { color: var(--accent); text-decoration: none; }
+.studio-label {
+  display: block; margin: 0 0 6px; padding: 0 2px;
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: 0.2px;
+  font-weight: 600; text-transform: uppercase; color: var(--label-secondary);
+}
+.studio-label .text-tertiary { text-transform: none; font-weight: 400; letter-spacing: var(--ls-footnote); }
+.studio-count {
+  font-size: var(--text-body); font-weight: 600; color: var(--label);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Chips (filters, categories, actor pick) */
+.studio-chips {
+  display: flex; gap: 6px; margin: 10px 0;
+  overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  padding: 2px;
+}
+.studio-chips::-webkit-scrollbar { display: none; }
+.studio-chips--wrap { flex-wrap: wrap; overflow: visible; }
+.studio-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 32px; padding: 4px 12px; flex: 0 0 auto;
+  border: 0; border-radius: var(--radius-pill);
+  background: var(--fill-tertiary); color: var(--label);
+  font-size: var(--text-footnote); line-height: 18px; letter-spacing: var(--ls-footnote); font-weight: 600;
+  cursor: pointer; user-select: none; white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.studio-chip:active { transform: scale(0.96); }
+.studio-chip.is-active { background: var(--accent); color: #fff; }
+.studio-chip.is-active .studio-chip-n { color: rgba(255,255,255,.75); }
+.studio-chip input { position: absolute; opacity: 0; width: 0; height: 0; }
+.studio-chip--static { cursor: default; color: var(--label-secondary); }
+.studio-chip-n { color: var(--label-secondary); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------------
+   Composer layout: picker left/top, form + preview right/bottom
+   --------------------------------------------------------------------- */
+.studio-composer, .studio-batch {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start;
+}
+@media (min-width: 1024px) {
+  .studio-composer, .studio-batch { grid-template-columns: minmax(0, 1fr) 420px; gap: 28px; }
+}
+.studio-composer-side, .studio-batch-side { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.studio-composer-pool, .studio-batch-pool { min-width: 0; }
+
+/* ---------------------------------------------------------------------
+   Approved Pool picker
+   --------------------------------------------------------------------- */
+.studio-picker { margin: 0 0 20px; }
+.studio-picker-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.studio-picker-sub { margin: 2px 0 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); }
+.studio-pool { margin-top: 4px; }
+.studio-asset {
+  padding: 0; border: 0; cursor: pointer; text-align: left; color: inherit;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.studio-asset:active { transform: scale(0.97); }
+.studio-asset:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.studio-asset img, .studio-asset video, .studio-asset .ui-video-tile {
+  transition: transform var(--dur-base) var(--ease-out), opacity var(--dur-base) var(--ease-out);
+}
+.studio-asset.is-selected img, .studio-asset.is-selected video, .studio-asset.is-selected .ui-video-tile { transform: scale(0.92); border-radius: 8px; }
+.studio-asset .ui-video-tile img { transition: none; }
+.studio-asset-duration { bottom: auto; top: 6px; right: 6px; }
+.studio-asset[hidden] { display: none; }
+.studio-asset-order {
+  position: absolute; top: 6px; right: 6px;
+  min-width: 24px; height: 24px; padding: 0 7px;
+  border-radius: 12px;
+  background: var(--accent); color: #fff;
+  font-size: var(--text-caption); font-weight: 700; line-height: 24px; text-align: center;
+  box-shadow: 0 0 0 2px var(--bg-elevated);
+  opacity: 0; transform: scale(0.6);
+  transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-base) var(--ease-spring);
+  pointer-events: none;
+}
+.studio-asset.is-selected .studio-asset-order { opacity: 1; transform: none; }
+.studio-asset-group {
+  max-width: calc(100% - 12px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; line-height: 16px; padding: 2px 7px;
+}
+.studio-asset.is-disabled { opacity: .45; cursor: not-allowed; }
+.studio-pool-empty[hidden] { display: none; }
+.studio-pool-empty a { color: var(--accent); text-decoration: none; font-weight: 600; }
+
+/* Selected strip — carousel order; drag (Pointer Events) or arrows */
+.studio-strip { margin-top: 14px; }
+.studio-strip[hidden] { display: none; }
+.studio-strip-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; padding: 0 2px; }
+.studio-strip-title {
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: 0.2px;
+  font-weight: 600; text-transform: uppercase; color: var(--label-secondary);
+}
+.studio-strip-list {
+  display: flex; gap: 10px; margin: 0; padding: 6px 2px 8px; list-style: none;
+  overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+}
+.studio-strip-list::-webkit-scrollbar { display: none; }
+.studio-strip-item {
+  position: relative; flex: 0 0 auto; width: 96px;
+  touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.studio-strip-item .ui-thumb { cursor: grab; }
+.studio-strip-item.is-dragging { z-index: 3; }
+.studio-strip-item.is-dragging .ui-thumb {
+  cursor: grabbing; transform: scale(1.06);
+  box-shadow: var(--shadow-card), 0 12px 32px rgba(0,0,0,.22);
+}
+.studio-strip-item .ui-thumb { transition: transform var(--dur-base) var(--ease-spring), box-shadow var(--dur-base) var(--ease-out); }
+.studio-strip-item.is-shift-left .ui-thumb  { transform: translateX(-12px); }
+.studio-strip-item.is-shift-right .ui-thumb { transform: translateX(12px); }
+.studio-strip-num {
+  position: absolute; top: 6px; left: 6px;
+  min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px;
+  background: rgba(0,0,0,.6); color: #fff;
+  font-size: var(--text-caption); font-weight: 700; line-height: 22px; text-align: center;
+  pointer-events: none;
+}
+.studio-strip-ctl {
+  display: flex; justify-content: space-between; gap: 2px; margin-top: 4px;
+}
+.studio-strip-ctl button {
+  flex: 1 1 0; min-height: 28px; padding: 0; border: 0; border-radius: 7px;
+  background: var(--fill-tertiary); color: var(--label-secondary);
+  font-size: var(--text-caption); font-weight: 700; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.studio-strip-ctl button:disabled { opacity: .35; cursor: default; }
+.studio-strip-ctl button:hover:not(:disabled) { color: var(--label); }
+.studio-strip-ctl button[data-strip-remove] { color: var(--deny); }
+.studio-strip-ctl .ui-icon { width: 14px; height: 14px; }
+.studio-strip-label {
+  margin-top: 4px; font-size: 11px; line-height: 14px; color: var(--label-secondary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------
+   Drop zones (one-offs in the composer/batch, the Uploads section)
+   --------------------------------------------------------------------- */
+.studio-upload-oneoff { margin-top: 8px; }
+.studio-dropzone {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  padding: 20px 16px; text-align: center;
+  border: 1.5px dashed var(--separator); border-radius: var(--radius-list);
+  background: var(--bg-elevated); cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
+}
+.studio-dropzone input[type="file"] { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+.studio-dropzone:hover, .studio-dropzone.is-dragover { border-color: var(--accent); background: rgba(0,122,255,.06); }
+.studio-dropzone:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.studio-dropzone--lg { padding: 44px 20px; gap: 6px; }
+.studio-dropzone-icon .ui-icon { width: 32px; height: 32px; color: var(--accent); }
+.studio-dropzone-label {
+  font-size: var(--text-headline); line-height: var(--lh-headline); letter-spacing: var(--ls-headline); font-weight: 600; color: var(--accent);
+}
+.studio-dropzone--sm .studio-dropzone-label { font-size: var(--text-subhead); }
+.studio-dropzone-hint {
+  max-width: 520px;
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote); color: var(--label-secondary);
+}
+.studio-dropzone input:disabled ~ .studio-dropzone-label { color: var(--label-tertiary); }
+.studio-filelist { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.studio-filelist li {
+  display: flex; align-items: center; gap: 10px; padding: 6px 10px;
+  border-radius: 10px; background: var(--bg-elevated);
+  font-size: var(--text-footnote); line-height: var(--lh-footnote);
+}
+.studio-filelist .studio-file-thumb { width: 36px; height: 36px; border-radius: 8px; object-fit: cover; background: var(--fill-tertiary); flex: 0 0 auto; }
+.studio-filelist .studio-file-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studio-filelist .studio-file-meta { color: var(--label-secondary); white-space: nowrap; }
+.studio-filelist .is-rejected { color: var(--deny); }
+.studio-legend { margin-top: 10px; }
+.studio-legend summary { cursor: pointer; font-size: var(--text-footnote); color: var(--label-secondary); }
+
+/* ---------------------------------------------------------------------
+   Live preview — a phone-width card holding the exact Posts detail partial
+   --------------------------------------------------------------------- */
+.studio-preview-head { margin-bottom: 8px; }
+.studio-preview-sub { margin: 2px 0 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); }
+.studio-phone {
+  max-width: 420px; margin: 0 auto; padding: 4px 16px 10px;
+  background: var(--bg-elevated); border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card), 0 0 0 0.5px var(--separator);
+  overflow: hidden;
+}
+.studio-pd .pd-meta { padding-bottom: 8px; }
+.studio-pd .pd-media { border-radius: 0; }
+.studio-pd .pd-slide { aspect-ratio: 1 / 1; max-height: 420px; }
+.studio-pd .pd-media--empty { margin: 0 -16px; min-height: 200px; }
+.studio-pd .pd-when-row { cursor: default; }
+.studio-pd .ig { padding-top: 12px; }
+
+/* ---------------------------------------------------------------------
+   Form fields
+   --------------------------------------------------------------------- */
+.studio-fields { display: flex; flex-direction: column; gap: 14px; }
+.studio-field { min-width: 0; }
+.studio-field--inline { max-width: 180px; }
+.studio-field-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.studio-caption { min-height: 120px; }
+.studio-tags { min-height: 64px; color: var(--accent); }
+.studio-defaults {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-mono); font-size: var(--text-caption); color: var(--label-secondary);
+}
+.studio-actions { display: flex; justify-content: flex-end; gap: 10px; padding-top: 6px; }
+.studio-actions--batch .ui-btn--large { flex: 1 1 auto; }
+.studio-existing { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
+.studio-existing-item { cursor: pointer; }
+.studio-existing-item input { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; margin: 0; accent-color: var(--deny); }
+.studio-existing-item.is-marked img, .studio-existing-item.is-marked video, .studio-existing-item.is-marked .ui-video-tile { opacity: .3; }
+.studio-existing-x {
+  position: absolute; left: 6px; bottom: 6px; padding: 2px 7px; border-radius: 999px;
+  background: rgba(0,0,0,.55); color: #fff; font-size: 11px; font-weight: 600; line-height: 16px;
+  opacity: 0; transition: opacity var(--dur-fast) var(--ease-out);
+}
+.studio-existing-item.is-marked .studio-existing-x { opacity: 1; }
+
+/* Comments (edit mode) */
+.studio-thread { margin-top: 24px; }
+.studio-reply { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.studio-reply-row { display: flex; align-items: center; gap: 6px; }
+.studio-reply .studio-chip { position: relative; }
+.studio-reply .studio-chip:has(input:checked) { background: var(--accent); color: #fff; }
+.studio-danger { margin: 16px 0 0; text-align: center; }
+.studio-danger-btn { color: var(--deny); }
+
+/* ---------------------------------------------------------------------
+   Batch builder
+   --------------------------------------------------------------------- */
+.studio-batch-pickactions { display: flex; gap: 8px; margin: -8px 0 20px; }
+.studio-batch-pickactions .ui-btn { flex: 1 1 0; }
+.studio-batch-meta { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.studio-batch-meta strong { font-size: var(--text-headline); font-weight: 600; }
+.studio-rows-list { overflow: visible; }
+.studio-rows-empty[hidden] { display: none; }
+.studio-row {
+  position: relative; display: flex; gap: 12px; padding: 12px 16px;
+}
+.studio-row + .studio-row::before {
+  content: ""; position: absolute; top: 0; left: 16px; right: 0; height: 0.5px; background: var(--separator);
+}
+.studio-row-media { flex: 0 0 auto; width: 72px; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; align-content: start; }
+.studio-row-media .studio-row-thumb {
+  aspect-ratio: 1 / 1; border-radius: 6px; overflow: hidden; background: var(--fill-tertiary);
+}
+.studio-row-media .studio-row-thumb:first-child:nth-last-child(1) { grid-column: 1 / -1; border-radius: 10px; }
+.studio-row-media img, .studio-row-media video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.studio-row-more {
+  display: flex; align-items: center; justify-content: center;
+  font-size: var(--text-caption); font-weight: 700; color: var(--label-secondary);
+}
+.studio-row-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.studio-row-caption { min-height: 56px; }
+.studio-row-fields { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.studio-row-fields .ui-input, .studio-row-fields .ui-select { flex: 1 1 150px; min-height: 36px; padding: 6px 10px; font-size: var(--text-subhead); }
+.studio-row-remove { margin-left: auto; color: var(--deny); }
+
+/* Progress */
+.studio-progress { margin: 4px 0; }
+.studio-progress[hidden] { display: none; }
+.studio-progress-bar { height: 6px; border-radius: 3px; background: var(--fill-tertiary); overflow: hidden; }
+.studio-progress-fill {
+  height: 100%; width: 100%; border-radius: 3px; background: var(--accent);
+  transform: translateX(-100%); transform-origin: left;
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.studio-progress-text { margin: 6px 0 0; font-size: var(--text-footnote); color: var(--label-secondary); text-align: center; }
+.studio-results[hidden] { display: none; }
+.studio-results .ui-list { margin-top: 8px; }
+.studio-result-ok .ui-row-leading--icon { background: var(--approve); }
+.studio-result-err .ui-row-leading--icon { background: var(--deny); }
+
+/* ---------------------------------------------------------------------
+   Uploads zone
+   --------------------------------------------------------------------- */
+.studio-uploadlist { margin: 12px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.studio-upload-item {
+  display: flex; gap: 12px; padding: 12px;
+  background: var(--bg-elevated); border-radius: var(--radius-list);
+}
+.studio-upload-thumb {
+  flex: 0 0 auto; width: 56px; height: 56px; border-radius: 10px; overflow: hidden;
+  background: var(--fill-tertiary); display: flex; align-items: center; justify-content: center; color: var(--label-secondary);
+}
+.studio-upload-thumb img, .studio-upload-thumb video { width: 100%; height: 100%; object-fit: cover; }
+.studio-upload-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.studio-upload-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studio-upload-meta { font-size: var(--text-footnote); line-height: var(--lh-footnote); }
+.studio-upload-warning {
+  margin-top: 4px; padding: 10px 12px; border-radius: 10px;
+  background: rgba(255,149,0,.12); color: var(--label);
+  font-size: var(--text-footnote); line-height: var(--lh-footnote);
+}
+.studio-upload-warning[hidden] { display: none; }
+.studio-upload-warning strong { color: var(--pending); }
+.studio-upload-warning-actions { margin-top: 8px; max-width: 280px; }
+.studio-upload-status { font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary); }
+.studio-upload-status.is-ok { color: var(--approve); font-weight: 600; }
+.studio-upload-status.is-error { color: var(--deny); font-weight: 600; }
+.studio-upload-status a { color: var(--accent); text-decoration: none; }
+
+/* ---------------------------------------------------------------------
+   Activity feed (helpers' renderActivityFeed markup — legacy class names)
+   --------------------------------------------------------------------- */
+.studio-activity .ui-card-body { padding: 0; max-height: 420px; overflow-y: auto; }
+.studio-activity-list .activity-day {
+  position: sticky; top: 0; z-index: 1;
+  padding: 6px 16px; background: var(--bg-elevated);
+  font-size: var(--text-caption); line-height: var(--lh-caption); letter-spacing: 0.2px;
+  font-weight: 600; text-transform: uppercase; color: var(--label-secondary);
+  box-shadow: 0 0.5px 0 var(--separator);
+}
+.studio-activity-list .activity-row {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: start;
+  padding: 10px 16px; color: var(--label); text-decoration: none;
+  box-shadow: inset 0 0.5px 0 var(--separator);
+}
+.studio-activity-list .activity-row:hover { background: var(--fill-tertiary); }
+.studio-activity-list .activity-actor {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  background: var(--fill-tertiary); color: var(--label-secondary);
+  font-size: 11px; line-height: 16px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; white-space: nowrap;
+}
+.studio-activity-list .activity-actor-client { background: rgba(0,122,255,.14); color: var(--accent); }
+.studio-activity-list .activity-actor-admin  { background: rgba(255,106,61,.16); color: var(--joust); }
+.studio-activity-list .activity-text { font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead); min-width: 0; }
+.studio-activity-list .activity-company { font-weight: 600; }
+.studio-activity-list .activity-verb { color: var(--label-secondary); }
+.studio-activity-list .activity-target { color: var(--accent); }
+.studio-activity-list .activity-detail { margin-top: 2px; font-size: var(--text-footnote); color: var(--label-secondary); }
+.studio-activity-list .activity-time { font-size: var(--text-caption); color: var(--label-tertiary); white-space: nowrap; }
+.studio-activity-list .activity-empty { padding: 24px 16px; text-align: center; color: var(--label-secondary); font-size: var(--text-subhead); }
+@media (max-width: 600px) {
+  .studio-activity-list .activity-row { grid-template-columns: auto 1fr; }
+  .studio-activity-list .activity-time { grid-column: 2; }
+}
+
+/* ---------------------------------------------------------------------
+   Reduced motion / contrast
+   --------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .studio-asset, .studio-asset img, .studio-asset video, .studio-asset-order,
+  .studio-strip-item .ui-thumb, .studio-chip, .studio-progress-fill, .studio-dropzone {
+    transition-duration: var(--dur-fast);
+    transition-property: opacity, background-color, border-color;
+  }
+  .studio-asset:active, .studio-chip:active { transform: none; }
+  .studio-asset.is-selected img, .studio-asset.is-selected video { transform: none; opacity: .75; }
+  .studio-strip-item.is-shift-left .ui-thumb, .studio-strip-item.is-shift-right .ui-thumb,
+  .studio-strip-item.is-dragging .ui-thumb { transform: none; }
+}
+@media (prefers-contrast: more) {
+  .studio-dropzone { border-color: var(--label-secondary); }
+  .studio-chip { box-shadow: inset 0 0 0 1px var(--separator); }
+}

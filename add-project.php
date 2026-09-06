@@ -1,8 +1,10 @@
 <?php
 /**
- * Project module entry from the admin dashboard.
- * For now this just forwards to the existing projects.php UI
- * where the "add task" form lives.
+ * Legacy shim — the "add task" form lives on the Projects page.
+ * 301s there, preserving ?client=.
  */
-header('Location: projects.php');
+require __DIR__ . '/db.php';
+require __DIR__ . '/helpers.php';
+
+header('Location: ' . clientUrl('projects.php'), true, 301);
 exit;
