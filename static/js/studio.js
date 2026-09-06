@@ -29,6 +29,14 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
   }
 
+  /* Link to one post in Posts. The server hands us a clientUrl('posts.php', ['post' => '__ID__'])
+     template (cfg.postUrl) so the URL shape (.php vs. pretty) is decided in one place (helpers.php);
+     the fallback builds the explicit .php form from the base path. */
+  function postUrl(c, id) {
+    var tpl = c.postUrl || ((c.base || '') + '/posts.php?client=' + encodeURIComponent(c.client || '') + '&post=__ID__');
+    return tpl.replace('__ID__', encodeURIComponent(id));
+  }
+
   /* Same transformation as posts.js linkTags(): escape → wrap #tags → newlines. */
   function linkTags(text) {
     var safe = esc(text);
@@ -604,7 +612,7 @@
       else {
         var when = created.date ? formatWhen(String(created.date).replace(' ', 'T')) : '';
         status.innerHTML = 'Draft post #' + esc(created.post_id) + (when ? ' · ' + esc(when) : '')
-          + ' — <a href="' + esc((cfg.base || '') + '/posts?client=' + encodeURIComponent(cfg.client || '') + '&post=' + encodeURIComponent(created.post_id)) + '">finish it in Posts</a>';
+          + ' — <a href="' + esc(postUrl(cfg, created.post_id)) + '">finish it in Posts</a>';
         status.classList.add('is-ok');
       }
       self.busy = false; self.next();
@@ -759,7 +767,7 @@
       results.hidden = false;
       list.innerHTML = (data.created || []).map(function (c) {
         var when = c.date ? formatWhen(String(c.date).replace(' ', 'T')) : '';
-        return '<li><a class="ui-row ui-row--leading-sm studio-result-ok" href="' + esc((cfg.base || '') + '/posts?client=' + encodeURIComponent(cfg.client || '') + '&post=' + encodeURIComponent(c.post_id)) + '">'
+        return '<li><a class="ui-row ui-row--leading-sm studio-result-ok" href="' + esc(postUrl(cfg, c.post_id)) + '">'
           + '<div class="ui-row-leading ui-row-leading--icon">' + ICON.check + '</div>'
           + '<div class="ui-row-body"><div class="ui-row-title">Post #' + esc(c.post_id) + ' — ' + esc(c.filename || '') + '</div><div class="ui-row-subtitle">' + esc(when) + (c.assets ? ' · ' + c.assets + ' media' : '') + '</div></div>'
           + '</a></li>';

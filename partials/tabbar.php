@@ -100,7 +100,7 @@ $uiBrandHref = clientUrl($uiIsAdmin && empty($client) ? 'admin.php' : 'index.php
     <?php endforeach; ?>
   </ul>
   <?php if ($uiIsAdmin): ?>
-    <div class="ui-tabbar-footer">Signed in as Joust · <a href="<?= esc(basePath() . '/logout') ?>">Sign out</a></div>
+    <div class="ui-tabbar-footer">Signed in as Joust · <a href="<?= esc(pagePath('logout')) ?>">Sign out</a></div>
   <?php endif; ?>
 </nav>
 <?php unset($uiTabs, $uiIsAdmin, $uiActive, $uiScript, $uiKey, $uiTab, $uiBadges, $uiCid, $uiSt, $uiErr, $uiBrandName, $uiBrandHref, $uiIsActive, $uiCount, $uiCls); ?>

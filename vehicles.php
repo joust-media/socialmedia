@@ -74,7 +74,7 @@ function vehUrl($make = null, $type = null, $q = null) {
     if ($make !== '') { $qs['make'] = $make; }
     if ($type !== '') { $qs['type'] = $type; }
     if ($q    !== '') { $qs['q']    = $q; }
-    return 'vehicles' . ($qs ? '?' . http_build_query($qs) : '');
+    return 'vehicles.php' . ($qs ? '?' . http_build_query($qs) : '');
 }
 
 /** "2024 Yamaha YXZ1000R" style label. */
@@ -190,11 +190,11 @@ function vehicleLabel($v) {
       'active'   => 'studio',
       'width'    => '980px',
       'trailing' => '',
-      'back'     => ['href' => 'admin', 'label' => 'Studio'],
+      'back'     => ['href' => 'admin.php', 'label' => 'Studio'],
       'links'    => [
-        ['label' => 'New vehicle', 'href' => 'add-vehicle', 'primary' => true],
-        ['label' => 'Prompts',     'href' => 'prompts'],
-        ['label' => 'Sign out',    'href' => 'logout', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
+        ['label' => 'New vehicle', 'href' => 'add-vehicle.php', 'primary' => true],
+        ['label' => 'Prompts',     'href' => 'prompts.php'],
+        ['label' => 'Sign out',    'href' => 'logout.php', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
       ],
     ]) ?>
 
@@ -210,13 +210,13 @@ function vehicleLabel($v) {
   <?php if (!$tableReady): ?>
     <div class="errors">
       ⚠ The <code>vehicles</code> table doesn't exist yet. Visit
-      <a href="migrate" style="color:inherit;text-decoration:underline;">migrate</a>
+      <a href="migrate.php" style="color:inherit;text-decoration:underline;">migrate</a>
       to create it, then come back.
     </div>
   <?php else: ?>
 
     <div class="filters">
-      <form class="search-box" method="GET" action="vehicles">
+      <form class="search-box" method="GET" action="vehicles.php">
         <?php if ($filterMake !== ''): ?><input type="hidden" name="make" value="<?= h($filterMake) ?>"><?php endif; ?>
         <?php if ($filterType !== ''): ?><input type="hidden" name="type" value="<?= h($filterType) ?>"><?php endif; ?>
         <input type="text" name="q" value="<?= h($search) ?>" placeholder="Search manufacturer, model or type…">
@@ -280,8 +280,8 @@ function vehicleLabel($v) {
               </div>
             </div>
             <div class="row-actions">
-              <a class="btn sm" href="add-vehicle?edit=<?= (int)$v['id'] ?>">Edit</a>
-              <form method="POST" action="add-vehicle"
+              <a class="btn sm" href="add-vehicle.php?edit=<?= (int)$v['id'] ?>">Edit</a>
+              <form method="POST" action="add-vehicle.php"
                     onsubmit="return confirm('Delete this vehicle and all its images permanently?');">
                 <input type="hidden" name="action" value="delete">
                 <input type="hidden" name="id" value="<?= (int)$v['id'] ?>">

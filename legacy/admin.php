@@ -333,10 +333,10 @@ if (!$client) {
           'active'   => 'studio',
           'width'    => '900px',
           'links'    => [
-            ['label' => 'Prompt Library',  'href' => legacyUrl('prompts')],
-            ['label' => 'Vehicle Library', 'href' => legacyUrl('vehicles')],
+            ['label' => 'Prompt Library',  'href' => legacyUrl('prompts.php')],
+            ['label' => 'Vehicle Library', 'href' => legacyUrl('vehicles.php')],
             ['label' => 'View site',       'href' => clientUrl('index.php'), 'attrs' => ['target' => '_blank']],
-            ['label' => 'Sign out',        'href' => legacyUrl('logout'), 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
+            ['label' => 'Sign out',        'href' => legacyUrl('logout.php'), 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
           ],
         ]) ?>
 
@@ -708,10 +708,10 @@ $clientQs = 'client=' . urlencode($client['slug']);
       'width'    => '900px',
       'links'    => [
         ['label' => 'Switch client',   'href' => legacyUrl('legacy/admin.php')],
-        ['label' => 'Prompt Library',  'href' => legacyUrl('prompts')],
-        ['label' => 'Vehicle Library', 'href' => legacyUrl('vehicles')],
+        ['label' => 'Prompt Library',  'href' => legacyUrl('prompts.php')],
+        ['label' => 'Vehicle Library', 'href' => legacyUrl('vehicles.php')],
         ['label' => 'View site',       'href' => clientUrl('index.php'), 'attrs' => ['target' => '_blank']],
-        ['label' => 'Sign out',        'href' => legacyUrl('logout'), 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
+        ['label' => 'Sign out',        'href' => legacyUrl('logout.php'), 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
       ],
     ]) ?>
 
@@ -729,7 +729,7 @@ $clientQs = 'client=' . urlencode($client['slug']);
   <?php if (!hasPostedColumn($pdo)): ?>
     <div class="errors">
       ⚠ Database needs a one-time update. Visit
-      <a href="<?= h(legacyUrl('migrate')) ?>" style="color:inherit;text-decoration:underline;">migrate</a>
+      <a href="<?= h(legacyUrl('migrate.php')) ?>" style="color:inherit;text-decoration:underline;">migrate</a>
       to add the new columns, then come back.
     </div>
   <?php endif; ?>
@@ -835,7 +835,7 @@ $clientQs = 'client=' . urlencode($client['slug']);
 
   <div class="tile-grid">
     <!-- Universal tiles -->
-    <a class="tile" href="<?= h(legacyUrl('add-post')) ?>?<?= h($clientQs) ?>">
+    <a class="tile" href="<?= h(legacyUrl('add-post.php')) ?>?<?= h($clientQs) ?>">
       <div class="tile-badge <?= $totalPosts === 0 ? 'zero' : '' ?>"><?= $totalPosts ?></div>
       <div class="tile-icon">📰</div>
       <div>
@@ -856,7 +856,7 @@ $clientQs = 'client=' . urlencode($client['slug']);
     </a>
 
     <!-- AI Builder (universal) -->
-    <a class="tile" href="<?= h(legacyUrl('build')) ?>?<?= h($clientQs) ?>">
+    <a class="tile" href="<?= h(legacyUrl('build.php')) ?>?<?= h($clientQs) ?>">
       <div class="tile-icon">🎨</div>
       <div>
         <div class="tile-title">AI Builder</div>
@@ -866,7 +866,7 @@ $clientQs = 'client=' . urlencode($client['slug']);
 
     <!-- Dynamic module tiles -->
     <?php foreach ($clientModules as $mod): ?>
-      <a class="tile" href="<?= h(legacyUrl('add-feature')) ?>?<?= h($clientQs) ?>&module=<?= h($mod['slug']) ?>">
+      <a class="tile" href="<?= h(legacyUrl('add-feature.php')) ?>?<?= h($clientQs) ?>&module=<?= h($mod['slug']) ?>">
         <div class="tile-badge <?= (int)$mod['item_count'] === 0 ? 'zero' : '' ?>">
           <?= (int)$mod['item_count'] ?>
         </div>
@@ -1023,8 +1023,8 @@ $clientQs = 'client=' . urlencode($client['slug']);
                   <?php endif; ?>
                 </form>
               <?php endif; ?>
-              <a class="btn sm" href="<?= h(legacyUrl('add-post')) ?>?<?= h($clientQs) ?>&edit=<?= (int)$p['id'] ?>">Edit</a>
-              <form method="POST" action="<?= h(legacyUrl('add-post')) ?>?<?= h($clientQs) ?>" class="inline-form"
+              <a class="btn sm" href="<?= h(legacyUrl('add-post.php')) ?>?<?= h($clientQs) ?>&edit=<?= (int)$p['id'] ?>">Edit</a>
+              <form method="POST" action="<?= h(legacyUrl('add-post.php')) ?>?<?= h($clientQs) ?>" class="inline-form"
                     onsubmit="return confirm('Delete this post and all its images? This cannot be undone.');">
                 <input type="hidden" name="action" value="delete">
                 <input type="hidden" name="id" value="<?= (int)$p['id'] ?>">

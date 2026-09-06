@@ -20,7 +20,7 @@ function h($s) {
 
 // A client must be in scope.
 if (!$client) {
-    header('Location: admin?msg=' . urlencode('Pick a client to open the AI Builder.'));
+    header('Location: admin.php?msg=' . urlencode('Pick a client to open the AI Builder.'));
     exit;
 }
 $clientQs     = 'client=' . urlencode($client['slug']);
@@ -342,11 +342,11 @@ $profileIncomplete = ($ctx['product_type'] === '' || $ctx['industry'] === '');
       'subtitle' => $client['name'],
       'active'   => 'studio',
       'width'    => '1100px',
-      'back'     => ['href' => 'admin?' . $clientQs, 'label' => 'Studio'],
+      'back'     => ['href' => 'admin.php?' . $clientQs, 'label' => 'Studio'],
       'links'    => [
-        ['label' => 'Prompt Library',  'href' => 'prompts'],
-        ['label' => 'Vehicle Library', 'href' => 'vehicles'],
-        ['label' => 'Sign out',        'href' => 'logout'],
+        ['label' => 'Prompt Library',  'href' => 'prompts.php'],
+        ['label' => 'Vehicle Library', 'href' => 'vehicles.php'],
+        ['label' => 'Sign out',        'href' => 'logout.php'],
       ],
     ]) ?>
 
@@ -367,14 +367,14 @@ $profileIncomplete = ($ctx['product_type'] === '' || $ctx['industry'] === '');
   <?php if (!$promptsReady): ?>
     <div class="notice warn">
       ⚠ The <code>prompts</code> table doesn't exist yet. Visit
-      <a href="migrate">migrate</a>, then add prompts in the
-      <a href="prompts">Prompt Library</a>.
+      <a href="migrate.php">migrate</a>, then add prompts in the
+      <a href="prompts.php">Prompt Library</a>.
     </div>
   <?php elseif ($profileIncomplete): ?>
     <div class="notice warn">
       ⚠ This client is missing <strong>product type</strong> and/or <strong>industry</strong>.
       Those variables will be skipped until you set them on the
-      <a href="admin?<?= h($clientQs) ?>">client admin page</a>.
+      <a href="admin.php?<?= h($clientQs) ?>">client admin page</a>.
     </div>
   <?php endif; ?>
 
@@ -398,7 +398,7 @@ $profileIncomplete = ($ctx['product_type'] === '' || $ctx['industry'] === '');
           </select>
           <span class="help">
             <?php if (empty($vehicles)): ?>
-              No vehicles in the library yet — <a href="add-vehicle" target="_blank">add one</a>.
+              No vehicles in the library yet — <a href="add-vehicle.php" target="_blank">add one</a>.
             <?php else: ?>
               Adds the vehicle's images below and fills the {{vehicle_*}} variables.
             <?php endif; ?>
@@ -443,7 +443,7 @@ $profileIncomplete = ($ctx['product_type'] === '' || $ctx['industry'] === '');
   <div class="card">
     <div class="card-header">
       <h2 class="card-title"><span class="step-num">2</span> Compose the prompt</h2>
-      <a class="btn sm" href="prompts" target="_blank">Manage library ↗</a>
+      <a class="btn sm" href="prompts.php" target="_blank">Manage library ↗</a>
     </div>
     <div class="card-body">
       <?php
@@ -460,7 +460,7 @@ $profileIncomplete = ($ctx['product_type'] === '' || $ctx['industry'] === '');
             echo '</select>';
             if (empty($opts)) {
                 echo '<span class="help">No ' . h($catSlug) . ' prompts yet — '
-                   . '<a href="add-prompt" target="_blank">add one</a>.</span>';
+                   . '<a href="add-prompt.php" target="_blank">add one</a>.</span>';
             }
         }
       ?>

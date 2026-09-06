@@ -15,7 +15,7 @@ function h($s) {
 }
 
 if (!hasVehiclesTable($pdo)) {
-    header('Location: vehicles?msg=' . urlencode('Run migrate first — the vehicles table is missing.'));
+    header('Location: vehicles.php?msg=' . urlencode('Run migrate first — the vehicles table is missing.'));
     exit;
 }
 
@@ -52,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
                 $pdo->prepare("DELETE FROM vehicles WHERE id = ?")->execute([$vehicleId]);
-                header('Location: vehicles?msg=' . urlencode('Vehicle deleted.'));
+                header('Location: vehicles.php?msg=' . urlencode('Vehicle deleted.'));
                 exit;
             } catch (Exception $e) {
                 $errors[] = 'Delete failed: ' . $e->getMessage();
@@ -200,7 +200,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->commit();
                 $msg = $action === 'create' ? 'Vehicle created.' : 'Vehicle updated.';
                 if ($errors) { $msg .= ' (Warnings: ' . implode(' ', $errors) . ')'; }
-                header('Location: vehicles?msg=' . urlencode($msg));
+                header('Location: vehicles.php?msg=' . urlencode($msg));
                 exit;
             } catch (Exception $e) {
                 if ($pdo->inTransaction()) { $pdo->rollBack(); }
@@ -360,9 +360,9 @@ $formSubmitText = $isEdit ? 'Save changes' : 'Create vehicle';
       'active'   => 'studio',
       'width'    => '860px',
       'trailing' => '',
-      'back'     => ['href' => 'vehicles', 'label' => 'Vehicles'],
+      'back'     => ['href' => 'vehicles.php', 'label' => 'Vehicles'],
       'links'    => [
-        ['label' => 'Sign out', 'href' => 'logout', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
+        ['label' => 'Sign out', 'href' => 'logout.php', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
       ],
     ]) ?>
 
@@ -381,11 +381,11 @@ $formSubmitText = $isEdit ? 'Save changes' : 'Create vehicle';
     <div class="card-header">
       <h2 class="card-title"><?= h($formTitle) ?></h2>
       <?php if ($isEdit): ?>
-        <a class="btn sm" href="add-vehicle">+ New instead</a>
+        <a class="btn sm" href="add-vehicle.php">+ New instead</a>
       <?php endif; ?>
     </div>
     <div class="card-body">
-      <form method="POST" action="add-vehicle<?= $isEdit ? '?edit=' . (int)$editVehicle['id'] : '' ?>"
+      <form method="POST" action="add-vehicle.php<?= $isEdit ? '?edit=' . (int)$editVehicle['id'] : '' ?>"
             enctype="multipart/form-data" id="vehicleForm">
         <input type="hidden" name="action" value="<?= h($formAction) ?>">
         <?php if ($isEdit): ?>
@@ -451,7 +451,7 @@ $formSubmitText = $isEdit ? 'Save changes' : 'Create vehicle';
         </div>
 
         <div class="form-actions">
-          <a class="btn" href="vehicles">Cancel</a>
+          <a class="btn" href="vehicles.php">Cancel</a>
           <button type="submit" class="btn primary"><?= h($formSubmitText) ?></button>
         </div>
       </form>
@@ -459,7 +459,7 @@ $formSubmitText = $isEdit ? 'Save changes' : 'Create vehicle';
   </div>
 
   <?php if ($isEdit): ?>
-    <form method="POST" action="add-vehicle"
+    <form method="POST" action="add-vehicle.php"
           onsubmit="return confirm('Delete this vehicle and all its images? This cannot be undone.');"
           style="text-align:right;">
       <input type="hidden" name="action" value="delete">

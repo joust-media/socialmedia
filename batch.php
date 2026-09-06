@@ -54,6 +54,7 @@ $studioConfig = [
     'defaults'   => $defaultTags,
     'categories' => array_map(fn($c) => ['id' => (int)$c['id'], 'name' => $c['name']], $categories),
     'postsUrl'   => clientUrl('posts.php', ['status' => 'pending', 'month' => 'all']),
+    'postUrl'    => clientUrl('posts.php', ['post' => '__ID__']),   // studio.js: per-post result links
 ];
 
 $pageTitle   = 'Batch';

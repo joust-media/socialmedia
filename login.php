@@ -12,8 +12,12 @@ $script = $_SERVER['SCRIPT_NAME'] ?? '/login.php';
 $base   = rtrim(str_replace('\\', '/', dirname($script)), '/');
 if ($base === '.' || $base === '') { $base = ''; }
 
+// Explicit .php links (unless CLEAN_URLS is on, see helpers.php) so sign-in works on a
+// folder with no extension-less rewrite. login.php loads only auth.php, not helpers.php.
+$ext = (defined('CLEAN_URLS') && CLEAN_URLS) ? '' : '.php';
+
 // Where to send the user after a successful login. Default = the Studio.
-$fallback  = $base . '/studio';
+$fallback  = $base . '/studio' . $ext;
 $returnRaw = (isset($_GET['return']) && is_string($_GET['return'])) ? $_GET['return'] : $fallback;
 $returnUrl = $returnRaw;
 // Only allow same-app redirects — never an off-site URL: the path must start with
@@ -134,7 +138,7 @@ $cssUrl = static function (string $name) use ($base): string {
 </head>
 <body>
 <div class="wrap">
-  <form class="card" method="POST" action="<?= h($base . '/login' . ($returnRaw ? '?return=' . urlencode($returnUrl) : '')) ?>">
+  <form class="card" method="POST" action="<?= h($base . '/login' . $ext . ($returnRaw ? '?return=' . urlencode($returnUrl) : '')) ?>">
     <div class="brand">
       <div class="brand-mark">J</div>
       <span>Joust Media</span>

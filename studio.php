@@ -29,10 +29,10 @@ function h($s) {
 
 $flash    = trim((string)($_GET['msg'] ?? ''));
 $navLinks = [
-    ['label' => 'Prompt Library',  'href' => basePath() . '/prompts'],
-    ['label' => 'Vehicle Library', 'href' => basePath() . '/vehicles'],
+    ['label' => 'Prompt Library',  'href' => pagePath('prompts')],
+    ['label' => 'Vehicle Library', 'href' => pagePath('vehicles')],
     ['label' => 'Classic admin',   'href' => basePath() . '/legacy/admin.php' . ($client ? '?client=' . rawurlencode($client['slug']) : '')],
-    ['label' => 'Sign out',        'href' => basePath() . '/logout', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
+    ['label' => 'Sign out',        'href' => pagePath('logout'), 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
 ];
 
 // =============================================================
@@ -169,6 +169,7 @@ $studioConfig = [
     'maxFileMb' => 25,
     'tab'       => $tab,
     'tabUrl'    => clientUrl('studio.php', ['tab' => '__TAB__']),
+    'postUrl'   => clientUrl('posts.php', ['post' => '__ID__']),   // studio.js: "finish it in Posts" links
 ];
 
 $pageTitle   = 'Studio';

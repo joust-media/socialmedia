@@ -51,8 +51,11 @@ function requireAdmin() {
     $script = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
     $base   = rtrim(str_replace('\\', '/', dirname($script)), '/');
     if ($base === '.' || $base === '') { $base = ''; }
-    $return = $_SERVER['REQUEST_URI'] ?? ($base . '/admin');
-    header('Location: ' . $base . '/login?return=' . urlencode($return));
+    // Explicit .php targets (unless CLEAN_URLS is on, see helpers.php) so the redirect works
+    // on a folder with no extension-less rewrite. auth.php is loaded standalone by login.php.
+    $ext    = (defined('CLEAN_URLS') && CLEAN_URLS) ? '' : '.php';
+    $return = $_SERVER['REQUEST_URI'] ?? ($base . '/admin' . $ext);
+    header('Location: ' . $base . '/login' . $ext . '?return=' . urlencode($return));
     exit;
 }
 

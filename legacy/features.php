@@ -43,7 +43,7 @@ if (!$client) {
     http_response_code(400);
     echo '<p style="font:15px sans-serif;padding:40px;">
             Missing <code>?client=&lt;slug&gt;</code>. Go to
-            <a href="' . h(basePath()) . '/admin">the admin picker</a>.
+            <a href="' . h(pagePath('admin')) . '">the admin picker</a>.
           </p>';
     exit;
 }
@@ -81,7 +81,7 @@ if (!$hasModule->fetchColumn()) {
 if (!isset($_GET['item']) && isset($_GET['tire'])) {
     $tireId = (int)$_GET['tire'];
     $qs = ['client' => $client['slug'], 'module' => $module['slug'], 'item' => $tireId];
-    header('Location: ' . basePath() . '/features?' . http_build_query($qs));
+    header('Location: ' . pagePath('features') . '?' . http_build_query($qs));
     exit;
 }
 
@@ -251,7 +251,7 @@ $navItems = clientNavItems($pdo, $client);
 function featureUrl($extra = []) {
     global $client, $module;
     $qs = array_merge(['client' => $client['slug'], 'module' => $module['slug']], $extra);
-    return basePath() . '/features?' . http_build_query(array_filter($qs, fn($v) => $v !== null && $v !== ''));
+    return pagePath('features') . '?' . http_build_query(array_filter($qs, fn($v) => $v !== null && $v !== ''));
 }
 ?>
 <!DOCTYPE html>
@@ -478,7 +478,7 @@ $splitName = function($name) {
     <?php if (empty($galleryItems)): ?>
       <div class="empty">
         No <?= h(strtolower($module['plural_label'])) ?> yet.<?php if (isAdmin()): ?> Add some on the
-        <a href="<?= h(basePath()) ?>/admin?client=<?= h($client['slug']) ?>">admin page</a>.<?php endif; ?>
+        <a href="<?= h(pagePath('admin')) ?>?client=<?= h($client['slug']) ?>">admin page</a>.<?php endif; ?>
       </div>
     <?php else: ?>
       <?php foreach ($galleryItems as $g):
@@ -583,7 +583,7 @@ $splitName = function($name) {
   <?php if (empty($allCategories) && empty($uncategorized)): ?>
     <div class="empty">
       No <?= h(strtolower($module['plural_label'])) ?> yet. Add some on the
-      <a href="<?= h(basePath()) ?>/admin?client=<?= h($client['slug']) ?>">admin page</a>.
+      <a href="<?= h(pagePath('admin')) ?>?client=<?= h($client['slug']) ?>">admin page</a>.
     </div>
   <?php else: ?>
 

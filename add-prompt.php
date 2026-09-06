@@ -16,7 +16,7 @@ function h($s) {
 
 // The prompts table must exist before this page can do anything useful.
 if (!hasPromptsTable($pdo)) {
-    header('Location: prompts?msg=' . urlencode('Run migrate first — the prompts table is missing.'));
+    header('Location: prompts.php?msg=' . urlencode('Run migrate first — the prompts table is missing.'));
     exit;
 }
 
@@ -38,7 +38,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($promptId > 0) {
             try {
                 $pdo->prepare("DELETE FROM prompts WHERE id = ?")->execute([$promptId]);
-                header('Location: prompts?msg=' . urlencode('Prompt deleted.'));
+                header('Location: prompts.php?msg=' . urlencode('Prompt deleted.'));
                 exit;
             } catch (Exception $e) {
                 $errors[] = 'Delete failed: ' . $e->getMessage();
@@ -95,7 +95,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $tagsClean   === '' ? null : $tagsClean,
                         $modelsClean === '' ? null : $modelsClean,
                     ]);
-                    header('Location: prompts?msg=' . urlencode('Prompt created.'));
+                    header('Location: prompts.php?msg=' . urlencode('Prompt created.'));
                     exit;
                 } else {
                     $promptId = (int)($_POST['id'] ?? 0);
@@ -111,7 +111,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $modelsClean === '' ? null : $modelsClean,
                         $promptId,
                     ]);
-                    header('Location: prompts?msg=' . urlencode('Prompt updated.'));
+                    header('Location: prompts.php?msg=' . urlencode('Prompt updated.'));
                     exit;
                 }
             } catch (Exception $e) {
@@ -278,9 +278,9 @@ $formSubmitText = $isEdit ? 'Save changes' : 'Create prompt';
       'active'   => 'studio',
       'width'    => '860px',
       'trailing' => '',
-      'back'     => ['href' => 'prompts', 'label' => 'Prompts'],
+      'back'     => ['href' => 'prompts.php', 'label' => 'Prompts'],
       'links'    => [
-        ['label' => 'Sign out', 'href' => 'logout', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
+        ['label' => 'Sign out', 'href' => 'logout.php', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
       ],
     ]) ?>
 
@@ -299,11 +299,11 @@ $formSubmitText = $isEdit ? 'Save changes' : 'Create prompt';
     <div class="card-header">
       <h2 class="card-title"><?= h($formTitle) ?></h2>
       <?php if ($isEdit): ?>
-        <a class="btn sm" href="add-prompt">+ New instead</a>
+        <a class="btn sm" href="add-prompt.php">+ New instead</a>
       <?php endif; ?>
     </div>
     <div class="card-body">
-      <form method="POST" action="add-prompt<?= $isEdit ? '?edit=' . (int)$editPrompt['id'] : '' ?>" id="promptForm">
+      <form method="POST" action="add-prompt.php<?= $isEdit ? '?edit=' . (int)$editPrompt['id'] : '' ?>" id="promptForm">
         <input type="hidden" name="action" value="<?= h($formAction) ?>">
         <?php if ($isEdit): ?>
           <input type="hidden" name="id" value="<?= (int)$editPrompt['id'] ?>">
@@ -370,7 +370,7 @@ $formSubmitText = $isEdit ? 'Save changes' : 'Create prompt';
         </div>
 
         <div class="form-actions">
-          <a class="btn" href="prompts">Cancel</a>
+          <a class="btn" href="prompts.php">Cancel</a>
           <button type="submit" class="btn primary" id="submitBtn"><?= h($formSubmitText) ?></button>
         </div>
       </form>
@@ -378,7 +378,7 @@ $formSubmitText = $isEdit ? 'Save changes' : 'Create prompt';
   </div>
 
   <?php if ($isEdit): ?>
-    <form method="POST" action="add-prompt"
+    <form method="POST" action="add-prompt.php"
           onsubmit="return confirm('Delete this prompt permanently?');"
           style="text-align:right;">
       <input type="hidden" name="action" value="delete">

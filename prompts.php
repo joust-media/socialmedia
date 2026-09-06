@@ -79,7 +79,7 @@ function libUrl($cat = null, $tag = null, $q = null) {
     if ($cat !== '') { $qs['cat'] = $cat; }
     if ($tag !== '') { $qs['tag'] = $tag; }
     if ($q   !== '') { $qs['q']   = $q; }
-    return 'prompts' . ($qs ? '?' . http_build_query($qs) : '');
+    return 'prompts.php' . ($qs ? '?' . http_build_query($qs) : '');
 }
 ?>
 <!DOCTYPE html>
@@ -222,10 +222,10 @@ function libUrl($cat = null, $tag = null, $q = null) {
       'active'   => 'studio',
       'width'    => '980px',
       'trailing' => '',
-      'back'     => ['href' => 'admin', 'label' => 'Studio'],
+      'back'     => ['href' => 'admin.php', 'label' => 'Studio'],
       'links'    => [
-        ['label' => 'New prompt', 'href' => 'add-prompt', 'primary' => true],
-        ['label' => 'Sign out',   'href' => 'logout', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
+        ['label' => 'New prompt', 'href' => 'add-prompt.php', 'primary' => true],
+        ['label' => 'Sign out',   'href' => 'logout.php', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
       ],
     ]) ?>
 
@@ -241,7 +241,7 @@ function libUrl($cat = null, $tag = null, $q = null) {
   <?php if (!$tableReady): ?>
     <div class="errors">
       ⚠ The <code>prompts</code> table doesn't exist yet. Visit
-      <a href="migrate" style="color:inherit;text-decoration:underline;">migrate</a>
+      <a href="migrate.php" style="color:inherit;text-decoration:underline;">migrate</a>
       to create it, then come back.
     </div>
   <?php else: ?>
@@ -260,7 +260,7 @@ function libUrl($cat = null, $tag = null, $q = null) {
         <?php endforeach; ?>
       </div>
       <div class="filter-row">
-        <form class="search-box" method="GET" action="prompts">
+        <form class="search-box" method="GET" action="prompts.php">
           <?php if ($selectedCat !== ''): ?><input type="hidden" name="cat" value="<?= h($selectedCat) ?>"><?php endif; ?>
           <?php if ($selectedTag !== ''): ?><input type="hidden" name="tag" value="<?= h($selectedTag) ?>"><?php endif; ?>
           <input type="text" name="q" value="<?= h($search) ?>" placeholder="Search name or prompt text…">
@@ -328,8 +328,8 @@ function libUrl($cat = null, $tag = null, $q = null) {
               </div>
             </div>
             <div class="row-actions">
-              <a class="btn sm" href="add-prompt?edit=<?= (int)$p['id'] ?>">Edit</a>
-              <form method="POST" action="add-prompt"
+              <a class="btn sm" href="add-prompt.php?edit=<?= (int)$p['id'] ?>">Edit</a>
+              <form method="POST" action="add-prompt.php"
                     onsubmit="return confirm('Delete &quot;<?= h(addslashes($p['name'])) ?>&quot; permanently?');">
                 <input type="hidden" name="action" value="delete">
                 <input type="hidden" name="id" value="<?= (int)$p['id'] ?>">

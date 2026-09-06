@@ -102,9 +102,31 @@ function basePath() {
     return $cached = $dir;
 }
 
+/** URL style switch for clientUrl() / pagePath().
+ *
+ *  false (default) → explicit script URLs: '/socialmedia/posts.php?client=hmf'. Works on
+ *                    any Apache folder with or without an extension-less rewrite, so the
+ *                    portal never depends on the host's .htaccess being in place.
+ *  true            → pretty URLs: '/socialmedia/posts?client=hmf'. Only flip this once the
+ *                    server's .htaccess rewrite (name → name.php) is confirmed working.
+ *  Home is the folder root ('/socialmedia/') in both modes. Guarded so a config.php or a
+ *  test harness can define it first. */
+if (!defined('CLEAN_URLS')) { define('CLEAN_URLS', false); }
+
+/** Root-rooted path for a page name honouring CLEAN_URLS:
+ *    pagePath('posts') / pagePath('posts.php') → '/socialmedia/posts.php' (or '/socialmedia/posts')
+ *    pagePath('index') / pagePath('index.php') / pagePath('') → '/socialmedia/'
+ *  Paths with a directory component ('legacy/admin.php') are treated the same way. */
+function pagePath($page) {
+    $name = preg_replace('/\.php$/', '', (string)$page);
+    if ($name === '' || $name === 'index') { return basePath() . '/'; }   // homepage = folder root
+    return basePath() . '/' . $name . (CLEAN_URLS ? '' : '.php');
+}
+
 /** Build URL to a page preserving client scope and merging extras.
- *  Output is always root-rooted ('/feed?client=hmf', '/socialmedia/feed?client=hmf'),
- *  so the same href works from any page in the app. .htaccess handles the .php rewrite. */
+ *  Output is always root-rooted ('/posts.php?client=hmf', '/socialmedia/posts.php?client=hmf'),
+ *  so the same href works from any page in the app. The page name may be given with or
+ *  without '.php' — see pagePath() / CLEAN_URLS for the emitted form. */
 function clientUrl($page, $extra = []) {
     global $clientSlug;
     $qs = [];
@@ -112,10 +134,7 @@ function clientUrl($page, $extra = []) {
     foreach ($extra as $k => $v) {
         if ($v !== null && $v !== '') { $qs[$k] = $v; }
     }
-    $clean = preg_replace('/\.php$/', '', $page);
-    if ($clean === 'index') { $clean = ''; }   // homepage = "/"
-    $path = basePath() . '/' . $clean;          // "/" or "/feed" or "/socialmedia/feed"
-    return $path . ($qs ? '?' . http_build_query($qs) : '');
+    return pagePath($page) . ($qs ? '?' . http_build_query($qs) : '');
 }
 
 /**
@@ -927,12 +946,11 @@ function dayBucket($datetime) {
 }
 
 /** Build a deep-link URL for an activity row.
- *  Root-rooted via basePath() so it resolves the same from any page. Aims to land the
+ *  Root-rooted via pagePath() so it resolves the same from any page. Aims to land the
  *  user *on the exact entity* — the post editor, the specific tire's review with the
  *  image anchored, the task highlighted in the project list — never a generic gallery. */
 function activityLink($entry) {
     $slug = $entry['company_slug'] ?? '';
-    $base = basePath();
     $meta = $entry['_meta'] ?? null;
 
     $clientPair = $slug !== '' ? ['client' => $slug] : [];
@@ -941,7 +959,7 @@ function activityLink($entry) {
         case 'post':
             // Land in the post editor with the comment thread visible.
             $qs = http_build_query(array_merge($clientPair, ['edit' => (int)$entry['entity_id']]));
-            return $base . '/add-post?' . $qs;
+            return pagePath('add-post') . '?' . $qs;
 
         case 'tire_image':
             // Per-image review: features?client=X&module=<slug>&item=<tire_id>#image-<id>
@@ -949,7 +967,7 @@ function activityLink($entry) {
             $tireId     = (int)($meta['tire_id'] ?? 0);
             $params     = array_merge($clientPair, ['module' => $moduleSlug]);
             if ($tireId > 0) { $params['item'] = $tireId; }
-            $url = $base . '/features?' . http_build_query($params);
+            $url = pagePath('features') . '?' . http_build_query($params);
             if ($tireId > 0) { $url .= '#image-' . (int)$entry['entity_id']; }
             return $url;
 
@@ -960,22 +978,22 @@ function activityLink($entry) {
                 'module' => $moduleSlug,
                 'item'   => (int)$entry['entity_id'],
             ]);
-            return $base . '/features?' . http_build_query($params);
+            return pagePath('features') . '?' . http_build_query($params);
 
         case 'task':
             // Anchor straight to the task in the project list.
-            $url = $base . '/projects';
+            $url = pagePath('projects');
             if ($clientPair) { $url .= '?' . http_build_query($clientPair); }
             return $url . '#task-' . (int)$entry['entity_id'];
 
         case 'library_image':
             // Anchor straight to the tile in the brand's library gallery.
-            $url = $base . '/library';
+            $url = pagePath('library');
             if ($clientPair) { $url .= '?' . http_build_query($clientPair); }
             return $url . '#lib-' . (int)$entry['entity_id'];
 
         default:
-            return $base . '/admin' . ($clientPair ? '?' . http_build_query($clientPair) : '');
+            return pagePath('admin') . ($clientPair ? '?' . http_build_query($clientPair) : '');
     }
 }
 
