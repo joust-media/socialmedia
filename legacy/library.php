@@ -394,7 +394,7 @@ $navItems = clientNavItems($pdo, $client);
       <?php foreach ($brandCards as $bc): $co = $bc['company']; $c = $bc['counts']; ?>
         <a class="brand-card" href="<?= h(clientUrl('library.php', ['client' => $co['slug']])) ?>">
           <?php if (!empty($co['logo_url'])): ?>
-            <img class="brand-card-logo" src="<?= h($co['logo_url']) ?>" alt="">
+            <img class="brand-card-logo" src="<?= h(brandLogoUrl($co['logo_url'])) ?>" alt="">
           <?php else: ?>
             <div class="brand-card-mark"><?= h(mb_strtoupper(mb_substr($co['name'], 0, 1))) ?></div>
           <?php endif; ?>
