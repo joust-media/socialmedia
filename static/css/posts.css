@@ -84,6 +84,26 @@ li + li > .pl-card::before { left: 100px; }
 .pl-meta-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }   /* "·" wraps with its item */
 .pl-meta-sep { color: var(--label-tertiary); }
 .pl-card .ui-row-chevron { align-self: center; }
+.pl-when { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 6px; }
+
+/* Scheduled posts whose date has passed (posts.php: postIsPast) — presentational only.
+   Fade the content, not the whole row, so the pill/meta stay legible in light + dark. */
+.pl-item--past .pl-thumb,
+.pl-item--past .pl-title,
+.pl-item--past .pl-caption { opacity: .5; }
+.pl-item--past .pl-date,
+.pl-item--past .pl-meta { opacity: .75; }
+.pl-item--past .pl-thumb img,
+.pl-item--past .pl-thumb-video { filter: saturate(.6); }
+.pl-past {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--fill-tertiary);
+  color: var(--label-secondary);
+  font-size: var(--text-caption); line-height: var(--lh-caption);
+  font-weight: 600; letter-spacing: .02em;
+}
 
 /* Swipe layers (iOS Mail): revealed under the card while dragging */
 .pl-swipe {
@@ -257,6 +277,10 @@ li + li > .pl-card::before { left: 100px; }
 .pd-when-label { font-size: var(--text-caption); line-height: var(--lh-caption); color: var(--label-secondary); }
 .pd-when-date { font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead); font-weight: 600; }
 .pd-when-cta { flex: 0 0 auto; font-size: var(--text-footnote); font-weight: 600; color: var(--accent); }
+.pd-when-past {
+  margin: 4px 0 0 50px;                          /* under the date text: 14px row padding + 24px icon + 12px gap */
+  font-size: var(--text-caption); line-height: var(--lh-caption);
+}
 .pd-when-row[aria-expanded="true"] .pd-when-cta { color: var(--label-tertiary); }
 
 /* 4. Comments thread */

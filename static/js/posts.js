@@ -299,6 +299,13 @@
     });
     var label = $('.pd-when-label', root);
     if (label) label.textContent = posted ? 'Scheduled for' : 'Planned for';
+    // "date has passed" note: only for Scheduled posts whose date is before today (data-past from PHP)
+    var pastNote = $('[data-when-past]', root);
+    if (pastNote) pastNote.hidden = !(posted && art.getAttribute('data-past') === '1');
+  }
+  /* Local-date ISO (YYYY-MM-DD) helpers for re-evaluating data-past after an admin date edit. */
+  function isoDay(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   }
 
   function applyStatus(id, status, posted) {
@@ -606,6 +613,10 @@
       var root = art.closest('.ui-sheet-root') || document;
       var disp = $('[data-when-display]', root); if (disp) { disp.textContent = fmtWhen(d); disp.setAttribute('data-iso', v); }
       var item = itemEl(id); if (item) { var t = $('.pl-date', item); if (t) { t.textContent = fmtDay(d); t.setAttribute('datetime', v); } }
+      // Re-evaluate the past flag (date-only, local) so the note follows the new date without a reload;
+      // the list row's fade is server-rendered and refreshes on the next page load.
+      art.setAttribute('data-past', v.slice(0, 10) < isoDay(new Date()) ? '1' : '0');
+      syncState(root);
       form.hidden = true;
       var row = $('[data-when-toggle]', root); if (row) row.setAttribute('aria-expanded', 'false');
       toast('Date saved', 'success');

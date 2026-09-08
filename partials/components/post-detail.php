@@ -180,6 +180,9 @@ if (!function_exists('renderPostDetail')) {
         $comments = is_array($post['comments'] ?? null) ? $post['comments'] : [];
         $when     = (string)($post['scheduled_date'] ?? '');
         $whenTs   = $when !== '' ? strtotime($when) : false;
+        // Date-only comparison (server local date): a post scheduled for later today is not past.
+        $datePast = $whenTs && date('Y-m-d', $whenTs) < date('Y-m-d');
+        $isPast   = $posted && $datePast;   // presentational only — posts.js re-evaluates on Mark/Unmark
         $brand    = ['name' => $post['company_name'] ?? '', 'logo_url' => $post['company_logo'] ?? ''];
         $typeLbl  = function_exists('postTypeLabel') ? postTypeLabel((string)($post['post_type'] ?? 'post')) : 'Post';
 
@@ -187,7 +190,7 @@ if (!function_exists('renderPostDetail')) {
         $approvedAt = !empty($post['approved_at']) ? strtotime((string)$post['approved_at']) : false;
         $approvedLine = 'Approved' . ($approvedAt ? ' ' . date('M j', $approvedAt) : '') . ' · Joust will schedule this';
 
-        $out  = '<article class="pd" data-post-detail="' . $id . '" data-id="' . $id . '" data-status="' . pdEsc($status) . '" data-posted="' . ($posted ? '1' : '0') . '" data-endpoint="' . pdEsc($endpoint) . '">';
+        $out  = '<article class="pd" data-post-detail="' . $id . '" data-id="' . $id . '" data-status="' . pdEsc($status) . '" data-posted="' . ($posted ? '1' : '0') . '" data-past="' . ($datePast ? '1' : '0') . '" data-endpoint="' . pdEsc($endpoint) . '">';
         $out .= '<div class="pd-body" data-pd-body>';
 
         // ---- Top meta row: type · status pill · (admin) ⋯ menu -------------
@@ -235,6 +238,8 @@ if (!function_exists('renderPostDetail')) {
               . '<span class="pd-when-date" data-when-display data-iso="' . pdEsc($whenTs ? date('Y-m-d\TH:i', $whenTs) : '') . '">' . pdEsc($whenTs ? pdFormatWhen($when) : 'Date to be confirmed') . '</span></span>'
               . '<span class="pd-when-cta">' . ($admin ? 'Edit' : 'Request a change') . '</span>'
               . '</button>';
+        // Muted note for Scheduled posts whose date has passed (hidden otherwise; posts.js toggles it)
+        $out .= '<p class="pd-when-past text-tertiary" data-when-past' . ($isPast ? '' : ' hidden') . '>This post\'s date has passed.</p>';
         if ($admin) {
             $out .= '<form class="pd-editor" data-edit-form="date" hidden>'
                   . '<label class="pd-editor-label" for="pd-date-' . $id . '">Scheduled date</label>'

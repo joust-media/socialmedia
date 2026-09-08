@@ -307,6 +307,20 @@ if (!function_exists('hasPostedColumn')) {
     }
 }
 
+/** Presentational only: is this a Scheduled post (posted = 1) whose scheduled_date fell on a
+ *  day strictly before today (server local date)? Compared on the date, not the datetime, so a
+ *  post scheduled for later today is NOT past. Pending/approved posts and null dates never are. */
+if (!function_exists('postIsPast')) {
+    function postIsPast(array $post): bool {
+        if (empty($post['posted'])) return false;
+        $raw = trim((string)($post['scheduled_date'] ?? ''));
+        if ($raw === '') return false;
+        $ts = strtotime($raw);
+        if ($ts === false) return false;
+        return date('Y-m-d', $ts) < date('Y-m-d');
+    }
+}
+
 /** Sanitize a display_name into a safe filename stem (no extension).
  *  Strips path separators, collapses whitespace + non-name chars to dashes,
  *  trims leading/trailing junk, caps at 80 chars. Returns '' for blank input. */

@@ -452,6 +452,7 @@ include __DIR__ . '/partials/layout-top.php';
         if (!$client) { $subtitle = $post['company_name'] . ($subtitle !== '' ? ' — ' . $subtitle : ''); }
         $ts       = strtotime((string)$post['scheduled_date']);
         $dateLbl  = $ts ? date('M j', $ts) : '';
+        $isPast   = postIsPast($post);   // Scheduled + date before today → faded row (presentational only)
         $href     = postsUrl(['status' => $segment, 'month' => $monthUrlParam, 'post' => $pid]);
         $queue    = $isQueue ? ($post['queue'] ?? null) : null;
         $qNote    = $queue ? $queue['note'] : '';
@@ -460,8 +461,8 @@ include __DIR__ . '/partials/layout-top.php';
         $qAbs     = $queue && $queue['note_at'] !== '' ? absoluteTime($queue['note_at']) : '';
         $qCount   = $queue ? (int)$queue['client_count'] : 0;
     ?>
-      <li class="pl-item<?= $queue ? ' pl-item--queue' : '' ?>" id="post-<?= $pid ?>" data-post-item="<?= $pid ?>" data-id="<?= $pid ?>"
-          data-status="<?= h($post['status']) ?>" data-posted="<?= $posted ? '1' : '0' ?>"
+      <li class="pl-item<?= $queue ? ' pl-item--queue' : '' ?><?= $isPast ? ' pl-item--past' : '' ?>" id="post-<?= $pid ?>" data-post-item="<?= $pid ?>" data-id="<?= $pid ?>"
+          data-status="<?= h($post['status']) ?>" data-posted="<?= $posted ? '1' : '0' ?>"<?= $isPast ? ' data-past="1"' : '' ?>
           data-title="<?= h($title) ?>"<?= $queue ? ' data-queue' : ' data-swipe' ?>>
         <?php if (!$queue): ?>
         <div class="pl-swipe pl-swipe--approve" aria-hidden="true"><?= icon('checkmark') ?><span>Approve</span></div>
@@ -480,7 +481,10 @@ include __DIR__ . '/partials/layout-top.php';
           <div class="ui-row-body">
             <div class="pl-top">
               <div class="ui-row-title pl-title"><?= h($title) ?></div>
-              <time class="pl-date" datetime="<?= h($ts ? date('Y-m-d\TH:i', $ts) : '') ?>"><?= h($dateLbl) ?></time>
+              <span class="pl-when">
+                <?php if ($isPast): ?><span class="pl-past" title="This post's scheduled date has passed">Past</span><?php endif; ?>
+                <time class="pl-date" datetime="<?= h($ts ? date('Y-m-d\TH:i', $ts) : '') ?>"><?= h($dateLbl) ?></time>
+              </span>
             </div>
             <?php if ($subtitle !== ''): ?>
               <div class="pl-caption"><?= h($subtitle) ?></div>
