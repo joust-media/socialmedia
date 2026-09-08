@@ -103,6 +103,35 @@ li + li > .pl-card::before { left: 100px; }
 .pl-item.is-blocked .pl-swipe { opacity: .35; }
 .pl-item.ui-leave { z-index: 0; }
 
+/* Needs-changes work queue (admin): the client's latest note + Open / Resubmit under the card */
+.pl-item--queue .pl-card { padding-bottom: 8px; }
+.pl-note {
+  margin: 6px 0 2px; padding: 7px 10px;
+  border-left: 2px solid var(--deny); border-radius: 0 10px 10px 0;
+  background: var(--fill-tertiary); color: var(--label);
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead);
+  white-space: normal;
+}
+.pl-note q {
+  quotes: "\201C" "\201D";
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.pl-note--empty { border-left-color: var(--label-tertiary); color: var(--label-secondary); }
+.pl-note-meta {
+  display: block; margin-top: 2px;
+  color: var(--label-secondary);
+  font-size: var(--text-caption); line-height: var(--lh-caption);
+}
+.pl-queue-actions {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  padding: 0 16px 12px 100px;             /* aligned under the row body (thumb inset) */
+  background: var(--bg-elevated);
+}
+.pl-queue-actions .ui-btn { flex: 0 0 auto; }
+@media (max-width: 479px) { .pl-queue-actions { padding-left: 16px; } }
+.pl-item--queue.is-busy .pl-queue-actions { opacity: .6; pointer-events: none; }
+
 /* ---------------------------------------------------------------------
    Post detail — sheet body
    --------------------------------------------------------------------- */

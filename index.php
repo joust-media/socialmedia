@@ -8,8 +8,10 @@
  *                        or one quiet "all caught up" card.
  *                     2. Coming up — the next three approved or scheduled posts.
  *                     3. Activity — humanized, run-collapsed, never a filename.
- *                     Admin additionally sees "Client responses" (last 7 days) and
- *                     a Studio quick-action row. Role is enforced with isAdmin().
+ *                     Admin additionally sees "Needs changes" (denied posts / assets
+ *                     waiting on Joust, with the latest client notes, linking to the
+ *                     posts.php work queue) and a Studio quick-action row. Role is
+ *                     enforced with isAdmin().
  *   (no client)     → a client chooser; admin also sees cross-client activity.
  *
  * No database changes. Counts use the same queries as the tab-bar badges
@@ -163,72 +165,70 @@ if ($hasLog) {
 }
 
 // ---------------------------------------------------------------------
-// Admin only — client responses over the last 7 days
+// Admin only — "Needs changes": what is waiting on Joust right now.
+// Posts = status denied (and not scheduled), same rule as the posts.php
+// queue; assets = denied tire / library images (assets.php filter=denied).
+// The latest client notes are activity_log 'commented' rows on those
+// posts (a deny note is stored as one of these), newest first, one per post.
 // ---------------------------------------------------------------------
-$denied = ['post' => 0, 'image' => 0, 'notes' => 0];
-$denyNotes = [];
-if ($isAdmin && $hasLog) {
+$needsPosts  = 0;
+$needsAssets = ['tire' => 0, 'library' => 0];
+$needsNotes  = [];
+if ($isAdmin) {
     try {
+        $deniedPostWhere = $hasPosted ? "status = 'denied' AND posted = 0" : "status = 'denied'";
+        $st = $pdo->prepare("SELECT COUNT(*) FROM posts WHERE company_id = ? AND {$deniedPostWhere}");
+        $st->execute([$cid]);
+        $needsPosts = (int)$st->fetchColumn();
+
         $st = $pdo->prepare("
-            SELECT d.entity_type, COUNT(*) AS n,
-                   SUM(EXISTS (SELECT 1 FROM activity_log c
-                                WHERE c.batch_id = d.batch_id AND c.id <> d.id
-                                  AND c.action = 'commented' AND c.detail IS NOT NULL AND c.detail <> '')) AS with_notes
-              FROM activity_log d
-             WHERE d.company_id = ? AND d.actor = 'client' AND d.action = 'denied'
-               AND d.created_at >= (NOW() - INTERVAL 7 DAY)
-             GROUP BY d.entity_type
+            SELECT COUNT(*) FROM tire_images ti
+             INNER JOIN tires t ON t.id = ti.tire_id
+             WHERE t.company_id = ? AND ti.status = 'denied'
         ");
         $st->execute([$cid]);
-        foreach ($st->fetchAll() as $r) {
-            $bucket = ($r['entity_type'] === 'post') ? 'post' : 'image';
-            $denied[$bucket] += (int)$r['n'];
-            $denied['notes'] += (int)$r['with_notes'];
+        $needsAssets['tire'] = (int)$st->fetchColumn();
+
+        if ($hasLib) {
+            $st = $pdo->prepare("SELECT COUNT(*) FROM library_images WHERE company_id = ? AND status = 'denied'");
+            $st->execute([$cid]);
+            $needsAssets['library'] = (int)$st->fetchColumn();
         }
-        $noteNameSel = $hasName ? 'p.name AS post_name' : "'' AS post_name";
-        $st = $pdo->prepare("
-            SELECT c.entity_type, c.entity_id, c.detail, c.created_at,
-                   p.caption AS post_caption, {$noteNameSel},
-                   ti.tire_id, t.name AS tire_name
-              FROM activity_log c
-             INNER JOIN activity_log d ON d.batch_id = c.batch_id AND d.id <> c.id AND d.action = 'denied'
-              LEFT JOIN posts p ON c.entity_type = 'post' AND p.id = c.entity_id
-              LEFT JOIN tire_images ti ON c.entity_type = 'tire_image' AND ti.id = c.entity_id
-              LEFT JOIN tires t ON t.id = ti.tire_id
-             WHERE c.company_id = ? AND c.actor = 'client' AND c.action = 'commented'
-               AND c.batch_id IS NOT NULL AND c.detail IS NOT NULL AND c.detail <> ''
-               AND c.created_at >= (NOW() - INTERVAL 7 DAY)
-             ORDER BY c.created_at DESC
-             LIMIT 3
-        ");
-        $st->execute([$cid]);
-        foreach ($st->fetchAll() as $r) {
-            $entry = [
-                'entity_type'  => $r['entity_type'],
-                'entity_id'    => (int)$r['entity_id'],
-                'company_slug' => $client['slug'],
-                '_meta'        => [
-                    'name'      => $r['post_name'] ?? '',
-                    'caption'   => $r['post_caption'] ?? '',
-                    'tire_id'   => (int)($r['tire_id'] ?? 0),
-                    'tire_name' => $r['tire_name'] ?? '',
-                ],
-            ];
-            $pn = activityParentName($entry);
-            if ($pn['thing'] === 'post')        $on = $pn['name'] !== '' ? $pn['name'] : 'a post';
-            elseif ($pn['parent'] !== '')       $on = 'an image in ' . $pn['parent'];
-            else                                $on = 'an image';
-            $denyNotes[] = [
-                'text' => trim((string)$r['detail']),
-                'on'   => $on,
-                'when' => relativeTime($r['created_at']),
-                'href' => activityDeepLink($entry, false),
-            ];
+
+        if ($hasLog && $needsPosts > 0) {
+            $noteNameSel = $hasName ? 'p.name AS post_name' : "'' AS post_name";
+            $pDenied     = $hasPosted ? "p.status = 'denied' AND p.posted = 0" : "p.status = 'denied'";
+            $st = $pdo->prepare("
+                SELECT c.entity_id, c.detail, c.created_at, p.caption AS post_caption, {$noteNameSel}
+                  FROM activity_log c
+                 INNER JOIN posts p ON p.id = c.entity_id
+                 WHERE c.company_id = ? AND c.entity_type = 'post' AND c.action = 'commented' AND c.actor = 'client'
+                   AND c.detail IS NOT NULL AND c.detail <> '' AND {$pDenied}
+                 ORDER BY c.created_at DESC, c.id DESC
+                 LIMIT 12
+            ");
+            $st->execute([$cid]);
+            $seen = [];
+            foreach ($st->fetchAll() as $r) {
+                $pid = (int)$r['entity_id'];
+                if (isset($seen[$pid])) continue;           // one note per post — the newest
+                $seen[$pid] = true;
+                $name = trim((string)($r['post_name'] ?? ''));
+                if ($name === '' || activityLooksLikeFilename($name)) $name = homeFirstLine($r['post_caption'] ?? '', 60);
+                $needsNotes[] = [
+                    'text' => trim((string)$r['detail']),
+                    'on'   => $name !== '' ? $name : 'Post #' . $pid,
+                    'when' => relativeTime($r['created_at']),
+                    'href' => clientUrl('posts', ['post' => $pid]),
+                ];
+                if (count($needsNotes) >= 3) break;
+            }
         }
     } catch (Throwable $e) {
-        error_log('index client-responses query failed: ' . $e->getMessage());
-        $denied = ['post' => 0, 'image' => 0, 'notes' => 0];
-        $denyNotes = [];
+        error_log('index needs-changes query failed: ' . $e->getMessage());
+        $needsPosts  = 0;
+        $needsAssets = ['tire' => 0, 'library' => 0];
+        $needsNotes  = [];
     }
 }
 
@@ -279,6 +279,60 @@ if ($pendingCollections > 0) {
   <?= $cards ? actionCardStack(array_slice($cards, 0, 3)) : actionCardCaughtUp() ?>
 </section>
 
+<?php // --- 1b. Admin: Needs changes (what is waiting on Joust) ---------- ?>
+<?php if ($isAdmin): ?>
+<?php
+  $queueUrl      = clientUrl('posts', ['status' => 'denied', 'month' => 'all']);
+  $assetsTotal   = $needsAssets['tire'] + $needsAssets['library'];
+  $assetsUrl     = clientUrl('assets', ['view' => $needsAssets['library'] > 0 ? 'library' : 'collections', 'filter' => 'denied']);
+?>
+<section class="home-section" aria-labelledby="home-changes" data-needs-changes="<?= (int)$needsPosts ?>">
+  <div class="home-section-head">
+    <h2 class="ui-list-header" id="home-changes">Needs changes</h2>
+    <?php if ($needsPosts > 0): ?><a href="<?= h($queueUrl) ?>">Open queue</a><?php endif; ?>
+  </div>
+  <?php
+    if ($needsPosts + $assetsTotal === 0) {
+        echo actionCardCaughtUp('Nothing waiting on you', 'No change requests from ' . $client['name'] . ' right now.');
+    } else {
+        $changeCards = [];
+        if ($needsPosts > 0) {
+            $changeCards[] = actionCard([
+                'count' => $needsPosts, 'noun' => 'post',
+                'one'   => 'needs changes', 'many' => 'need changes',
+                'href'  => $queueUrl,
+                'icon'  => 'xmark', 'subtitle' => 'Posts · Needs changes · client notes inside', 'tone' => 'deny',
+                'index' => 0,
+            ]);
+        }
+        if ($assetsTotal > 0) {
+            $assetParts = [];
+            if ($needsAssets['library'] > 0) $assetParts[] = $needsAssets['library'] . ' in Library';
+            if ($needsAssets['tire'] > 0)    $assetParts[] = $needsAssets['tire'] . ' in Collections';
+            $changeCards[] = actionCard([
+                'count' => $assetsTotal, 'noun' => 'asset',
+                'one'   => 'needs changes', 'many' => 'need changes',
+                'href'  => $assetsUrl,
+                'icon'  => 'photo', 'subtitle' => 'Assets · ' . implode(' · ', $assetParts), 'tone' => 'deny',
+                'index' => count($changeCards),
+            ]);
+        }
+        echo actionCardStack($changeCards);
+        if ($needsNotes) {
+            $notesHtml = '<ul class="home-notes" role="list">';
+            foreach ($needsNotes as $n) {
+                $q = mb_strlen($n['text']) > 160 ? rtrim(mb_substr($n['text'], 0, 159)) . '…' : $n['text'];
+                $notesHtml .= '<li><a class="home-note" href="' . h($n['href']) . '"><q>' . h($q) . '</q>'
+                            . '<span class="home-note-meta">on ' . h($n['on']) . ' · ' . h($n['when']) . '</span></a></li>';
+            }
+            $notesHtml .= '</ul>';
+            echo card($notesHtml, ['subtitle' => 'Latest notes from ' . $client['name'], 'class' => 'home-changes-notes']);
+        }
+    }
+  ?>
+</section>
+<?php endif; ?>
+
 <?php // --- 2. Coming up ----------------------------------------------- ?>
 <?php if ($upcoming): ?>
 <section class="home-section" aria-labelledby="home-upcoming">
@@ -326,33 +380,6 @@ if ($pendingCollections > 0) {
 
 <?php // --- 4. Admin variant (server-side gated) ------------------------ ?>
 <?php if ($isAdmin): ?>
-<section class="home-section" aria-labelledby="home-responses">
-  <h2 class="ui-list-header" id="home-responses">Client responses</h2>
-  <?php
-    $totalDenied = $denied['post'] + $denied['image'];
-    if ($totalDenied === 0) {
-        $lead = '<p class="home-responses-lead">No denials from ' . h($client['name']) . ' this week.</p>';
-    } else {
-        $parts = [];
-        if ($denied['post'] > 0)  $parts[] = '<strong>' . (int)$denied['post'] . ' ' . ($denied['post'] === 1 ? 'post' : 'posts') . '</strong>';
-        if ($denied['image'] > 0) $parts[] = '<strong>' . (int)$denied['image'] . ' ' . ($denied['image'] === 1 ? 'image' : 'images') . '</strong>';
-        $lead = '<p class="home-responses-lead">' . h($client['name']) . ' denied ' . implode(' and ', $parts)
-              . ' this week · <strong>' . (int)$denied['notes'] . '</strong> with notes</p>';
-    }
-    $notesHtml = '';
-    if ($denyNotes) {
-        $notesHtml .= '<ul class="home-notes" role="list">';
-        foreach ($denyNotes as $n) {
-            $q = mb_strlen($n['text']) > 160 ? rtrim(mb_substr($n['text'], 0, 159)) . '…' : $n['text'];
-            $notesHtml .= '<li><a class="home-note" href="' . h($n['href']) . '"><q>' . h($q) . '</q>'
-                        . '<span class="home-note-meta">on ' . h($n['on']) . ' · ' . h($n['when']) . '</span></a></li>';
-        }
-        $notesHtml .= '</ul>';
-    }
-    echo card($lead . $notesHtml, ['subtitle' => 'Last 7 days']);
-  ?>
-</section>
-
 <section class="home-section" aria-labelledby="home-studio">
   <h2 class="ui-list-header" id="home-studio">Studio</h2>
   <div class="home-quick">

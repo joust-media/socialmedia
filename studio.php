@@ -247,17 +247,19 @@ include __DIR__ . '/partials/layout-top.php';
 
 <!-- Posts -------------------------------------------------------------- -->
 <section class="studio-section" data-studio-section="posts"<?= $tab === 'posts' ? '' : ' hidden' ?>>
+  <?php $queueUrl = clientUrl('posts.php', ['status' => 'denied', 'month' => 'all']);   // the admin work queue ?>
   <?= insetListOpen(h($client['name']) . '\'s posts', ['raw' => true]) ?>
     <?= insetRow(['href' => clientUrl('posts.php', ['status' => 'pending', 'month' => 'all']),  'icon' => 'grid',      'iconStyle' => 'color:var(--pending)',   'title' => 'To Review', 'subtitle' => 'Waiting for the client', 'trailing' => '<span class="studio-count">' . $counts['pending'] . '</span>']) ?>
     <?= insetRow(['href' => clientUrl('posts.php', ['status' => 'approved', 'month' => 'all']), 'icon' => 'checkmark', 'iconStyle' => 'color:var(--approve)',   'title' => 'Approved',  'subtitle' => 'Ready to schedule',       'trailing' => '<span class="studio-count">' . $counts['approved'] . '</span>']) ?>
     <?= insetRow(['href' => clientUrl('posts.php', ['status' => 'scheduled', 'month' => 'all']),'icon' => 'calendar',  'iconStyle' => 'color:var(--scheduled)', 'title' => 'Scheduled', 'subtitle' => 'Pushed to the scheduler', 'trailing' => '<span class="studio-count">' . $counts['scheduled'] . '</span>']) ?>
-    <?= insetRow(['href' => clientUrl('posts.php', ['status' => 'denied', 'month' => 'all']),   'icon' => 'xmark',     'iconStyle' => 'color:var(--deny)',      'title' => 'Needs changes', 'subtitle' => 'Rework these', 'trailing' => '<span class="studio-count">' . $counts['denied'] . '</span>']) ?>
+    <?= insetRow(['href' => $queueUrl, 'icon' => 'xmark', 'iconStyle' => 'color:var(--deny)', 'title' => 'Needs changes', 'subtitle' => 'Work queue · client notes, Open, Resubmit', 'trailing' => '<span class="studio-count">' . $counts['denied'] . '</span>', 'chevron' => true, 'attrs' => ['data-queue-link' => '1']]) ?>
   <?= insetListClose() ?>
 
   <?php if (hasActivityLog($pdo)): ?>
     <section class="ui-card studio-activity">
       <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Recent client responses</h3>
-        <p class="ui-card-subtitle">Approvals, notes and change requests on <?= h($client['name']) ?>'s work.</p></div></div>
+        <p class="ui-card-subtitle">Approvals, notes and change requests on <?= h($client['name']) ?>'s work.</p></div>
+        <div class="ui-card-aside"><a class="ui-btn ui-btn--sm <?= $counts['denied'] > 0 ? 'ui-btn--deny ui-btn--tinted' : 'ui-btn--gray' ?>" href="<?= h($queueUrl) ?>" data-queue-link="2"><?= icon('xmark') ?><span>Needs changes · <?= (int)$counts['denied'] ?></span></a></div></div>
       <div class="ui-card-body studio-activity-list"><?= renderActivityFeed($pdo, (int)$client['id'], 12) ?></div>
     </section>
   <?php endif; ?>

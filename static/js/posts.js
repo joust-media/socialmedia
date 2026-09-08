@@ -8,7 +8,8 @@
    App.swipe.reset(item)          snap a row back
    App.posts.open(id, {deny})     open the post detail sheet (inline template or partial fetch)
    App.posts.close()
-   App.posts.decide(id, status, note)   optimistic approve / deny (+ required note) / reset
+   App.posts.decide(id, status, note, {toast})   optimistic approve / deny (+ required note) / reset
+   App.posts.resubmit(id)         admin work queue: denied → pending (status.php status=pending), row leaves the queue
    App.posts.comment(id, text)
    App.posts.togglePosted(id, to) (admin)   App.posts.remove(id) (admin)
    App.posts.videoFallback(root)  swaps a non-playable <video> for the "Open / Download" card
@@ -185,7 +186,8 @@
       empty = document.createElement('div');
       empty.className = 'ui-empty posts-empty ui-enter';
       empty.setAttribute('data-posts-empty', '');
-      empty.textContent = P.segment === 'pending' ? 'All caught up — nothing left to review.' : 'Nothing here.';
+      empty.textContent = P.segment === 'pending' ? 'All caught up — nothing left to review.'
+                        : (P.segment === 'denied' ? 'Nothing needs changes — the queue is clear.' : 'Nothing here.');
       group.parentNode.insertBefore(empty, group);
     }
     empty.hidden = false;
@@ -345,8 +347,9 @@
   }
 
   /* ---- decide: approve / deny(+note) / reset ------------------------ */
-  P.decide = function (id, status, note) {
+  P.decide = function (id, status, note, opts) {
     id = String(id);
+    opts = opts || {};
     var before = snapshot(id);
     if (!before) return Promise.resolve(null);
     var fromSeg = segmentOf(before.status, before.posted);
@@ -382,12 +385,26 @@
           if (note) appendComment(art, note, App.actor);
           var form = $('[data-deny-form]', sheetRoot()); if (form) { form.hidden = true; var ta = $('[data-deny-note]', form); if (ta) ta.value = ''; }
         }
-        if (status === 'approved') toast('Approved', 'success');
+        if (opts.toast) toast(opts.toast, 'success');
+        else if (status === 'approved') toast('Approved', 'success');
         else if (status === 'denied') toast(App.role === 'admin' ? 'Marked as needs changes' : 'Sent to Joust', 'success');
         else toast('Back in To Review');
         if (status === 'denied' && App.role !== 'admin' && P.current && P.current.id === id) setTimeout(P.close, 700);
       }
       document.dispatchEvent(new CustomEvent('posts:decided', { detail: { id: id, status: status, ok: res.ok } }));
+      return res;
+    });
+  };
+
+  /* ---- work queue (admin): denied → pending -------------------------- */
+  P.resubmit = function (id) {
+    id = String(id);
+    var item = itemEl(id);
+    var btns = item ? $$('[data-resubmit]', item) : [];
+    btns.forEach(function (b) { b.disabled = true; });
+    if (P.current && P.current.id === id) P.close();
+    return P.decide(id, 'pending', null, { toast: 'Resubmitted — back in To Review' }).then(function (res) {
+      if (!res || !res.ok) btns.forEach(function (b) { b.disabled = false; });
       return res;
     });
   };
@@ -675,6 +692,14 @@
       if (e.metaKey || e.ctrlKey || e.shiftKey) return;
       e.preventDefault();
       P.open(opener.getAttribute('data-post-open'));
+    });
+
+    // work queue: Resubmit for review (admin-only markup; status.php enforces the role)
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-resubmit]');
+      if (!btn || btn.disabled) return;
+      e.preventDefault();
+      P.resubmit(btn.getAttribute('data-resubmit'));
     });
 
     // everything inside the sheet

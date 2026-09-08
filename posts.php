@@ -14,6 +14,12 @@
  *   Scheduled = posted = 1                      (label only; DB value stays `posted`)
  *   Needs changes (admin only) = status denied AND posted = 0
  * Clients never receive denied rows — filtered in SQL (AND p.status <> 'denied').
+ *
+ * The Needs changes segment is Joust's work queue: each row also carries the
+ * client's latest note (deny note or newest comment — both are activity_log
+ * 'commented' rows), a client-comment count, and Open / Resubmit for review
+ * actions. Resubmit = status.php status=pending (admin only, existing rule).
+ * Sorted by most recent client activity. No schema changes.
  */
 
 require __DIR__ . '/db.php';
@@ -264,6 +270,71 @@ $st->execute($viewParams);
 $posts = $st->fetchAll();
 postsAttachRelations($pdo, $posts, $hasMedia, $hasLog);
 
+// ---------------------------------------------------------------------
+// Needs changes = the admin work queue. Attach the latest client note
+// (the deny note is a 'commented' row in the same batch as the deny, so
+// the comments already loaded above cover it), the client-comment count
+// and the time of the last client activity; newest activity first.
+// ---------------------------------------------------------------------
+$isQueue = $admin && $segment === 'denied';
+if ($isQueue && $posts) {
+    $deniedAt = [];
+    if ($hasLog) {
+        $ids = array_map('intval', array_column($posts, 'id'));
+        $ph  = implode(',', array_fill(0, count($ids), '?'));
+        try {
+            $st = $pdo->prepare("
+                SELECT entity_id, MAX(created_at) AS at FROM activity_log
+                WHERE entity_type = 'post' AND action = 'denied' AND entity_id IN ($ph)
+                GROUP BY entity_id
+            ");
+            $st->execute($ids);
+            foreach ($st->fetchAll() as $row) { $deniedAt[(int)$row['entity_id']] = (string)$row['at']; }
+        } catch (Throwable $e) {
+            error_log('posts queue denied_at query failed: ' . $e->getMessage());
+        }
+    }
+    foreach ($posts as &$p) {
+        $p['queue'] = postsQueueInfo($p, $deniedAt[(int)$p['id']] ?? null, $client);
+    }
+    unset($p);
+    usort($posts, static function ($a, $b) {
+        return ($b['queue']['activity_ts'] <=> $a['queue']['activity_ts']) ?: ((int)$b['id'] <=> (int)$a['id']);
+    });
+}
+
+/**
+ * Queue facts for one denied post: latest client note (else the latest note of
+ * any actor), client-comment count and the last-activity timestamp used for sorting.
+ */
+function postsQueueInfo(array $post, ?string $deniedAt, ?array $client): array {
+    $comments   = is_array($post['comments'] ?? null) ? $post['comments'] : [];
+    $clientRows = array_values(array_filter($comments, static function ($c) {
+        return strtolower(trim((string)($c['actor'] ?? ''))) === 'client';
+    }));
+    $latestClient = $clientRows ? $clientRows[count($clientRows) - 1] : null;
+    $latestAny    = $comments ? $comments[count($comments) - 1] : null;
+    $note         = $latestClient ?: $latestAny;
+    $noteActor    = $note ? strtolower(trim((string)($note['actor'] ?? ''))) : '';
+    $who          = $noteActor === 'client' ? (string)($client['name'] ?? $post['company_name'] ?? 'Client')
+                  : ($noteActor === 'admin' ? 'Joust' : 'Note');
+
+    $ts = 0;
+    foreach ([$latestClient['created_at'] ?? null, $deniedAt, $latestAny['created_at'] ?? null,
+              $post['updated_at'] ?? null, $post['scheduled_date'] ?? null] as $cand) {
+        $t = $cand ? strtotime((string)$cand) : false;
+        if ($t) { $ts = max($ts, $t); }
+    }
+    return [
+        'note'         => $note ? trim((string)$note['detail']) : '',
+        'note_who'     => $who,
+        'note_at'      => $note ? (string)$note['created_at'] : ($deniedAt ?? ''),
+        'client_count' => count($clientRows),
+        'denied_at'    => $deniedAt ?? '',
+        'activity_ts'  => $ts,
+    ];
+}
+
 $inList = false;
 foreach ($posts as $p) { if ((int)$p['id'] === $postParam) { $inList = true; break; } }
 if ($directPost && !$inList) {
@@ -339,6 +410,7 @@ $postsConfig = [
     'admin'       => $admin,
     'hasPosted'   => $hasPosted,
     'openPost'    => $postParam > 0 ? $postParam : 0,
+    'queue'       => $isQueue,
     'segmentUrls' => array_combine(array_keys($segments), array_map($segmentUrl, array_keys($segments))),
 ];
 $footExtra = '<script>window.PostsConfig = ' . json_encode($postsConfig, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n"
@@ -381,12 +453,20 @@ include __DIR__ . '/partials/layout-top.php';
         $ts       = strtotime((string)$post['scheduled_date']);
         $dateLbl  = $ts ? date('M j', $ts) : '';
         $href     = postsUrl(['status' => $segment, 'month' => $monthUrlParam, 'post' => $pid]);
+        $queue    = $isQueue ? ($post['queue'] ?? null) : null;
+        $qNote    = $queue ? $queue['note'] : '';
+        if (mb_strlen($qNote) > 220) { $qNote = rtrim(mb_substr($qNote, 0, 219)) . '…'; }
+        $qWhen    = $queue && $queue['note_at'] !== '' ? relativeTime($queue['note_at']) : '';
+        $qAbs     = $queue && $queue['note_at'] !== '' ? absoluteTime($queue['note_at']) : '';
+        $qCount   = $queue ? (int)$queue['client_count'] : 0;
     ?>
-      <li class="pl-item" id="post-<?= $pid ?>" data-post-item="<?= $pid ?>" data-id="<?= $pid ?>"
+      <li class="pl-item<?= $queue ? ' pl-item--queue' : '' ?>" id="post-<?= $pid ?>" data-post-item="<?= $pid ?>" data-id="<?= $pid ?>"
           data-status="<?= h($post['status']) ?>" data-posted="<?= $posted ? '1' : '0' ?>"
-          data-title="<?= h($title) ?>" data-swipe>
+          data-title="<?= h($title) ?>"<?= $queue ? ' data-queue' : ' data-swipe' ?>>
+        <?php if (!$queue): ?>
         <div class="pl-swipe pl-swipe--approve" aria-hidden="true"><?= icon('checkmark') ?><span>Approve</span></div>
         <div class="pl-swipe pl-swipe--deny" aria-hidden="true"><?= icon('xmark') ?><span>Deny</span></div>
+        <?php endif; ?>
         <a class="ui-row ui-row--leading pl-card" href="<?= h($href) ?>" data-post-open="<?= $pid ?>">
           <div class="ui-row-leading pl-thumb<?= $isVid ? ' pl-thumb--video' : '' ?>">
             <?php if ($first && !$isVid): ?>
@@ -405,14 +485,34 @@ include __DIR__ . '/partials/layout-top.php';
             <?php if ($subtitle !== ''): ?>
               <div class="pl-caption"><?= h($subtitle) ?></div>
             <?php endif; ?>
+            <?php if ($queue): ?>
+              <div class="pl-note<?= $qNote === '' ? ' pl-note--empty' : '' ?>" data-queue-note>
+                <?php if ($qNote !== ''): ?>
+                  <q><?= h($qNote) ?></q>
+                  <span class="pl-note-meta"><?= h($queue['note_who']) ?><?php if ($qWhen !== ''): ?> · <time title="<?= h($qAbs) ?>"><?= h($qWhen) ?></time><?php endif; ?></span>
+                <?php else: ?>
+                  <span>No note left<?php if ($qWhen !== ''): ?> · denied <time title="<?= h($qAbs) ?>"><?= h($qWhen) ?></time><?php endif; ?></span>
+                <?php endif; ?>
+              </div>
+            <?php endif; ?>
             <div class="pl-meta">
               <?= statusPill($post['status'], $posted) ?>
               <span class="pl-meta-item"><span class="pl-meta-sep">·</span><span><?= $nImg ?> <?= $nImg === 1 ? ($isVid ? 'video' : 'image') : 'media' ?></span></span>
-              <span class="pl-meta-item"><span class="pl-meta-sep">·</span><span data-comment-count-for="<?= $pid ?>"><?= $nCmt ?> <?= $nCmt === 1 ? 'comment' : 'comments' ?></span></span>
+              <?php if ($queue): ?>
+                <span class="pl-meta-item"><span class="pl-meta-sep">·</span><span data-queue-count="<?= $pid ?>"><?= $qCount > 0 ? $qCount . ' client ' . ($qCount === 1 ? 'comment' : 'comments') : 'no client comments' ?></span></span>
+              <?php else: ?>
+                <span class="pl-meta-item"><span class="pl-meta-sep">·</span><span data-comment-count-for="<?= $pid ?>"><?= $nCmt ?> <?= $nCmt === 1 ? 'comment' : 'comments' ?></span></span>
+              <?php endif; ?>
             </div>
           </div>
           <?= icon('chevron-right', 'ui-row-chevron') ?>
         </a>
+        <?php if ($queue): ?>
+          <div class="pl-queue-actions">
+            <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-post-open="<?= $pid ?>">Open</button>
+            <button type="button" class="ui-btn ui-btn--tinted ui-btn--sm" data-resubmit="<?= $pid ?>" title="Move this post back to the client's To Review list">Resubmit for review</button>
+          </div>
+        <?php endif; ?>
         <?php if ($inlineDetails): ?>
           <template data-post-template="<?= $pid ?>"><?= renderPostDetail($post, ['admin' => $admin, 'hasPosted' => $hasPosted]) ?></template>
         <?php endif; ?>
@@ -421,6 +521,8 @@ include __DIR__ . '/partials/layout-top.php';
   </ul>
   <?php if ($segment === 'pending'): ?>
     <p class="ui-list-footer posts-hint">Swipe right to approve, left to deny. Tap a post for the full preview.</p>
+  <?php elseif ($isQueue): ?>
+    <p class="ui-list-footer">Newest client activity first. Open a post for the full thread; Resubmit sends it back to the client's To Review list.</p>
   <?php endif; ?>
 </section>
 
