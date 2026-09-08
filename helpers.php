@@ -90,9 +90,11 @@ function clientQs() {
     return $clientSlug !== '' ? 'client=' . urlencode($clientSlug) : '';
 }
 
-/** App root URL prefix — '' when deployed at the document root, '/socialmedia' when in a
- *  subdirectory, etc. Mirrors the dirname-of-SCRIPT_NAME pattern admin.php's digest
- *  shutdown trigger uses. Cached per-request because SCRIPT_NAME never changes mid-flight. */
+/** App root URL prefix — '' when deployed at the document root, '/portal' when in a
+ *  subdirectory, etc. Derived from SCRIPT_NAME at runtime, so the folder can be renamed on
+ *  the server without any code change. Mirrors the dirname-of-SCRIPT_NAME pattern
+ *  admin.php's digest shutdown trigger uses. Cached per-request because SCRIPT_NAME never
+ *  changes mid-flight. */
 function basePath() {
     static $cached = null;
     if ($cached !== null) return $cached;
@@ -104,18 +106,18 @@ function basePath() {
 
 /** URL style switch for clientUrl() / pagePath().
  *
- *  false (default) → explicit script URLs: '/socialmedia/posts.php?client=hmf'. Works on
+ *  false (default) → explicit script URLs: '/portal/posts.php?client=hmf'. Works on
  *                    any Apache folder with or without an extension-less rewrite, so the
  *                    portal never depends on the host's .htaccess being in place.
- *  true            → pretty URLs: '/socialmedia/posts?client=hmf'. Only flip this once the
+ *  true            → pretty URLs: '/portal/posts?client=hmf'. Only flip this once the
  *                    server's .htaccess rewrite (name → name.php) is confirmed working.
- *  Home is the folder root ('/socialmedia/') in both modes. Guarded so a config.php or a
+ *  Home is the folder root ('/portal/') in both modes. Guarded so a config.php or a
  *  test harness can define it first. */
 if (!defined('CLEAN_URLS')) { define('CLEAN_URLS', false); }
 
 /** Root-rooted path for a page name honouring CLEAN_URLS:
- *    pagePath('posts') / pagePath('posts.php') → '/socialmedia/posts.php' (or '/socialmedia/posts')
- *    pagePath('index') / pagePath('index.php') / pagePath('') → '/socialmedia/'
+ *    pagePath('posts') / pagePath('posts.php') → '/portal/posts.php' (or '/portal/posts')
+ *    pagePath('index') / pagePath('index.php') / pagePath('') → '/portal/'
  *  Paths with a directory component ('legacy/admin.php') are treated the same way. */
 function pagePath($page) {
     $name = preg_replace('/\.php$/', '', (string)$page);
@@ -124,7 +126,7 @@ function pagePath($page) {
 }
 
 /** Build URL to a page preserving client scope and merging extras.
- *  Output is always root-rooted ('/posts.php?client=hmf', '/socialmedia/posts.php?client=hmf'),
+ *  Output is always root-rooted ('/posts.php?client=hmf', '/portal/posts.php?client=hmf'),
  *  so the same href works from any page in the app. The page name may be given with or
  *  without '.php' — see pagePath() / CLEAN_URLS for the emitted form. */
 function clientUrl($page, $extra = []) {
@@ -469,7 +471,7 @@ if (!function_exists('videoFileLooksValid')) {
  * Library gallery — reads image files straight off disk from a folder Lance
  * drops files into by hand (Drive/FTP), one folder per brand, keyed on the
  * company's slug: media/library/{slug}/. That folder is a *sibling* of this
- * app (http/media/ next to http/socialmedia/), not inside it.
+ * app (http/media/ next to http/portal/), not inside it.
  */
 
 /** Filesystem path to a brand's library folder. */
@@ -1451,6 +1453,25 @@ function renderActivityFeed(PDO $pdo, $companyId = null, $limit = 20) {
 }
 
 /**
+ * Resolve a company's hand-entered `logo_url` into the URL to emit. Keeps a logo that
+ * lives in this app's uploads/ working when the app folder is renamed, without touching
+ * the row:
+ *   - app-relative ('uploads/kenda-logo.png')                → basePath() . '/uploads/…'
+ *   - root-rooted under a (possibly former) app folder
+ *     ('/old-folder/uploads/kenda-logo.png')                  → basePath() . '/uploads/…'
+ *     (uploads/ only ever exists inside the app folder, so re-rooting is always right)
+ *   - anything else ('https://…', '/images/kenda.png', 'x.png') → unchanged
+ * Idempotent, so it is safe to apply at more than one layer.
+ */
+function brandLogoUrl($url): string {
+    $url = trim((string)$url);
+    if ($url === '') { return ''; }
+    if (preg_match('#^(?:[a-z][a-z0-9+.\-]*:|//)#i', $url)) { return $url; }     // scheme or protocol-relative
+    if (preg_match('#(?:^|/)(uploads/.+)$#', $url, $m)) { return basePath() . '/' . $m[1]; }
+    return $url;
+}
+
+/**
  * Render the brand block (logo + name) for the client topbar.
  * Falls back to a "J" mark when unscoped or when the client has no logo.
  */
@@ -1458,7 +1479,7 @@ function renderBrand($client, $sub = '') {
     $h = function ($s) {
         return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
     };
-    $logoUrl = $client['logo_url'] ?? '';
+    $logoUrl = brandLogoUrl($client['logo_url'] ?? '');
     $name    = $client ? $client['name'] : 'Joust Media';
 
     $mark = $logoUrl
@@ -1482,7 +1503,7 @@ function renderBrand($client, $sub = '') {
 if (!function_exists('clientAvatar')) {
     function clientAvatar($client, string $class = ''): string {
         $name = !empty($client['name']) ? (string)$client['name'] : 'Joust Media';
-        $logo = !empty($client['logo_url']) ? (string)$client['logo_url'] : '';
+        $logo = !empty($client['logo_url']) ? brandLogoUrl($client['logo_url']) : '';
         $cls  = trim('ui-avatar ' . $class);
         if ($logo !== '') {
             return '<img class="' . esc($cls) . '" src="' . esc($logo) . '" alt="' . esc($name) . '" width="36" height="36" loading="lazy">';

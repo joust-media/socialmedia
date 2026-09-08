@@ -1133,7 +1133,7 @@ function buildFilterUrl($cats, $month, $statuses = null) {
              data-post-type="<?= h($postType) ?>">
       <div class="post-header">
         <img class="post-logo"
-             src="<?= h($post['company_logo']) ?>"
+             src="<?= h(brandLogoUrl($post['company_logo'])) ?>"
              alt="<?= h($post['company_name']) ?> logo">
         <div class="post-meta">
           <div class="post-name"><?= h($post['company_name']) ?></div>

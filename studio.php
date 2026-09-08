@@ -164,7 +164,7 @@ $studioConfig = [
     'endpoint'  => basePath() . '/status.php',
     'batch'     => basePath() . '/batch-process.php?client=' . rawurlencode($client['slug']),
     'client'    => $client['slug'],
-    'brand'     => ['name' => $client['name'], 'logo' => (string)($client['logo_url'] ?? '')],
+    'brand'     => ['name' => $client['name'], 'logo' => brandLogoUrl($client['logo_url'] ?? '')],
     'maxImages' => 10,
     'maxFileMb' => 25,
     'tab'       => $tab,

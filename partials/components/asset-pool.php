@@ -471,7 +471,8 @@ if (!function_exists('studioPreviewHtml')) {
             ? renderCaptionPreview($post, $brand, ['copy' => false])
             : '';
 
-        $out  = '<aside class="studio-preview" data-preview data-brand-name="' . $esc($brand['name'] ?? '') . '" data-brand-logo="' . $esc($brand['logo_url'] ?? '') . '" aria-label="Preview — what the client sees">';
+        $brandLogo = function_exists('brandLogoUrl') ? brandLogoUrl($brand['logo_url'] ?? '') : (string)($brand['logo_url'] ?? '');
+        $out  = '<aside class="studio-preview" data-preview data-brand-name="' . $esc($brand['name'] ?? '') . '" data-brand-logo="' . $esc($brandLogo) . '" aria-label="Preview — what the client sees">';
         $out .= '<div class="studio-preview-head"><h2 class="studio-section-title">Preview</h2><p class="text-secondary studio-preview-sub">Exactly what ' . $esc($brand['name'] ?? 'the client') . ' will see</p></div>';
         $out .= '<div class="studio-phone"><article class="pd studio-pd" data-post-detail="0">';
         $out .= '<div class="pd-meta"><span class="pd-type" data-preview-type>' . $esc($type) . '</span>'
@@ -517,7 +518,7 @@ if (!function_exists('studioComposerHtml')) {
         $slots    = max(0, $max - count($editImgs));
         $formId   = (string)($ctx['formId'] ?? 'studioComposer');
 
-        $brand = ['name' => (string)($client['name'] ?? ''), 'logo_url' => (string)($client['logo_url'] ?? '')];
+        $brand = ['name' => (string)($client['name'] ?? ''), 'logo_url' => function_exists('brandLogoUrl') ? brandLogoUrl($client['logo_url'] ?? '') : (string)($client['logo_url'] ?? '')];
         $previewPost = [
             'caption'        => (string)($post['caption'] ?? ''),
             'hashtags'       => (string)($post['hashtags'] ?? ''),

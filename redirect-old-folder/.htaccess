@@ -1,0 +1,23 @@
+# Redirect kit for the OLD portal folder.
+#
+# Place this file (and index.php) inside the old, otherwise-empty
+# public_html/socialmedia/ folder after the real app has been renamed to
+# public_html/portal/. Every request under /socialmedia is answered with a
+# permanent redirect to the same path under /portal:
+#
+#   /socialmedia                                  -> /portal/
+#   /socialmedia/                                 -> /portal/
+#   /socialmedia/?client=kenda                    -> /portal/?client=kenda
+#   /socialmedia/posts.php?client=kenda&status=denied
+#                                                 -> /portal/posts.php?client=kenda&status=denied
+#   /socialmedia/static/css/tokens.css            -> /portal/static/css/tokens.css
+#
+# mod_alias keeps the query string automatically (the target has no "?").
+# The optional group makes the no-trailing-slash form work even if this rule
+# runs before Apache's own DirectorySlash redirect; when the group is unmatched
+# $2 expands to "", giving /portal/.
+#
+# If this .htaccess is ignored (AllowOverride None), requests for /socialmedia/
+# fall through to index.php next to it, which performs the same redirect in PHP.
+
+RedirectMatch 301 ^/socialmedia(/(.*))?$ /portal/$2

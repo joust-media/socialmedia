@@ -654,7 +654,7 @@ $studioConfig = [
     'endpoint'  => basePath() . '/status.php',
     'batch'     => basePath() . '/batch-process.php',
     'client'    => $client['slug'],
-    'brand'     => ['name' => $client['name'], 'logo' => (string)($client['logo_url'] ?? '')],
+    'brand'     => ['name' => $client['name'], 'logo' => brandLogoUrl($client['logo_url'] ?? '')],
     'maxImages' => $maxImages,
     'maxFileMb' => (int)($maxFileSize / (1024 * 1024)),
 ];

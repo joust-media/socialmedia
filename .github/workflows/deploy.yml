@@ -29,13 +29,16 @@ jobs:
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
 
-          # The folder on the GoDaddy server to deploy into.
-          # The FTP account's root IS the site's document root (its root listing
-          # contains css/, js/, images/, media/ and the live socialmedia/ folder),
-          # so paths here are relative to it. Do NOT prefix with public_html/ -
-          # that creates a bogus nested folder and never touches the live site.
-          # Deploys are scoped to socialmedia/ and never touch the rest of the site.
-          server-dir: socialmedia/
+          # The folder on the GoDaddy server to deploy into (public URL
+          # https://joustmedia.com/portal/). The FTP account's root IS the
+          # site's document root (its root listing contains css/, js/, images/,
+          # media/ and the live portal/ folder), so paths here are relative to
+          # it. Do NOT prefix with public_html/ - that creates a bogus nested
+          # folder and never touches the live site.
+          # Deploys are scoped to portal/ and never touch the rest of the site.
+          # (The folder was renamed from socialmedia/ -> portal/; the old folder
+          # only holds the redirect kit from redirect-old-folder/.)
+          server-dir: portal/
 
           # Upload from the repository root.
           local-dir: ./
@@ -45,6 +48,7 @@ jobs:
           #   - config.php holds the LIVE database credentials
           #   - uploads/ holds client-uploaded images and is not tracked in git
           #   - .htaccess lives on the server (controls site routing/PHP config) and is not tracked in the repo
+          #   - redirect-old-folder/ is the kit for the OLD socialmedia/ folder, placed there by hand
           exclude: |
             **/.git*
             **/.git*/**
@@ -55,3 +59,4 @@ jobs:
             **/.htaccess
             error_log
             README.md
+            redirect-old-folder/**

@@ -723,7 +723,7 @@ $splitName = function($name) {
 </main>
 <div class="toast" id="toast"></div>
 <script>
-  // App root ('' or '/socialmedia') so endpoint fetches work wherever this page is served from.
+  // App root ('' or '/portal') so endpoint fetches work wherever this page is served from.
   const APP_BASE = <?= json_encode(basePath()) ?>;
   // URL to return to after a delete — stays in this module for this client
   const LIST_URL = <?= json_encode(featureUrl()) ?>;

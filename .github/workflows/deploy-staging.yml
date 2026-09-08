@@ -2,12 +2,12 @@ name: Deploy to staging
 
 # Manually deploys ANY branch/tag to a separate "staging" folder on GoDaddy so a
 # redesign can be tested against a copy of the database without touching the
-# live site in socialmedia/.
+# live site in portal/ (https://joustmedia.com/portal/).
 #
 # The FTP account's root IS the site's document root (its root listing contains
-# css/, js/, images/, media/ and the live socialmedia/ folder), so server paths
+# css/, js/, images/, media/ and the live portal/ folder), so server paths
 # are relative to it. Do NOT prefix with public_html/ - that creates a bogus
-# nested folder that is not served (joustmedia.com/socialmedia-staging -> 404).
+# nested folder that is not served (joustmedia.com/portal-staging -> 404).
 #
 # This file must live on the DEFAULT branch (main) before it shows up under
 # Actions > "Deploy to staging" > "Run workflow". The branch you pick in the
@@ -25,7 +25,7 @@ on:
       server_dir:
         description: "Target folder on the server, relative to the FTP root = document root (must end with / and contain 'staging')"
         required: true
-        default: socialmedia-staging/
+        default: portal-staging/
         type: string
       confirm:
         description: "Type the word: staging"
@@ -44,7 +44,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Refuse to run unless the inputs unambiguously point at staging.
-      # Guards against typing the production path into server_dir by accident.
+      # Guards against typing the production path (current portal/, the old
+      # socialmedia/ folder, or the site root) into server_dir by accident.
       - name: Guard against deploying to production
         env:
           SERVER_DIR: ${{ inputs.server_dir }}
@@ -55,8 +56,12 @@ jobs:
             echo "::error::confirm must be exactly 'staging' (got '$CONFIRM')."; exit 1
           fi
           case "$SERVER_DIR" in
+            portal/|public_html/portal/|/portal/|./portal/)
+              echo "::error::server_dir is the PRODUCTION folder (portal/). Refusing."; exit 1 ;;
             socialmedia/|public_html/socialmedia/|/socialmedia/|./socialmedia/)
-              echo "::error::server_dir is the PRODUCTION folder. Refusing."; exit 1 ;;
+              echo "::error::server_dir is the OLD production folder (socialmedia/). Refusing."; exit 1 ;;
+            ""|/|./|public_html/|/public_html/)
+              echo "::error::server_dir is the site ROOT. Refusing."; exit 1 ;;
           esac
           case "$SERVER_DIR" in
             *staging*) ;;
@@ -104,6 +109,7 @@ jobs:
           #   - config.php holds the STAGING database credentials (hand-copied, edited)
           #   - uploads/ holds client-uploaded images, copied by hand from production
           #   - .htaccess lives on the server (routing / PHP config) and is not in git
+          #   - redirect-old-folder/ is the kit for the OLD socialmedia/ folder, placed there by hand
           exclude: |
             **/.git*
             **/.git*/**
@@ -114,3 +120,4 @@ jobs:
             **/.htaccess
             error_log
             README.md
+            redirect-old-folder/**

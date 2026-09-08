@@ -3,7 +3,8 @@
  * Daily activity digest — emails recent activity_log rows to lance.
  *
  * Triggers (any one is enough):
- *   - GET ?source=cron        — wired up via real cron, preferred
+ *   - GET ?source=cron        — wired up via real cron, preferred, e.g. (cPanel > Cron Jobs)
+ *                               0 13 * * * curl -fsS "https://joustmedia.com/portal/digest.php?source=cron" >/dev/null 2>&1
  *   - POST source=manual      — "Send digest now" button on admin.php
  *   - GET ?source=opportunistic — fired from admin.php shutdown hook
  *
