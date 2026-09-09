@@ -135,10 +135,9 @@ try {
 
     // ---- delete_email (admin) ----
     if ($action === 'delete_email') {
+        // Same path as add-email.php's delete (emails-lib.php): map rows + row, 'deleted' logged with the company id.
         $pdo->beginTransaction();
-        $pdo->prepare("DELETE FROM email_group_map WHERE email_id = ?")->execute([$id]);
-        $pdo->prepare("DELETE FROM emails WHERE id = ?")->execute([$id]);
-        logEmailActivity($pdo, $actor, 'deleted', $id, "Email {$label} deleted", null, null, $companyId);
+        deleteEmail($pdo, $email, $actor);
         $pdo->commit();
         echo json_encode(['ok' => true, 'id' => $id, 'deleted' => 1]);
         exit;

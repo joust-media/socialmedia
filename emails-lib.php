@@ -983,10 +983,15 @@ if (!function_exists('emailCsvEncodeRow')) {
      * One CSV line (no terminator), RFC 4180: cells are quoted only when they contain a
      * comma, a quote or a line break (fputcsv() would also quote every cell with a space,
      * which makes the header read "Subject Line" instead of Subject Line). Quotes doubled.
+     *
+     * Formula guard: a cell starting with = + - @ (or a tab / CR) would be evaluated by
+     * Excel / Sheets when the export is opened, so it is prefixed with a space. The
+     * importer trims every cell (emailCleanCell), so a round trip stays diff-free.
      */
     function emailCsvEncodeRow(array $cells): string {
         return implode(',', array_map(static function ($c) {
             $c = (string)$c;
+            if ($c !== '' && strpbrk($c[0], "=+-@\t\r") !== false) $c = ' ' . $c;
             return preg_match('/[",\r\n]/', $c) ? '"' . str_replace('"', '""', $c) . '"' : $c;
         }, $cells));
     }
