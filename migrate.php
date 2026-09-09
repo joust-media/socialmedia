@@ -953,6 +953,89 @@ try {
     } else {
         $steps[] = "• `library_images` table already exists — skipped.";
     }
+
+    // 19. emails — external HTML emails reviewed per client (Emails tab).
+    //     One row per email: code ('C1', 'R3'), title, link to the hosted HTML,
+    //     subject / preview / trigger copy, optional send date, priority,
+    //     review status (draft → pending → approved | denied) and a `live`
+    //     flag that wins over status for display. See emails-lib.php.
+    if (!tableExists($pdo, 'emails')) {
+        $pdo->exec("
+            CREATE TABLE emails (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                company_id INT UNSIGNED NOT NULL,
+                code VARCHAR(32) NOT NULL,
+                title VARCHAR(255) NOT NULL DEFAULT '',
+                html_url VARCHAR(512) NOT NULL DEFAULT '',
+                subject VARCHAR(255) NOT NULL DEFAULT '',
+                preview_text TEXT NULL,
+                trigger_text TEXT NULL,
+                send_at DATE NULL,
+                priority ENUM('low','medium','high') NULL,
+                status ENUM('draft','pending','approved','denied') NOT NULL DEFAULT 'draft',
+                live TINYINT(1) NOT NULL DEFAULT 0,
+                live_at DATETIME NULL,
+                sort_order INT NOT NULL DEFAULT 0,
+                notes TEXT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_company_code (company_id, code),
+                KEY ix_company_status (company_id, status, live)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `emails` table.";
+    } else {
+        $steps[] = "• `emails` table already exists — skipped.";
+    }
+
+    // 20. email_groups — per-client tags (Free, Pro, Leads, Renewal, System …).
+    if (!tableExists($pdo, 'email_groups')) {
+        $pdo->exec("
+            CREATE TABLE email_groups (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                company_id INT UNSIGNED NOT NULL,
+                name VARCHAR(80) NOT NULL,
+                slug VARCHAR(80) NOT NULL,
+                sort_order INT NOT NULL DEFAULT 0,
+                UNIQUE KEY uq_company_slug (company_id, slug)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `email_groups` table.";
+    } else {
+        $steps[] = "• `email_groups` table already exists — skipped.";
+    }
+
+    // 21. email_group_map — many-to-many emails ↔ groups.
+    if (!tableExists($pdo, 'email_group_map')) {
+        $pdo->exec("
+            CREATE TABLE email_group_map (
+                email_id INT UNSIGNED NOT NULL,
+                group_id INT UNSIGNED NOT NULL,
+                PRIMARY KEY (email_id, group_id),
+                KEY ix_email_group_map_group (group_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `email_group_map` table.";
+    } else {
+        $steps[] = "• `email_group_map` table already exists — skipped.";
+    }
+
+    // 22. 'emails' module row — enable the Emails tab per client with one
+    //     company_modules (company_id, module_id) row. (The tab also appears
+    //     automatically once a client has any emails row.)
+    $s = $pdo->prepare("SELECT id FROM modules WHERE slug = 'emails'");
+    $s->execute();
+    $emailsModuleId = (int)$s->fetchColumn();
+    if (!$emailsModuleId) {
+        $pdo->prepare("
+            INSERT INTO modules (slug, singular_label, plural_label, icon)
+            VALUES ('emails', 'Email', 'Emails', '✉️')
+        ")->execute();
+        $emailsModuleId = (int)$pdo->lastInsertId();
+        $steps[] = "✓ Seeded 'emails' module (id={$emailsModuleId}) — add a company_modules row per client to enable the Emails tab.";
+    } else {
+        $steps[] = "• 'emails' module already seeded (id={$emailsModuleId}).";
+    }
 } catch (Exception $e) {
     $errors[] = $e->getMessage();
 }

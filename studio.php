@@ -4,7 +4,7 @@
  * session is redirected to login by requireAdmin() before any output.
  *
  *   ?client=<slug>        scope (helpers.php); without it → client chooser
- *   &tab=compose|batch|uploads|posts   initial segment (default compose)
+ *   &tab=compose|batch|uploads|posts|emails   initial segment (default compose)
  *   &msg=…                flash after a save
  *
  * Sections (scoped):
@@ -12,6 +12,8 @@
  *   Batch    — summary + the batch builder (batch.php)
  *   Uploads  — drag-drop zone → batch-process.php (one pending post per file into uploads/)
  *   Posts    — segment counts into posts.php + recent client responses (renderActivityFeed)
+ *   Emails   — <section data-studio-emails> (present once migrate.php created the emails table);
+ *              the Emails admin worker owns everything inside that section.
  */
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
@@ -100,6 +102,8 @@ if (!$client) {
 // MODE B — client selected: the hub
 // =============================================================
 $tabs = ['compose' => 'Compose', 'batch' => 'Batch', 'uploads' => 'Uploads', 'posts' => 'Posts'];
+$hasEmails = hasEmailsTable($pdo);          // migration-gated; admin always gets the tab so the first email can be added
+if ($hasEmails) $tabs['emails'] = 'Emails';
 $tab  = strtolower(trim((string)($_GET['tab'] ?? 'compose')));
 if (!isset($tabs[$tab])) $tab = 'compose';
 
@@ -264,5 +268,28 @@ include __DIR__ . '/partials/layout-top.php';
     </section>
   <?php endif; ?>
 </section>
+
+<?php if ($hasEmails): ?>
+<!-- Emails ------------------------------------------------------------- -->
+<!-- Placeholder shell: the Emails admin worker replaces everything INSIDE this section
+     (add / edit, CSV + JSON export / import, group management). Keep the section tag. -->
+<section class="studio-section" data-studio-section="emails" data-studio-emails<?= $tab === 'emails' ? '' : ' hidden' ?>>
+  <?php
+    $emailCounts  = emailCounts($pdo, (int)$client['id']);
+    $emailsOn     = companyHasEmails($client, $pdo);
+    $emailsIntro  = $emailsOn
+        ? '<p>' . h($client['name']) . ' has <strong>' . (int)$emailCounts['total'] . '</strong> email' . ((int)$emailCounts['total'] === 1 ? '' : 's')
+          . ' · ' . (int)$emailCounts['pending'] . ' to review · ' . (int)$emailCounts['approved'] . ' approved · '
+          . (int)$emailCounts['live'] . ' live · ' . (int)$emailCounts['denied'] . ' needs changes · ' . (int)$emailCounts['draft'] . ' draft.</p>'
+        : '<p>The Emails module is not enabled for ' . h($client['name']) . ' yet. Enable it in <code>company_modules</code> or add the first email and the Emails tab appears for the client.</p>';
+  ?>
+  <?= card(
+        $emailsIntro . '<p class="text-secondary">Add and edit emails, import or export the spreadsheet, and manage groups here — coming soon.</p>',
+        [
+          'title'  => 'Emails',
+          'footer' => $emailsOn ? '<a class="ui-btn ui-btn--filled" href="' . h(emailsUrl(['status' => 'all'])) . '">Open emails</a>' : '',
+        ]) ?>
+</section>
+<?php endif; ?>
 
 <?php include __DIR__ . '/partials/layout-bottom.php'; ?>
