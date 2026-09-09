@@ -219,9 +219,25 @@ function render_summary(array $rows, int $leftover, array $config) {
     // "Post #N" line can read "Spring launch — hero shot" instead.
     $postLabels = [];
     $postIds = [];
+    $emailLabels = [];
+    $emailIds = [];
     foreach ($companies as $cid => $co) {
         foreach ($co['entries'] as $e) {
-            if ($e['entity_type'] === 'post') $postIds[] = (int)$e['entity_id'];
+            if ($e['entity_type'] === 'post')  $postIds[]  = (int)$e['entity_id'];
+            if ($e['entity_type'] === 'email') $emailIds[] = (int)$e['entity_id'];
+        }
+    }
+    if ($emailIds && function_exists('hasEmailsTable') && hasEmailsTable($pdo)) {
+        $emailIds = array_values(array_unique($emailIds));
+        $ph = implode(',', array_fill(0, count($emailIds), '?'));
+        try {
+            $s = $pdo->prepare("SELECT id, code, title FROM emails WHERE id IN ($ph)");
+            $s->execute($emailIds);
+            foreach ($s->fetchAll() as $r) {
+                $emailLabels[(int)$r['id']] = emailDisplayLabel($r);
+            }
+        } catch (Throwable $e) {
+            $emailLabels = [];
         }
     }
     if ($postIds) {
@@ -259,6 +275,8 @@ function render_summary(array $rows, int $leftover, array $config) {
                 $entityLabel = 'Image #' . (int)$e['entity_id'];
             } elseif ($e['entity_type'] === 'task') {
                 $entityLabel = 'Task #' . (int)$e['entity_id'];
+            } elseif ($e['entity_type'] === 'email') {
+                $entityLabel = $emailLabels[(int)$e['entity_id']] ?? ('Email #' . (int)$e['entity_id']);
             } else {
                 $entityLabel = ucfirst($e['entity_type']) . ' #' . (int)$e['entity_id'];
             }

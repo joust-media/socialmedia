@@ -3,19 +3,22 @@
  * Home — "Today" (spec §4.1).
  *
  *   ?client=kenda   → the client's Today screen:
- *                     1. Needs your attention — up to three stacked action cards
- *                        (pending posts / Library images / collections with new renders),
- *                        or one quiet "all caught up" card.
- *                     2. Coming up — the next three approved or scheduled posts.
+ *                     1. Needs your attention — up to four stacked action cards
+ *                        (pending posts / emails to review / Library images /
+ *                        collections with new renders), or one quiet "all caught up" card.
+ *                     2. Coming up — the next three approved or scheduled posts, merged
+ *                        with Live emails that have a future send date.
  *                     3. Activity — humanized, run-collapsed, never a filename.
- *                     Admin additionally sees "Needs changes" (denied posts / assets
- *                     waiting on Joust, with the latest client notes, linking to the
- *                     posts.php work queue) and a Studio quick-action row. Role is
- *                     enforced with isAdmin().
+ *                     Admin additionally sees "Needs changes" (denied posts / emails /
+ *                     assets waiting on Joust, with the latest client notes, linking to
+ *                     the posts.php / emails.php work queues) and a Studio quick-action
+ *                     row. Role is enforced with isAdmin().
  *   (no client)     → a client chooser; admin also sees cross-client activity.
  *
  * No database changes. Counts use the same queries as the tab-bar badges
- * (partials/tabbar.php) so the numbers always agree.
+ * (partials/tabbar.php) so the numbers always agree. Everything email-related
+ * is gated on companyHasEmails() (emails-lib.php): a company without the
+ * Emails module renders exactly as before.
  */
 
 require __DIR__ . '/db.php';
@@ -132,8 +135,35 @@ if ($hasLib) {
     $pendingLibrary = (int)$st->fetchColumn();
 }
 
+// Emails (module-gated; emails-lib.php). pending = awaiting the client, the
+// same rule as the Emails tab badge. Live emails with a future send date join
+// "Coming up". Nothing here runs for a company without the module.
+$hasEmails      = function_exists('companyHasEmails') && companyHasEmails($client, $pdo);
+$emailCounts    = ['draft' => 0, 'pending' => 0, 'approved' => 0, 'denied' => 0, 'live' => 0, 'total' => 0];
+$upcomingEmails = [];
+if ($hasEmails) {
+    try {
+        $emailCounts = emailCounts($pdo, $cid);
+        $today = date('Y-m-d');
+        foreach (emailsForCompany($pdo, $cid, ['status' => 'live']) as $e) {
+            $raw = trim((string)($e['send_at'] ?? ''));
+            if ($raw === '' || $raw === '0000-00-00' || $raw < $today) continue;
+            $ts = strtotime($raw);
+            if ($ts === false) continue;
+            $upcomingEmails[] = ['kind' => 'email', 'ts' => $ts, 'id' => (int)$e['id'], 'row' => $e];
+        }
+    } catch (Throwable $e) {
+        error_log('index emails query failed: ' . $e->getMessage());
+        $emailCounts    = ['draft' => 0, 'pending' => 0, 'approved' => 0, 'denied' => 0, 'live' => 0, 'total' => 0];
+        $upcomingEmails = [];
+    }
+}
+$pendingEmails = (int)$emailCounts['pending'];
+
 // ---------------------------------------------------------------------
-// Coming up — next 3 approved or scheduled posts from today onwards
+// Coming up — next 3 approved or scheduled posts from today onwards,
+// merged with the Live emails above (date order; an email's send date is
+// all-day, so it sorts ahead of posts on the same day).
 // ---------------------------------------------------------------------
 $hasPosted = hasPostedColumn($pdo);
 $hasName   = hasPostsNameColumn($pdo);
@@ -154,7 +184,18 @@ $st = $pdo->prepare("
      LIMIT 3
 ");
 $st->execute([$cid]);
-$upcoming = array_slice($st->fetchAll(), 0, 3);
+$upcoming = [];
+foreach (array_slice($st->fetchAll(), 0, 3) as $p) {
+    $ts = $p['scheduled_date'] ? strtotime((string)$p['scheduled_date']) : false;
+    $upcoming[] = ['kind' => 'post', 'ts' => $ts === false ? PHP_INT_MAX : $ts, 'id' => (int)$p['id'], 'row' => $p];
+}
+if ($upcomingEmails) {
+    $upcoming = array_merge($upcoming, $upcomingEmails);
+    usort($upcoming, static function ($a, $b) {
+        return [$a['ts'], $a['kind'] === 'post' ? 0 : 1, $a['id']] <=> [$b['ts'], $b['kind'] === 'post' ? 0 : 1, $b['id']];
+    });
+    $upcoming = array_slice($upcoming, 0, 3);
+}
 
 // ---------------------------------------------------------------------
 // Activity — humanized + run-collapsed (helpers.php)
@@ -167,11 +208,14 @@ if ($hasLog) {
 // ---------------------------------------------------------------------
 // Admin only — "Needs changes": what is waiting on Joust right now.
 // Posts = status denied (and not scheduled), same rule as the posts.php
-// queue; assets = denied tire / library images (assets.php filter=denied).
+// queue; emails = Needs changes (denied, not live), the emails.php queue;
+// assets = denied tire / library images (assets.php filter=denied).
 // The latest client notes are activity_log 'commented' rows on those
-// posts (a deny note is stored as one of these), newest first, one per post.
+// posts / emails (a deny note is stored as one of these), newest first,
+// one per item, merged and capped at three.
 // ---------------------------------------------------------------------
 $needsPosts  = 0;
+$needsEmails = 0;
 $needsAssets = ['tire' => 0, 'library' => 0];
 $needsNotes  = [];
 if ($isAdmin) {
@@ -220,13 +264,52 @@ if ($isAdmin) {
                     'on'   => $name !== '' ? $name : 'Post #' . $pid,
                     'when' => relativeTime($r['created_at']),
                     'href' => clientUrl('posts', ['post' => $pid]),
+                    'ts'   => (int)strtotime((string)$r['created_at']),
                 ];
                 if (count($needsNotes) >= 3) break;
+            }
+        }
+
+        // Emails: same shape as the posts query (design §9) — the newest client
+        // note per Needs-changes email, merged with the post notes by time.
+        if ($hasEmails) {
+            $needsEmails = (int)$emailCounts['denied'];
+            if ($hasLog && $needsEmails > 0) {
+                $st = $pdo->prepare("
+                    SELECT c.entity_id, c.detail, c.created_at, e.code, e.title
+                      FROM activity_log c
+                     INNER JOIN emails e ON e.id = c.entity_id
+                     WHERE c.company_id = ? AND c.entity_type = 'email' AND c.action = 'commented' AND c.actor = 'client'
+                       AND c.detail IS NOT NULL AND c.detail <> '' AND e.status = 'denied' AND e.live = 0
+                     ORDER BY c.created_at DESC, c.id DESC
+                     LIMIT 12
+                ");
+                $st->execute([$cid]);
+                $seen = []; $emailNotes = [];
+                foreach ($st->fetchAll() as $r) {
+                    $eid = (int)$r['entity_id'];
+                    if (isset($seen[$eid])) continue;       // one note per email — the newest
+                    $seen[$eid] = true;
+                    $emailNotes[] = [
+                        'text' => trim((string)$r['detail']),
+                        'on'   => emailDisplayLabel(['id' => $eid, 'code' => $r['code'] ?? '', 'title' => $r['title'] ?? '']),
+                        'when' => relativeTime($r['created_at']),
+                        'href' => emailUrl(['id' => $eid]),
+                        'ts'   => (int)strtotime((string)$r['created_at']),
+                    ];
+                    if (count($emailNotes) >= 3) break;
+                }
+                if ($emailNotes) {
+                    $needsNotes = array_merge($needsNotes, $emailNotes);
+                    usort($needsNotes, static function ($a, $b) { return $b['ts'] <=> $a['ts']; });
+                    $needsNotes = array_slice($needsNotes, 0, 3);
+                }
             }
         }
     } catch (Throwable $e) {
         error_log('index needs-changes query failed: ' . $e->getMessage());
         $needsPosts  = 0;
+        $needsEmails = 0;
         $needsAssets = ['tire' => 0, 'library' => 0];
         $needsNotes  = [];
     }
@@ -253,6 +336,15 @@ if ($pendingPosts > 0) {
         'index' => count($cards),
     ]);
 }
+if ($pendingEmails > 0) {
+    $cards[] = actionCard([
+        'count' => $pendingEmails, 'noun' => 'email',
+        'one'   => 'is ready for your review', 'many' => 'ready for your review',
+        'href'  => emailsUrl(['status' => 'pending']),
+        'icon'  => 'mail', 'subtitle' => 'Emails · To Review', 'tone' => 'accent',
+        'index' => count($cards),
+    ]);
+}
 if ($pendingLibrary > 0) {
     $cards[] = actionCard([
         'count' => $pendingLibrary, 'noun' => 'image',
@@ -276,23 +368,24 @@ if ($pendingCollections > 0) {
 ?>
 <section class="home-section" aria-labelledby="home-attention">
   <h2 class="ui-list-header" id="home-attention">Needs your attention</h2>
-  <?= $cards ? actionCardStack(array_slice($cards, 0, 3)) : actionCardCaughtUp() ?>
+  <?= $cards ? actionCardStack(array_slice($cards, 0, 4)) : actionCardCaughtUp() ?>
 </section>
 
 <?php // --- 1b. Admin: Needs changes (what is waiting on Joust) ---------- ?>
 <?php if ($isAdmin): ?>
 <?php
   $queueUrl      = clientUrl('posts', ['status' => 'denied', 'month' => 'all']);
+  $emailQueueUrl = $needsEmails > 0 ? emailsUrl(['status' => 'denied']) : '';
   $assetsTotal   = $needsAssets['tire'] + $needsAssets['library'];
   $assetsUrl     = clientUrl('assets', ['view' => $needsAssets['library'] > 0 ? 'library' : 'collections', 'filter' => 'denied']);
 ?>
-<section class="home-section" aria-labelledby="home-changes" data-needs-changes="<?= (int)$needsPosts ?>">
+<section class="home-section" aria-labelledby="home-changes" data-needs-changes="<?= (int)$needsPosts ?>"<?= $needsEmails > 0 ? ' data-needs-changes-emails="' . (int)$needsEmails . '"' : '' ?>>
   <div class="home-section-head">
     <h2 class="ui-list-header" id="home-changes">Needs changes</h2>
-    <?php if ($needsPosts > 0): ?><a href="<?= h($queueUrl) ?>">Open queue</a><?php endif; ?>
+    <?php if ($needsPosts > 0): ?><a href="<?= h($queueUrl) ?>">Open queue</a><?php elseif ($needsEmails > 0): ?><a href="<?= h($emailQueueUrl) ?>">Open queue</a><?php endif; ?>
   </div>
   <?php
-    if ($needsPosts + $assetsTotal === 0) {
+    if ($needsPosts + $needsEmails + $assetsTotal === 0) {
         echo actionCardCaughtUp('Nothing waiting on you', 'No change requests from ' . $client['name'] . ' right now.');
     } else {
         $changeCards = [];
@@ -303,6 +396,15 @@ if ($pendingCollections > 0) {
                 'href'  => $queueUrl,
                 'icon'  => 'xmark', 'subtitle' => 'Posts · Needs changes · client notes inside', 'tone' => 'deny',
                 'index' => 0,
+            ]);
+        }
+        if ($needsEmails > 0) {
+            $changeCards[] = actionCard([
+                'count' => $needsEmails, 'noun' => 'email',
+                'one'   => 'needs changes', 'many' => 'need changes',
+                'href'  => $emailQueueUrl,
+                'icon'  => 'mail', 'subtitle' => 'Emails · Needs changes · client notes inside', 'tone' => 'deny',
+                'index' => count($changeCards),
             ]);
         }
         if ($assetsTotal > 0) {
@@ -341,7 +443,22 @@ if ($pendingCollections > 0) {
     <a href="<?= h(clientUrl('posts', ['status' => 'approved'])) ?>">See all</a>
   </div>
   <div class="home-scroller" role="list">
-    <?php foreach ($upcoming as $p):
+    <?php foreach ($upcoming as $u): if ($u['kind'] === 'email'):
+      $e       = $u['row'];
+      $whenDay = date('D, M j', $u['ts']);
+    ?>
+      <a class="home-upcoming home-upcoming--email" role="listitem" href="<?= h(emailUrl($e)) ?>">
+        <span class="home-upcoming-thumb home-upcoming-thumb--email">
+          <?= icon('mail') ?>
+          <?= emailStatusPill($e, ['class' => 'ui-pill--glass']) ?>
+        </span>
+        <span class="home-upcoming-body">
+          <span class="home-upcoming-date"><?= icon('calendar') ?><span><?= h($whenDay) ?></span></span>
+          <span class="home-upcoming-caption"><?= h(emailDisplayLabel($e)) ?></span>
+        </span>
+      </a>
+    <?php else:
+      $p        = $u['row'];
       $ts       = $p['scheduled_date'] ? strtotime((string)$p['scheduled_date']) : false;
       $whenDay  = $ts ? date('D, M j', $ts) : 'Unscheduled';
       $whenTime = $ts ? date('g:i A', $ts) : '';
@@ -368,7 +485,7 @@ if ($pendingCollections > 0) {
           <span class="home-upcoming-caption"><?= h($title !== '' ? $title : 'Untitled post') ?></span>
         </span>
       </a>
-    <?php endforeach; ?>
+    <?php endif; endforeach; ?>
   </div>
 </section>
 <?php endif; ?>

@@ -854,3 +854,38 @@
   else init();
 
 })(window, document);
+
+/* =====================================================================
+   Emails (Studio → Emails, add-email.php): group chips + the Live guard.
+   Live may only be ticked when the status is Approved (mirrors the
+   email-status.php 409 rule); the server enforces it too.
+   ===================================================================== */
+(function (window, document) {
+  'use strict';
+  function initEmailForm() {
+    var form = document.querySelector('[data-email-form]');
+    if (!form) return;
+    var status = form.querySelector('[data-email-status]');
+    var live   = form.querySelector('[data-email-live]');
+    var chip   = form.querySelector('[data-email-live-chip]');
+    var help   = form.querySelector('[data-email-live-help]');
+    function syncLive() {
+      var ok = status && status.value === 'approved';
+      if (live) {
+        live.disabled = !ok;
+        if (!ok) live.checked = false;
+      }
+      if (chip) chip.classList.toggle('is-active', !!(live && live.checked));
+      if (help) help.hidden = ok;
+    }
+    if (status) status.addEventListener('change', syncLive);
+    if (live) live.addEventListener('change', syncLive);
+    form.addEventListener('change', function (e) {
+      var c = e.target.closest('[data-email-group-chip]');
+      if (c) c.classList.toggle('is-active', e.target.checked);
+    });
+    syncLive();
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initEmailForm);
+  else initEmailForm();
+})(window, document);

@@ -203,6 +203,7 @@ function clientNavItems(PDO $pdo, $client) {
     ");
     $s->execute([$client['id']]);
     foreach ($s->fetchAll() as $mod) {
+        if (($mod['slug'] ?? '') === 'emails') continue;   // Emails has its own tab (emails.php), not a features.php module
         $items[] = [
             'label' => $mod['plural_label'],
             'icon'  => $mod['icon'],
@@ -812,12 +813,14 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
     $postIds    = [];
     $libImgIds  = [];
     $taskIds    = [];
+    $emailIds   = [];
     foreach ($grouped as $g) {
         if ($g['entity_type'] === 'tire_image')    { $imageIds[]  = (int)$g['entity_id']; }
         if ($g['entity_type'] === 'tire')          { $tireIds[]   = (int)$g['entity_id']; }
         if ($g['entity_type'] === 'post')          { $postIds[]   = (int)$g['entity_id']; }
         if ($g['entity_type'] === 'library_image') { $libImgIds[] = (int)$g['entity_id']; }
         if ($g['entity_type'] === 'task')          { $taskIds[]   = (int)$g['entity_id']; }
+        if ($g['entity_type'] === 'email')         { $emailIds[]  = (int)$g['entity_id']; }
     }
     $imageMeta = [];
     if ($imageIds) {
@@ -905,6 +908,20 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
             $libImgMeta[(int)$r['id']] = ['filename' => $r['filename']];
         }
     }
+    $emailMeta = [];
+    if ($emailIds && function_exists('hasEmailsTable') && hasEmailsTable($pdo)) {
+        $emailIds = array_values(array_unique($emailIds));
+        $ph = implode(',', array_fill(0, count($emailIds), '?'));
+        try {
+            $s = $pdo->prepare("SELECT id, code, title FROM emails WHERE id IN ($ph)");
+            $s->execute($emailIds);
+            foreach ($s->fetchAll() as $r) {
+                $emailMeta[(int)$r['id']] = ['code' => (string)($r['code'] ?? ''), 'title' => (string)($r['title'] ?? '')];
+            }
+        } catch (Throwable $e) {
+            $emailMeta = [];
+        }
+    }
 
     foreach ($grouped as &$g) {
         if ($g['entity_type'] === 'tire_image' && isset($imageMeta[(int)$g['entity_id']])) {
@@ -917,6 +934,8 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
             $g['_meta'] = $libImgMeta[(int)$g['entity_id']];
         } elseif ($g['entity_type'] === 'task' && isset($taskMeta[(int)$g['entity_id']])) {
             $g['_meta'] = $taskMeta[(int)$g['entity_id']];
+        } elseif ($g['entity_type'] === 'email' && isset($emailMeta[(int)$g['entity_id']])) {
+            $g['_meta'] = $emailMeta[(int)$g['entity_id']];
         }
     }
     unset($g);
@@ -946,6 +965,18 @@ function actionLabel($action) {
         'task_updated'         => 'updated task',
         'task_toggled'         => 'toggled task',
         'task_deleted'         => 'deleted task',
+        // emails (entity_type = 'email')
+        'submitted'            => 'sent for review',
+        'marked_live'          => 'marked live',
+        'unmarked_live'        => 'unmarked live',
+        'imported'             => 'imported',
+        'deleted'              => 'deleted',
+        'edited_subject'       => 'edited subject line',
+        'edited_preview'       => 'edited preview text',
+        'edited_trigger'       => 'edited trigger',
+        'edited_send_at'       => 'changed send date',
+        'edited_html_url'      => 'changed email link',
+        'edited_code'          => 'changed ID',
     ];
     return $map[$action] ?? str_replace('_', ' ', $action);
 }
@@ -1007,6 +1038,11 @@ function activityLink($entry) {
             $url = pagePath('library');
             if ($clientPair) { $url .= '?' . http_build_query($clientPair); }
             return $url . '#lib-' . (int)$entry['entity_id'];
+
+        case 'email':
+            // Emails list with the row's detail open.
+            $qs = http_build_query(array_merge($clientPair, ['email' => (int)$entry['entity_id']]));
+            return pagePath('emails') . '?' . $qs;
 
         default:
             return pagePath('admin') . ($clientPair ? '?' . http_build_query($clientPair) : '');
@@ -1079,6 +1115,12 @@ if (!function_exists('activityParentName')) {
             case 'task':
                 return ['thing' => 'task', 'name' => $firstLine($meta['title'] ?? '', 80),
                         'parent' => '', 'parent_key' => 'task:' . $id];
+            case 'email':
+                // "C1 · Welcome" — code + first line of the title (either alone when the other is blank).
+                $code  = trim((string)($meta['code'] ?? ''));
+                $title = $firstLine($meta['title'] ?? '');
+                $name  = ($code !== '' && $title !== '') ? $code . ' · ' . $title : ($code !== '' ? $code : $title);
+                return ['thing' => 'email', 'name' => $name, 'parent' => '', 'parent_key' => 'email:' . $id];
             default:
                 return ['thing' => 'item', 'name' => '', 'parent' => '',
                         'parent_key' => (string)($entry['entity_type'] ?? 'item') . ':' . $id];
@@ -1116,6 +1158,8 @@ if (!function_exists('activityDeepLink')) {
                 return clientUrl('assets', $p);
             case 'task':
                 return clientUrl('projects', $qs) . '#task-' . $id;
+            case 'email':
+                return clientUrl('emails', $qs + ['email' => $id]);
             default:
                 return clientUrl('index.php', $qs);
         }
@@ -1126,8 +1170,9 @@ if (!function_exists('activityDeepLink')) {
 if (!function_exists('activityPrimaryAction')) {
     function activityPrimaryAction(array $actions): string {
         static $rank = [
-            'denied' => 1, 'approved' => 2, 'reset_pending' => 3, 'posted' => 4, 'unposted' => 5,
-            'created' => 6, 'deleted' => 7,
+            'denied' => 1, 'approved' => 2, 'reset_pending' => 3, 'submitted' => 3,
+            'posted' => 4, 'unposted' => 5, 'marked_live' => 4, 'unmarked_live' => 5,
+            'created' => 6, 'deleted' => 7, 'imported' => 7,
             'task_created' => 8, 'task_toggled' => 9, 'task_deleted' => 10, 'task_updated' => 11,
             'edited_schedule' => 12, 'renamed_post' => 13, 'renamed_image' => 14,
             'edited_caption' => 15, 'edited_hashtags' => 16, 'edited_type' => 17,
@@ -1298,6 +1343,10 @@ if (!function_exists('activityFinalizeRows')) {
                     if (!$many && $r['name'] !== '') { $objT = $r['name']; $objH = '<em>' . $h($r['name']) . '</em>'; }
                     else                             { $objT = $objH = $many ? $n . ' tasks' : 'a task'; }
                     break;
+                case 'email':
+                    if (!$many && $r['name'] !== '') { $objT = $r['name']; $objH = '<em>' . $h($r['name']) . '</em>'; }
+                    else                             { $objT = $objH = $many ? $n . ' emails' : 'an email'; }
+                    break;
                 default:
                     $objT = $objH = $many ? $n . ' items' : 'an item';
             }
@@ -1341,8 +1390,21 @@ if (!function_exists('activityFinalizeRows')) {
                     // The entity is gone, so no name resolves; say what kind of thing it was.
                     $kind = $r['thing'] === 'image' ? ($many ? $n . ' images' : 'an image')
                           : ($r['thing'] === 'collection' ? ($many ? $n . ' collections' : 'a collection')
-                          : ($r['thing'] === 'post' ? ($many ? $n . ' posts' : 'a post') : $objT));
+                          : ($r['thing'] === 'post' ? ($many ? $n . ' posts' : 'a post')
+                          : ($r['thing'] === 'email' ? ($many ? $n . ' emails' : 'an email') : $objT)));
                     $t = "$who removed $kind"; $hh = "$whoH removed " . $h($kind); break;
+                case 'submitted':
+                    $verb = 'sent for review'; $icon = 'mail'; $tone = 'accent';
+                    $t = "$who sent $objT for review"; $hh = "$whoH sent $objH for review"; break;
+                case 'marked_live':
+                    $verb = 'marked live'; $icon = 'mail'; $tone = 'scheduled';
+                    $t = "$who marked $objT live"; $hh = "$whoH marked $objH live"; break;
+                case 'unmarked_live':
+                    $verb = 'took offline'; $icon = 'mail'; $tone = 'neutral';
+                    $t = "$who took $objT offline"; $hh = "$whoH took $objH offline"; break;
+                case 'imported':
+                    $verb = 'imported'; $icon = 'download'; $tone = 'neutral';
+                    $t = "$who imported $objT"; $hh = "$whoH imported $objH"; break;
                 case 'task_created':
                     $verb = 'opened'; $icon = 'checklist'; $tone = 'accent';
                     $t = "$who opened $objT"; $hh = "$whoH opened $objH"; break;
@@ -1370,6 +1432,7 @@ if (!function_exists('activityFinalizeRows')) {
                     }
             }
             if ($r['entity_type'] === 'task' && $icon === 'ellipsis') $icon = 'checklist';
+            if ($r['entity_type'] === 'email' && $icon === 'ellipsis') $icon = 'mail';
             // One comment → quote it inline; several → the disclosure lists them.
             if (count($r['children']) === 1) {
                 $q = $r['children'][0]['text'];
@@ -1580,3 +1643,7 @@ function renderAppChrome(string $pageTitle, array $opts = []): string {
     }
     return (string)ob_get_clean();
 }
+
+// Emails module helpers (hasEmailsTable, companyHasEmails, emailsForCompany, …).
+// Function definitions only — no DB work at load; see scratchpad emails-design.md.
+require_once __DIR__ . '/emails-lib.php';
