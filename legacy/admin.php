@@ -865,8 +865,15 @@ $clientQs = 'client=' . urlencode($client['slug']);
     </a>
 
     <!-- Dynamic module tiles -->
-    <?php foreach ($clientModules as $mod): ?>
-      <a class="tile" href="<?= h(legacyUrl('add-feature.php')) ?>?<?= h($clientQs) ?>&module=<?= h($mod['slug']) ?>">
+    <?php foreach ($clientModules as $mod):
+      // The Emails module is not a tires-style feature: its rows live in `emails`
+      // (emails-lib.php) and its form is add-email.php, not add-feature.php.
+      $modIsEmails = ($mod['slug'] ?? '') === 'emails';
+      if ($modIsEmails && function_exists('emailCounts')) {
+          try { $mod['item_count'] = (int)emailCounts($pdo, (int)$client['id'])['total']; } catch (Throwable $e) { $mod['item_count'] = 0; }
+      }
+    ?>
+      <a class="tile" href="<?= $modIsEmails ? h(clientUrl('add-email.php')) : h(legacyUrl('add-feature.php')) . '?' . h($clientQs) . '&module=' . h($mod['slug']) ?>">
         <div class="tile-badge <?= (int)$mod['item_count'] === 0 ? 'zero' : '' ?>">
           <?= (int)$mod['item_count'] ?>
         </div>
