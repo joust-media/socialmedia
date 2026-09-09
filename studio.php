@@ -271,24 +271,131 @@ include __DIR__ . '/partials/layout-top.php';
 
 <?php if ($hasEmails): ?>
 <!-- Emails ------------------------------------------------------------- -->
-<!-- Placeholder shell: the Emails admin worker replaces everything INSIDE this section
-     (add / edit, CSV + JSON export / import, group management). Keep the section tag. -->
+<!-- Admin surface for the Emails module: counts, add / edit links, CSV + JSON export,
+     import preview, group management and the per-client Emails-tab toggle. All actions
+     POST to add-email.php (groups, toggle, delete) or emails-io.php (import). -->
 <section class="studio-section" data-studio-section="emails" data-studio-emails<?= $tab === 'emails' ? '' : ' hidden' ?>>
   <?php
-    $emailCounts  = emailCounts($pdo, (int)$client['id']);
+    $emailCid     = (int)$client['id'];
+    $emailCounts  = emailCounts($pdo, $emailCid);
     $emailsOn     = companyHasEmails($client, $pdo);
-    $emailsIntro  = $emailsOn
-        ? '<p>' . h($client['name']) . ' has <strong>' . (int)$emailCounts['total'] . '</strong> email' . ((int)$emailCounts['total'] === 1 ? '' : 's')
-          . ' · ' . (int)$emailCounts['pending'] . ' to review · ' . (int)$emailCounts['approved'] . ' approved · '
-          . (int)$emailCounts['live'] . ' live · ' . (int)$emailCounts['denied'] . ' needs changes · ' . (int)$emailCounts['draft'] . ' draft.</p>'
-        : '<p>The Emails module is not enabled for ' . h($client['name']) . ' yet. Enable it in <code>company_modules</code> or add the first email and the Emails tab appears for the client.</p>';
+    $emailModOn   = emailsModuleEnabled($pdo, $emailCid);
+    $emailGroups  = emailGroupsForCompany($pdo, $emailCid);
+    $emailGroupN  = emailGroupCounts($pdo, $emailCid);
+    $emailRows    = emailsForCompany($pdo, $emailCid);
+    $emailFormUrl = clientUrl('add-email.php');
+    $emailSegs    = [
+        ['key' => 'pending',  'title' => 'To Review',     'subtitle' => 'Waiting for the client',           'icon' => 'mail',      'tint' => 'var(--pending)'],
+        ['key' => 'approved', 'title' => 'Approved',      'subtitle' => 'Ready for dev',                    'icon' => 'checkmark', 'tint' => 'var(--approve)'],
+        ['key' => 'live',     'title' => 'Live',          'subtitle' => 'Active in production',             'icon' => 'calendar',  'tint' => 'var(--scheduled)'],
+        ['key' => 'denied',   'title' => 'Needs changes', 'subtitle' => 'Work queue · client notes',        'icon' => 'xmark',     'tint' => 'var(--deny)'],
+        ['key' => 'draft',    'title' => 'Draft',         'subtitle' => 'Admin only · not sent for review', 'icon' => 'grid',      'tint' => 'var(--label-secondary)'],
+    ];
   ?>
-  <?= card(
-        $emailsIntro . '<p class="text-secondary">Add and edit emails, import or export the spreadsheet, and manage groups here — coming soon.</p>',
-        [
-          'title'  => 'Emails',
-          'footer' => $emailsOn ? '<a class="ui-btn ui-btn--filled" href="' . h(emailsUrl(['status' => 'all'])) . '">Open emails</a>' : '',
-        ]) ?>
+  <div class="studio-emails-head" data-emails-actions>
+    <a class="ui-btn ui-btn--filled" href="<?= h($emailFormUrl) ?>" data-emails-new><?= icon('plus') ?><span>New email</span></a>
+    <?php if ($emailsOn): ?><a class="ui-btn ui-btn--gray" href="<?= h(emailsUrl(['status' => 'all'])) ?>" data-emails-open>Open emails</a><?php endif; ?>
+    <span class="ui-spacer"></span>
+    <a class="ui-btn ui-btn--gray ui-btn--sm" href="<?= h(clientUrl('emails-io.php', ['format' => 'csv'])) ?>" data-emails-export="csv" title="Download the spreadsheet (Status, ID, Title, Sequence, Trigger, …)"><?= icon('download') ?><span>Export CSV</span></a>
+    <a class="ui-btn ui-btn--gray ui-btn--sm" href="<?= h(clientUrl('emails-io.php', ['format' => 'json'])) ?>" data-emails-export="json" title="Download everything incl. groups and comment threads"><?= icon('download') ?><span>Export JSON</span></a>
+  </div>
+
+  <?php if (!$emailsOn): ?>
+    <div class="studio-alert studio-emails-off" role="status">The Emails tab is not showing for <?= h($client['name']) ?> yet — enable it below, or add the first email and it appears automatically.</div>
+  <?php endif; ?>
+
+  <?= insetListOpen(h($client['name']) . '\'s emails', ['raw' => true, 'attrs' => ['data-emails-counts' => '1']]) ?>
+    <?php foreach ($emailSegs as $seg): ?>
+      <?= insetRow([
+          'href'      => emailsUrl(['status' => $seg['key']]),
+          'icon'      => $seg['icon'],
+          'iconStyle' => 'color:' . $seg['tint'],
+          'title'     => $seg['title'],
+          'subtitle'  => $seg['subtitle'],
+          'trailing'  => '<span class="studio-count" data-emails-count="' . h($seg['key']) . '">' . (int)$emailCounts[$seg['key']] . '</span>',
+          'attrs'     => ['data-emails-segment' => $seg['key']],
+      ]) ?>
+    <?php endforeach; ?>
+  <?= insetListClose((int)$emailCounts['total'] . ' email' . ((int)$emailCounts['total'] === 1 ? '' : 's') . ' in total. The client sees To Review, Approved and Live.') ?>
+
+  <?= insetListOpen('All emails (' . count($emailRows) . ')', ['class' => 'studio-email-list', 'attrs' => ['data-emails-list' => '1']]) ?>
+    <?php if (!$emailRows): ?>
+      <li><div class="ui-row"><div class="ui-row-body"><div class="ui-row-subtitle">No emails yet — add one or import the spreadsheet below.</div></div></div></li>
+    <?php endif; ?>
+    <?php foreach ($emailRows as $em):
+        $gNames = array_map(static function ($g) { return $g['name']; }, $em['groups'] ?? []);
+        $sub = ($gNames ? '<span class="studio-email-groups">' . h(implode(' · ', $gNames)) . '</span>' : '<span class="studio-email-groups">No group</span>')
+             . (trim((string)($em['trigger_text'] ?? '')) !== '' ? ' · ' . h(mb_strimwidth(preg_replace('/\s+/', ' ', (string)$em['trigger_text']), 0, 70, '…')) : '');
+    ?>
+      <?= insetRow([
+          'href'        => clientUrl('add-email.php', ['edit' => (int)$em['id']]),
+          'title'       => emailDisplayLabel($em),
+          'wrap'        => true,
+          'subtitle'    => $sub,
+          'rawSubtitle' => true,
+          'trailing'    => emailStatusPill($em) . '<span class="ui-btn ui-btn--gray ui-btn--sm">Edit</span>',
+          'chevron'     => false,
+          'attrs'       => ['data-email-row' => (int)$em['id'], 'data-email-code' => $em['code']],
+      ]) ?>
+    <?php endforeach; ?>
+  <?= insetListClose('Edit opens the form; Open emails shows the client view with the review thread.') ?>
+
+  <section class="ui-card studio-import-card" data-emails-import>
+    <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Import spreadsheet</h3>
+      <p class="ui-card-subtitle">CSV (the client's sheet: Status, ID, Title, Sequence, Trigger, Subject Line, Preview Text, URL, Priority, Groups) or a JSON export. Rows match on ID; you get a preview of every change before anything is written.</p></div></div>
+    <div class="ui-card-body">
+      <form method="POST" action="<?= h(clientUrl('emails-io.php')) ?>" enctype="multipart/form-data" class="studio-import-form">
+        <input type="hidden" name="mode" value="preview">
+        <input type="file" name="file" accept=".csv,.json,text/csv,application/json" required aria-label="CSV or JSON file">
+        <button type="submit" class="ui-btn ui-btn--tinted">Preview import</button>
+      </form>
+      <p class="studio-help">Blank IDs are skipped, duplicate IDs keep the first row, “#ERROR!” and thumbs-up “Active” placeholder cells are treated as blank, and unknown statuses land in Draft. Sequence + Groups become groups (created when missing).</p>
+    </div>
+  </section>
+
+  <section class="ui-card studio-groups-card" data-emails-groups>
+    <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Groups</h3>
+      <p class="ui-card-subtitle">Sequences the client can filter by (Free, Pro, Renewal…). Deleting a group only unlinks its emails.</p></div></div>
+    <div class="ui-card-body">
+      <?php if (!$emailGroups): ?><p class="text-secondary">No groups yet.</p><?php endif; ?>
+      <ul class="studio-groups" role="list">
+        <?php foreach ($emailGroups as $g): $n = (int)($emailGroupN[(int)$g['id']] ?? 0); ?>
+          <li class="studio-group" data-email-group="<?= (int)$g['id'] ?>">
+            <form method="POST" action="<?= h($emailFormUrl) ?>" class="studio-group-form">
+              <input type="hidden" name="action" value="group_rename">
+              <input type="hidden" name="id" value="<?= (int)$g['id'] ?>">
+              <input class="ui-input" type="text" name="name" value="<?= h($g['name']) ?>" maxlength="80" required aria-label="Group name">
+              <span class="studio-group-n"><?= $n ?> email<?= $n === 1 ? '' : 's' ?></span>
+              <button type="submit" class="ui-btn ui-btn--gray ui-btn--sm">Rename</button>
+            </form>
+            <form method="POST" action="<?= h($emailFormUrl) ?>" class="studio-inline-form" data-confirm-submit="Delete the group “<?= h($g['name']) ?>”? Its <?= $n ?> email<?= $n === 1 ? '' : 's' ?> stay, just without this group.">
+              <input type="hidden" name="action" value="group_delete">
+              <input type="hidden" name="id" value="<?= (int)$g['id'] ?>">
+              <button type="submit" class="ui-btn ui-btn--plain ui-btn--sm studio-danger-btn">Delete</button>
+            </form>
+          </li>
+        <?php endforeach; ?>
+      </ul>
+      <form method="POST" action="<?= h($emailFormUrl) ?>" class="studio-group-add">
+        <input type="hidden" name="action" value="group_add">
+        <input class="ui-input" type="text" name="name" maxlength="80" required placeholder="New group, e.g. Leads" aria-label="New group name">
+        <button type="submit" class="ui-btn ui-btn--tinted">Add group</button>
+      </form>
+    </div>
+  </section>
+
+  <section class="ui-card studio-module-card" data-emails-module>
+    <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Emails tab for <?= h($client['name']) ?></h3>
+      <p class="ui-card-subtitle"><?= $emailModOn ? 'Enabled — the Emails tab shows for the client even with zero emails.' : 'Not enabled — the tab still appears once this client has at least one email.' ?></p></div>
+      <div class="ui-card-aside"><?= statusPill($emailModOn ? 'approved' : 'neutral', false, ['label' => $emailModOn ? 'On' : 'Off', 'attrs' => ['data-emails-module-state' => $emailModOn ? 'on' : 'off']]) ?></div></div>
+    <div class="ui-card-footer">
+      <form method="POST" action="<?= h($emailFormUrl) ?>" class="studio-inline-form">
+        <input type="hidden" name="action" value="module_toggle">
+        <input type="hidden" name="to" value="<?= $emailModOn ? 0 : 1 ?>">
+        <button type="submit" class="ui-btn <?= $emailModOn ? 'ui-btn--gray' : 'ui-btn--filled' ?>" data-emails-module-toggle><?= $emailModOn ? 'Disable Emails tab' : 'Enable Emails tab' ?></button>
+      </form>
+    </div>
+  </section>
 </section>
 <?php endif; ?>
 
