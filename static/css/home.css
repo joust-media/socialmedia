@@ -114,6 +114,12 @@
 }
 .home-upcoming-thumb .ui-icon { width: 28px; height: 28px; }
 .home-upcoming-thumb .ui-pill { position: absolute; left: 8px; bottom: 8px; }
+/* Live email in the scroller: no artwork, a tinted mail tile instead */
+.home-upcoming-thumb--email {
+  background: color-mix(in srgb, var(--accent) 12%, var(--fill-tertiary));
+  color: var(--accent);
+}
+.home-upcoming-thumb--email .ui-icon { width: 32px; height: 32px; stroke-width: 1.8; }
 .home-upcoming-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 3px; }
 .home-upcoming-date {
   display: inline-flex; align-items: center; gap: 5px;
