@@ -1,0 +1,210 @@
+/* =====================================================================
+   Joust client portal — Emails module
+   Loads after tokens/base/components/motion AND posts.css (the list and
+   detail reuse .pl-* / .pd-* from there). Prefixes added here:
+     .emails-*  page chrome (toolbar, chips, search)
+     .em-chip   group filter chip
+     .el-*      the email list row extras (code tile, trigger, groups, priority)
+     .ed-*      the email detail (preview frame, meta list, admin tools)
+   Only transform/opacity are animated.
+   ===================================================================== */
+
+/* ---------------------------------------------------------------------
+   Page chrome: chips + search under the segmented control
+   --------------------------------------------------------------------- */
+.emails-toolbar { margin-bottom: 12px; }
+.emails-filters { display: flex; flex-direction: column; gap: 10px; margin: 0 0 16px; }
+.emails-chips {
+  display: flex; gap: 8px; align-items: center;
+  margin: 0 -16px; padding: 2px 16px;
+  overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+}
+.emails-chips::-webkit-scrollbar { display: none; }
+.em-chip {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; gap: 4px;
+  min-height: 30px; padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated); color: var(--label);
+  box-shadow: 0 0 0 0.5px var(--separator);
+  font-size: var(--text-footnote); line-height: 18px; letter-spacing: var(--ls-footnote); font-weight: 600;
+  text-decoration: none; white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+}
+.em-chip:active { transform: scale(0.96); }
+.em-chip.is-active { background: var(--accent); color: #fff; box-shadow: none; }
+.em-chip.is-active::before { content: "\2713"; font-size: 11px; }
+.em-chip--clear { color: var(--label-secondary); background: transparent; box-shadow: none; }
+.em-chip--clear .ui-icon { width: 12px; height: 12px; stroke-width: 2.6; }
+.emails-search { display: flex; gap: 8px; align-items: center; }
+.emails-search-input { flex: 1 1 auto; min-width: 0; }
+
+/* ---------------------------------------------------------------------
+   List rows — .pl-item/.pl-card from posts.css with a code tile instead of a thumb
+   --------------------------------------------------------------------- */
+.el-card { --row-inset: 84px; }                                 /* 16 + 56 tile + 12 gap */
+li + li > .el-card::before { left: 84px; }
+.el-code-tile {
+  width: 56px; height: 56px;
+  border-radius: var(--radius-thumb);
+  background: var(--fill-tertiary); color: var(--label-secondary);
+  font-family: var(--font-mono); font-weight: 700; letter-spacing: 0;
+  font-size: 13px; line-height: 1;
+  text-align: center; padding: 0 4px; overflow: hidden;
+}
+.el-code { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.el-code-tile--pending  { background: rgba(255,149,0,.15);  color: var(--pending); }
+.el-code-tile--approved { background: rgba(52,199,89,.15);  color: var(--approve); }
+.el-code-tile--denied   { background: rgba(255,59,48,.15);  color: var(--deny); }
+.el-code-tile--live     { background: rgba(88,86,214,.15);  color: var(--scheduled); }
+.el-subject { -webkit-line-clamp: 1; }
+.el-subject--empty { color: var(--label-tertiary); font-style: italic; }
+.el-trigger {
+  display: flex; align-items: center; gap: 5px;
+  margin-top: 2px;
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote);
+  color: var(--label-secondary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.el-trigger span { overflow: hidden; text-overflow: ellipsis; }
+.el-trigger-icon { width: 13px; height: 13px; flex: 0 0 auto; color: var(--label-tertiary); }
+.el-prio { gap: 5px; }
+.ed-dot { width: 8px; height: 8px; }
+.ed-dot--high   { background: var(--deny); }
+.ed-dot--medium { background: var(--pending); }
+.ed-dot--low    { background: var(--label-tertiary); }
+.el-groups { gap: 4px; flex-wrap: wrap; white-space: normal; }
+.el-tag {
+  display: inline-block; padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--fill-tertiary); color: var(--label-secondary);
+  font-size: var(--text-caption); line-height: var(--lh-caption); font-weight: 600; letter-spacing: 0;
+  white-space: nowrap;
+}
+/* Live emails whose send date has passed (emailIsPast) — fade like past posts */
+.pl-item--past .el-code-tile,
+.pl-item--past .el-trigger { opacity: .5; }
+/* Queue actions align under the row body (56px tile) */
+.el-item.pl-item--queue .pl-queue-actions { padding-left: 84px; }
+@media (max-width: 479px) { .el-item.pl-item--queue .pl-queue-actions { padding-left: 16px; } }
+
+/* ---------------------------------------------------------------------
+   Detail — preview frame
+   --------------------------------------------------------------------- */
+.ed-preview { margin: 0 -16px; padding: 0 16px 4px; }
+.ed-preview-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.ed-preview-toggle .ui-segmented-item { min-height: 28px; padding: 3px 12px; }
+.ed-preview-open { margin-right: -8px; }
+.ed-frame-wrap {
+  position: relative;
+  height: 70vh; min-height: 320px; max-height: 760px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #fff;                                    /* email HTML expects a white canvas in both themes */
+  box-shadow: 0 0 0 0.5px var(--separator);
+}
+.ed-frame {
+  display: block; border: 0;
+  width: 650px; height: 100%;
+  transform-origin: 0 0;
+  background: #fff;
+}
+.ed-frame-wrap[data-preview-w="375"] { background: var(--fill-tertiary); }
+.ed-frame-wrap[data-preview-w="375"] .ed-frame { box-shadow: 0 0 0 0.5px var(--separator); background: #fff; }
+.ed-preview-hint { margin: 6px 2px 0; font-size: var(--text-caption); line-height: var(--lh-caption); }
+.ed-preview-hint a { color: var(--accent); text-decoration: none; }
+.ed-preview-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  min-height: 180px; padding: 24px;
+  border-radius: 12px;
+  background: var(--fill-tertiary); color: var(--label-secondary);
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); font-weight: 600;
+  text-align: center;
+}
+.ed-preview-empty .text-tertiary { font-weight: 400; font-size: var(--text-footnote); }
+.ed-preview-empty-icon { width: 32px; height: 32px; color: var(--label-tertiary); margin-bottom: 4px; }
+
+/* ---------------------------------------------------------------------
+   Detail — meta list
+   --------------------------------------------------------------------- */
+.ed-meta {
+  margin: 12px 0 4px; padding: 4px 14px;
+  border-radius: 12px;
+  background: var(--fill-tertiary);
+}
+.ed-meta-row { display: flex; gap: 12px; padding: 9px 0; }
+.ed-meta-row + .ed-meta-row { box-shadow: 0 -0.5px 0 var(--separator); }
+.ed-meta dt {
+  flex: 0 0 92px;
+  font-size: var(--text-caption); line-height: var(--lh-caption); letter-spacing: 0.2px;
+  font-weight: 600; text-transform: uppercase; color: var(--label-secondary);
+  padding-top: 2px;
+}
+.ed-meta dd {
+  flex: 1 1 auto; min-width: 0; margin: 0;
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead);
+  overflow-wrap: anywhere;
+}
+.ed-pre { white-space: pre-wrap; }
+.ed-meta-past { display: block; margin-top: 2px; font-size: var(--text-caption); line-height: var(--lh-caption); }
+.ed-meta-past[hidden] { display: none; }
+.ed-priority { display: inline-flex; align-items: center; gap: 6px; }
+.ed-code { font-family: var(--font-mono); font-size: 13px; }
+.ed-url { color: var(--accent); text-decoration: none; word-break: break-all; }
+.ed-notes-pill { margin-left: 6px; vertical-align: 1px; }
+
+/* ---------------------------------------------------------------------
+   Detail — footer: admin status control + tools
+   --------------------------------------------------------------------- */
+.ed-status-ctl { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px; }
+.ed-status-ctl[hidden] { display: none; }
+.ed-status-ctl-label {
+  font-size: var(--text-caption); line-height: var(--lh-caption); letter-spacing: 0.2px;
+  font-weight: 600; text-transform: uppercase; color: var(--label-secondary);
+}
+/* Four segments inside a 343–480px footer: caption type, tight padding, never overflow */
+.ed-status-ctl .ui-segmented-item {
+  flex: 1 1 auto; padding-inline: 6px; gap: 0;
+  font-size: var(--text-caption); letter-spacing: 0;
+  overflow: hidden; text-overflow: ellipsis;
+}
+/* Wide labels ("Needs changes", "Resubmit for review") share the row with a primary button.
+   Scoped to the page, not .ed: emails.js moves [data-pd-footer] into the sheet's own footer. */
+.page-emails .pd-actions .ui-btn--large {
+  padding-inline: 10px;
+  font-size: var(--text-subhead); letter-spacing: var(--ls-subhead);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.page-emails .pd-decide > .ui-btn, .page-emails .pd-admin-denied > .ui-btn { flex: 1 1 0; }
+/* Top meta row: keep the code and "edited" stamp whole; wrap between items, not inside them */
+.ed-head { flex-wrap: wrap; row-gap: 4px; }
+.ed-head .pd-type, .ed-head .pd-edited { white-space: nowrap; }
+.ed-head .pd-edited { margin-left: auto; }
+.ed-admin-tools { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.ed-admin-tools .ui-btn .ui-icon { width: 14px; height: 14px; }
+.ed-delete { color: var(--deny); }
+.pd-state--draft { color: var(--label-secondary); background: var(--fill-tertiary); }
+.pd-decide[hidden], .pd-admin-draft[hidden], .pd-admin-approved[hidden], .pd-admin-denied[hidden], .pd-admin-live[hidden] { display: none; }
+
+/* ---------------------------------------------------------------------
+   Desktop: the detail is a right panel and the list stays usable (posts.css twin)
+   --------------------------------------------------------------------- */
+@media (min-width: 1024px) {
+  .page-emails .ui-sheet-root.is-detail .ui-sheet-backdrop { background: transparent; pointer-events: none; }
+  .page-emails .ui-sheet-root.is-detail .ui-sheet { box-shadow: var(--shadow-panel), -0.5px 0 0 var(--separator); }
+  .page-emails .pl-item.is-open .pl-card { background: var(--fill-tertiary); }
+  .ed-frame-wrap { height: 62vh; }
+}
+@media (min-width: 1440px) {
+  .page-emails:has(.ui-sheet-root.is-detail.is-open) .ui-nav-inner,
+  .page-emails:has(.ui-sheet-root.is-detail.is-open) .ui-page { margin-right: 480px; }
+}
+
+/* ---------------------------------------------------------------------
+   Reduced motion
+   --------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .em-chip { transition: none; }
+  .em-chip:active { transform: none; }
+}
