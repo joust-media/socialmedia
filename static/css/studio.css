@@ -402,3 +402,43 @@
   .studio-dropzone { border-color: var(--label-secondary); }
   .studio-chip { box-shadow: inset 0 0 0 1px var(--separator); }
 }
+
+/* ---------------------------------------------------------------------
+   Emails tab (Studio), add-email.php, emails-io.php preview
+   --------------------------------------------------------------------- */
+.studio-emails-head { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0 0 16px; }
+.studio-emails-head .ui-spacer { flex: 1 1 auto; }
+.studio-emails-off { margin: 0 0 16px; }
+.studio-groups { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.studio-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.studio-group-form { display: flex; flex: 1 1 auto; align-items: center; gap: 8px; min-width: 0; }
+.studio-group .ui-input { flex: 1 1 160px; min-height: 36px; padding: 6px 10px; font-size: var(--text-subhead); }
+.studio-group-n { min-width: 64px; font-size: var(--text-footnote); color: var(--label-secondary); font-variant-numeric: tabular-nums; }
+.studio-group-add { display: flex; gap: 8px; margin-top: 12px; }
+.studio-group-add .ui-input { flex: 1 1 auto; }
+.studio-inline-form { display: inline; }
+.studio-import-form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.studio-import-form input[type="file"] { font-size: var(--text-footnote); max-width: 100%; }
+.studio-actions--start { justify-content: flex-start; align-items: center; flex-wrap: wrap; padding: 0 0 14px; }
+.studio-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.studio-table { width: 100%; border-collapse: collapse; font-size: var(--text-subhead); }
+.studio-table th { text-align: left; font-size: var(--text-footnote); font-weight: 600; text-transform: uppercase; letter-spacing: 0.2px; color: var(--label-secondary); padding: 6px 8px; border-bottom: 1px solid var(--separator); }
+.studio-table td { padding: 8px; border-bottom: 1px solid var(--separator); vertical-align: top; }
+.studio-import-line { color: var(--label-tertiary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.studio-import-id { white-space: nowrap; }
+.studio-import-row--unchanged td { color: var(--label-secondary); }
+.studio-import-row--skip td, .studio-import-row--duplicate td { color: var(--label-secondary); }
+.studio-import-changes { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.studio-import-field { display: inline-block; min-width: 88px; font-size: var(--text-footnote); font-weight: 600; color: var(--label-secondary); }
+.studio-import-changes del { color: var(--deny); text-decoration: line-through; white-space: pre-wrap; }
+.studio-import-changes ins { color: var(--approve); text-decoration: none; white-space: pre-wrap; }
+.studio-import-warn { color: var(--pending); }
+.studio-email-form .studio-help[hidden] { display: none; }
+.studio-email-list .ui-row-subtitle { white-space: normal; }
+.studio-email-groups { color: var(--label-tertiary); }
+.studio-email-list .ui-row-trailing { gap: 8px; }
+.studio-chip:has(input:disabled) { opacity: .45; cursor: not-allowed; }
+@media (max-width: 600px) {
+  .studio-email-list .ui-row-trailing .ui-btn { display: none; }
+  .studio-group-form .studio-group-n { flex-basis: 100%; order: 3; }
+}
