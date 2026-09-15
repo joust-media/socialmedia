@@ -337,6 +337,18 @@ $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) .
              . '<link rel="stylesheet" href="' . h(staticUrl('css/emails.css')) . '">';
 $bodyClass   = 'page-emails';
 
+// Flows (flows.php): a "Flows" link in the nav's trailing slot once the client has a flow (admin: always,
+// so the first one can be created). flows-lib.php (loaded by emails-lib.php) may be absent on older deploys — function-guarded.
+$flowCount = 0;
+if ($hasTable && function_exists('hasEmailFlowsTable') && function_exists('emailFlowsForCompany')) {
+    try { if (hasEmailFlowsTable($pdo)) $flowCount = count(emailFlowsForCompany($pdo, $cid)); } catch (Throwable $e) { $flowCount = 0; }
+}
+if ($flowCount > 0 || ($admin && function_exists('hasEmailFlowsTable'))) {
+    $navTrailing = '<a class="ui-btn ui-btn--gray ui-btn--sm" href="' . h(clientUrl('flows.php')) . '" data-flows-link>Flows'
+                 . ($flowCount > 0 ? ' <span class="ui-badge ui-badge--neutral">' . $flowCount . '</span>' : '') . '</a>'
+                 . (function_exists('clientAvatar') ? clientAvatar($client) : '');
+}
+
 $emailsConfig = [
     'base'        => basePath(),
     'endpoint'    => basePath() . '/email-status.php',

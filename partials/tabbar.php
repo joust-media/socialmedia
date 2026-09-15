@@ -28,7 +28,7 @@ $uiTabs = [
     'posts'    => ['label' => 'Posts',    'icon' => 'grid',      'page' => 'posts.php',
                    'scripts' => ['feed', 'posts']],
     'emails'   => ['label' => 'Emails',   'icon' => 'mail',      'page' => 'emails.php',
-                   'scripts' => ['emails', 'email-status'],
+                   'scripts' => ['emails', 'email-status', 'flows', 'flow-status'],
                    'module' => 'emails'],
     'projects' => ['label' => 'Projects', 'icon' => 'checklist', 'page' => 'projects.php',
                    'scripts' => ['projects', 'add-project']],
