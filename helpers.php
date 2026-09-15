@@ -814,6 +814,7 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
     $libImgIds  = [];
     $taskIds    = [];
     $emailIds   = [];
+    $flowIds    = [];
     foreach ($grouped as $g) {
         if ($g['entity_type'] === 'tire_image')    { $imageIds[]  = (int)$g['entity_id']; }
         if ($g['entity_type'] === 'tire')          { $tireIds[]   = (int)$g['entity_id']; }
@@ -821,6 +822,7 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
         if ($g['entity_type'] === 'library_image') { $libImgIds[] = (int)$g['entity_id']; }
         if ($g['entity_type'] === 'task')          { $taskIds[]   = (int)$g['entity_id']; }
         if ($g['entity_type'] === 'email')         { $emailIds[]  = (int)$g['entity_id']; }
+        if ($g['entity_type'] === 'email_flow')    { $flowIds[]   = (int)$g['entity_id']; }
     }
     $imageMeta = [];
     if ($imageIds) {
@@ -922,6 +924,20 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
             $emailMeta = [];
         }
     }
+    $flowMeta = [];
+    if ($flowIds && function_exists('hasEmailFlowsTable') && hasEmailFlowsTable($pdo)) {
+        $flowIds = array_values(array_unique($flowIds));
+        $ph = implode(',', array_fill(0, count($flowIds), '?'));
+        try {
+            $s = $pdo->prepare("SELECT id, name, slug FROM email_flows WHERE id IN ($ph)");
+            $s->execute($flowIds);
+            foreach ($s->fetchAll() as $r) {
+                $flowMeta[(int)$r['id']] = ['name' => (string)($r['name'] ?? ''), 'slug' => (string)($r['slug'] ?? '')];
+            }
+        } catch (Throwable $e) {
+            $flowMeta = [];
+        }
+    }
 
     foreach ($grouped as &$g) {
         if ($g['entity_type'] === 'tire_image' && isset($imageMeta[(int)$g['entity_id']])) {
@@ -936,6 +952,8 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
             $g['_meta'] = $taskMeta[(int)$g['entity_id']];
         } elseif ($g['entity_type'] === 'email' && isset($emailMeta[(int)$g['entity_id']])) {
             $g['_meta'] = $emailMeta[(int)$g['entity_id']];
+        } elseif ($g['entity_type'] === 'email_flow' && isset($flowMeta[(int)$g['entity_id']])) {
+            $g['_meta'] = $flowMeta[(int)$g['entity_id']];
         }
     }
     unset($g);
@@ -977,6 +995,14 @@ function actionLabel($action) {
         'edited_send_at'       => 'changed send date',
         'edited_html_url'      => 'changed email link',
         'edited_code'          => 'changed ID',
+        // flows (entity_type = 'email_flow')
+        'renamed'              => 'renamed',
+        'step_added'           => 'added a step',
+        'step_removed'         => 'removed a step',
+        'step_moved'           => 'reordered a step',
+        'step_timing'          => 'edited step timing',
+        'reordered'            => 'reordered flows',
+        'seeded'               => 'seeded from the email series',
     ];
     return $map[$action] ?? str_replace('_', ' ', $action);
 }
@@ -1043,6 +1069,12 @@ function activityLink($entry) {
             // Emails list with the row's detail open.
             $qs = http_build_query(array_merge($clientPair, ['email' => (int)$entry['entity_id']]));
             return pagePath('emails') . '?' . $qs;
+
+        case 'email_flow':
+            // The flow page (slug from _meta; the list when the flow is gone).
+            $params = $clientPair;
+            if (!empty($meta['slug'])) { $params['flow'] = (string)$meta['slug']; }
+            return pagePath('flows') . ($params ? '?' . http_build_query($params) : '');
 
         default:
             return pagePath('admin') . ($clientPair ? '?' . http_build_query($clientPair) : '');
@@ -1121,6 +1153,9 @@ if (!function_exists('activityParentName')) {
                 $title = $firstLine($meta['title'] ?? '');
                 $name  = ($code !== '' && $title !== '') ? $code . ' · ' . $title : ($code !== '' ? $code : $title);
                 return ['thing' => 'email', 'name' => $name, 'parent' => '', 'parent_key' => 'email:' . $id];
+            case 'email_flow':
+                return ['thing' => 'flow', 'name' => $firstLine($meta['name'] ?? '', 80),
+                        'parent' => '', 'parent_key' => 'email_flow:' . $id];
             default:
                 return ['thing' => 'item', 'name' => '', 'parent' => '',
                         'parent_key' => (string)($entry['entity_type'] ?? 'item') . ':' . $id];
@@ -1160,6 +1195,11 @@ if (!function_exists('activityDeepLink')) {
                 return clientUrl('projects', $qs) . '#task-' . $id;
             case 'email':
                 return clientUrl('emails', $qs + ['email' => $id]);
+            case 'email_flow':
+                $flowSlug = (string)($meta['slug'] ?? '');
+                return function_exists('emailFlowUrl')
+                    ? emailFlowUrl(['slug' => $flowSlug], $qs)
+                    : clientUrl('flows', $qs + ($flowSlug !== '' ? ['flow' => $flowSlug] : []));
             default:
                 return clientUrl('index.php', $qs);
         }
@@ -1172,11 +1212,12 @@ if (!function_exists('activityPrimaryAction')) {
         static $rank = [
             'denied' => 1, 'approved' => 2, 'reset_pending' => 3, 'submitted' => 3,
             'posted' => 4, 'unposted' => 5, 'marked_live' => 4, 'unmarked_live' => 5,
-            'created' => 6, 'deleted' => 7, 'imported' => 7,
+            'seeded' => 5, 'created' => 6, 'deleted' => 7, 'imported' => 7,
             'task_created' => 8, 'task_toggled' => 9, 'task_deleted' => 10, 'task_updated' => 11,
-            'edited_schedule' => 12, 'renamed_post' => 13, 'renamed_image' => 14,
+            'edited_schedule' => 12, 'renamed_post' => 13, 'renamed' => 13, 'renamed_image' => 14,
             'edited_caption' => 15, 'edited_hashtags' => 16, 'edited_type' => 17,
             'type_changed' => 18, 'edited_image_caption' => 19,
+            'step_added' => 20, 'step_removed' => 20, 'step_moved' => 21, 'reordered' => 21, 'step_timing' => 22,
             'commented' => 30, 'uncommented' => 31,
         ];
         $best = null; $bestRank = PHP_INT_MAX;
@@ -1347,6 +1388,10 @@ if (!function_exists('activityFinalizeRows')) {
                     if (!$many && $r['name'] !== '') { $objT = $r['name']; $objH = '<em>' . $h($r['name']) . '</em>'; }
                     else                             { $objT = $objH = $many ? $n . ' emails' : 'an email'; }
                     break;
+                case 'flow':
+                    if (!$many && $r['name'] !== '') { $objT = $r['name']; $objH = '<em>' . $h($r['name']) . '</em>'; }
+                    else                             { $objT = $objH = $many ? $n . ' flows' : 'a flow'; }
+                    break;
                 default:
                     $objT = $objH = $many ? $n . ' items' : 'an item';
             }
@@ -1391,8 +1436,31 @@ if (!function_exists('activityFinalizeRows')) {
                     $kind = $r['thing'] === 'image' ? ($many ? $n . ' images' : 'an image')
                           : ($r['thing'] === 'collection' ? ($many ? $n . ' collections' : 'a collection')
                           : ($r['thing'] === 'post' ? ($many ? $n . ' posts' : 'a post')
-                          : ($r['thing'] === 'email' ? ($many ? $n . ' emails' : 'an email') : $objT)));
+                          : ($r['thing'] === 'email' ? ($many ? $n . ' emails' : 'an email')
+                          : ($r['thing'] === 'flow' ? ($many ? $n . ' flows' : 'a flow') : $objT))));
                     $t = "$who removed $kind"; $hh = "$whoH removed " . $h($kind); break;
+                // flows (entity_type = 'email_flow')
+                case 'renamed':
+                    $verb = 'renamed'; $icon = 'mail'; $tone = 'neutral';
+                    $t = "$who renamed $objT"; $hh = "$whoH renamed $objH"; break;
+                case 'step_added':
+                    $verb = 'added a step'; $icon = 'plus'; $tone = 'accent';
+                    $t = "$who added a step to $objT"; $hh = "$whoH added a step to $objH"; break;
+                case 'step_removed':
+                    $verb = 'removed a step'; $icon = 'mail'; $tone = 'neutral';
+                    $t = "$who removed a step from $objT"; $hh = "$whoH removed a step from $objH"; break;
+                case 'step_moved':
+                    $verb = 'reordered'; $icon = 'mail'; $tone = 'neutral';
+                    $t = "$who reordered $objT"; $hh = "$whoH reordered $objH"; break;
+                case 'step_timing':
+                    $verb = 'updated timing'; $icon = 'mail'; $tone = 'neutral';
+                    $t = "$who updated timing in $objT"; $hh = "$whoH updated timing in $objH"; break;
+                case 'reordered':
+                    $verb = 'reordered'; $icon = 'mail'; $tone = 'neutral';
+                    $t = "$who reordered flows"; $hh = "$whoH reordered flows"; break;
+                case 'seeded':
+                    $verb = 'created'; $icon = 'plus'; $tone = 'accent';
+                    $t = "$who created $objT from the email series"; $hh = "$whoH created $objH from the email series"; break;
                 case 'submitted':
                     $verb = 'sent for review'; $icon = 'mail'; $tone = 'accent';
                     $t = "$who sent $objT for review"; $hh = "$whoH sent $objH for review"; break;
@@ -1433,6 +1501,7 @@ if (!function_exists('activityFinalizeRows')) {
             }
             if ($r['entity_type'] === 'task' && $icon === 'ellipsis') $icon = 'checklist';
             if ($r['entity_type'] === 'email' && $icon === 'ellipsis') $icon = 'mail';
+            if ($r['entity_type'] === 'email_flow' && $icon === 'ellipsis') $icon = 'mail';
             // One comment → quote it inline; several → the disclosure lists them.
             if (count($r['children']) === 1) {
                 $q = $r['children'][0]['text'];

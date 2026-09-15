@@ -221,10 +221,26 @@ function render_summary(array $rows, int $leftover, array $config) {
     $postIds = [];
     $emailLabels = [];
     $emailIds = [];
+    $flowLabels = [];
+    $flowIds = [];
     foreach ($companies as $cid => $co) {
         foreach ($co['entries'] as $e) {
-            if ($e['entity_type'] === 'post')  $postIds[]  = (int)$e['entity_id'];
-            if ($e['entity_type'] === 'email') $emailIds[] = (int)$e['entity_id'];
+            if ($e['entity_type'] === 'post')       $postIds[]  = (int)$e['entity_id'];
+            if ($e['entity_type'] === 'email')      $emailIds[] = (int)$e['entity_id'];
+            if ($e['entity_type'] === 'email_flow') $flowIds[]  = (int)$e['entity_id'];
+        }
+    }
+    if ($flowIds && function_exists('hasEmailFlowsTable') && hasEmailFlowsTable($pdo)) {
+        $flowIds = array_values(array_unique($flowIds));
+        $ph = implode(',', array_fill(0, count($flowIds), '?'));
+        try {
+            $s = $pdo->prepare("SELECT id, name, slug FROM email_flows WHERE id IN ($ph)");
+            $s->execute($flowIds);
+            foreach ($s->fetchAll() as $r) {
+                $flowLabels[(int)$r['id']] = 'Flow ' . (string)($r['name'] ?? '');
+            }
+        } catch (Throwable $e) {
+            $flowLabels = [];
         }
     }
     if ($emailIds && function_exists('hasEmailsTable') && hasEmailsTable($pdo)) {
@@ -277,6 +293,8 @@ function render_summary(array $rows, int $leftover, array $config) {
                 $entityLabel = 'Task #' . (int)$e['entity_id'];
             } elseif ($e['entity_type'] === 'email') {
                 $entityLabel = $emailLabels[(int)$e['entity_id']] ?? ('Email #' . (int)$e['entity_id']);
+            } elseif ($e['entity_type'] === 'email_flow') {
+                $entityLabel = $flowLabels[(int)$e['entity_id']] ?? ('Flow #' . (int)$e['entity_id']);
             } else {
                 $entityLabel = ucfirst($e['entity_type']) . ' #' . (int)$e['entity_id'];
             }

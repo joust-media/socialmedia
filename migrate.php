@@ -1036,6 +1036,48 @@ try {
     } else {
         $steps[] = "• 'emails' module already seeded (id={$emailsModuleId}).";
     }
+
+    // 23. email_flows — a named, ordered sequence of a client's emails
+    //     ("Free" = F1 → F4 → C2 …). Admin builds them (flow-status.php),
+    //     clients view them (flows.php). See flows-lib.php.
+    if (!tableExists($pdo, 'email_flows')) {
+        $pdo->exec("
+            CREATE TABLE email_flows (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                company_id INT UNSIGNED NOT NULL,
+                name VARCHAR(120) NOT NULL,
+                slug VARCHAR(120) NOT NULL,
+                description TEXT NULL,
+                sort_order INT NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_company_slug (company_id, slug)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `email_flows` table.";
+    } else {
+        $steps[] = "• `email_flows` table already exists — skipped.";
+    }
+
+    // 24. email_flow_steps — the emails inside a flow, in order, with the
+    //     timing between steps ("3 days after F1") and an optional note.
+    if (!tableExists($pdo, 'email_flow_steps')) {
+        $pdo->exec("
+            CREATE TABLE email_flow_steps (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                flow_id INT UNSIGNED NOT NULL,
+                email_id INT UNSIGNED NOT NULL,
+                position INT NOT NULL DEFAULT 0,
+                timing_text VARCHAR(255) NULL,
+                note TEXT NULL,
+                UNIQUE KEY uq_flow_email (flow_id, email_id),
+                KEY ix_flow_pos (flow_id, position)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `email_flow_steps` table.";
+    } else {
+        $steps[] = "• `email_flow_steps` table already exists — skipped.";
+    }
 } catch (Exception $e) {
     $errors[] = $e->getMessage();
 }
