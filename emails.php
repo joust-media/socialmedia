@@ -24,7 +24,6 @@
 
 require __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
-if (is_file(__DIR__ . '/flows-lib.php')) require_once __DIR__ . '/flows-lib.php';   // Flows link + "In flows" row (optional module)
 require_once __DIR__ . '/partials/components/comment-thread.php';
 require_once __DIR__ . '/partials/components/email-detail.php';
 
@@ -339,7 +338,7 @@ $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) .
 $bodyClass   = 'page-emails';
 
 // Flows (flows.php): a "Flows" link in the nav's trailing slot once the client has a flow (admin: always,
-// so the first one can be created). flows-lib.php may not be deployed yet — everything is function-guarded.
+// so the first one can be created). flows-lib.php (loaded by emails-lib.php) may be absent on older deploys — function-guarded.
 $flowCount = 0;
 if ($hasTable && function_exists('hasEmailFlowsTable') && function_exists('emailFlowsForCompany')) {
     try { if (hasEmailFlowsTable($pdo)) $flowCount = count(emailFlowsForCompany($pdo, $cid)); } catch (Throwable $e) { $flowCount = 0; }

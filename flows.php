@@ -3,7 +3,8 @@
  * Flows — a client's emails as named, ordered sequences ("Free" = F1 → F4 → F3 …), each
  * step a card on a vertical timeline with the timing on the connector between cards.
  * Admin edits (drag / up-down reorder, add, remove, timing overrides, rename, delete);
- * clients view. Backend: flows-lib.php + flow-status.php (scratchpad flows-design.md).
+ * clients view. Backend: flows-lib.php (loaded by emails-lib.php) + flow-status.php — scratchpad
+ * flows-design.md. Step positions are 0-based server-side; cards show 1-based numbers.
  *
  *   ?client=privacybee                scope (helpers.php)
  *   &flow=<slug>                      which flow (default: the first by sort_order)
@@ -17,7 +18,6 @@
 
 require __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
-if (is_file(__DIR__ . '/flows-lib.php')) require_once __DIR__ . '/flows-lib.php';
 require_once __DIR__ . '/partials/components/comment-thread.php';
 require_once __DIR__ . '/partials/components/email-detail.php';
 require_once __DIR__ . '/partials/components/flow-card.php';

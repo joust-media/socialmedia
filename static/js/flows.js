@@ -134,7 +134,7 @@
     if (opts.focus) { var b = $(opts.focus, li); if (b && !b.disabled) b.focus(); else { var alt = $('[data-flow-handle]', li); if (alt) alt.focus(); } }
     li.classList.add('is-busy');
     var emailId = li.getAttribute('data-email-id');
-    return post({ action: 'move_step', email_id: emailId, position: to + 1 }).then(function (res) {
+    return post({ action: 'move_step', email_id: emailId, position: to }).then(function (res) {   // positions are 0-based
       li.classList.remove('is-busy');
       if (!res.ok) {
         place(li, from);
@@ -238,9 +238,11 @@
     });
   };
 
+  /* position: 0-based insert index; null / undefined = append. */
   F.add = function (emailId, position) {
     var params = { action: 'add_step', email_id: emailId };
-    if (position) params.position = position;
+    var insertAt = (position === null || position === undefined || position === '') ? null : Math.max(0, parseInt(position, 10) || 0);
+    if (insertAt !== null) params.position = insertAt;
     return post(params).then(function (res) {
       if (!res.ok) { toast(res.error || 'Could not add this email', 'error'); return res; }
       var html = res.data && res.data.html;
@@ -251,7 +253,7 @@
       if (!li) { window.location.reload(); return res; }
       var l = list(); if (!l) { window.location.reload(); return res; }
       var items = steps();
-      var ref = position && items[position - 1] ? items[position - 1] : null;
+      var ref = insertAt !== null && items[insertAt] ? items[insertAt] : null;
       l.insertBefore(li, ref);
       li.classList.add('ui-enter');
       F.renumber();
@@ -324,13 +326,14 @@
   /* ================================================================== */
   /* Sheets: picker, flow form, reorder flows                             */
   /* ================================================================== */
-  function openPicker(position) {
+  /* stepNum: 1-based step number to insert BEFORE (0 = append); the endpoint gets the 0-based index. */
+  function openPicker(stepNum) {
     var tpl = $('template[data-flow-picker]'); if (!tpl) return;
     var root = sheetRoot(); if (!root || !App.sheet) return;
-    App.sheet.open(root, { title: position ? 'Insert before step ' + position : 'Add email', html: tpl.innerHTML, footer: '' });
+    App.sheet.open(root, { title: stepNum ? 'Insert before step ' + stepNum : 'Add email', html: tpl.innerHTML, footer: '' });
     var body = $('[data-sheet-body]', root);
     var picker = $('[data-flow-picker-root]', body); if (!picker) return;
-    picker.setAttribute('data-flow-pick-position', position || '');
+    picker.setAttribute('data-flow-pick-position', stepNum ? String(stepNum - 1) : '');
     var present = {};
     steps().forEach(function (li) { present[li.getAttribute('data-email-id')] = true; });
     $$('[data-flow-pick-item]', picker).forEach(function (it) { it.hidden = !!present[it.getAttribute('data-flow-pick-item')]; });
@@ -537,7 +540,8 @@
         var pick = t.closest('[data-flow-pick]');
         if (pick) {
           var picker = t.closest('[data-flow-picker-root]');
-          var pos = picker ? parseInt(picker.getAttribute('data-flow-pick-position') || '0', 10) || 0 : 0;
+          var posAttr = picker ? picker.getAttribute('data-flow-pick-position') : '';
+          var pos = posAttr === '' || posAttr === null ? null : parseInt(posAttr, 10);
           pick.disabled = true;
           F.add(pick.getAttribute('data-flow-pick'), pos).then(function (res) { if (res && res.ok && App.sheet) App.sheet.close(); else pick.disabled = false; });
           return;

@@ -17,7 +17,6 @@
  */
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
-if (is_file(__DIR__ . '/flows-lib.php')) require_once __DIR__ . '/flows-lib.php';   // Flows button in the Emails tab (optional module)
 require_once __DIR__ . '/auth.php';
 requireAdmin();
 

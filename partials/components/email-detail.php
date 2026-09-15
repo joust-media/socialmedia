@@ -158,7 +158,7 @@ if (!function_exists('renderEmailDetail')) {
                 foreach ($inFlows as $f) {
                     $fUrl = function_exists('emailFlowUrl') ? emailFlowUrl($f) : (function_exists('clientUrl') ? clientUrl('flows.php', ['flow' => (string)($f['slug'] ?? '')]) : 'flows.php?flow=' . rawurlencode((string)($f['slug'] ?? '')));
                     $chips .= '<a class="el-tag ed-flow-chip" href="' . edEsc($fUrl . '#flow-step-' . $id) . '" data-flow-chip="' . edEsc((string)($f['slug'] ?? '')) . '">'
-                            . edEsc((string)($f['name'] ?? '')) . ' · step ' . (int)($f['position'] ?? 0) . ' of ' . (int)($f['step_count'] ?? 0) . '</a>';
+                            . edEsc((string)($f['name'] ?? '')) . ' · step ' . ((int)($f['position'] ?? 0) + 1) . ' of ' . (int)($f['step_count'] ?? 0) . '</a>';
                 }
                 $out .= $row(count($inFlows) === 1 ? 'In flow' : 'In flows', '<span class="el-groups" data-email-flows>' . $chips . '</span>');
             }

@@ -11,9 +11,12 @@
  *                               they stay hidden until the page root carries .is-editing.
  *            'editing' bool   — the page is already in edit mode (flow-status.php's add_step
  *                               passes the caller's state; affects nothing but is accepted).
- *            'index'   int    — 0-based position in the rendered list (default position - 1)
- *            'total'   int    — steps in the flow (for "Step 3 of 7"; default 0 → "Step 3")
- *            'client'  string — client slug for the Open link (default: the page's $clientSlug)
+ *            'index'   int    — 0-based position in the rendered list (default: the step's stored position, 0-based)
+ *            'total'   int    — steps in the flow (for "Step 3 of 7"; default 0 → "Step 3"); 'count' is an alias
+ *                               (flow-status.php's add_step passes index + count)
+ *            'client'  string — client slug for the Open link (default: $opts['company']['slug'], else the page's $clientSlug)
+ *            'company' array  — company row (flow-status.php passes it; only 'slug' is read)
+ *            'flow'    array  — accepted, unused
  *
  *   Output (one list item; flows.js re-numbers [data-flow-num] / data-position after every move):
  *     <li class="fl-step" id="flow-step-<emailId>" data-flow-step=<stepId> data-email-item=<emailId>
@@ -69,8 +72,8 @@ if (!function_exists('renderFlowCard')) {
 
         $admin   = array_key_exists('admin', $opts) ? (bool)$opts['admin'] : (function_exists('isAdmin') && isAdmin());
         $pos     = (int)($step['position'] ?? 0);
-        $index   = array_key_exists('index', $opts) ? max(0, (int)$opts['index']) : max(0, $pos - 1);
-        $total   = max(0, (int)($opts['total'] ?? 0));
+        $index   = array_key_exists('index', $opts) ? max(0, (int)$opts['index']) : max(0, $pos);   // positions are stored 0-based
+        $total   = max(0, (int)($opts['total'] ?? $opts['count'] ?? 0));
         $num     = $index + 1;
         $stepId  = (int)($step['id'] ?? 0);
         $eid     = (int)($email['id'] ?? 0);
@@ -101,7 +104,7 @@ if (!function_exists('renderFlowCard')) {
         $timingLbl = $timing !== '' ? $timing : 'Timing not set';
 
         // Open: the detail sheet in-page (emails.js), with the list deep link as the no-JS fallback.
-        $slug    = (string)($opts['client'] ?? ($GLOBALS['clientSlug'] ?? ''));
+        $slug    = (string)($opts['client'] ?? ($opts['company']['slug'] ?? ($GLOBALS['clientSlug'] ?? '')));
         $openUrl = function_exists('clientUrl')
             ? clientUrl('emails.php', ['client' => $slug !== '' ? $slug : null, 'status' => 'all', 'email' => $eid])
             : 'emails.php?email=' . $eid;
