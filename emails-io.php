@@ -5,7 +5,8 @@
  *
  *   GET  emails-io.php?client=<slug>&format=csv   → text/csv download <slug>-emails-YYYY-MM-DD.csv
  *                                                   (columns per emails-design.md §7, UTF-8 BOM, CRLF)
- *   GET  emails-io.php?client=<slug>&format=json  → application/json download (full rows + groups + comment threads)
+ *   GET  emails-io.php?client=<slug>&format=json  → application/json download (full rows + groups + comment threads + flows)
+ *   GET  emails-io.php?client=<slug>&format=flows-csv → text/csv download <slug>-flows-YYYY-MM-DD.csv (one row per flow step)
  *
  *   POST emails-io.php?client=<slug>   multipart `file` (CSV or JSON) or `payload` (rows from a preview)
  *        mode=preview (default; also dry_run=1) → diff table, NO writes, plus a Confirm form
@@ -70,6 +71,19 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
         echo $json;
         exit;
     }
+    if ($format === 'flows-csv') {
+        // One row per flow step (Flow, Position, ID, Title, Timing, Trigger, Subject Line, Preview Text, Status, URL).
+        $csv = (function_exists('emailFlowsExportCsv') && hasEmailFlowsTable($pdo))
+             ? emailFlowsExportCsv($pdo, $cid)
+             : "\xEF\xBB\xBF" . emailCsvEncodeRow(emailFlowsCsvColumns()) . "\r\n";
+        $fstem = preg_replace('/[^a-z0-9-]+/', '-', strtolower((string)$client['slug'])) . '-flows-' . date('Y-m-d');
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="' . $fstem . '.csv"');
+        header('Cache-Control: no-store');
+        header('Content-Length: ' . strlen($csv));
+        echo $csv;
+        exit;
+    }
     header('Location: ' . clientUrl('studio.php', ['tab' => 'emails']));
     exit;
 }
@@ -124,7 +138,16 @@ function ioRowsFromPayload(string $json): ?array {
     return $rows;
 }
 
+/** The optional top-level `flows` list of a JSON export (see flows-design.md §4); [] for CSV / absent. */
+function ioFlowsFromJson(string $text): array {
+    if (strncmp($text, "\xEF\xBB\xBF", 3) === 0) $text = substr($text, 3);
+    $data = json_decode($text, true);
+    if (!is_array($data) || array_is_list($data) || !isset($data['flows']) || !is_array($data['flows'])) return [];
+    return function_exists('emailFlowsImportNormalize') ? emailFlowsImportNormalize($data['flows']) : [];
+}
+
 $rows     = null;
+$flows    = [];   // normalised flow objects from a JSON file (ignored for CSV)
 $source   = '';
 $parseErr = '';
 if (!empty($_FILES['file']) && is_array($_FILES['file']) && ($_FILES['file']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
@@ -139,36 +162,57 @@ if (!empty($_FILES['file']) && is_array($_FILES['file']) && ($_FILES['file']['er
     $parsed = $isJson ? emailImportParseJson($text) : emailImportParseCsv($text);
     if ($parsed['error'] !== null) $parseErr = $parsed['error'];
     else $rows = emailImportNormalizeRows($parsed['records'], $parsed['columns']);
+    if ($isJson) $flows = ioFlowsFromJson($text);
 } elseif (isset($_POST['payload']) && is_string($_POST['payload']) && trim($_POST['payload']) !== '') {
     $rows = ioRowsFromPayload($_POST['payload']);
     if ($rows === null) $parseErr = 'The preview payload could not be read — upload the file again.';
     $source = trim((string)($_POST['source'] ?? '')) ?: 'preview';
+    if (isset($_POST['flows_payload']) && is_string($_POST['flows_payload']) && trim($_POST['flows_payload']) !== '') {
+        $fp = json_decode($_POST['flows_payload'], true);
+        if (is_array($fp) && function_exists('emailFlowsImportNormalize')) $flows = emailFlowsImportNormalize($fp);
+    }
 } elseif (isset($_POST['text']) && is_string($_POST['text']) && trim($_POST['text']) !== '') {
     $text = (string)$_POST['text'];
     $head = ltrim($text);
-    $parsed = (($head[0] ?? '') === '{' || ($head[0] ?? '') === '[') ? emailImportParseJson($text) : emailImportParseCsv($text);
+    $isJson = (($head[0] ?? '') === '{' || ($head[0] ?? '') === '[');
+    $parsed = $isJson ? emailImportParseJson($text) : emailImportParseCsv($text);
     $source = 'pasted text';
     if ($parsed['error'] !== null) $parseErr = $parsed['error'];
     else $rows = emailImportNormalizeRows($parsed['records'], $parsed['columns']);
+    if ($isJson) $flows = ioFlowsFromJson($text);
 } else {
     ioFail('Choose a CSV or JSON file to import.');
 }
 if ($parseErr !== '') ioFail('Import failed: ' . $parseErr, 422);
+if ($flows && !(function_exists('hasEmailFlowsTable') && hasEmailFlowsTable($pdo))) $flows = [];   // flow tables not migrated yet → ignore
 
 if ($mode === 'apply') {
     try {
         $result = emailImportApply($pdo, $cid, $rows, 'admin');
+        $flowResult = null;
+        if ($flows) {
+            $pdo->beginTransaction();
+            $flowResult = emailFlowsImport($pdo, $cid, $flows, 'admin', $result['batch_id']);
+            $pdo->commit();
+        }
     } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
         error_log('emails-io apply: ' . $e->getMessage());
         ioFail('Import failed: database error — nothing was changed.', 500);
+    }
+    $flowMsg = '';
+    if ($flowResult) {
+        $flowMsg = ' Flows: ' . (int)$flowResult['created'] . ' new · ' . (int)$flowResult['updated'] . ' updated · ' . (int)$flowResult['unchanged'] . ' unchanged'
+                 . ($flowResult['missing'] ? ' · unknown IDs skipped: ' . implode(', ', $flowResult['missing']) : '') . '.';
     }
     if ($wantsJson) {
         header('Content-Type: application/json');
         echo json_encode(['ok' => true, 'dry_run' => false, 'batch_id' => $result['batch_id'], 'summary' => $result['summary'],
-            'rows' => array_map(static function ($r) { return ['line' => $r['line'], 'code' => $r['code'], 'action' => $r['action'], 'changes' => $r['changes'] ?? [], 'message' => $r['message']]; }, $result['rows'])]);
+            'rows' => array_map(static function ($r) { return ['line' => $r['line'], 'code' => $r['code'], 'action' => $r['action'], 'changes' => $r['changes'] ?? [], 'message' => $r['message']]; }, $result['rows']),
+            'flows' => $flowResult ? ['created' => $flowResult['created'], 'updated' => $flowResult['updated'], 'unchanged' => $flowResult['unchanged'], 'steps' => $flowResult['steps'], 'missing' => $flowResult['missing']] : null]);
         exit;
     }
-    header('Location: ' . clientUrl('studio.php', ['tab' => 'emails', 'msg' => emailImportSummaryText($result['summary'], true)]));
+    header('Location: ' . clientUrl('studio.php', ['tab' => 'emails', 'msg' => emailImportSummaryText($result['summary'], true) . $flowMsg]));
     exit;
 }
 
@@ -180,9 +224,11 @@ $writes  = (int)$summary['create'] + (int)$summary['update'];
 if ($wantsJson) {
     header('Content-Type: application/json');
     echo json_encode(['ok' => true, 'dry_run' => true, 'summary' => $summary,
-        'rows' => array_map(static function ($r) { return ['line' => $r['line'], 'code' => $r['code'], 'action' => $r['action'], 'changes' => $r['changes'] ?? [], 'message' => $r['message'], 'warnings' => $r['warnings']]; }, $diff['rows'])]);
+        'rows' => array_map(static function ($r) { return ['line' => $r['line'], 'code' => $r['code'], 'action' => $r['action'], 'changes' => $r['changes'] ?? [], 'message' => $r['message'], 'warnings' => $r['warnings']]; }, $diff['rows']),
+        'flows' => array_map(static function ($f) { return ['name' => $f['name'], 'slug' => $f['slug'], 'steps' => count($f['steps'])]; }, $flows)]);
     exit;
 }
+$flowsPayload = $flows ? json_encode($flows, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : '';
 
 // Payload the Confirm form re-posts: only the normalised inputs, never the diff.
 $payloadRows = array_map(static function ($r) {
@@ -220,14 +266,16 @@ include __DIR__ . '/partials/layout-top.php';
       <span class="studio-chip studio-chip--static"><?= (int)$summary['duplicates'] ?> <span class="studio-chip-n">duplicate<?= (int)$summary['duplicates'] === 1 ? '' : 's' ?></span></span>
       <span class="studio-chip studio-chip--static"><?= (int)$summary['skipped'] ?> <span class="studio-chip-n">skipped</span></span>
       <?php if ((int)$summary['unknown_status'] > 0): ?><span class="studio-chip studio-chip--static"><?= (int)$summary['unknown_status'] ?> <span class="studio-chip-n">unknown status → Draft</span></span><?php endif; ?>
+      <?php if ($flows): ?><span class="studio-chip studio-chip--static" data-import-flows="<?= count($flows) ?>"><?= count($flows) ?> <span class="studio-chip-n">flow<?= count($flows) === 1 ? '' : 's' ?> in file</span></span><?php endif; ?>
     </div>
 
     <form method="POST" action="<?= h(clientUrl('emails-io.php')) ?>" class="studio-import-confirm" data-import-confirm>
       <input type="hidden" name="mode" value="apply">
       <input type="hidden" name="source" value="<?= h($source) ?>">
       <input type="hidden" name="payload" value="<?= h($payload) ?>">
+      <?php if ($flowsPayload !== ''): ?><input type="hidden" name="flows_payload" value="<?= h($flowsPayload) ?>"><?php endif; ?>
       <div class="studio-actions studio-actions--start">
-        <button type="submit" class="ui-btn ui-btn--filled"<?= $writes === 0 ? ' disabled' : '' ?>>Apply <?= $writes ?> change<?= $writes === 1 ? '' : 's' ?></button>
+        <button type="submit" class="ui-btn ui-btn--filled"<?= ($writes === 0 && !$flows) ? ' disabled' : '' ?>>Apply <?= $writes ?> change<?= $writes === 1 ? '' : 's' ?><?= $flows ? ' + ' . count($flows) . ' flow' . (count($flows) === 1 ? '' : 's') : '' ?></button>
         <a class="ui-btn ui-btn--gray" href="<?= h(clientUrl('studio.php', ['tab' => 'emails'])) ?>">Cancel</a>
         <span class="studio-help">Applies in one transaction; changed emails are logged as “imported”, new ones as “created”.</span>
       </div>
