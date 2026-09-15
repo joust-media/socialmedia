@@ -106,6 +106,12 @@ if ($flows) {
     if (!$flow) $flow = $flows[0];
 }
 $flowId = $flow ? (int)$flow['id'] : 0;
+// Switcher chip counts: admins see every step (step_count); clients see only live / pending / approved
+// steps, so their chips use the visible counts (same rule as the timeline below) for EVERY flow.
+$chipCounts = [];
+if ($flows && $visibleTo === 'client' && function_exists('emailFlowVisibleStepCounts')) {
+    try { $chipCounts = emailFlowVisibleStepCounts($pdo, $cid); } catch (Throwable $e) { error_log('flows visible counts failed: ' . $e->getMessage()); $chipCounts = []; }
+}
 $steps  = $flow ? emailFlowSteps($pdo, $flowId, ['visibleTo' => $visibleTo]) : [];
 $steps  = array_values(array_filter($steps, static function ($s) { return is_array($s['email'] ?? null); }));
 $total  = count($steps);
@@ -231,7 +237,7 @@ include __DIR__ . '/partials/layout-top.php';
   <div class="fl-flows" role="group" aria-label="Flows" data-flow-switcher>
     <?php foreach ($flows as $f):
         $on = (int)$f['id'] === $flowId;
-        $n  = $on ? $total : (int)($f['step_count'] ?? 0); ?>
+        $n  = $on ? $total : (int)($chipCounts[(int)$f['id']] ?? $f['step_count'] ?? 0); ?>
       <a class="em-chip fl-flow-chip<?= $on ? ' is-active' : '' ?>" href="<?= h($flowUrl($f)) ?>" data-flow-chip="<?= h($f['slug']) ?>" aria-current="<?= $on ? 'page' : 'false' ?>"><span data-flow-chip-name><?= h($f['name']) ?></span> <span class="fl-chip-n" data-flow-count="<?= (int)$f['id'] ?>"><?= $n ?></span></a>
     <?php endforeach; ?>
     <?php if ($admin): ?>

@@ -414,6 +414,29 @@ if (!function_exists('emailFlowsForEmail')) {
     }
 }
 
+if (!function_exists('emailFlowVisibleStepCounts')) {
+    /**
+     * [flow_id => number of steps a CLIENT can see] for every flow of the company — steps whose
+     * email is live or pending/approved (the emailFlowSteps(['visibleTo' => 'client']) rule), so
+     * the flow switcher counts match the timeline. Admins keep step_count (every step).
+     * Built from the existing per-flow helpers so it runs on every backend the module supports.
+     */
+    function emailFlowVisibleStepCounts(PDO $pdo, int $companyId): array {
+        $out = [];
+        if ($companyId <= 0 || !hasEmailFlowsTable($pdo)) return $out;
+        $flows = emailFlowsForCompany($pdo, $companyId);
+        if (!$flows) return $out;
+        $visible = [];
+        foreach (emailsForCompany($pdo, $companyId, ['visibleTo' => 'client']) as $e) $visible[(int)$e['id']] = true;
+        foreach ($flows as $f) {
+            $n = 0;
+            foreach (emailFlowStepRows($pdo, (int)$f['id']) as $st) if (isset($visible[(int)$st['email_id']])) $n++;
+            $out[(int)$f['id']] = $n;
+        }
+        return $out;
+    }
+}
+
 if (!function_exists('emailSeriesSortCodes')) {
     /** (internal) Sort email rows the way the client's Email Manager does inside a series: number in the ID, then natural code, then id. */
     function emailSeriesSortCodes(array $rows): array {

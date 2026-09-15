@@ -75,6 +75,32 @@ Status, ID, Title, Sequence, Trigger, Subject Line, Preview Text, View Email, UR
 - Export is UTF-8 with BOM, CRLF rows, file name `<slug>-emails-YYYYMMDD.csv`. `format=json`
   gives the same data as JSON (`{version, company, groups, emails}`) and imports back.
 
+### Flows
+
+A **flow** is a named, ordered sequence of a client's emails ("Free" = F1 → F4 → F3 …; series
+can be mixed) shown as a vertical timeline on `flows.php?client=<slug>[&flow=<flow-slug>]`,
+with the timing between steps on the connector (a per-step override, else the email's first
+trigger line). Clients only view flows and never see Draft / Needs-changes steps; Joust edits.
+
+- **Migration**: `migrate.php` steps 23–24 create `email_flows` and `email_flow_steps`
+  (idempotent, nothing existing is altered). Until they exist the Flows button, chips and
+  page stay hidden ("Flows are not set up yet").
+- **First flows**: Studio → Emails → **Suggest flows from series** creates one flow per code
+  series present (F Free, N Essentials, P Pro, G Signature, L Lead, R Renewal, S System, … in the
+  series order), each with that series' emails ordered by their number; a series whose flow
+  already exists is skipped. "New flow" on `flows.php` starts an empty one.
+- **Edit mode** (`flows.php` → Edit, or `&edit=1`): drag handles / up-down buttons reorder
+  steps, "Add email" / the "+" on a connector insert from a picker of the client's emails,
+  "×" removes a step (the email is kept), tapping the timing pill edits the override; the
+  "…" menu renames, reorders or deletes flows. Every change posts to `flow-status.php`
+  (admin only, same-site, scoped to the posted client) and lands in the activity feed and digest.
+- **Export / import**: `emails-io.php?client=<slug>&format=json` now carries a `flows` list
+  (name, slug, description, steps by email code with 0-based positions and timing overrides)
+  and imports it back (upsert by slug; unknown codes are reported, not created).
+  `format=flows-csv` downloads `<slug>-flows-YYYY-MM-DD.csv`, one row per step
+  (`Flow, Position, ID, Title, Timing, Trigger, Subject Line, Preview Text, Status, URL`, Position 1-based).
+- Deleting an email removes it from every flow; an email's detail sheet lists the flows it is in.
+
 ## Not deployed
 
 `config.php` (live DB credentials), `uploads/`, `.htaccess` files, `error_log`, this README

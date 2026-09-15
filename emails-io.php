@@ -188,13 +188,15 @@ if ($flows && !(function_exists('hasEmailFlowsTable') && hasEmailFlowsTable($pdo
 
 if ($mode === 'apply') {
     try {
+        // One transaction for rows + flows (emailImportApply joins an open one), so a failing
+        // flows step rolls the email rows back too and "nothing was changed" stays true.
+        $pdo->beginTransaction();
         $result = emailImportApply($pdo, $cid, $rows, 'admin');
         $flowResult = null;
         if ($flows) {
-            $pdo->beginTransaction();
             $flowResult = emailFlowsImport($pdo, $cid, $flows, 'admin', $result['batch_id']);
-            $pdo->commit();
         }
+        $pdo->commit();
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
         error_log('emails-io apply: ' . $e->getMessage());

@@ -23,6 +23,9 @@ require_once __DIR__ . '/helpers.php';
 
 header('Content-Type: application/json');
 
+const FLOW_MAX_BODY = 64 * 1024;   // JSON bodies above this are refused with 413
+const FLOW_MAX_TEXT = 2000;        // description / note length cap (timing_text is 255, name 120)
+
 function flowFail(int $code, string $msg): void {
     http_response_code($code);
     echo json_encode(['ok' => false, 'error' => $msg]);
@@ -49,9 +52,13 @@ if (!isAdmin()) {
 $in = $_POST;
 $ctype = strtolower((string)($_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? ''));
 if (strpos($ctype, 'application/json') !== false) {
-    $raw = (string)file_get_contents('php://input');
-    $decoded = json_decode($raw, true);
-    if (!is_array($decoded)) {
+    // Bounded read: the largest legitimate body (reorder_flows with every flow id, or a long note) is a few KB.
+    $raw = (string)file_get_contents('php://input', false, null, 0, FLOW_MAX_BODY + 1);
+    if (strlen($raw) > FLOW_MAX_BODY) {
+        flowFail(413, 'Request body is too large');
+    }
+    $decoded = json_decode($raw, true, 8);
+    if (!is_array($decoded) || array_is_list($decoded)) {
         flowFail(400, 'Invalid JSON body');
     }
     $in = $decoded;
@@ -84,11 +91,17 @@ $clientSlug = (string)$company['slug'];   // clientUrl() scope for the URLs in r
 
 $actor = actorFromPost();
 
-/** Scalar field from the body (null when absent). */
+/** Scalar field from the body (null when absent or not a scalar). */
 function flowField(array $in, string $key): ?string {
     if (!array_key_exists($key, $in) || $in[$key] === null) return null;
-    if (is_array($in[$key])) return null;
+    if (!is_scalar($in[$key])) return null;
     return (string)$in[$key];
+}
+/** Free-text field (description / note): trimmed, CRLF → LF, cut to FLOW_MAX_TEXT; '' → null. */
+function flowText(?string $text): ?string {
+    $t = trim(str_replace(["\r\n", "\r"], "\n", (string)$text));
+    if ($t === '') return null;
+    return mb_substr($t, 0, FLOW_MAX_TEXT, 'UTF-8');
 }
 /** Validated flow name (400 on blank / too long). */
 function flowNameOr400(array $in): string {
@@ -159,7 +172,7 @@ try {
     if ($action === 'create_flow') {
         $name = flowNameOr400($in);
         $pdo->beginTransaction();
-        $id = createEmailFlow($pdo, $companyId, $name, flowField($in, 'description'));
+        $id = createEmailFlow($pdo, $companyId, $name, flowText(flowField($in, 'description')));
         if ($id <= 0) throw new RuntimeException('createEmailFlow returned 0');
         logEmailFlowActivity($pdo, $actor, 'created', $id, "Flow {$name} created", null, null, $companyId);
         $pdo->commit();
@@ -172,8 +185,7 @@ try {
         $flow = flowOrFail($pdo, $in, $companyId);
         $name = flowNameOr400($in);
         $desc = array_key_exists('description', $in) ? flowField($in, 'description') : ($flow['description'] ?? null);
-        $descClean = trim(str_replace(["\r\n", "\r"], "\n", (string)$desc));
-        $descClean = $descClean === '' ? null : $descClean;
+        $descClean = flowText($desc);
         $nameChanged = $name !== (string)$flow['name'];
         $descChanged = $descClean !== ($flow['description'] ?? null);
         $pdo->beginTransaction();
@@ -204,6 +216,7 @@ try {
         $raw = $in['flow_ids'] ?? null;
         if (is_string($raw)) $raw = preg_split('/[,\s]+/', trim($raw), -1, PREG_SPLIT_NO_EMPTY);
         if (!is_array($raw) || !$raw) flowFail(400, 'flow_ids is required');
+        $raw = array_filter($raw, 'is_scalar');   // a JSON body may nest arrays; only scalar ids count
         $ids = array_values(array_unique(array_filter(array_map('intval', $raw), static function ($i) { return $i > 0; })));
         if (!$ids) flowFail(400, 'flow_ids is required');
         $own = [];
@@ -289,8 +302,7 @@ try {
         $note   = array_key_exists('note', $in) ? flowField($in, 'note') : $current['note'];
         $timingClean = trim(str_replace(["\r\n", "\r"], "\n", (string)$timing));
         $timingClean = $timingClean === '' ? null : mb_substr($timingClean, 0, 255);
-        $noteClean   = trim(str_replace(["\r\n", "\r"], "\n", (string)$note));
-        $noteClean   = $noteClean === '' ? null : $noteClean;
+        $noteClean   = flowText($note);
         $changed = $timingClean !== $current['timing_text'] || $noteClean !== $current['note'];
         $pdo->beginTransaction();
         if ($changed) {
