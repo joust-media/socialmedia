@@ -17,6 +17,7 @@
  */
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
+if (is_file(__DIR__ . '/flows-lib.php')) require_once __DIR__ . '/flows-lib.php';   // Flows button in the Emails tab (optional module)
 require_once __DIR__ . '/auth.php';
 requireAdmin();
 
@@ -295,6 +296,17 @@ include __DIR__ . '/partials/layout-top.php';
   <div class="studio-emails-head" data-emails-actions>
     <a class="ui-btn ui-btn--filled" href="<?= h($emailFormUrl) ?>" data-emails-new><?= icon('plus') ?><span>New email</span></a>
     <?php if ($emailsOn): ?><a class="ui-btn ui-btn--gray" href="<?= h(emailsUrl(['status' => 'all'])) ?>" data-emails-open>Open emails</a><?php endif; ?>
+    <?php
+      // Flows (flows.php / flow-status.php): count button + a one-tap "suggest from series" seed when there are none.
+      $emailFlowsOn = function_exists('hasEmailFlowsTable') && function_exists('emailFlowsForCompany') && hasEmailFlowsTable($pdo);
+      $emailFlowN   = $emailFlowsOn ? count(emailFlowsForCompany($pdo, $emailCid)) : 0;
+    ?>
+    <?php if ($emailFlowsOn): ?>
+      <a class="ui-btn ui-btn--gray" href="<?= h(clientUrl('flows.php')) ?>" data-emails-flows>Flows <span class="ui-badge ui-badge--neutral" data-emails-flow-count><?= $emailFlowN ?></span></a>
+      <?php if ($emailFlowN === 0 && $emailRows): ?>
+        <button type="button" class="ui-btn ui-btn--tinted" data-action="seed_series" data-endpoint="<?= h(basePath() . '/flow-status.php') ?>" data-param-action="seed_series" data-reload data-toast="Flows created from the code series" data-emails-flows-seed title="One flow per code series (F, R, S…), in the series order">Suggest flows from series</button>
+      <?php endif; ?>
+    <?php endif; ?>
     <span class="ui-spacer"></span>
     <a class="ui-btn ui-btn--gray ui-btn--sm" href="<?= h(clientUrl('emails-io.php', ['format' => 'csv'])) ?>" data-emails-export="csv" title="Download the spreadsheet (Status, ID, Title, Sequence, Trigger, …)"><?= icon('download') ?><span>Export CSV</span></a>
     <a class="ui-btn ui-btn--gray ui-btn--sm" href="<?= h(clientUrl('emails-io.php', ['format' => 'json'])) ?>" data-emails-export="json" title="Download everything incl. groups and comment threads"><?= icon('download') ?><span>Export JSON</span></a>

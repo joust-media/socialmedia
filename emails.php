@@ -24,6 +24,7 @@
 
 require __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
+if (is_file(__DIR__ . '/flows-lib.php')) require_once __DIR__ . '/flows-lib.php';   // Flows link + "In flows" row (optional module)
 require_once __DIR__ . '/partials/components/comment-thread.php';
 require_once __DIR__ . '/partials/components/email-detail.php';
 
@@ -336,6 +337,18 @@ $activeTab   = 'emails';
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">' . "\n"
              . '<link rel="stylesheet" href="' . h(staticUrl('css/emails.css')) . '">';
 $bodyClass   = 'page-emails';
+
+// Flows (flows.php): a "Flows" link in the nav's trailing slot once the client has a flow (admin: always,
+// so the first one can be created). flows-lib.php may not be deployed yet — everything is function-guarded.
+$flowCount = 0;
+if ($hasTable && function_exists('hasEmailFlowsTable') && function_exists('emailFlowsForCompany')) {
+    try { if (hasEmailFlowsTable($pdo)) $flowCount = count(emailFlowsForCompany($pdo, $cid)); } catch (Throwable $e) { $flowCount = 0; }
+}
+if ($flowCount > 0 || ($admin && function_exists('hasEmailFlowsTable'))) {
+    $navTrailing = '<a class="ui-btn ui-btn--gray ui-btn--sm" href="' . h(clientUrl('flows.php')) . '" data-flows-link>Flows'
+                 . ($flowCount > 0 ? ' <span class="ui-badge ui-badge--neutral">' . $flowCount . '</span>' : '') . '</a>'
+                 . (function_exists('clientAvatar') ? clientAvatar($client) : '');
+}
 
 $emailsConfig = [
     'base'        => basePath(),

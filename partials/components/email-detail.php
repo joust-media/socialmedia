@@ -148,6 +148,21 @@ if (!function_exists('renderEmailDetail')) {
             }
             $out .= $row(count($groups) === 1 ? 'Group' : 'Groups', '<span class="el-groups">' . $chips . '</span>');
         }
+        // In flows (flows.php): "Free · step 3 of 7" chips linking to the card in each flow — flows-lib.php may not be deployed yet.
+        $flowsPdo = $GLOBALS['pdo'] ?? null;
+        if ($id > 0 && function_exists('emailFlowsForEmail') && $flowsPdo instanceof PDO) {
+            $inFlows = [];
+            try { $inFlows = emailFlowsForEmail($flowsPdo, $id); } catch (Throwable $e) { $inFlows = []; }
+            if ($inFlows) {
+                $chips = '';
+                foreach ($inFlows as $f) {
+                    $fUrl = function_exists('emailFlowUrl') ? emailFlowUrl($f) : (function_exists('clientUrl') ? clientUrl('flows.php', ['flow' => (string)($f['slug'] ?? '')]) : 'flows.php?flow=' . rawurlencode((string)($f['slug'] ?? '')));
+                    $chips .= '<a class="el-tag ed-flow-chip" href="' . edEsc($fUrl . '#flow-step-' . $id) . '" data-flow-chip="' . edEsc((string)($f['slug'] ?? '')) . '">'
+                            . edEsc((string)($f['name'] ?? '')) . ' · step ' . (int)($f['position'] ?? 0) . ' of ' . (int)($f['step_count'] ?? 0) . '</a>';
+                }
+                $out .= $row(count($inFlows) === 1 ? 'In flow' : 'In flows', '<span class="el-groups" data-email-flows>' . $chips . '</span>');
+            }
+        }
         $out .= $row('Code', ($code !== '' ? '<code class="ed-code">' . edEsc($code) . '</code>' : '<span class="text-tertiary">—</span>')
               . ($htmlUrl !== '' ? ' <a class="ed-url" href="' . edEsc($htmlUrl) . '" target="_blank" rel="noopener noreferrer">' . edEsc(preg_replace('#^https?://#i', '', $htmlUrl)) . '</a>' : ''));
         if ($admin && $notes !== '') {
