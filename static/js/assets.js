@@ -20,7 +20,14 @@
      rollback, denied tiles leave on the spot (scale .9 + fade, FLIP reflow
      with a spring; reduced motion → crossfade), live filter/badge counts,
      multi-select batch Approve (sequential queue with progress), deep links
-     (?asset=&kind= or #lib-<id> / #image-<id>).
+     (?asset=&kind= / ?image= or #lib-<id> / #image-<id>).
+     Paging: "Load more" fetches assets.php?…&partial=1&offset=N (tile markup
+     only) and appends; an open viewer gets the new items too (viewer.append)
+     and asks for the next page itself when it nears the end of the list.
+     Series (tire-series-lib.php): switcher pending badges follow decisions,
+     admin "…" menu → Rename / Delete sheets posting series_rename /
+     series_delete to tire-status.php; "Approve all remaining" is a plain
+     App.actions button (approve_series + reload).
 
    Loads with `defer` before app.js, so nothing here touches App.* until
    'app:ready' (or immediately if App has already initialised).
@@ -230,11 +237,21 @@
       if (m && m.tagName === 'VIDEO') { try { m.pause(); } catch (e) {} }
     },
 
+    /** Append items (e.g. the next page of a series) without touching the current slide. */
+    append: function (items) {
+      if (!this.isOpen || !items || !items.length) return;
+      this.items = this.items.concat(items);
+      this.updateChrome();
+      this._preload(this.index + 1);
+    },
+
     updateChrome: function () {
       var item = this.current(), r = this.refs;
       if (!item) return;
       r.title.textContent = item.label || '';
-      r.count.textContent = (this.index + 1) + ' of ' + this.items.length;
+      // "<tire> · <series> · n of N" when the page gave us a context, else "n of N"
+      var ctx = this.opts.context ? this.opts.context + ' · ' : '';
+      r.count.textContent = ctx + (this.index + 1) + ' of ' + (this.opts.total > this.items.length ? this.opts.total : this.items.length);
       if (App.status) App.status.applyPill(r.status, item.status, false);
       var approved = item.status === 'approved', denied = item.status === 'denied';
       r.approve.classList.toggle('is-done', approved);
@@ -602,6 +619,15 @@
 
       // Video tiles: posters + duration badges are filled by App.video (video.js) from its probe/cache.
 
+      // Paging ("Load more") + series controls (switcher counts, admin menu, rename / delete sheets)
+      var moreBtn = $('[data-assets-more]');
+      if (moreBtn) moreBtn.addEventListener('click', function () { self.loadMore(); });
+      // The viewer walks past the loaded page → fetch the next one so "next" never runs dry mid-series.
+      document.addEventListener('viewer:navigate', function (e) {
+        if (self.hasMore() && e.detail.index >= viewer.items.length - 3) self.loadMore();
+      });
+      this.initSeries();
+
       // Deep link: ?asset=&kind= (resolved server-side into cfg.open) or the legacy #lib-<id> / #image-<id> anchors
       var open = cfg.open;
       if (!open && location.hash) {
@@ -625,7 +651,109 @@
     openAt: function (tile) {
       var self = this, items = this.tiles().map(function (t) { return self.tileToItem(t); });
       var idx = items.findIndex(function (it) { return it.tile === tile; });
-      viewer.open(items, idx < 0 ? 0 : idx, { mode: this.cfg.mode || 'review' });
+      var page = this.cfg.page || {};
+      viewer.open(items, idx < 0 ? 0 : idx, { mode: this.cfg.mode || 'review', context: this.cfg.context || '', total: page.total || items.length });
+    },
+
+    /* ---------------- paging: "Load more" appends the next ASSETS_PAGE tiles (and extends an open viewer) ---------------- */
+    hasMore: function () {
+      var page = this.cfg.page;
+      return !!(page && page.partial && this.grid && this.tiles().length + (page.offset || 0) < (page.total || 0));
+    },
+    loadMore: function () {
+      var self = this, page = this.cfg.page, btn = $('[data-assets-more]');
+      if (!this.hasMore() || this._loading) return Promise.resolve([]);
+      this._loading = true;
+      var offset = (page.offset || 0) + this.tiles().length;
+      if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }
+      var url = page.partial.replace('__OFFSET__', String(offset));
+      return fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'text/html' } })
+        .then(function (res) { if (!res.ok) throw new Error('Load failed (' + res.status + ')'); return res.text(); })
+        .then(function (html) {
+          var tpl = document.createElement('template');
+          tpl.innerHTML = html.trim();
+          var added = $$('[data-asset]', tpl.content);
+          var frag = document.createDocumentFragment();
+          added.forEach(function (t) { t.classList.add('ui-enter'); frag.appendChild(t); });
+          self.grid.appendChild(frag);
+          if (App.video && App.video.enhance) App.video.enhance(self.grid);   // posters / durations for new video tiles
+          if (!added.length) page.total = self.tiles().length + (page.offset || 0);   // the server ran dry: stop asking
+          viewer.append(added.map(function (t) { return self.tileToItem(t); }));
+          self.syncMore();
+          return added;
+        })
+        .catch(function (err) { toast(err.message || 'Could not load more', { kind: 'error' }); return []; })
+        .then(function (added) {
+          self._loading = false;
+          if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); }
+          return added;
+        });
+    },
+    syncMore: function () {
+      var page = this.cfg.page || {}, wrap = $('[data-assets-more-wrap]'), count = $('[data-assets-more-count]');
+      var remaining = Math.max(0, (page.total || 0) - (page.offset || 0) - this.tiles().length);
+      if (count) count.textContent = remaining + ' remaining';
+      if (wrap) wrap.hidden = remaining <= 0;
+      if (viewer.isOpen) { viewer.opts.total = page.total || viewer.items.length; viewer.updateChrome(); }
+    },
+
+    /* ---------------- series: admin menu, rename / delete sheets ---------------- */
+    initSeries: function () {
+      var self = this, cfg = this.cfg, s = cfg.series;
+      var menuBtn = $('[data-series-menu]'), menu = $('[data-series-menu-list]');
+      if (menuBtn && menu) {
+        menuBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          var open = menu.hidden;
+          menu.hidden = !open;
+          menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+          if (open) { var first = $('[role="menuitem"]', menu); if (first) { try { first.focus({ preventScroll: true }); } catch (err) {} } }
+        });
+        document.addEventListener('click', function (e) { if (!menu.hidden && !e.target.closest('[data-series-menu-root]')) { menu.hidden = true; menuBtn.setAttribute('aria-expanded', 'false'); } });
+        document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !menu.hidden) { menu.hidden = true; menuBtn.setAttribute('aria-expanded', 'false'); menuBtn.focus(); } });
+      }
+      var rename = $('[data-series-rename]'), del = $('[data-series-delete]');
+      if (rename) rename.addEventListener('click', function () { if (menu) menu.hidden = true; self.seriesSheet('rename'); });
+      if (del) del.addEventListener('click', function () { if (menu) menu.hidden = true; self.seriesSheet('delete'); });
+      if (!s) return;
+    },
+    /** Open the admin Rename / Delete form (templates rendered by assets.php for admin only) in the generic sheet. */
+    seriesSheet: function (kind) {
+      var self = this, s = this.cfg.series, tpl = $('[data-series-form="' + kind + '"]');
+      if (!s || !s.id || !tpl || !App.sheet) return;
+      var title = kind === 'rename' ? 'Rename series' : 'Delete series';
+      var root = App.sheet.open('#uiSheet', { title: title, html: tpl.innerHTML, footer: '' });
+      if (!root) return;
+      var form = $('[data-series-form-el]', root);
+      if (!form || form._bound) return;
+      form._bound = true;
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var btn = $('[data-series-form-submit]', form), endpoint = (self.cfg.endpoints || {}).tire || 'tire-status.php';
+        if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }
+        var done = function (res) { if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); } return res; };
+        if (kind === 'rename') {
+          var input = $('[name="name"]', form), name = (input.value || '').trim();
+          if (name.length < 1) { input.focus(); done(); return; }
+          App.post(endpoint, { action: 'series_rename', series_id: s.id, name: name, actor: App.actor }).then(done).then(function (res) {
+            if (!res.ok) { toast(res.error || 'Could not rename', { kind: 'error' }); return; }
+            var shown = (res.data && res.data.series && res.data.series.name) || name;
+            s.name = shown;
+            $$('[data-series-title]').forEach(function (el) { el.textContent = shown; });
+            var chip = $('[data-series-chip="' + s.key + '"]'); if (chip) chip.firstChild.textContent = shown;
+            self.cfg.context = (s.tire || '') + ' · ' + shown;
+            App.sheet.close();
+            toast('Series renamed', { kind: 'success' });
+          });
+        } else {
+          var cb = $('[name="delete_files"]', form);
+          App.post(endpoint, { action: 'series_delete', series_id: s.id, delete_files: cb && cb.checked ? 1 : 0, actor: App.actor }).then(done).then(function (res) {
+            if (!res.ok) { toast(res.error || 'Could not delete', { kind: 'error' }); return; }
+            App.sheet.close(true);
+            window.location.href = s.tireUrl || window.location.pathname;
+          });
+        }
+      });
     },
 
     /* ---------------- tile state ---------------- */
@@ -720,6 +848,16 @@
       if (to)   bump('[data-count="' + to + '"]', 1);
       var delta = (to === 'pending' ? 1 : 0) - (from === 'pending' ? 1 : 0);
       if (!delta) return;
+      // Series switcher: the pending badge of the series the grid shows (hidden at 0)
+      var key = this.grid && this.grid.dataset.series;
+      if (key) {
+        $$('[data-series-pending="' + key + '"]').forEach(function (el) {
+          var v = Math.max(0, (parseInt(el.textContent, 10) || 0) + delta);
+          el.textContent = String(v); el.hidden = v === 0;
+        });
+        var approveAll = $('[data-action="approve_series"]');
+        if (approveAll && (parseInt(($('[data-count="pending"]') || {}).textContent, 10) || 0) === 0) approveAll.hidden = true;
+      }
       var seg = $('.ui-segmented-item.is-active .ui-segmented-count');
       if (seg) { var v = Math.max(0, (parseInt(seg.textContent, 10) || 0) + delta); if (v > 0) seg.textContent = String(v); else seg.remove(); }
       else if (delta > 0) { var act = $('.ui-segmented-item.is-active'); if (act) act.insertAdjacentHTML('beforeend', ' <span class="ui-segmented-count">1</span>'); }
