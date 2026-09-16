@@ -753,16 +753,21 @@ function selfUrl($extra = []) {
             </div>
           <?php endif; ?>
 
-          <?php if ($isEdit && !empty($editSeries) && ($editSeries['series_count'] > 0 || $editSeries['render_count'] > 0)):
+          <?php if ($isEdit && !empty($editSeries)):
             // Series renders are reviewed in Assets (approve / deny per image or per series), not here.
             $editTireRow = tireWithSlug($pdo, (int)$editItem['id']);
+            $hasRenders  = $editSeries['series_count'] > 0 || $editSeries['render_count'] > 0;
           ?>
             <div class="field full" data-tire-series-summary>
               <label>Render series</label>
               <span class="help">
-                <?= (int)$editSeries['series_count'] ?> series · <?= (int)$editSeries['render_count'] ?> renders
-                (<?= (int)array_sum(array_column($editSeries['series'], 'pending')) ?> to review) —
-                <a href="<?= h(clientUrl('assets.php', ['view' => 'collections', 'item' => (int)$editItem['id']])) ?>">Review in Assets</a>.
+                <?php if ($hasRenders): ?>
+                  <?= (int)$editSeries['series_count'] ?> series · <?= (int)$editSeries['render_count'] ?> renders
+                  (<?= (int)array_sum(array_column($editSeries['series'], 'pending')) ?> to review) —
+                  <a href="<?= h(clientUrl('assets.php', ['view' => 'collections', 'item' => (int)$editItem['id']])) ?>">Review in Assets</a>.
+                <?php else: ?>
+                  No render series yet.
+                <?php endif; ?>
                 <?php if ($editTireRow): ?>
                   Drop folders into <code><?= h(tireFolderRel($client, $editTireRow)) ?>/&lt;series&gt;/</code> or upload from Assets.
                 <?php endif; ?>
