@@ -115,20 +115,41 @@ if (!$row) {
     exit;
 }
 
-if (!is_dir($uploadsDir)) { @mkdir($uploadsDir, 0755, true); }
-
-$prefix  = $isVideo ? 'vid_' : 'img_';
-$newName = uniqid($prefix, true) . '.' . $ext;
-$newName = preg_replace('/[^a-zA-Z0-9_.\-]/', '', $newName);
-$dest    = $uploadsDir . '/' . $newName;
+// A series render (media/tires/<tire>/<series>/<file>, tire-series-lib.php) is replaced IN PLACE —
+// same folder, same stem, the new extension — so a later folder scan doesn't re-import the old name.
+$inPlace  = false;
+$oldPath  = null;
+$oldThumb = null;
+if ($type === 'tire') {
+    $oldPath  = tireImagePath($row);
+    $oldThumb = tireThumbPath($row);
+    if ($oldPath !== null && strpos(ltrim((string)$row['image_url'], '/'), 'media/tires/') === 0) {
+        $inPlace = true;
+        $dir     = dirname($oldPath);
+        $stem    = pathinfo($oldPath, PATHINFO_FILENAME);
+        $newName = $stem . '.' . $ext;
+        if (strcasecmp($newName, basename($oldPath)) !== 0) {
+            for ($n = 2; file_exists($dir . '/' . $newName) && $n < 1000; $n++) { $newName = $stem . '-' . $n . '.' . $ext; }
+        }
+        $dest   = $dir . '/' . $newName;
+        $newUrl = rtrim(dirname(ltrim((string)$row['image_url'], '/')), '/') . '/' . $newName;
+    }
+}
+if (!$inPlace) {
+    if (!is_dir($uploadsDir)) { @mkdir($uploadsDir, 0755, true); }
+    $prefix  = $isVideo ? 'vid_' : 'img_';
+    $newName = uniqid($prefix, true) . '.' . $ext;
+    $newName = preg_replace('/[^a-zA-Z0-9_.\-]/', '', $newName);
+    $dest    = $uploadsDir . '/' . $newName;
+    $newUrl  = $uploadsUrl . '/' . $newName;
+}
 
 if (!move_uploaded_file($tmpName, $dest)) {
     http_response_code(500);
-    echo json_encode(['ok' => false, 'error' => 'Failed to save file (check uploads/ permissions)']);
+    echo json_encode(['ok' => false, 'error' => 'Failed to save file (check ' . ($inPlace ? 'media/tires/' : 'uploads/') . ' permissions)']);
     exit;
 }
-
-$newUrl = $uploadsUrl . '/' . $newName;
+@chmod($dest, 0644);
 
 try {
     // post_images has a media_type column once migrate.php has run; tire_images doesn't.
@@ -141,13 +162,22 @@ try {
         $upd->execute([$newUrl, $imageId]);
     }
 
-    // Delete the old file from disk if it's inside uploads/
+    // Delete the old file from disk if it's inside uploads/ (or, for an in-place series replace,
+    // the old file when the extension changed) and drop the stale thumb.
     $oldUrl = $row['image_url'];
-    if (strpos($oldUrl, 'uploads/') === 0) {
+    if ($inPlace) {
+        if ($oldPath !== null && realpath($oldPath) !== realpath($dest) && is_file($oldPath)) { @unlink($oldPath); }
+    } elseif (strpos($oldUrl, 'uploads/') === 0) {
         $oldPath = __DIR__ . '/' . $oldUrl;
         if (is_file($oldPath) && realpath(dirname($oldPath)) === realpath($uploadsDir)) {
             @unlink($oldPath);
         }
+    }
+    if ($type === 'tire') {
+        if ($oldThumb !== null && is_file($oldThumb)) { @unlink($oldThumb); }
+        $newThumb = tireThumbPath(['image_url' => $newUrl]);
+        if ($newThumb !== null && is_file($newThumb)) { @unlink($newThumb); }
+        if (!$isVideo) { ensureTireThumb(['image_url' => $newUrl]); }
     }
 
     // Bump updated_at on the parent post (only for post images)
@@ -160,6 +190,7 @@ try {
         'ok'         => true,
         'image_id'   => $imageId,
         'image_url'  => $newUrl,
+        'src'        => $type === 'tire' ? tireImageSrc($newUrl) : (basePath() . '/' . ltrim($newUrl, '/')),   // ready-to-use URL (media/tires rows are root-relative)
         'media_type' => $isVideo ? 'video' : 'image',
     ]);
 } catch (Exception $e) {

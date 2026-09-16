@@ -379,7 +379,7 @@
         .then(function (res) {
           if (!res.ok) throw new Error((res.data && res.data.error) || ('Replace failed (' + res.status + ')'));
           var base = item.src.indexOf('/uploads/') > 0 ? item.src.slice(0, item.src.indexOf('/uploads/')) : '';
-          var url = base + '/' + res.data.image_url + '?t=' + Date.now();
+          var url = (res.data.src || (base + '/' + res.data.image_url)) + '?t=' + Date.now();   // src: ready-to-use (series renders live under /media/tires/)
           var meta = /\.(mp4|webm|mov|m4v)(\?|$)/i.test(res.data.image_url);
           item.src = url; item.type = (res.data.media_type === 'video' || meta) ? 'video' : 'image';
           item._preloaded = false;

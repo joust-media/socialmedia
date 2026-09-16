@@ -19,6 +19,10 @@ $allowedExt    = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
 $maxFileSize   = 10 * 1024 * 1024;
 $maxItemImages = 6;
 
+// Series renders (tire_images.series_id set — tire-series-lib.php) are reviewed in Assets and never
+// count against the reference-image slots; every query here is scoped to series_id IS NULL.
+$refOnly = hasTireSeries($pdo) ? ' AND series_id IS NULL' : '';
+
 $errors = [];
 $flash  = $_GET['msg'] ?? '';
 
@@ -214,11 +218,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 if (!empty($_FILES['item_images']) && is_array($_FILES['item_images']['name'])) {
-                    $cnt = $pdo->prepare("SELECT COUNT(*) FROM tire_images WHERE tire_id = ?");
+                    $cnt = $pdo->prepare("SELECT COUNT(*) FROM tire_images WHERE tire_id = ?{$refOnly}");
                     $cnt->execute([$itemId]);
                     $existing = (int)$cnt->fetchColumn();
 
-                    $sortQ = $pdo->prepare("SELECT COALESCE(MAX(sort_order), 0) FROM tire_images WHERE tire_id = ?");
+                    $sortQ = $pdo->prepare("SELECT COALESCE(MAX(sort_order), 0) FROM tire_images WHERE tire_id = ?{$refOnly}");
                     $sortQ->execute([$itemId]);
                     $sortOrder = (int)$sortQ->fetchColumn();
 
@@ -302,9 +306,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // --- Fetch for display -------------------------------------------
 $allCategories = $pdo->query("SELECT id, name FROM categories ORDER BY sort_order, name")->fetchAll();
 
+$refOnlyTi = $refOnly !== '' ? ' AND ti.series_id IS NULL' : '';
 $allItems = $pdo->prepare("
     SELECT t.id, t.name,
-           (SELECT COUNT(*) FROM tire_images ti WHERE ti.tire_id = t.id) AS image_count,
+           (SELECT COUNT(*) FROM tire_images ti WHERE ti.tire_id = t.id{$refOnlyTi}) AS image_count,
            (SELECT GROUP_CONCAT(cat.name ORDER BY cat.sort_order SEPARATOR ', ')
             FROM tire_categories tc
             INNER JOIN categories cat ON cat.id = tc.category_id
@@ -332,10 +337,12 @@ if ($editId > 0) {
         $imgStmt = $pdo->prepare("
             SELECT id, image_url, caption, status, client_comment{$updatedSel}{$nameSel}
             FROM tire_images
-            WHERE tire_id = ? ORDER BY sort_order ASC
+            WHERE tire_id = ?{$refOnly} ORDER BY sort_order ASC
         ");
         $imgStmt->execute([$editId]);
         $editImages = $imgStmt->fetchAll();
+        // Render series of this item (folders under media/tires/<slug>/ or uploads) — reviewed in Assets, summarised here.
+        $editSeries = hasTireSeries($pdo) ? tireSeriesCounts($pdo, $editId) : null;
 
         $catStmt = $pdo->prepare("SELECT category_id FROM tire_categories WHERE tire_id = ?");
         $catStmt->execute([$editId]);
@@ -679,7 +686,7 @@ function selfUrl($extra = []) {
                   <div class="tire-edit-row" data-tire-row data-image-id="<?= (int)$img['id'] ?>" data-status="<?= h($imgStatus) ?>">
                     <div class="tire-edit-thumb">
                       <div class="tire-edit-thumb-frame">
-                        <img src="<?= h($img['image_url']) ?>" alt="" data-thumb-img>
+                        <img src="<?= h(tireImageThumb($img)) ?>" alt="" data-thumb-img>
                         <button type="button" class="tire-edit-replace-btn"
                                 data-replace-tire-img
                                 title="Replace this image">
@@ -742,6 +749,23 @@ function selfUrl($extra = []) {
                 Status changes save instantly. To reply to comments, open the
                 <a href="<?= h('features.php?' . http_build_query(['client' => $client['slug'], 'module' => $module['slug'], 'item' => (int)$editItem['id']])) ?>"
                    target="_blank">review page</a>.
+              </span>
+            </div>
+          <?php endif; ?>
+
+          <?php if ($isEdit && !empty($editSeries) && ($editSeries['series_count'] > 0 || $editSeries['render_count'] > 0)):
+            // Series renders are reviewed in Assets (approve / deny per image or per series), not here.
+            $editTireRow = tireWithSlug($pdo, (int)$editItem['id']);
+          ?>
+            <div class="field full" data-tire-series-summary>
+              <label>Render series</label>
+              <span class="help">
+                <?= (int)$editSeries['series_count'] ?> series · <?= (int)$editSeries['render_count'] ?> renders
+                (<?= (int)array_sum(array_column($editSeries['series'], 'pending')) ?> to review) —
+                <a href="<?= h(clientUrl('assets.php', ['view' => 'collections', 'item' => (int)$editItem['id']])) ?>">Review in Assets</a>.
+                <?php if ($editTireRow): ?>
+                  Drop folders into <code><?= h(tireFolderRel($client, $editTireRow)) ?>/&lt;series&gt;/</code> or upload from Assets.
+                <?php endif; ?>
               </span>
             </div>
           <?php endif; ?>
@@ -947,7 +971,8 @@ function selfUrl($extra = []) {
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Failed');
       // Cache-bust in case the same filename gets reused
-      const bust = data.image_url + (data.image_url.includes('?') ? '&' : '?') + 't=' + Date.now();
+      const fresh = data.src || data.image_url;   // src: ready-to-use URL (series renders live under /media/tires/)
+      const bust = fresh + (fresh.includes('?') ? '&' : '?') + 't=' + Date.now();
       imgEl.src = bust;
     } catch (err) {
       alert('Replace failed: ' + (err.message || 'unknown'));

@@ -223,12 +223,66 @@ function render_summary(array $rows, int $leftover, array $config) {
     $emailIds = [];
     $flowLabels = [];
     $flowIds = [];
+    $imageLabels = [];
+    $imageIds = [];
+    $seriesLabels = [];
+    $seriesIds = [];
     foreach ($companies as $cid => $co) {
         foreach ($co['entries'] as $e) {
-            if ($e['entity_type'] === 'post')       $postIds[]  = (int)$e['entity_id'];
-            if ($e['entity_type'] === 'email')      $emailIds[] = (int)$e['entity_id'];
-            if ($e['entity_type'] === 'email_flow') $flowIds[]  = (int)$e['entity_id'];
+            if ($e['entity_type'] === 'post')        $postIds[]   = (int)$e['entity_id'];
+            if ($e['entity_type'] === 'email')       $emailIds[]  = (int)$e['entity_id'];
+            if ($e['entity_type'] === 'email_flow')  $flowIds[]   = (int)$e['entity_id'];
+            if ($e['entity_type'] === 'tire_image')  $imageIds[]  = (int)$e['entity_id'];
+            if ($e['entity_type'] === 'tire_series') $seriesIds[] = (int)$e['entity_id'];
         }
+    }
+    // Tire images: "<series> · <display_name>" (or "<tire> · <display_name>") while the row exists; series: "<tire> · <series>".
+    $withSeries = function_exists('hasTireSeries') && hasTireSeries($pdo);
+    if ($imageIds) {
+        $imageIds = array_values(array_unique($imageIds));
+        $ph = implode(',', array_fill(0, count($imageIds), '?'));
+        try {
+            $hasName   = $pdo->query("SHOW COLUMNS FROM tire_images LIKE 'display_name'")->rowCount() > 0;
+            $nameSel   = $hasName ? 'ti.display_name' : "'' AS display_name";
+            $seriesSel = $withSeries ? 'ti.series_id' : 'NULL AS series_id';
+            $s = $pdo->prepare("
+                SELECT ti.id, ti.caption, {$nameSel}, {$seriesSel}, t.name AS tire_name
+                  FROM tire_images ti
+                  INNER JOIN tires t ON t.id = ti.tire_id
+                 WHERE ti.id IN ($ph)
+            ");
+            $s->execute($imageIds);
+            foreach ($s->fetchAll() as $r) {
+                $sid = isset($r['series_id']) && $r['series_id'] !== null ? (int)$r['series_id'] : 0;
+                if ($sid > 0) $seriesIds[] = $sid;
+                $imageLabels[(int)$r['id']] = [
+                    'name'      => imageDisplayLabel(['display_name' => $r['display_name'] ?? '', 'caption' => $r['caption'] ?? '', 'id' => (int)$r['id']]),
+                    'tire_name' => (string)($r['tire_name'] ?? ''),
+                    'series_id' => $sid,
+                ];
+            }
+        } catch (Throwable $e) {
+            $imageLabels = [];
+        }
+    }
+    $seriesNames = [];
+    if ($seriesIds && $withSeries) {
+        $seriesIds = array_values(array_unique($seriesIds));
+        $ph = implode(',', array_fill(0, count($seriesIds), '?'));
+        try {
+            $s = $pdo->prepare("SELECT s.id, s.name, t.name AS tire_name FROM tire_series s INNER JOIN tires t ON t.id = s.tire_id WHERE s.id IN ($ph)");
+            $s->execute($seriesIds);
+            foreach ($s->fetchAll() as $r) {
+                $seriesNames[(int)$r['id']]  = (string)($r['name'] ?? '');
+                $seriesLabels[(int)$r['id']] = trim((string)($r['tire_name'] ?? '')) . ' · ' . (string)($r['name'] ?? '');
+            }
+        } catch (Throwable $e) {
+            $seriesLabels = [];
+        }
+    }
+    foreach ($imageLabels as $iid => $info) {
+        $prefix = ($info['series_id'] > 0 && isset($seriesNames[$info['series_id']])) ? $seriesNames[$info['series_id']] : $info['tire_name'];
+        $imageLabels[$iid] = ($prefix !== '' ? $prefix . ' · ' : '') . $info['name'];
     }
     if ($flowIds && function_exists('hasEmailFlowsTable') && hasEmailFlowsTable($pdo)) {
         $flowIds = array_values(array_unique($flowIds));
@@ -288,7 +342,9 @@ function render_summary(array $rows, int $leftover, array $config) {
             if ($e['entity_type'] === 'post') {
                 $entityLabel = $postLabels[(int)$e['entity_id']] ?? ('Post #' . (int)$e['entity_id']);
             } elseif ($e['entity_type'] === 'tire_image') {
-                $entityLabel = 'Image #' . (int)$e['entity_id'];
+                $entityLabel = $imageLabels[(int)$e['entity_id']] ?? ('Image #' . (int)$e['entity_id']);
+            } elseif ($e['entity_type'] === 'tire_series') {
+                $entityLabel = $seriesLabels[(int)$e['entity_id']] ?? ('Series #' . (int)$e['entity_id']);
             } elseif ($e['entity_type'] === 'task') {
                 $entityLabel = 'Task #' . (int)$e['entity_id'];
             } elseif ($e['entity_type'] === 'email') {

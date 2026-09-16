@@ -120,22 +120,36 @@ if (!function_exists('studioAssetFromLibraryRow')) {
 }
 
 if (!function_exists('studioAssetFromTireRow')) {
-    function studioAssetFromTireRow(array $row): array
+    /** $series = [id => {id, name, slug}] (tireSeriesNamesForImages) to label the render's series. */
+    function studioAssetFromTireRow(array $row, array $series = []): array
     {
         $url   = (string)$row['image_url'];
         $ext   = strtolower(pathinfo($url, PATHINFO_EXTENSION));
         $label = trim((string)($row['display_name'] ?? ''));
         if ($label === '') $label = trim((string)($row['caption'] ?? ''));
         if ($label === '') $label = 'Image #' . (int)$row['id'];
+        // uploads/feat_… (reference images) or media/tires/<tire>/<series>/… (renders) — tire-series-lib.php resolves both.
+        $hasLib = function_exists('tireImageSrc') && function_exists('tireImagePath');
+        $path   = $hasLib ? (tireImagePath($row) ?? '') : studioTireImagePath($url);
+        $dir    = '';
+        if ($path !== '' && function_exists('tireMediaRootPath') && strpos(ltrim($url, '/'), 'media/tires/') === 0) {
+            $dir = dirname($path);   // the series folder: copy containment root for studioCopyAssetToUploads()
+        }
+        $sid = isset($row['series_id']) && $row['series_id'] !== null ? (int)$row['series_id'] : 0;
+        $s   = $sid > 0 ? ($series[$sid] ?? null) : null;
         return [
             'kind'        => 'tire',
             'id'          => (int)$row['id'],
             'key'         => 'tire:' . (int)$row['id'],
-            'src'         => studioRootUrl($url),
-            'path'        => studioTireImagePath($url),
+            'src'         => $hasLib ? tireImageSrc($row) : studioRootUrl($url),
+            'thumb'       => $hasLib && function_exists('tireImageThumb') ? tireImageThumb($row) : studioRootUrl($url),
+            'path'        => $path,
+            'dir'         => $dir,
             'label'       => $label,
             'group'       => 'tire:' . (int)$row['tire_id'],
             'group_label' => (string)($row['tire_name'] ?? 'Collection'),
+            'tire'        => (string)($row['tire_name'] ?? ''),
+            'series'      => $s ? ['id' => (int)$s['id'], 'name' => (string)$s['name']] : null,
             'ext'         => $ext,
             'media'       => (function_exists('isVideoExt') && isVideoExt($ext)) ? 'video' : 'image',
         ];
@@ -169,9 +183,12 @@ if (!function_exists('studioApprovedPool')) {
         }
 
         // Collections (tires module) — approved images, scoped by company through the tires JOIN
-        $nameSel = studioHasTireDisplayName($pdo) ? 'ti.display_name,' : "'' AS display_name,";
+        // (reference images and series renders alike; series names come from one extra query so the
+        //  FROM/WHERE shape stays as it is)
+        $nameSel   = studioHasTireDisplayName($pdo) ? 'ti.display_name,' : "'' AS display_name,";
+        $seriesSel = (function_exists('hasTireSeries') && hasTireSeries($pdo)) ? 'ti.series_id,' : 'NULL AS series_id,';
         $st = $pdo->prepare("
-            SELECT ti.id, ti.tire_id, ti.image_url, ti.caption, {$nameSel} ti.sort_order,
+            SELECT ti.id, ti.tire_id, ti.image_url, ti.caption, {$nameSel} {$seriesSel} ti.sort_order,
                    t.name AS tire_name
             FROM tire_images ti
             INNER JOIN tires t ON t.id = ti.tire_id
@@ -179,8 +196,11 @@ if (!function_exists('studioApprovedPool')) {
             ORDER BY t.name ASC, ti.sort_order ASC, ti.id ASC
         ");
         $st->execute([$cid]);
-        foreach ($st->fetchAll() as $row) {
-            $a = studioAssetFromTireRow($row);
+        $tireRows    = $st->fetchAll();
+        $seriesNames = function_exists('tireSeriesNamesForImages') ? tireSeriesNamesForImages($pdo, $tireRows) : [];
+        foreach ($tireRows as $row) {
+            $a = studioAssetFromTireRow($row, $seriesNames);
+            if ($a['path'] === '' || !is_file($a['path'])) continue;   // a render whose file left the folder is not offered
             $assets[] = $a;
             $counts['tire']++;
             $tid = (int)$row['tire_id'];
@@ -248,9 +268,10 @@ if (!function_exists('studioResolveAsset')) {
         }
 
         if ($kind === 'tire') {
-            $nameSel = studioHasTireDisplayName($pdo) ? 'ti.display_name,' : "'' AS display_name,";
+            $nameSel   = studioHasTireDisplayName($pdo) ? 'ti.display_name,' : "'' AS display_name,";
+            $seriesSel = (function_exists('hasTireSeries') && hasTireSeries($pdo)) ? 'ti.series_id,' : 'NULL AS series_id,';
             $st = $pdo->prepare("
-                SELECT ti.id, ti.tire_id, ti.image_url, ti.caption, {$nameSel} ti.status,
+                SELECT ti.id, ti.tire_id, ti.image_url, ti.caption, {$nameSel} {$seriesSel} ti.status,
                        t.name AS tire_name
                 FROM tire_images ti
                 INNER JOIN tires t ON t.id = ti.tire_id
@@ -260,7 +281,7 @@ if (!function_exists('studioResolveAsset')) {
             $st->execute([$id, $cid]);
             $row = $st->fetch();
             if (!$row || ($row['status'] ?? '') !== 'approved') return null;
-            $a = studioAssetFromTireRow($row);
+            $a = studioAssetFromTireRow($row, function_exists('tireSeriesNamesForImages') ? tireSeriesNamesForImages($pdo, [$row]) : []);
             return ($a['path'] !== '' && is_file($a['path'])) ? $a : null;
         }
         return null;
@@ -419,15 +440,16 @@ if (!function_exists('studioPickerHtml')) {
             $out .= '<div class="ui-grid studio-pool" data-pool-grid role="listbox" aria-multiselectable="true" aria-label="Approved assets">';
             foreach ($assets as $a) {
                 $on = in_array($a['key'], $selected, true);
+                $seriesAttr = !empty($a['series']) ? ' data-asset-series="' . (int)$a['series']['id'] . '" data-asset-series-label="' . $esc($a['series']['name']) . '"' : '';
                 $out .= '<button type="button" class="ui-thumb studio-asset' . ($on ? ' is-selected ui-thumb--selected' : '') . '" role="option"'
                       . ' data-asset-key="' . $esc($a['key']) . '" data-asset-kind="' . $esc($a['kind']) . '" data-asset-id="' . (int)$a['id'] . '"'
                       . ' data-asset-src="' . $esc($a['src']) . '" data-asset-label="' . $esc($a['label']) . '" data-asset-group="' . $esc($a['group']) . '"'
-                      . ' data-asset-group-label="' . $esc($a['group_label']) . '" data-asset-media="' . $esc($a['media']) . '"'
+                      . ' data-asset-group-label="' . $esc($a['group_label']) . '" data-asset-media="' . $esc($a['media']) . '"' . $seriesAttr
                       . ' aria-selected="' . ($on ? 'true' : 'false') . '" title="' . $esc($a['label'] . ' — ' . $a['group_label']) . '">';
                 if ($a['media'] === 'video') {
                     $out .= videoTile($a['src'], ['badgeClass' => 'studio-asset-duration']);
                 } else {
-                    $out .= '<img src="' . $esc($a['src']) . '" alt="' . $esc($a['label']) . '" loading="lazy" decoding="async">';
+                    $out .= '<img src="' . $esc($a['thumb'] ?? $a['src']) . '" alt="' . $esc($a['label']) . '" loading="lazy" decoding="async">';
                 }
                 $out .= '<span class="studio-asset-order" data-asset-order aria-hidden="true"></span>'
                       . '<span class="ui-pill ui-pill--glass ui-pill--nodot ui-thumb-badge studio-asset-group">' . $esc($a['group_label']) . '</span>'

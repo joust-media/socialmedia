@@ -78,6 +78,15 @@ if (!function_exists('videoMediaRoots')) {
             $lib  = $slug !== '' ? realpath(libraryDir($slug)) : false;
             if ($lib !== false) $roots[] = rtrim($lib, '/');
         }
+        // Tire series renders: /media/tires/<tire-slug>/<series-folder>/<file> (tire-series-lib.php).
+        if (preg_match('#^/media/tires/([^/]+)/([^/]+)/[^/]+$#', $path, $m) && function_exists('tireMediaRootPath')) {
+            $tireSlug = videoLibrarySlug($m[1]);
+            $folder   = videoSafeFilename($m[2]);
+            if ($tireSlug !== '' && $folder !== '' && $folder[0] !== '.') {
+                $dir = realpath(tireMediaRootPath() . '/' . $tireSlug . '/' . $folder);
+                if ($dir !== false) $roots[] = rtrim($dir, '/');
+            }
+        }
         return [$roots, $path];
     }
 }
@@ -118,6 +127,13 @@ if (!function_exists('videoDiskPath')) {
             $name = videoSafeFilename($m[2]);
             if ($slug === '' || $name === '') return '';
             return libraryDir($slug) . '/' . $name;
+        }
+        if (preg_match('#^/media/tires/([^/]+)/([^/]+)/([^/]+)$#', $path, $m) && function_exists('tireMediaRootPath')) {
+            $slug   = videoLibrarySlug($m[1]);
+            $folder = videoSafeFilename($m[2]);
+            $name   = videoSafeFilename($m[3]);
+            if ($slug === '' || $folder === '' || $folder[0] === '.' || $name === '') return '';
+            return tireMediaRootPath() . '/' . $slug . '/' . $folder . '/' . $name;
         }
         return '';
     }

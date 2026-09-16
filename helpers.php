@@ -815,6 +815,7 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
     $taskIds    = [];
     $emailIds   = [];
     $flowIds    = [];
+    $seriesIds  = [];
     foreach ($grouped as $g) {
         if ($g['entity_type'] === 'tire_image')    { $imageIds[]  = (int)$g['entity_id']; }
         if ($g['entity_type'] === 'tire')          { $tireIds[]   = (int)$g['entity_id']; }
@@ -823,7 +824,9 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
         if ($g['entity_type'] === 'task')          { $taskIds[]   = (int)$g['entity_id']; }
         if ($g['entity_type'] === 'email')         { $emailIds[]  = (int)$g['entity_id']; }
         if ($g['entity_type'] === 'email_flow')    { $flowIds[]   = (int)$g['entity_id']; }
+        if ($g['entity_type'] === 'tire_series')   { $seriesIds[] = (int)$g['entity_id']; }
     }
+    $withSeries = function_exists('hasTireSeries') && hasTireSeries($pdo);
     $imageMeta = [];
     if ($imageIds) {
         $imageIds = array_values(array_unique($imageIds));
@@ -833,9 +836,10 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
         if ($hasDisplayName === null) {
             $hasDisplayName = $pdo->query("SHOW COLUMNS FROM tire_images LIKE 'display_name'")->rowCount() > 0;
         }
-        $nameSel = $hasDisplayName ? 'ti.display_name' : "'' AS display_name";
+        $nameSel   = $hasDisplayName ? 'ti.display_name' : "'' AS display_name";
+        $seriesSel = $withSeries ? 'ti.series_id' : 'NULL AS series_id';
         $s = $pdo->prepare("
-            SELECT ti.id AS image_id, ti.tire_id, ti.caption, {$nameSel},
+            SELECT ti.id AS image_id, ti.tire_id, ti.caption, {$nameSel}, {$seriesSel},
                    t.name AS tire_name, m.slug AS module_slug
               FROM tire_images ti
               INNER JOIN tires t ON t.id = ti.tire_id
@@ -844,14 +848,49 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
         ");
         $s->execute($imageIds);
         foreach ($s->fetchAll() as $r) {
+            $sid = isset($r['series_id']) && $r['series_id'] !== null ? (int)$r['series_id'] : 0;
             $imageMeta[(int)$r['image_id']] = [
                 'tire_id'      => (int)$r['tire_id'],
                 'tire_name'    => (string)($r['tire_name'] ?? ''),
                 'module_slug'  => $r['module_slug'],
                 'display_name' => $r['display_name'] ?? '',
                 'caption'      => $r['caption'] ?? '',
+                'series_id'    => $sid,
+                'series_name'  => '',
             ];
+            if ($sid > 0) { $seriesIds[] = $sid; }
         }
+    }
+    $seriesMeta = [];
+    if ($seriesIds && $withSeries) {
+        $seriesIds = array_values(array_unique($seriesIds));
+        $ph = implode(',', array_fill(0, count($seriesIds), '?'));
+        try {
+            $s = $pdo->prepare("
+                SELECT s.id, s.name, s.tire_id, t.name AS tire_name, m.slug AS module_slug
+                  FROM tire_series s
+                  INNER JOIN tires t ON t.id = s.tire_id
+                  INNER JOIN modules m ON m.id = t.module_id
+                 WHERE s.id IN ($ph)
+            ");
+            $s->execute($seriesIds);
+            foreach ($s->fetchAll() as $r) {
+                $seriesMeta[(int)$r['id']] = [
+                    'name'        => (string)($r['name'] ?? ''),
+                    'tire_id'     => (int)$r['tire_id'],
+                    'tire_name'   => (string)($r['tire_name'] ?? ''),
+                    'module_slug' => $r['module_slug'] ?? 'tires',
+                ];
+            }
+        } catch (Throwable $e) {
+            $seriesMeta = [];
+        }
+        foreach ($imageMeta as &$im) {
+            if ($im['series_id'] > 0 && isset($seriesMeta[$im['series_id']])) {
+                $im['series_name'] = $seriesMeta[$im['series_id']]['name'];
+            }
+        }
+        unset($im);
     }
     $tireMeta = [];
     if ($tireIds) {
@@ -954,6 +993,8 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
             $g['_meta'] = $emailMeta[(int)$g['entity_id']];
         } elseif ($g['entity_type'] === 'email_flow' && isset($flowMeta[(int)$g['entity_id']])) {
             $g['_meta'] = $flowMeta[(int)$g['entity_id']];
+        } elseif ($g['entity_type'] === 'tire_series' && isset($seriesMeta[(int)$g['entity_id']])) {
+            $g['_meta'] = $seriesMeta[(int)$g['entity_id']];
         }
     }
     unset($g);
@@ -1003,6 +1044,10 @@ function actionLabel($action) {
         'step_timing'          => 'edited step timing',
         'reordered'            => 'reordered flows',
         'seeded'               => 'seeded from the email series',
+        // tire series (entity_type = 'tire_series') + tire images
+        'scanned'              => 'scanned in',
+        'uploaded'             => 'uploaded',
+        'set_reference'        => 'made the reference image',
     ];
     return $map[$action] ?? str_replace('_', ' ', $action);
 }
@@ -1076,6 +1121,13 @@ function activityLink($entry) {
             if (!empty($meta['slug'])) { $params['flow'] = (string)$meta['slug']; }
             return pagePath('flows') . ($params ? '?' . http_build_query($params) : '');
 
+        case 'tire_series':
+            // The collection in Assets with the series selected.
+            $tireId = (int)($meta['tire_id'] ?? 0);
+            $params = array_merge($clientPair, ['view' => 'collections']);
+            if ($tireId > 0) { $params['item'] = $tireId; $params['series'] = (int)$entry['entity_id']; }
+            return pagePath('assets') . '?' . http_build_query($params);
+
         default:
             return pagePath('admin') . ($clientPair ? '?' . http_build_query($clientPair) : '');
     }
@@ -1136,12 +1188,24 @@ if (!function_exists('activityParentName')) {
                 return ['thing' => 'post', 'name' => $name, 'parent' => '', 'parent_key' => 'post:' . $id];
             case 'tire_image':
                 $tireId = (int)($meta['tire_id'] ?? 0);
-                return ['thing' => 'image', 'name' => '',
-                        'parent' => trim((string)($meta['tire_name'] ?? '')),
-                        'parent_key' => 'tire:' . ($tireId > 0 ? $tireId : 'unknown')];
+                $parent = trim((string)($meta['tire_name'] ?? ''));
+                $key    = 'tire:' . ($tireId > 0 ? $tireId : 'unknown');
+                // A render in a series: "<tire> · <series>", runs collapse per series.
+                $sid = (int)($meta['series_id'] ?? 0);
+                if ($sid > 0) {
+                    $sname = trim((string)($meta['series_name'] ?? ''));
+                    if ($sname !== '') { $parent = ($parent !== '' ? $parent . ' · ' : '') . $sname; }
+                    $key .= ':series:' . $sid;
+                }
+                return ['thing' => 'image', 'name' => '', 'parent' => $parent, 'parent_key' => $key];
             case 'tire':
                 return ['thing' => 'collection', 'name' => trim((string)($meta['name'] ?? '')),
                         'parent' => '', 'parent_key' => 'tire:' . $id];
+            case 'tire_series':
+                $tireName = trim((string)($meta['tire_name'] ?? ''));
+                $sname    = trim((string)($meta['name'] ?? ''));
+                $name     = ($tireName !== '' && $sname !== '') ? $tireName . ' · ' . $sname : ($sname !== '' ? $sname : $tireName);
+                return ['thing' => 'series', 'name' => $name, 'parent' => '', 'parent_key' => 'tire_series:' . $id];
             case 'library_image':
                 return ['thing' => 'image', 'name' => '', 'parent' => 'Library', 'parent_key' => 'library'];
             case 'task':
@@ -1183,10 +1247,16 @@ if (!function_exists('activityDeepLink')) {
                 $tireId = (int)($meta['tire_id'] ?? 0);
                 $p = $qs + ['view' => 'collections'];
                 if ($tireId > 0) $p['item'] = $tireId;
+                if ($tireId > 0 && (int)($meta['series_id'] ?? 0) > 0) $p['series'] = (int)$meta['series_id'];
                 if (!$collapsed && $tireId > 0) { $p['asset'] = $id; $p['kind'] = 'tire'; }
                 return clientUrl('assets', $p);
             case 'tire':
                 return clientUrl('assets', $qs + ['view' => 'collections', 'item' => $id]);
+            case 'tire_series':
+                $tireId = (int)($meta['tire_id'] ?? 0);
+                $p = $qs + ['view' => 'collections'];
+                if ($tireId > 0) { $p['item'] = $tireId; $p['series'] = $id; }
+                return clientUrl('assets', $p);
             case 'library_image':
                 $p = $qs + ['view' => 'library'];
                 if (!$collapsed) { $p['asset'] = $id; $p['kind'] = 'library'; }
@@ -1212,7 +1282,8 @@ if (!function_exists('activityPrimaryAction')) {
         static $rank = [
             'denied' => 1, 'approved' => 2, 'reset_pending' => 3, 'submitted' => 3,
             'posted' => 4, 'unposted' => 5, 'marked_live' => 4, 'unmarked_live' => 5,
-            'seeded' => 5, 'created' => 6, 'deleted' => 7, 'imported' => 7,
+            'seeded' => 5, 'scanned' => 5, 'uploaded' => 5, 'created' => 6, 'deleted' => 7, 'imported' => 7,
+            'set_reference' => 12,
             'task_created' => 8, 'task_toggled' => 9, 'task_deleted' => 10, 'task_updated' => 11,
             'edited_schedule' => 12, 'renamed_post' => 13, 'renamed' => 13, 'renamed_image' => 14,
             'edited_caption' => 15, 'edited_hashtags' => 16, 'edited_type' => 17,
@@ -1392,6 +1463,10 @@ if (!function_exists('activityFinalizeRows')) {
                     if (!$many && $r['name'] !== '') { $objT = $r['name']; $objH = '<em>' . $h($r['name']) . '</em>'; }
                     else                             { $objT = $objH = $many ? $n . ' flows' : 'a flow'; }
                     break;
+                case 'series':
+                    if (!$many && $r['name'] !== '') { $objT = 'the ' . $r['name'] . ' series'; $objH = 'the <em>' . $h($r['name']) . '</em> series'; }
+                    else                             { $objT = $objH = $many ? $n . ' series' : 'a series'; }
+                    break;
                 default:
                     $objT = $objH = $many ? $n . ' items' : 'an item';
             }
@@ -1437,8 +1512,19 @@ if (!function_exists('activityFinalizeRows')) {
                           : ($r['thing'] === 'collection' ? ($many ? $n . ' collections' : 'a collection')
                           : ($r['thing'] === 'post' ? ($many ? $n . ' posts' : 'a post')
                           : ($r['thing'] === 'email' ? ($many ? $n . ' emails' : 'an email')
-                          : ($r['thing'] === 'flow' ? ($many ? $n . ' flows' : 'a flow') : $objT))));
+                          : ($r['thing'] === 'flow' ? ($many ? $n . ' flows' : 'a flow')
+                          : ($r['thing'] === 'series' ? ($many ? $n . ' series' : 'a series') : $objT)))));
                     $t = "$who removed $kind"; $hh = "$whoH removed " . $h($kind); break;
+                // tire series (entity_type = 'tire_series') + renders
+                case 'scanned':
+                    $verb = 'added renders'; $icon = 'photo'; $tone = 'accent';
+                    $t = "$who added new renders to $objT"; $hh = "$whoH added new renders to $objH"; break;
+                case 'uploaded':
+                    $verb = 'uploaded'; $icon = 'photo'; $tone = 'accent';
+                    $t = "$who uploaded renders to $objT"; $hh = "$whoH uploaded renders to $objH"; break;
+                case 'set_reference':
+                    $verb = 'made the reference'; $icon = 'photo'; $tone = 'neutral';
+                    $t = "$who made $objT the reference"; $hh = "$whoH made $objH the reference"; break;
                 // flows (entity_type = 'email_flow')
                 case 'renamed':
                     $verb = 'renamed'; $icon = 'mail'; $tone = 'neutral';
@@ -1712,6 +1798,10 @@ function renderAppChrome(string $pageTitle, array $opts = []): string {
     }
     return (string)ob_get_clean();
 }
+
+// Tire asset series helpers (hasTireSeries, syncTireSeries, tireImageSrc/Thumb/Path, …).
+// Function definitions only — no DB work at load; see scratchpad tire-series-design.md.
+require_once __DIR__ . '/tire-series-lib.php';
 
 // Emails module helpers (hasEmailsTable, companyHasEmails, emailsForCompany, …).
 // Function definitions only — no DB work at load; see scratchpad emails-design.md.
