@@ -77,7 +77,8 @@ if ($action === 'delete_tire') {
 //   series_rename {series_id, name}       admin
 //   series_delete {series_id, delete_files} admin
 //   series_reorder {tire_id, ids[]}       admin
-$seriesActions = ['approve_series', 'delete_image', 'set_reference', 'series_create', 'series_rename', 'series_delete', 'series_reorder'];
+//   rescan {tire_id?}                     admin — syncTireSeries() now (one tire, or every tire of the posted client)
+$seriesActions = ['approve_series', 'delete_image', 'set_reference', 'series_create', 'series_rename', 'series_delete', 'series_reorder', 'rescan'];
 if (in_array($action, $seriesActions, true)) {
     $fail = static function (int $code, string $msg): void {
         http_response_code($code);
@@ -148,6 +149,7 @@ if (in_array($action, $seriesActions, true)) {
                 $img = tireImageById($pdo, $imgId);
                 if (!$img) { $fail(404, 'Image not found'); }
                 $tire = $loadTire((int)$img['tire_id']);
+                if (($img['type'] ?? '') === 'video') { $fail(400, 'A video cannot be the reference image — pick a still.'); }   // the reference header renders an <img>
                 $pdo->beginTransaction();
                 $pdo->prepare("UPDATE tire_images SET sort_order = sort_order + 1 WHERE tire_id = ? AND series_id IS NULL AND id <> ?")->execute([(int)$tire['id'], $imgId]);
                 $pdo->prepare("UPDATE tire_images SET series_id = NULL, sort_order = 0 WHERE id = ?")->execute([$imgId]);
@@ -218,6 +220,27 @@ if (in_array($action, $seriesActions, true)) {
                 $rows = reorderTireSeries($pdo, (int)$tire['id'], $ids);
                 $pdo->commit();
                 echo json_encode(['ok' => true, 'tire_id' => (int)$tire['id'], 'series' => $rows]);
+                exit;
+            }
+            case 'rescan': {
+                // Scope: the posted tire (its company), else the posted client slug (every tire of that company).
+                $tireId = (int)($_POST['tire_id'] ?? 0);
+                $companyRow = null;
+                if ($tireId > 0) {
+                    $tire = $loadTire($tireId);
+                    $cs = $pdo->prepare("SELECT id, name, slug FROM companies WHERE id = ?");
+                    $cs->execute([(int)$tire['company_id']]);
+                    $companyRow = $cs->fetch() ?: null;
+                } else {
+                    $scope = postedClientSlug();
+                    if ($scope === '') { $fail(400, 'tire_id or client is required'); }
+                    $cs = $pdo->prepare("SELECT id, name, slug FROM companies WHERE slug = ?");
+                    $cs->execute([$scope]);
+                    $companyRow = $cs->fetch() ?: null;
+                }
+                if (!$companyRow) { $fail(404, 'Client not found'); }
+                $res = syncTireSeries($pdo, $companyRow, $tireId > 0 ? $tireId : null, ['thumbs' => true, 'actor' => $actor]);
+                echo json_encode(['ok' => true, 'tire_id' => $tireId > 0 ? $tireId : null, 'added' => (int)$res['new_files']] + $res);
                 exit;
             }
         }

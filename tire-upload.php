@@ -7,7 +7,8 @@
  *   tire_id     tires.id
  *   series_id   tire_series.id   — or —   new_series  a name (created on first use, folder = slug)
  *   file        the image / video
- *   batch       optional 16-hex batch id shared by one drop (one activity line for the whole drop)
+ *   batch       optional batch token shared by one drop (one activity line for the whole drop);
+ *               16-hex is used as is, any other [A-Za-z0-9_-]{4,40} token is hashed to 16-hex
  *
  * Stores media/tires/<tire-slug>/<series-folder>/<stem>.<ext> (de-duplicated -2, -3 …), inserts a
  * pending tire_images row with series_id, makes the thumb, logs tire_series/uploaded.
@@ -58,8 +59,13 @@ $newSeries = trim((string)($_POST['new_series'] ?? ''));
 if ($seriesId <= 0 && $newSeries === '') { tireUploadFail(400, 'series_id or new_series is required'); }
 if ($newSeries !== '' && mb_strlen($newSeries, 'UTF-8') > 120) { tireUploadFail(400, 'Series name is too long (max 120 characters)'); }
 
+// Batch id: one per drop so the activity feed shows one line. The UI sends any short token
+// (e.g. "b<base36 time><random>"); activity_log.batch_id is CHAR(16), so anything that is
+// not already 16-hex is mapped to a stable 16-hex digest of the token.
 $batchId = (string)($_POST['batch'] ?? '');
-if (!preg_match('/^[0-9a-f]{16}$/', $batchId)) { $batchId = newBatchId(); }
+if (preg_match('/^[0-9a-f]{16}$/', $batchId)) { /* as is */ }
+elseif (preg_match('/^[A-Za-z0-9_\-]{4,40}$/', $batchId)) { $batchId = substr(sha1('tire-upload:' . $batchId), 0, 16); }
+else { $batchId = newBatchId(); }
 
 // ---- the file ----
 if (empty($_FILES['file']) || ($_FILES['file']['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
@@ -89,10 +95,26 @@ if ($size > $limit) {
     $mb = (int)round($limit / (1024 * 1024));
     tireUploadFail(413, ($isVideo ? 'Videos' : 'Images') . " must be under {$mb} MB.", ['limit_mb' => $mb, 'ini_max' => $iniMax]);
 }
+// Content check — the extension alone is never trusted: images must decode AND match the
+// extension's format (a PHP/HTML file renamed .jpg fails here), videos must carry the
+// container magic (videoFileLooksValid: EBML / ftyp).
 if ($isVideo) {
     if (!videoFileLooksValid($tmpName, $ext)) { tireUploadFail(422, 'Not a valid video file'); }
 } else {
-    if (@getimagesize($tmpName) === false) { tireUploadFail(422, 'Not a valid image'); }
+    $info = @getimagesize($tmpName);
+    if ($info === false || (int)($info[0] ?? 0) <= 0 || (int)($info[1] ?? 0) <= 0) { tireUploadFail(422, 'Not a valid image'); }
+    $byType = [IMAGETYPE_JPEG => 'jpg', IMAGETYPE_PNG => 'png', IMAGETYPE_GIF => 'gif'];
+    if (defined('IMAGETYPE_WEBP')) { $byType[IMAGETYPE_WEBP] = 'webp'; }
+    $detected = $byType[(int)($info[2] ?? 0)] ?? '';
+    if ($detected === '' || $detected !== $ext) {
+        tireUploadFail(422, $detected === '' ? 'Unsupported image format — use JPG, PNG, GIF or WebP.' : "The file is a {$detected} image, not .{$ext} — rename it and try again.");
+    }
+    if (function_exists('finfo_open')) {   // belt and braces: the MIME sniff must agree too
+        $fi = @finfo_open(FILEINFO_MIME_TYPE);
+        $mime = $fi ? (string)@finfo_file($fi, $tmpName) : '';
+        if ($fi) { @finfo_close($fi); }
+        if ($mime !== '' && strpos($mime, 'image/') !== 0) { tireUploadFail(422, 'Not a valid image'); }
+    }
 }
 
 // ---- the series ----
@@ -117,8 +139,18 @@ try {
 
 // ---- destination: media/tires/<slug>/<folder>/ (fallback: uploads/) ----
 $storage   = 'media';
-$mediaDir  = tireSeriesFolderPath($company, $tire, $series);
+$mediaDir  = tireSeriesFolderPath($company, $tire, $series);   // <root>/<slug [a-z0-9-]>/<folder: no slashes, no dot prefix>
 if (!is_dir($mediaDir)) { @mkdir($mediaDir, 0755, true); }
+if (is_dir($mediaDir)) {
+    // Containment: the resolved folder must sit exactly two levels under media/tires/ (no symlink escape).
+    // (When realpath() cannot resolve — stream-wrapped harness — the textually validated path stands, like tireImagePath().)
+    $rootReal = realpath(tireMediaRootPath());
+    $dirReal  = realpath($mediaDir);
+    if ($rootReal !== false && $dirReal !== false && $dirReal !== rtrim($rootReal, '/') . '/' . tireSlug($tire) . '/' . tireSeriesFolderName($series)) {
+        tireUploadFail(500, 'Series folder resolves outside media/tires/');
+    }
+    ensureTireMediaHtaccess();   // media/tires/.htaccess (+ media/.htaccess when absent): no PHP/CGI, no listing
+}
 if (!is_dir($mediaDir) || !is_writable($mediaDir)) {
     $storage = 'uploads';
     $mediaDir = __DIR__ . '/uploads';
@@ -128,8 +160,12 @@ if (!is_dir($mediaDir) || !is_writable($mediaDir)) {
     }
 }
 
-$stem = safeFilenameStem(pathinfo($origName, PATHINFO_FILENAME));
-if ($stem === '') { $stem = 'render'; }
+// File name: safeFilenameStem() keeps [A-Za-z0-9._-] only, trims leading dots/dashes and caps at 80
+// chars, so the name can never be a dotfile, ".."-ish or carry a path separator; a stem that
+// collapses to nothing (or would become a dotfile) is called "render".
+$stem = safeFilenameStem(basename($origName) !== '' ? pathinfo(basename($origName), PATHINFO_FILENAME) : '');
+$stem = trim((string)$stem, '.-_ ');
+if ($stem === '' || $stem[0] === '.' || preg_match('/[\/\\\\\0]/', $stem)) { $stem = 'render'; }
 if ($storage === 'media') {
     $name = $stem . '.' . $ext;
     for ($n = 2; file_exists($mediaDir . '/' . $name) && $n < 1000; $n++) { $name = $stem . '-' . $n . '.' . $ext; }

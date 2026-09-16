@@ -72,7 +72,8 @@
         more: $('[data-viewer-more]', root), menu: $('[data-viewer-menu]', root),
         note: $('[data-viewer-note]', root), noteInput: $('[data-viewer-note-input]', root),
         noteHint: $('[data-viewer-note-hint]', root), noteSend: $('[data-viewer-note-send]', root), noteCancel: $('[data-viewer-note-cancel]', root),
-        replace: $('[data-viewer-replace]', root), replaceInput: $('[data-viewer-replace-input]', root), manage: $('[data-viewer-manage]', root)
+        replace: $('[data-viewer-replace]', root), replaceInput: $('[data-viewer-replace-input]', root), manage: $('[data-viewer-manage]', root),
+        setRef: $('[data-viewer-set-reference]', root), del: $('[data-viewer-delete]', root)
       };
       var self = this;
 
@@ -101,6 +102,8 @@
         r.replaceInput.addEventListener('change', function () { if (r.replaceInput.files && r.replaceInput.files[0]) self.replace(r.replaceInput.files[0]); });
       }
       if (r.manage) r.manage.addEventListener('click', function () { self.closeMenu(); });
+      if (r.setRef) r.setRef.addEventListener('click', function () { self.closeMenu(); self.setReference(); });
+      if (r.del) r.del.addEventListener('click', function () { self.closeMenu(); self.deleteImage(); });
       document.addEventListener('click', function (e) { if (self.isOpen && !r.menu.hidden && !e.target.closest('[data-viewer-menu]')) self.closeMenu(); });
 
       this._bindGestures();
@@ -264,6 +267,53 @@
       if (r.next) r.next.disabled = !this.hasNext();
       $$('[data-tire-only]', r.menu).forEach(function (el) { el.hidden = item.kind !== 'tire'; });
       if (r.manage) { r.manage.href = item.manage || '#'; if (!item.manage) r.manage.hidden = true; }
+      if (r.setRef && item.kind === 'tire') r.setRef.hidden = item.type === 'video' || item.isReference === true;   // the reference header is an <img>
+    },
+
+    /* ---------------- admin: set as reference / delete (tire images; the menu items exist only for admin) ---------------- */
+    /** Drop the current item from the viewer (after a delete or a move out of this series) and move on or close. */
+    removeCurrent: function (reason) {
+      var item = this.current(), root = this.root;
+      if (!item) return;
+      var idx = this.index;
+      this.items.splice(idx, 1);
+      if (this.opts.total > 0) this.opts.total--;
+      emit(root, 'viewer:removed', { item: item, reason: reason || 'deleted' });
+      if (!this.items.length) { this.close(); return; }
+      this.goTo(clamp(idx, 0, this.items.length - 1), idx < this.items.length ? 1 : -1);
+    },
+
+    /** tire-status.php action=set_reference: the image becomes the tire's reference (sort_order 0, no series). */
+    setReference: function () {
+      var item = this.current(), self = this;
+      if (!item || item.kind !== 'tire' || item._busy || !item.endpoint) return;
+      if (item.type === 'video') { toast('A video cannot be the reference image', { kind: 'error' }); return; }
+      item._busy = true;
+      App.post(item.endpoint, { action: 'set_reference', id: item.id, actor: App.actor }).then(function (res) {
+        item._busy = false;
+        if (!res.ok) { toast(res.error || 'Could not set the reference', { kind: 'error' }); return; }
+        var ref = $('.as-reference-media img');
+        if (ref) ref.src = item.src;
+        toast('Set as reference image', { kind: 'success' });
+        var grid = $('#assetsGrid'), key = grid ? grid.dataset.series : '';
+        if (key && key !== 'ref') self.removeCurrent('moved');   // it left this series for the Reference set
+        else { item.isReference = true; self.updateChrome(); }
+      });
+    },
+
+    /** tire-status.php action=delete_image: row + file + thumb are gone for good (confirm first). */
+    deleteImage: function () {
+      var item = this.current(), self = this;
+      if (!item || item.kind !== 'tire' || item._busy || !item.endpoint) return;
+      var name = item.label || 'this image';
+      if (!window.confirm('Delete “' + name + '”? The file is removed from the server and its review history is lost.')) return;
+      item._busy = true;
+      App.post(item.endpoint, { action: 'delete_image', id: item.id, actor: App.actor }).then(function (res) {
+        item._busy = false;
+        if (!res.ok) { toast(res.error || 'Could not delete', { kind: 'error' }); return; }
+        toast('Image deleted', { kind: 'success' });
+        self.removeCurrent('deleted');
+      });
     },
 
     /* ---------------- decisions ---------------- */
@@ -608,6 +658,14 @@
       document.addEventListener('viewer:replaced', function (e) {
         var tile = e.detail.item.tile || self.findTile(e.detail.item.kind, e.detail.item.id);
         var img = tile && tile.querySelector('img'); if (img) img.src = e.detail.src;
+      });
+      // Admin deleted the image (or moved it to the Reference set): the tile leaves and the counts drop by one.
+      document.addEventListener('viewer:removed', function (e) {
+        var it = e.detail.item, tile = it.tile || self.findTile(it.kind, it.id);
+        self.adjustCounts(it.status, null);
+        if (self.cfg.page && self.cfg.page.total > 0) self.cfg.page.total--;
+        if (tile) self.leaveTile(tile);
+        self.syncMore();
       });
 
       // Select mode (batch Approve only — denials always need a note)

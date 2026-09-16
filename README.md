@@ -111,24 +111,48 @@ join the Approved Pool and the composer like any tire image.
 - **Folder layout** (a sibling of `portal/`, next to the library): `media/tires/<tire-slug>/<series-folder>/<file>`.
   The tire slug is the tire name lower-cased with runs of non-alphanumerics turned into `-`
   ("Klever R/T" → `klever-r-t`; two tires with the same slug: the older keeps it, the newer gets
-  `-<id>`); the edit screen in Studio shows the exact folder. Any subfolder becomes a series
-  named after it (`series-1` → "Series 1"); dot-folders, dotfiles, non-media files and the `.mp4`
-  twin of a `.mov` are ignored.
-- **Two ways in**: drop files by FTP and open Assets → Collections (the folder is rescanned,
-  throttled by folder mtimes + 60 s; existing rows are never touched, a removed file only stops
-  showing up), or upload from the portal into a series (`tire-upload.php`, admin, one file per
-  request, 10 MB images / 200 MB videos, falls back to `uploads/` when `media/tires` is not
-  writable).
+  `-<id>`); the edit screen in Studio and the Renders tab show the exact folder (with a Copy
+  button). Any subfolder becomes a series named after it (`series-1` → "Series 1");
+  dot-folders, dotfiles, symlinks, non-media files and the `.mp4` twin of a `.mov` are ignored.
+- **Two ways in**:
+  1. **FTP**: create `media/tires/<tire-slug>/<series-folder>/` (create `media/tires/` next to
+     `media/library/` the first time), drop the files, then open Assets → Collections — the folder
+     is rescanned on every collections view, throttled by folder mtimes + 60 s — or press
+     **Rescan folders** in Studio → Renders (`tire-status.php` `action=rescan`, admin; the page
+     falls back to `assets.php?…&rescan=1`, also admin-only). Existing rows are never touched; a
+     removed file only stops showing up (its decisions stay).
+  2. **Upload in the portal**: Studio → **Renders** → pick the tire → pick a series or "New
+     series…" → drop files. One request per file (`tire-upload.php`, admin, same-site, 10 MB
+     images / 200 MB videos, sequential queue with progress + Retry), stored under the series
+     folder as `<original stem>.<ext>` (de-duplicated `-2`, `-3` …; the folder is created with
+     0755), falling back to `uploads/` when `media/tires` is not writable. Every file is
+     sniffed: images must decode as the format their extension claims, videos must carry the
+     container magic; anything else is 422.
+- **Review**: Assets → Collections → the tire shows a series switcher (Reference · Series 1 ·
+  …, default = the first series with something to review) over a paged grid (60 tiles + "Load
+  more"; the viewer keeps fetching as it walks). **Approve all remaining** (client or admin)
+  approves every pending render of the open series in one request. The admin "…" menu renames /
+  deletes the series (optionally deleting the files); in the viewer the admin can **Set as
+  reference** (moves the image to the tire's reference set, sort_order 0) and **Delete image…**
+  (row + file + thumb). Series renders show in the Approved Pool grouped per collection with
+  series chips.
 - **Thumbnails**: `<series>/.thumbs/<stem>.jpg` (max 640 px) are generated with GD, up to 40 per
   page view, so a 200-image grid stays light; the viewer / downloads / posts use the original.
 - **Migration**: `migrate.php` steps 25–26 create `tire_series` and add `tire_images.series_id`
-  (idempotent; the only change to an existing table). Until they exist everything behaves as before.
+  (one idempotent `ALTER TABLE tire_images ADD COLUMN series_id INT UNSIGNED NULL` — the only
+  change to an existing table). Until they exist everything behaves as before ("Render series
+  are not set up yet").
 - **Endpoints**: `tire-status.php` gains `approve_series` (client or admin), `delete_image`,
-  `set_reference`, `series_create` / `series_rename` / `series_delete` / `series_reorder`
-  (admin, same-site, scoped to the posted client). Reference images (the ≤6 in Studio) are the
-  rows without a series; the 6-image cap counts only those.
+  `set_reference`, `series_create` / `series_rename` / `series_delete` / `series_reorder`,
+  `rescan` (admin, same-site, scoped to the posted client). Reference images (the ≤6 in Studio)
+  are the rows without a series; the 6-image cap counts only those.
+- **`media/` hardening**: the first upload or rescan writes `media/tires/.htaccess` (and
+  `media/.htaccess` when the parent has none) — `Options -Indexes`, PHP engine off, script
+  extensions refused — so nothing dropped by FTP or upload can ever execute. Existing files
+  are never overwritten; the text and the by-hand steps are in `media-hardening/`.
 
 ## Not deployed
 
-`config.php` (live DB credentials), `uploads/`, `.htaccess` files, `error_log`, this README
-and `redirect-old-folder/` are excluded from both workflows and must be managed on the server.
+`config.php` (live DB credentials), `uploads/`, `.htaccess` files, `error_log`, this README,
+`redirect-old-folder/` and `media-hardening/` are excluded from both workflows and must be
+managed on the server. `media/` lives outside the app folder, so deploys never touch it.

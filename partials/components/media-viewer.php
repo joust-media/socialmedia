@@ -13,8 +13,10 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
  *   ok, rolledBack, error}, 'viewer:navigate' {item, index}, 'viewer:close'.
  *
  * Toolbar = exactly three controls: Deny (red, secondary) · Approve (green,
- * primary, ~60% width) · More (Download for everyone; Replace + "Manage in
- * Studio" for admin — rendered here only when the server says so).
+ * primary, ~60% width) · More (Download for everyone; Replace, "Set as
+ * reference", "Manage in Studio" and "Delete image…" for admin — rendered here
+ * only when the server says so; the two tire-only actions post set_reference /
+ * delete_image to tire-status.php, which gates them again).
  *
  * Deny opens the inline note ("What should change?", required, >= 3 chars); the
  * note is sent in the SAME request as status=denied to tire-status.php /
@@ -88,7 +90,9 @@ $viewerReplaceEndpoint = isset($viewerReplaceEndpoint) ? (string)$viewerReplaceE
     <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-download><?= icon('download') ?>Download</button>
     <?php if ($viewerAdmin): // admin-only: never rendered for clients ?>
       <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-replace data-tire-only><?= icon('photo') ?>Replace image…</button>
+      <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-set-reference data-tire-only><?= icon('checkmark') ?>Set as reference</button>
       <a class="ui-viewer-menu-item" role="menuitem" data-viewer-manage data-tire-only href="#"><?= icon('wand') ?>Manage in Studio</a>
+      <button type="button" class="ui-viewer-menu-item is-destructive" role="menuitem" data-viewer-delete data-tire-only><?= icon('xmark') ?>Delete image…</button>
     <?php endif; ?>
   </div>
   <?php if ($viewerAdmin): ?>

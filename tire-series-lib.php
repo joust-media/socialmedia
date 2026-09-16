@@ -695,17 +695,19 @@ if (!function_exists('tireImagesForSeries')) {
     function tireImagesForSeries(PDO $pdo, int $tireId, ?int $seriesId = null, array $opts = []): array {
         if ($tireId <= 0) return [];
         $withSeries = hasTireSeries($pdo);
-        $sql = "SELECT ti.*, t.name AS tire_name FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id WHERE ti.tire_id = ?";
-        $params = [$tireId];
-        if (isset($opts['company_id']) && (int)$opts['company_id'] > 0) { $sql .= " AND t.company_id = ?"; $params[] = (int)$opts['company_id']; }
+        // Clause order mirrors the original assets.php collection query (company, tire, client filter,
+        // status) so the pinned "client SQL filters denied" shape stays; the series clause comes last.
+        $sql = "SELECT ti.*, t.name AS tire_name FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id WHERE";
+        $params = [];
+        if (isset($opts['company_id']) && (int)$opts['company_id'] > 0) { $sql .= " t.company_id = ? AND"; $params[] = (int)$opts['company_id']; }
+        $sql .= " ti.tire_id = ?"; $params[] = $tireId;
+        if (!$withSeries && $seriesId !== null && $seriesId > 0) return [];
+        if (!empty($opts['client'])) { $sql .= " AND ti.status <> 'denied'"; }
+        if (isset($opts['status']) && in_array($opts['status'], ['pending', 'approved', 'denied'], true)) { $sql .= " AND ti.status = ?"; $params[] = $opts['status']; }
         if ($withSeries) {
             if ($seriesId === null || $seriesId <= 0) { $sql .= " AND ti.series_id IS NULL"; }
             else { $sql .= " AND ti.series_id = ?"; $params[] = $seriesId; }
-        } elseif ($seriesId !== null && $seriesId > 0) {
-            return [];
         }
-        if (!empty($opts['client'])) { $sql .= " AND ti.status <> 'denied'"; }
-        if (isset($opts['status']) && in_array($opts['status'], ['pending', 'approved', 'denied'], true)) { $sql .= " AND ti.status = ?"; $params[] = $opts['status']; }
         $sql .= " ORDER BY ti.sort_order ASC, ti.id ASC";
         $limit  = isset($opts['limit']) ? (int)$opts['limit'] : 0;
         $offset = isset($opts['offset']) ? max(0, (int)$opts['offset']) : 0;
@@ -786,6 +788,49 @@ if (!function_exists('logTireSeriesActivity')) {
 }
 
 // ---------------------------------------------------------------------
+// Hardening: media/ is a static folder — never let the web server execute
+// anything dropped there (by FTP or by the upload endpoint).
+// ---------------------------------------------------------------------
+
+if (!function_exists('tireMediaHtaccessText')) {
+    /** The .htaccess written into media/tires/ (and media/ when absent): no PHP/CGI, no directory listing. */
+    function tireMediaHtaccessText(): string {
+        return "# Written by the portal (tire-series-lib.php): this folder only serves static files.\n"
+             . "# Re-created on the next upload / rescan if removed. Same text as media-hardening/htaccess.txt.\n"
+             . "Options -Indexes\n"
+             . "<IfModule mod_php.c>\n    php_flag engine off\n</IfModule>\n"
+             . "<IfModule mod_php7.c>\n    php_flag engine off\n</IfModule>\n"
+             . "<IfModule mod_php8.c>\n    php_flag engine off\n</IfModule>\n"
+             . "RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .pht .phar .cgi .pl .py .sh\n"
+             . "RemoveType .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .pht .phar\n"
+             . "<FilesMatch \"(?i)\\.(php\\d?|phtml|phps|pht|phar|cgi|pl|py|sh|htaccess)$\">\n"
+             . "    <IfModule mod_authz_core.c>\n        Require all denied\n    </IfModule>\n"
+             . "    <IfModule !mod_authz_core.c>\n        Order allow,deny\n        Deny from all\n    </IfModule>\n"
+             . "</FilesMatch>\n";
+    }
+}
+
+if (!function_exists('ensureTireMediaHtaccess')) {
+    /**
+     * Make sure media/tires/.htaccess exists (and media/.htaccess when the parent has none).
+     * Called on every upload and scan; writes only when the file is missing, never overwrites
+     * a server-managed one. Returns the number of files written. Never fatal.
+     */
+    function ensureTireMediaHtaccess(): int {
+        $n = 0;
+        $tires = tireMediaRootPath();
+        $media = mediaRootPath();
+        foreach ([$media, $tires] as $dir) {
+            if (!is_dir($dir)) continue;
+            $file = $dir . '/.htaccess';
+            if (is_file($file)) continue;
+            if (@file_put_contents($file, tireMediaHtaccessText()) !== false) { @chmod($file, 0644); $n++; }
+        }
+        return $n;
+    }
+}
+
+// ---------------------------------------------------------------------
 // The scan
 // ---------------------------------------------------------------------
 
@@ -798,7 +843,7 @@ if (!function_exists('tireSeriesListSubfolders')) {
         $out = [];
         foreach ($names as $f) {
             if ($f === '.' || $f === '..' || $f[0] === '.') continue;
-            if (!is_dir($dir . '/' . $f)) continue;
+            if (is_link($dir . '/' . $f) || !is_dir($dir . '/' . $f)) continue;   // never follow a symlink out of media/tires/
             $out[] = $f;
         }
         natcasesort($out);
@@ -824,6 +869,7 @@ if (!function_exists('syncTireSeries')) {
         if (!is_dir($root)) return $out;
         $companyId = (int)($company['id'] ?? 0);
         if ($companyId <= 0) return $out;
+        ensureTireMediaHtaccess();   // FTP drops land here too: keep the folder non-executable
 
         $tires = tiresWithSlugs($pdo, $companyId);
         if ($tireId !== null && $tireId > 0) {

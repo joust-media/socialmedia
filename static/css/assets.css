@@ -276,7 +276,7 @@ html:not(:has(.ui-tabbar)) .as-selectbar { bottom: 0; padding-bottom: max(10px, 
   font-size: var(--text-headline); line-height: var(--lh-headline); letter-spacing: var(--ls-headline); font-weight: var(--fw-headline);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.ui-viewer-count { font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote); color: var(--label-secondary); font-variant-numeric: tabular-nums; }
+.ui-viewer-count { font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote); color: var(--label-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }   /* "<tire> · <series> · n of N" stays one line on phones */
 .ui-viewer-status { justify-self: end; }
 
 .ui-viewer-stage {
@@ -384,6 +384,7 @@ video.ui-viewer-media { width: 100%; background: #000; touch-action: auto; }
 .ui-viewer-menu-item:hover, .ui-viewer-menu-item:focus-visible { background: var(--fill-tertiary); }
 .ui-viewer-menu-item .ui-icon { width: 20px; height: 20px; color: var(--label-secondary); }
 .ui-viewer-menu-item[hidden] { display: none; }
+.ui-viewer-menu-item.is-destructive, .ui-viewer-menu-item.is-destructive .ui-icon { color: var(--deny); }
 
 /* Video fallback card (spec §6): rendered inside each video slide by App.video (.ui-video-fallback, components.css) */
 
