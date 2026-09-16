@@ -557,7 +557,7 @@ $splitName = function($name) {
                   <?php foreach ($imgs as $img): ?>
                     <div class="tire-thumb">
                       <div class="tire-thumb-frame">
-                        <img src="<?= h(basePath() . '/' . $img['image_url']) ?>"
+                        <img src="<?= h(tireImageThumb($img)) ?>"
                              alt="<?= h($img['caption'] ?: $g['name']) ?>"
                              loading="lazy"
                              data-image-el>
@@ -677,8 +677,8 @@ $splitName = function($name) {
                   <span class="image-card-status <?= h($img['status']) ?>" data-status-pill><?= h(ucfirst($img['status'])) ?></span>
                 </div>
                 <div class="tire-item">
-                  <img src="<?= h(basePath() . '/' . $img['image_url']) ?>" alt="<?= h($img['caption']) ?>" loading="lazy" data-image-el>
-                  <button class="save-img-btn" data-src="<?= h(basePath() . '/' . $img['image_url']) ?>" data-filename="<?= h($filename) ?>">⬇ Save</button>
+                  <img src="<?= h(tireImageSrc($img)) ?>" alt="<?= h($img['caption']) ?>" loading="lazy" data-image-el>
+                  <button class="save-img-btn" data-src="<?= h(tireImageSrc($img)) ?>" data-filename="<?= h($filename) ?>">⬇ Save</button>
                   <?php if (isAdmin()): // admin-only: never rendered for clients ?>
                     <button class="replace-img-btn" data-replace-img type="button" title="Replace this image">🔄 Replace</button>
                   <?php endif; ?>
@@ -748,7 +748,7 @@ $splitName = function($name) {
     const file=replaceInput.files[0];if(file.size>10*1024*1024){showToast('Image exceeds 10 MB');return}
     const tireItem=pendingReplaceBtn.closest('.tire-item'),card=pendingReplaceBtn.closest('.image-card'),imageId=card.getAttribute('data-image-id'),imgEl=tireItem.querySelector('[data-image-el]'),svBtn=tireItem.querySelector('.save-img-btn');
     tireItem.classList.add('replacing');pendingReplaceBtn.disabled=true;pendingReplaceBtn.textContent='⏳ Uploading…';
-    try{const fd=new FormData();fd.append('image_id',imageId);fd.append('image',file);fd.append('type','tire');const r=await fetch(APP_BASE+'/replace-image.php',{method:'POST',body:fd}),d=await r.json();if(!d.ok)throw new Error(d.error||'Failed');const bust=d.image_url+(d.image_url.includes('?')?'&':'?')+'t='+Date.now();imgEl.src=bust;if(svBtn)svBtn.setAttribute('data-src',d.image_url);showToast('✓ Image replaced')}catch(err){showToast('Replace failed: '+(err.message||'unknown'))}finally{tireItem.classList.remove('replacing');pendingReplaceBtn.disabled=false;pendingReplaceBtn.textContent='🔄 Replace';pendingReplaceBtn=null}
+    try{const fd=new FormData();fd.append('image_id',imageId);fd.append('image',file);fd.append('type','tire');const r=await fetch(APP_BASE+'/replace-image.php',{method:'POST',body:fd}),d=await r.json();if(!d.ok)throw new Error(d.error||'Failed');const fresh=d.src||d.image_url;const bust=fresh+(fresh.includes('?')?'&':'?')+'t='+Date.now();imgEl.src=bust;if(svBtn)svBtn.setAttribute('data-src',fresh);showToast('✓ Image replaced')}catch(err){showToast('Replace failed: '+(err.message||'unknown'))}finally{tireItem.classList.remove('replacing');pendingReplaceBtn.disabled=false;pendingReplaceBtn.textContent='🔄 Replace';pendingReplaceBtn=null}
   });
 
   document.addEventListener('click',async e=>{

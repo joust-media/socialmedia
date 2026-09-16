@@ -60,6 +60,9 @@ $slug = (string)$client['slug'];
 // ---------------------------------------------------------------------
 $view    = (($_GET['view'] ?? 'library') === 'collections') ? 'collections' : 'library';
 $itemId  = max(0, (int)($_GET['item'] ?? 0));
+$seriesId = max(0, (int)($_GET['series'] ?? 0));   // a render series of the open collection (tire-series-lib.php); 0 = every image
+$withSeries = hasTireSeries($pdo);
+if (!$withSeries) { $seriesId = 0; }
 $filters = $isAdmin ? ['pending', 'approved', 'denied'] : ['pending', 'approved'];
 $filter  = in_array($_GET['filter'] ?? '', $filters, true) ? (string)$_GET['filter'] : 'pending';
 
@@ -87,15 +90,19 @@ if ($deepId > 0 && $deepKind !== '') {
         $hit = $s->fetch();
         if ($hit) { $view = 'library'; $itemId = 0; }
     } elseif ($deepKind === 'tire') {
+        $seriesSel = $withSeries ? ', ti.series_id' : '';
         $s = $pdo->prepare("
-            SELECT ti.id, ti.status, ti.tire_id
+            SELECT ti.id, ti.status, ti.tire_id{$seriesSel}
               FROM tire_images ti
               INNER JOIN tires t ON t.id = ti.tire_id
              WHERE ti.id = ? AND t.company_id = ?{$clientOnlyTi}
         ");
         $s->execute([$deepId, $cid]);
         $hit = $s->fetch();
-        if ($hit) { $view = 'collections'; $itemId = (int)$hit['tire_id']; }
+        if ($hit) {
+            $view = 'collections'; $itemId = (int)$hit['tire_id'];
+            $seriesId = $withSeries ? (int)($hit['series_id'] ?? 0) : 0;   // land in the render's series
+        }
     }
     if ($hit && in_array($hit['status'], $filters, true)) {
         $filter   = (string)$hit['status'];
@@ -126,8 +133,8 @@ $filterLabels = ['pending' => 'To Review', 'approved' => 'Approved', 'denied' =>
 /** URL for this page with the current scope merged with $extra (null drops a key). */
 if (!function_exists('assetsUrl')) {
     function assetsUrl(array $extra = []): string {
-        global $view, $itemId, $filter;
-        $base = ['view' => $view, 'item' => $itemId > 0 ? $itemId : null, 'filter' => $filter];
+        global $view, $itemId, $filter, $seriesId;
+        $base = ['view' => $view, 'item' => $itemId > 0 ? $itemId : null, 'series' => $seriesId > 0 ? $seriesId : null, 'filter' => $filter];
         return clientUrl('assets.php', array_merge($base, $extra));
     }
 }
@@ -155,6 +162,10 @@ if ($libReady) {
     $s->execute([$cid]);
     foreach ($s->fetchAll() as $r) { if (isset($libCounts[$r['status']])) $libCounts[$r['status']] = (int)$r['n']; }
 }
+if ($view === 'collections' && $withSeries) {
+    // Register renders dropped by FTP into media/tires/<tire-slug>/<series>/ (throttled: folder mtimes + 60 s).
+    try { tireSeriesSyncThrottled($pdo, $client); } catch (Throwable $e) { error_log('tire series sync failed: ' . $e->getMessage()); }
+}
 $s = $pdo->prepare("
     SELECT ti.status, COUNT(*) AS n
       FROM tire_images ti
@@ -173,6 +184,9 @@ $scopeCounts = $libCounts;
 $collection  = null;    // tires row when a collection is open
 $reference   = null;    // pinned reference image for the open collection
 $collections = [];      // list rows (collections view without item)
+$tireSeries  = [];      // render series of the open collection (tireSeriesForTire shape, with counts)
+$tireSeriesCounts = null;   // tireSeriesCounts() of the open collection (reference vs per-series)
+$series      = null;    // the open series row when series=<id> is valid
 
 if ($view === 'library') {
     if ($libReady) {
@@ -218,18 +232,31 @@ if ($view === 'library') {
         $s->execute([$itemId]);
         foreach ($s->fetchAll() as $r) { if (isset($scopeCounts[$r['status']])) $scopeCounts[$r['status']] = (int)$r['n']; }
 
+        // Render series of this collection (folders under media/tires/<slug>/ or uploads) + reference/series counts.
+        if ($withSeries) {
+            $tireSeries       = tireSeriesForTire($pdo, $itemId);
+            $tireSeriesCounts = tireSeriesCounts($pdo, $itemId);
+            if ($seriesId > 0) {
+                foreach ($tireSeries as $sr) { if ((int)$sr['id'] === $seriesId) { $series = $sr; break; } }
+                if (!$series) { $seriesId = 0; $notice = $notice ?: 'That series is no longer available.'; }
+            }
+        }
+
         // Reference = lowest sort_order image (see the ASSUMPTION at the top). Clients never see a denied one.
         $s = $pdo->prepare("SELECT id, image_url, status FROM tire_images WHERE tire_id = ?{$clientOnly} ORDER BY sort_order ASC, id ASC LIMIT 1");
         $s->execute([$itemId]);
         $reference = $s->fetch() ?: null;
 
-        $sql = "SELECT ti.id, ti.tire_id, ti.image_url, ti.caption, ti.status, ti.sort_order{$nameSel}, t.name AS tire_name
+        $seriesSel = $withSeries ? ', ti.series_id' : '';
+        $sql = "SELECT ti.id, ti.tire_id, ti.image_url, ti.caption, ti.status, ti.sort_order{$nameSel}{$seriesSel}, t.name AS tire_name
                   FROM tire_images ti
                   INNER JOIN tires t ON t.id = ti.tire_id
-                 WHERE t.company_id = ? AND ti.tire_id = ?{$clientOnlyTi} AND ti.status = ?
-                 ORDER BY ti.sort_order ASC, ti.id ASC";
+                 WHERE t.company_id = ? AND ti.tire_id = ?{$clientOnlyTi} AND ti.status = ?";
+        $params = [$cid, $itemId, $filter];
+        if ($seriesId > 0) { $sql .= " AND ti.series_id = ?"; $params[] = $seriesId; }   // one series of the collection
+        $sql .= " ORDER BY ti.sort_order ASC, ti.id ASC";
         $s = $pdo->prepare($sql);
-        $s->execute([$cid, $itemId, $filter]);
+        $s->execute($params);
         $n = 0;
         foreach ($s->fetchAll() as $r) {
             $n++;
@@ -237,17 +264,20 @@ if ($view === 'library') {
             $label = trim((string)($r['display_name'] ?: ($r['caption'] ?: '')));
             if ($label === '') { $label = (string)$collection['name'] . ' · ' . $n; }
             $stem  = safeFilenameStem($r['display_name'] ?: ($collection['name'] . '-' . $n));
+            $src   = tireImageSrc($r);   // uploads/… or media/tires/… (tire-series-lib.php)
             $items[] = [
                 'id'       => (int)$r['id'],
                 'kind'     => 'tire',
                 'status'   => (string)$r['status'],
-                'src'      => basePath() . '/' . ltrim((string)$r['image_url'], '/'),
+                'src'      => $src,
+                'thumb'    => tireImageThumb($r),   // <dir>/.thumbs/<stem>.jpg when it exists, else the full image
+                'series'   => $withSeries && isset($r['series_id']) && $r['series_id'] !== null ? (int)$r['series_id'] : 0,
                 'type'     => $meta['type'],
                 'mime'     => $meta['mime'],
                 'label'    => $label,
                 'download' => ($stem !== '' ? $stem : 'image') . '.' . $meta['ext'],
                 'manage'   => $isAdmin ? clientUrl('add-feature.php', ['module' => 'tires', 'edit_item' => $itemId]) : '',
-                'twin'     => $meta['type'] === 'video' ? videoTwinUrl(basePath() . '/' . ltrim((string)$r['image_url'], '/')) : '',
+                'twin'     => $meta['type'] === 'video' ? videoTwinUrl($src, tireImagePath($r)) : '',
             ];
         }
     } else {
@@ -283,7 +313,7 @@ if ($view === 'library') {
             $s->execute($ids);
             foreach ($s->fetchAll() as $r) {
                 $tid = (int)$r['tire_id'];
-                if (!isset($thumbs[$tid])) $thumbs[$tid] = basePath() . '/' . ltrim((string)$r['image_url'], '/');
+                if (!isset($thumbs[$tid])) $thumbs[$tid] = tireImageThumb($r);
             }
         }
     }
@@ -374,7 +404,7 @@ include __DIR__ . '/partials/layout-top.php';
   <?php if ($collection): ?>
     <section class="as-reference" aria-label="Reference image">
       <?php if ($reference): ?>
-        <div class="as-reference-media"><img src="<?= esc(basePath() . '/' . ltrim((string)$reference['image_url'], '/')) ?>" alt="<?= esc('Reference for ' . $collection['name']) ?>"></div>
+        <div class="as-reference-media"><img src="<?= esc(tireImageSrc($reference)) ?>" alt="<?= esc('Reference for ' . $collection['name']) ?>"></div>
       <?php else: ?>
         <div class="as-reference-media as-reference-media--empty"><?= icon('photo') ?></div>
       <?php endif; ?>
@@ -418,12 +448,12 @@ include __DIR__ . '/partials/layout-top.php';
                 data-asset data-id="<?= (int)$it['id'] ?>" data-kind="<?= esc($it['kind']) ?>" data-status="<?= esc($it['status']) ?>"
                 data-src="<?= esc($it['src']) ?>" data-type="<?= esc($it['type']) ?>"<?= $it['mime'] !== '' ? ' data-mime="' . esc($it['mime']) . '"' : '' ?>
                 data-label="<?= esc($it['label']) ?>" data-download="<?= esc($it['download']) ?>"
-                data-endpoint="<?= esc($endpoint) ?>"<?= $it['manage'] !== '' ? ' data-manage="' . esc($it['manage']) . '"' : '' ?><?= !empty($it['twin']) ? ' data-twin="' . esc($it['twin']) . '"' : '' /* transcoded .mp4 next to a .mov → second <source> in the viewer */ ?>
+                data-endpoint="<?= esc($endpoint) ?>"<?= $it['manage'] !== '' ? ' data-manage="' . esc($it['manage']) . '"' : '' ?><?= !empty($it['twin']) ? ' data-twin="' . esc($it['twin']) . '"' : '' /* transcoded .mp4 next to a .mov → second <source> in the viewer */ ?><?= !empty($it['series']) ? ' data-series="' . (int)$it['series'] . '"' : '' ?>
                 aria-label="<?= esc('Open ' . $it['label'] . ', ' . ($i + 1) . ' of ' . $total) ?>">
           <?php if ($it['type'] === 'video'): ?>
             <?= videoTile($it['src'], ['badge' => false]) /* poster when App.video has one cached, else dark tile + play glyph */ ?>
           <?php else: ?>
-            <img src="<?= esc($it['src']) ?>" alt="" loading="lazy" decoding="async">
+            <img src="<?= esc($it['thumb'] ?? $it['src']) ?>" alt="" loading="lazy" decoding="async">
           <?php endif; ?>
           <span class="ui-pill ui-pill--glass ui-pill--nodot ui-thumb-badge as-badge">
             <i class="ui-dot ui-dot--<?= esc($it['status']) ?>" data-status-dot></i>
@@ -457,6 +487,7 @@ $assetsConfig = [
     'view'      => $view,
     'filter'    => $filter,
     'item'      => $itemId,
+    'series'    => $seriesId,                                       // 0 = every image of the collection
     'mode'      => $filter === 'pending' ? 'review' : 'browse',   // review: auto-advance targets pending items only
     'isAdmin'   => $isAdmin,
     'open'      => $deepOpen,
@@ -465,6 +496,7 @@ $assetsConfig = [
         'library' => basePath() . '/library-status.php',
         'tire'    => basePath() . '/tire-status.php',
         'replace' => basePath() . '/replace-image.php',
+        'upload'  => basePath() . '/tire-upload.php',              // admin: one file per request into a series
     ],
     'labels'    => ['collections' => $collectionsLabel],
 ];

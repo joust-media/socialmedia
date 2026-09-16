@@ -101,6 +101,33 @@ trigger line). Clients only view flows and never see Draft / Needs-changes steps
   (`Flow, Position, ID, Title, Timing, Trigger, Subject Line, Preview Text, Status, URL`, Position 1-based).
 - Deleting an email removes it from every flow; an email's detail sheet lists the flows it is in.
 
+## Tire render series
+
+Each tire ("collection" in Assets) can carry any number of **series** — folders of generated
+real-life renders (images and MP4/WebM/MOV videos, typically ~200 per series) that the client
+reviews with the same approve / deny-with-note flow as the reference images. Approved renders
+join the Approved Pool and the composer like any tire image.
+
+- **Folder layout** (a sibling of `portal/`, next to the library): `media/tires/<tire-slug>/<series-folder>/<file>`.
+  The tire slug is the tire name lower-cased with runs of non-alphanumerics turned into `-`
+  ("Klever R/T" → `klever-r-t`; two tires with the same slug: the older keeps it, the newer gets
+  `-<id>`); the edit screen in Studio shows the exact folder. Any subfolder becomes a series
+  named after it (`series-1` → "Series 1"); dot-folders, dotfiles, non-media files and the `.mp4`
+  twin of a `.mov` are ignored.
+- **Two ways in**: drop files by FTP and open Assets → Collections (the folder is rescanned,
+  throttled by folder mtimes + 60 s; existing rows are never touched, a removed file only stops
+  showing up), or upload from the portal into a series (`tire-upload.php`, admin, one file per
+  request, 10 MB images / 200 MB videos, falls back to `uploads/` when `media/tires` is not
+  writable).
+- **Thumbnails**: `<series>/.thumbs/<stem>.jpg` (max 640 px) are generated with GD, up to 40 per
+  page view, so a 200-image grid stays light; the viewer / downloads / posts use the original.
+- **Migration**: `migrate.php` steps 25–26 create `tire_series` and add `tire_images.series_id`
+  (idempotent; the only change to an existing table). Until they exist everything behaves as before.
+- **Endpoints**: `tire-status.php` gains `approve_series` (client or admin), `delete_image`,
+  `set_reference`, `series_create` / `series_rename` / `series_delete` / `series_reorder`
+  (admin, same-site, scoped to the posted client). Reference images (the ≤6 in Studio) are the
+  rows without a series; the 6-image cap counts only those.
+
 ## Not deployed
 
 `config.php` (live DB credentials), `uploads/`, `.htaccess` files, `error_log`, this README
