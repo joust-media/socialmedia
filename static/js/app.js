@@ -215,6 +215,19 @@
   };
 
   /* ---------------------------------------------------------------- */
+  /* Actor avatar markup for a freshly appended bubble: the server puts */
+  /* window.AppAvatars = {admin: <html>, client: <html>} in <head>     */
+  /* (avatarScriptTag(), helpers.php) — same markup commentBubble()    */
+  /* renders, so a sent message looks like a reloaded one.             */
+  /* ---------------------------------------------------------------- */
+  App.actorAvatar = function (actor) {
+    var a = window.AppAvatars || {};
+    if (actor === 'client') return a.client || '';
+    if (actor === 'admin')  return a.admin  || '';
+    return '';
+  };
+
+  /* ---------------------------------------------------------------- */
   /* Fetch helper — application/x-www-form-urlencoded, JSON back      */
   /* ---------------------------------------------------------------- */
   App.post = function (endpoint, params) {

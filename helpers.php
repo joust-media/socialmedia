@@ -790,7 +790,7 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
     $sql = "
         SELECT a.id, a.company_id, a.entity_type, a.entity_id, a.action, a.actor,
                a.batch_id, a.summary, a.detail, a.created_at,
-               c.name AS company_name, c.slug AS company_slug
+               c.name AS company_name, c.slug AS company_slug, c.logo_url AS company_logo_url
           FROM activity_log a
           LEFT JOIN companies c ON c.id = a.company_id
     ";
@@ -815,6 +815,7 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
                     'company_id'   => $r['company_id'],
                     'company_name' => $r['company_name'],
                     'company_slug' => $r['company_slug'],
+                    'company_logo_url' => $r['company_logo_url'] ?? '',
                     'entity_type'  => $r['entity_type'],
                     'entity_id'    => $r['entity_id'],
                     'actor'        => $r['actor'],
@@ -838,6 +839,7 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
                 'company_id'   => $r['company_id'],
                 'company_name' => $r['company_name'],
                 'company_slug' => $r['company_slug'],
+                'company_logo_url' => $r['company_logo_url'] ?? '',
                 'entity_type'  => $r['entity_type'],
                 'entity_id'    => $r['entity_id'],
                 'actor'        => $r['actor'],
@@ -1076,6 +1078,8 @@ function actionLabel($action) {
         'renamed_post'         => 'renamed',
         'renamed_image'        => 'renamed',
         'created'              => 'created',
+        'updated'              => 'updated',
+        'logo_changed'         => 'changed the logo of',
         'task_created'         => 'opened task',
         'task_updated'         => 'updated task',
         'task_toggled'         => 'toggled task',
@@ -1276,6 +1280,10 @@ if (!function_exists('activityParentName')) {
             case 'email_flow':
                 return ['thing' => 'flow', 'name' => $firstLine($meta['name'] ?? '', 80),
                         'parent' => '', 'parent_key' => 'email_flow:' . $id];
+            case 'company':
+                // Studio → Clients: the company row itself (created / updated / logo_changed).
+                return ['thing' => 'client', 'name' => $firstLine($entry['company_name'] ?? '', 80),
+                        'parent' => '', 'parent_key' => 'company:' . $id];
             default:
                 return ['thing' => 'item', 'name' => '', 'parent' => '',
                         'parent_key' => (string)($entry['entity_type'] ?? 'item') . ':' . $id];
@@ -1326,6 +1334,9 @@ if (!function_exists('activityDeepLink')) {
                 return function_exists('emailFlowUrl')
                     ? emailFlowUrl(['slug' => $flowSlug], $qs)
                     : clientUrl('flows', $qs + ($flowSlug !== '' ? ['flow' => $flowSlug] : []));
+            case 'company':
+                // Studio → Clients with this client's card open (admin only; a client never sees company rows link there).
+                return clientUrl('studio', $qs + ['tab' => 'clients', 'edit' => $id]);
             default:
                 return clientUrl('index.php', $qs);
         }
@@ -1436,6 +1447,7 @@ if (!function_exists('humanizeActivityRows')) {
                 'company_id'   => $e['company_id'] ?? null,
                 'company_name' => (string)($e['company_name'] ?? ''),
                 'company_slug' => (string)($e['company_slug'] ?? ''),
+                'company_logo_url' => (string)($e['company_logo_url'] ?? ''),
                 'batch_id'     => $e['batch_id'] ?? null,
                 '_entry'       => $e,
             ];
@@ -1522,6 +1534,10 @@ if (!function_exists('activityFinalizeRows')) {
                 case 'series':
                     if (!$many && $r['name'] !== '') { $objT = 'the ' . $r['name'] . ' series'; $objH = 'the <em>' . $h($r['name']) . '</em> series'; }
                     else                             { $objT = $objH = $many ? $n . ' series' : 'a series'; }
+                    break;
+                case 'client':
+                    if (!$many && $r['name'] !== '') { $objT = 'the client ' . $r['name']; $objH = 'the client <em>' . $h($r['name']) . '</em>'; }
+                    else                             { $objT = $objH = $many ? $n . ' clients' : 'a client'; }
                     break;
                 default:
                     $objT = $objH = $many ? $n . ' items' : 'an item';
@@ -1632,6 +1648,13 @@ if (!function_exists('activityFinalizeRows')) {
                 case 'task_deleted':
                     $verb = 'removed'; $icon = 'xmark'; $tone = 'neutral';
                     $t = "$who removed a task"; $hh = "$whoH removed a task"; break;
+                // companies (entity_type = 'company', Studio → Clients)
+                case 'logo_changed':
+                    $verb = 'changed the logo of'; $icon = 'photo'; $tone = 'accent';
+                    $t = "$who changed the logo of $objT"; $hh = "$whoH changed the logo of $objH"; break;
+                case 'updated':
+                    $verb = 'updated'; $icon = 'ellipsis'; $tone = 'neutral';
+                    $t = "$who updated $objT"; $hh = "$whoH updated $objH"; break;
                 default:
                     if (strpos($a, 'edited_') === 0 || strpos($a, 'renamed_') === 0 || $a === 'type_changed') {
                         $verb = 'updated'; $icon = 'ellipsis'; $tone = 'neutral';
@@ -1737,12 +1760,103 @@ function renderActivityFeed(PDO $pdo, $companyId = null, $limit = 20) {
  *   - anything else ('https://…', '/images/kenda.png', 'x.png') → unchanged
  * Idempotent, so it is safe to apply at more than one layer.
  */
-function brandLogoUrl($url): string {
+function brandLogoUrl($url, string $slug = ''): string {
+    static $cache = [];
     $url = trim((string)$url);
-    if ($url === '') { return ''; }
-    if (preg_match('#^(?:[a-z][a-z0-9+.\-]*:|//)#i', $url)) { return $url; }     // scheme or protocol-relative
-    if (preg_match('#(?:^|/)(uploads/.+)$#', $url, $m)) { return basePath() . '/' . $m[1]; }
-    return $url;
+    $key = $url . '|' . $slug;
+    if (array_key_exists($key, $cache)) return $cache[$key];
+
+    if (preg_match('#^(?:[a-z][a-z0-9+.\-]*:|//)#i', $url)) { return $cache[$key] = $url; }     // scheme or protocol-relative
+    if (preg_match('#(?:^|/)(uploads/.+)$#', $url, $m) && strpos($m[1], '..') === false) {
+        $rel = $m[1];
+        // 1. the file really is in this app's uploads/ → re-rooted to this folder
+        if (is_file(__DIR__ . '/' . $rel)) { return $cache[$key] = basePath() . '/' . $rel; }
+        // 1b. a root-rooted value whose file exists where it says (an uploads/ outside this
+        //     app folder, or the former folder still holding it) → emitted as-is
+        $docroot = rtrim(str_replace('\\', '/', (string)($_SERVER['DOCUMENT_ROOT'] ?? '')), '/');
+        if ($url[0] === '/' && $docroot !== '' && strpos($url, '..') === false && is_file($docroot . $url)) {
+            return $cache[$key] = $url;
+        }
+        // 2. missing on disk → the bundled static/brand/<slug>.* mark, else nothing (initials)
+        return $cache[$key] = brandStaticLogoUrl($slug);
+    }
+    if ($url !== '') { return $cache[$key] = $url; }     // '/images/x.png', 'x.png': not ours to check
+    return $cache[$key] = brandStaticLogoUrl($slug);
+}
+
+/**
+ * URL of the bundled fallback mark static/brand/<slug>.png|svg|jpg|jpeg|webp for a
+ * company slug ('' when there is none). This is what shows for a client that has
+ * no working logo_url — e.g. a client created in Studio → Clients before a logo
+ * is uploaded, or a row whose old uploads/ file went missing.
+ */
+function brandStaticLogoUrl(string $slug): string {
+    $slug = strtolower(trim($slug));
+    if ($slug === '' || !preg_match('/^[a-z0-9\-]{1,60}$/', $slug)) return '';
+    foreach (['png', 'svg', 'jpg', 'jpeg', 'webp'] as $ext) {
+        if (is_file(__DIR__ . '/static/brand/' . $slug . '.' . $ext)) { return staticUrl('brand/' . $slug . '.' . $ext); }
+    }
+    return '';
+}
+
+/** Root-rooted URL of the Joust mark (static/brand/joust.png), '' when the file is missing. */
+function joustLogoUrl(string $variant = ''): string {
+    $name = 'joust' . ($variant !== '' ? '-' . preg_replace('/[^0-9]/', '', $variant) : '') . '.png';
+    return is_file(__DIR__ . '/static/brand/' . $name) ? staticUrl('brand/' . $name) : '';
+}
+
+/**
+ * The Joust avatar (same 36px rounded square as clientAvatar()): the bundled
+ * static/brand/joust.png, or an orange "J" when the file is missing. Used for the
+ * admin actor in comment threads / the activity feed and on the admin chooser.
+ */
+function joustAvatar(string $class = ''): string {
+    $cls = trim('ui-avatar ui-avatar--joust ' . $class);
+    $src = joustLogoUrl();
+    if ($src !== '') {
+        return '<img class="' . esc($cls) . '" src="' . esc($src) . '" alt="Joust Media" width="36" height="36" loading="lazy">';
+    }
+    return '<span class="' . esc($cls . ' ui-avatar--initial') . '" aria-label="Joust Media">J</span>';
+}
+
+/**
+ * Avatar for an activity actor: 'admin' → the Joust mark, 'client' → the company's
+ * logo / initials (clientAvatar()), anything else → nothing.
+ */
+function actorAvatar(string $actor, $client = null, string $class = ''): string {
+    $actor = strtolower(trim($actor));
+    if ($actor === 'admin') return joustAvatar($class);
+    if ($actor === 'client') {
+        if (empty($client) || empty($client['name'])) return '';
+        return clientAvatar($client, $class);
+    }
+    return '';
+}
+
+/**
+ * <link rel="icon"> / apple-touch-icon tags for the Joust mark (static/brand/joust*.png).
+ * Shared by renderAppHead(), partials/layout-top.php and login.php (which builds the
+ * same URLs itself because it does not load helpers.php).
+ */
+function appIconTags(): string {
+    $out = '';
+    $big = joustLogoUrl(); $touch = joustLogoUrl('180'); $small = joustLogoUrl('32');
+    if ($small !== '') $out .= '<link rel="icon" type="image/png" sizes="32x32" href="' . esc($small) . '">' . "\n";
+    if ($big !== '')   $out .= '<link rel="icon" type="image/png" sizes="512x512" href="' . esc($big) . '">' . "\n";
+    if ($touch !== '') $out .= '<link rel="apple-touch-icon" sizes="180x180" href="' . esc($touch) . '">' . "\n";
+    if ($out !== '')   $out .= '<meta name="application-name" content="Joust Portal">' . "\n"
+                             . '<meta name="apple-mobile-web-app-title" content="Joust">' . "\n";
+    return $out;
+}
+
+/**
+ * window.AppAvatars = {admin: <html>, client: <html>} so the page scripts (posts.js,
+ * assets.js, emails.js) can append a freshly sent bubble with the same avatar markup
+ * commentBubble() renders server-side. 'client' is '' on unscoped pages.
+ */
+function avatarScriptTag($client = null): string {
+    $data = ['admin' => joustAvatar('ui-avatar--xs'), 'client' => !empty($client['name']) ? clientAvatar($client, 'ui-avatar--xs') : ''];
+    return '<script>window.AppAvatars = ' . json_encode($data, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) . ';</script>' . "\n";
 }
 
 /**
@@ -1753,7 +1867,7 @@ function renderBrand($client, $sub = '') {
     $h = function ($s) {
         return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
     };
-    $logoUrl = brandLogoUrl($client['logo_url'] ?? '');
+    $logoUrl = brandLogoUrl($client['logo_url'] ?? '', (string)($client['slug'] ?? ''));
     $name    = $client ? $client['name'] : 'Joust Media';
 
     $mark = $logoUrl
@@ -1777,7 +1891,7 @@ function renderBrand($client, $sub = '') {
 if (!function_exists('clientAvatar')) {
     function clientAvatar($client, string $class = ''): string {
         $name = !empty($client['name']) ? (string)$client['name'] : 'Joust Media';
-        $logo = !empty($client['logo_url']) ? brandLogoUrl($client['logo_url']) : '';
+        $logo = brandLogoUrl($client['logo_url'] ?? '', (string)($client['slug'] ?? ''));   // DB value → uploads/ → static/brand/<slug> → ''
         $cls  = trim('ui-avatar ' . $class);
         if ($logo !== '') {
             return '<img class="' . esc($cls) . '" src="' . esc($logo) . '" alt="' . esc($name) . '" width="36" height="36" loading="lazy">';
@@ -1816,12 +1930,15 @@ function appScript(): string {
  * (New pages use partials/layout-top.php instead.)
  */
 function renderAppHead(): string {
+    global $client;
     return "\n" . '<meta name="color-scheme" content="light dark">' . "\n"
          . '<meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">' . "\n"
          . '<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">' . "\n"
          . '<meta name="format-detection" content="telephone=no">' . "\n"
+         . appIconTags()
          . appStylesheets()
-         . appScript();
+         . appScript()
+         . avatarScriptTag($client ?? null);
 }
 
 /**

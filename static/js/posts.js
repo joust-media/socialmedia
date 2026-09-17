@@ -463,7 +463,7 @@
     msg.className = 'pd-msg pd-msg--' + side + ' ui-enter';
     msg.setAttribute('data-actor', actor);
     msg.innerHTML = '<div class="ui-bubble ui-bubble--' + side + '">' + escapeHtml(text).replace(/\n/g, '<br>') + '</div>'
-                  + '<div class="ui-bubble-meta">' + who + ' · just now</div>';
+                  + '<div class="ui-bubble-meta">' + (App.actorAvatar ? App.actorAvatar(actor) : '') + who + ' · just now</div>';
     var empty = $('[data-thread-empty]', thread); if (empty) empty.hidden = true;
     thread.appendChild(msg);
     var n = (parseInt(thread.getAttribute('data-count') || '0', 10) || 0) + 1;

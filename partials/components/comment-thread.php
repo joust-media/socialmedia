@@ -44,9 +44,13 @@ if (!function_exists('commentBubble')) {
         $rel   = function_exists('relativeTime') ? relativeTime($when) : '';
         $abs   = function_exists('absoluteTime') ? absoluteTime($when) : $when;
 
+        // Actor avatar in the meta line: the Joust mark for admin bubbles, the client's logo /
+        // initials for client bubbles (actorAvatar(), helpers.php; '' for 'unknown' notes).
+        $avatar = function_exists('actorAvatar') ? actorAvatar($actor, $GLOBALS['client'] ?? null, 'ui-avatar--xs pd-msg-avatar') : '';
+
         $out  = '<div class="pd-msg pd-msg--' . $side . '" data-actor="' . $esc($actor) . '">';
         $out .= '<div class="ui-bubble ui-bubble--' . $side . '">' . nl2br($esc($text)) . '</div>';
-        $out .= '<div class="ui-bubble-meta">' . $esc(commentActorLabel($actor));
+        $out .= '<div class="ui-bubble-meta">' . $avatar . $esc(commentActorLabel($actor));
         if ($rel !== '') { $out .= ' · <time title="' . $esc($abs) . '">' . $esc($rel) . '</time>'; }
         $out .= '</div></div>';
         return $out;

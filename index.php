@@ -80,6 +80,7 @@ if (!$client) {
     $pageTitle  = $isAdmin ? 'Today' : 'Joust';
     $htmlTitle  = 'Joust Media — Client portal';
     $navSubtitle = $isAdmin ? 'All clients' : '';
+    $navTrailing = $isAdmin ? joustAvatar() : '';   // the admin chooser carries the Joust mark (no client is scoped)
     $activeTab  = 'home';
     $headExtra  = '<link rel="stylesheet" href="' . h(staticUrl('css/home.css')) . '">' . "\n";
     include __DIR__ . '/partials/layout-top.php';

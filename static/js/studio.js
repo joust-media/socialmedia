@@ -1228,3 +1228,92 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initEmailForm);
   else initEmailForm();
 })(window, document);
+
+/* =====================================================================
+   Clients (Studio → Clients, partials/studio-clients.php → client-admin.php)
+   - slug auto-fills from the name until the admin edits it by hand
+   - every [data-client-form] posts with fetch + FormData (Accept: JSON) and
+     follows the reply's `redirect`; errors land in the form's status line +
+     a toast. Without JS the same forms post normally and the endpoint
+     redirects back on its own (msg= / err=).
+   - the logo file input submits on change (2 MB checked client-side too)
+   ===================================================================== */
+(function (window, document) {
+  'use strict';
+  var App = window.App = window.App || {};
+  var MAX_LOGO = 2 * 1024 * 1024;
+  function $(sel, root) { return (root || document).querySelector(sel); }
+  function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+  function toast(msg, opts) { if (App.toast) App.toast(msg, opts); else if (msg) window.alert(msg); }
+
+  /* Same rule as caSlugify() in client-admin.php (ASCII letters / digits, dashes, ≤ 40). */
+  function slugify(name) {
+    var s = String(name || '');
+    try { s = s.normalize('NFKD').replace(/[̀-ͯ]/g, ''); } catch (e) {}
+    s = s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '');
+    return s;
+  }
+  App.slugify = App.slugify || slugify;
+
+  function initClients() {
+    var root = $('[data-clients]');
+    if (!root) return;
+
+    $$('[data-client-form]', root).forEach(function (form) {
+      var name = $('[data-client-name]', form), slug = $('[data-client-slug]', form);
+      if (name && slug) {
+        name.addEventListener('input', function () { if (!slug.dataset.touched) slug.value = slugify(name.value); });
+        slug.addEventListener('input', function () { slug.dataset.touched = slug.value.trim() === '' ? '' : '1'; });
+      }
+      var file = $('[data-client-logo-input]', form);
+      if (file) {
+        var manual = $('[data-client-logo-submit]', form);   // the no-JS Upload button: picking a file submits instead
+        if (manual) manual.hidden = true;
+        file.addEventListener('change', function () {
+          var f = file.files && file.files[0];
+          var label = $('[data-client-file-label]', form);
+          if (f && f.size > MAX_LOGO) { toast('Logos are limited to 2 MB.', { kind: 'error' }); file.value = ''; if (label) label.textContent = 'Add a logo… (optional)'; return; }
+          if (label) label.textContent = f ? f.name : 'Add a logo… (optional)';
+          // the "Replace logo…" form has nothing else to fill in: upload straight away
+          if (f && form.querySelector('input[name="action"][value="logo_upload"]')) submit(form);
+        });
+      }
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        if (form.dataset.confirmSubmit && !window.confirm(form.dataset.confirmSubmit)) return;
+        submit(form);
+      });
+    });
+
+    function submit(form) {
+      var status = $('[data-client-status]', form);
+      var buttons = $$('button[type="submit"]', form);
+      var fd = new FormData(form);
+      var fileInput = $('input[type="file"]', form);
+      if (fileInput && fileInput.files && fileInput.files[0] && fileInput.files[0].size > MAX_LOGO) { toast('Logos are limited to 2 MB.', { kind: 'error' }); return; }
+      buttons.forEach(function (b) { b.disabled = true; });
+      if (status) status.textContent = 'Saving…';
+      fetch(form.getAttribute('action'), { method: 'POST', body: fd, credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+        .then(function (res) { return res.text().then(function (t) { var d = null; try { d = t ? JSON.parse(t) : null; } catch (err) {} return { ok: res.ok && d && d.ok !== false, status: res.status, data: d }; }); })
+        .then(function (r) {
+          if (r.ok && r.data) {
+            if (status) status.textContent = r.data.message || 'Saved.';
+            if (r.data.redirect) { window.location.href = r.data.redirect; return; }
+            window.location.reload();
+            return;
+          }
+          var msg = (r.data && r.data.error) || ('Request failed (' + r.status + ')');
+          if (status) status.textContent = msg;
+          toast(msg, { kind: 'error' });
+          buttons.forEach(function (b) { b.disabled = false; });
+        })
+        .catch(function () {
+          if (status) status.textContent = 'Network error';
+          toast('Network error', { kind: 'error' });
+          buttons.forEach(function (b) { b.disabled = false; });
+        });
+    }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initClients);
+  else initClients();
+})(window, document);

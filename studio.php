@@ -46,6 +46,11 @@ $navLinks = [
 // MODE A — no client selected: chooser
 // =============================================================
 if (!$client) {
+    // ?tab=clients without a client: the Clients manager on its own (the first place a
+    // brand-new portal can create its first company — no client to scope to yet).
+    $clientsOnly = strtolower(trim((string)($_GET['tab'] ?? ''))) === 'clients';
+    array_unshift($navLinks, ['label' => 'Clients', 'href' => pagePath('studio') . '?tab=clients', 'attrs' => ['data-studio-clients-link' => '1']]);
+
     $companies = $pdo->query("
         SELECT c.id, c.name, c.slug, c.logo_url,
                (SELECT COUNT(*) FROM posts WHERE posts.company_id = c.id AND posts.status = 'pending') AS pending_count,
@@ -55,15 +60,27 @@ if (!$client) {
         ORDER BY c.name ASC
     ")->fetchAll();
 
-    $pageTitle   = 'Studio';
-    $navSubtitle = 'Choose a client';
+    $pageTitle   = $clientsOnly ? 'Clients' : 'Studio';
+    $navSubtitle = $clientsOnly ? 'Studio' : 'Choose a client';
     $activeTab   = 'studio';
-    $navTrailing = '';
+    $navTrailing = joustAvatar();          // the admin surface carries the Joust mark, not a client's
     $bodyClass   = 'page-studio page-studio-chooser';
     $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">';
+    if ($clientsOnly) {
+        $navBack   = ['href' => pagePath('studio'), 'label' => 'Studio'];
+        $navLinks  = [];
+        $footExtra = '<script>window.StudioConfig = ' . json_encode(['base' => basePath(), 'clientAdmin' => basePath() . '/client-admin.php',
+                         'clientsUrl' => pagePath('studio') . '?tab=clients'], JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n"
+                   . '<script src="' . h(staticUrl('js/studio.js')) . '" defer></script>';
+    }
     include __DIR__ . '/partials/layout-top.php';
     ?>
     <?php if ($flash): ?><div class="studio-alert studio-alert--ok" role="status"><?= h($flash) ?></div><?php endif; ?>
+    <?php if ($clientsOnly) {
+        include __DIR__ . '/partials/studio-clients.php';
+        include __DIR__ . '/partials/layout-bottom.php';
+        exit;
+    } ?>
 
     <?php if (!$companies): ?>
       <div class="ui-empty">No clients in the <code>companies</code> table yet.</div>
@@ -111,6 +128,7 @@ $hasEmails = hasEmailsTable($pdo);          // migration-gated; admin always get
 if ($hasEmails) $tabs['emails'] = 'Emails';
 $hasRenders = function_exists('hasTireSeries') && hasTireSeries($pdo);   // tire series (migration-gated)
 if ($hasRenders) $tabs['renders'] = 'Renders';
+$tabs['clients'] = 'Clients';                 // company management (partials/studio-clients.php → client-admin.php)
 $tab  = strtolower(trim((string)($_GET['tab'] ?? 'compose')));
 if (!isset($tabs[$tab])) $tab = 'compose';
 
@@ -202,6 +220,8 @@ $studioConfig = [
     'tab'       => $tab,
     'tabUrl'    => clientUrl('studio.php', ['tab' => '__TAB__']),
     'postUrl'   => clientUrl('posts.php', ['post' => '__ID__']),   // studio.js: "finish it in Posts" links
+    'clientAdmin' => basePath() . '/client-admin.php',             // Clients tab endpoint (create / update / logo / modules)
+    'clientsUrl'  => clientUrl('studio.php', ['tab' => 'clients']),
 ];
 if ($hasRenders) {
     $studioConfig['renders'] = [
@@ -527,5 +547,12 @@ include __DIR__ . '/partials/layout-top.php';
   </section>
 </section>
 <?php endif; ?>
+
+<!-- Clients ------------------------------------------------------------ -->
+<!-- Company management: list, "New client", per-client edit (name / slug / feature label /
+     logo / module toggles). Every action posts to client-admin.php (partials/studio-clients.php). -->
+<section class="studio-section" data-studio-section="clients"<?= $tab === 'clients' ? '' : ' hidden' ?>>
+  <?php include __DIR__ . '/partials/studio-clients.php'; ?>
+</section>
 
 <?php include __DIR__ . '/partials/layout-bottom.php'; ?>

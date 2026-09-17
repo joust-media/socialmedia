@@ -44,8 +44,10 @@ $uiRole = isAdmin() ? 'admin' : 'client';
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="format-detection" content="telephone=no">
 <title><?= esc($htmlTitle) ?></title>
+<?= appIconTags() ?>
 <?= appStylesheets() ?>
 <?= isset($headExtra) ? $headExtra : '' ?>
+<?= avatarScriptTag($client ?? null) ?>
 </head>
 <body class="<?= esc(trim('ui-body ' . (isset($bodyClass) ? (string)$bodyClass : ''))) ?>" data-role="<?= $uiRole ?>" data-actor="<?= $uiRole ?>"<?= !empty($client['slug']) ? ' data-client="' . esc($client['slug']) . '"' : '' ?>>
 <?php include __DIR__ . '/navbar.php'; ?>

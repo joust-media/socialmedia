@@ -147,7 +147,13 @@
    --------------------------------------------------------------------- */
 .activity-item { align-items: flex-start; padding-top: 11px; padding-bottom: 11px; }
 .activity-item .ui-row-trailing { align-self: center; }
-.activity-icon { margin-top: 1px; }
+.activity-icon { margin-top: 1px; position: relative; overflow: visible; }
+/* Actor badge on the action icon: the Joust mark for admin rows, the client's logo / initials for client rows */
+.activity-icon .activity-actor {           /* beats `.ui-row-leading img { width:100% }` */
+  position: absolute; right: -6px; bottom: -6px;
+  width: 15px; height: 15px; border-radius: 4px; font-size: 8px; line-height: 1;
+  box-shadow: 0 0 0 1.5px var(--bg-elevated);
+}
 .activity-icon--approve   { background: var(--approve); }
 .activity-icon--deny      { background: var(--deny); }
 .activity-icon--accent    { background: var(--accent); }

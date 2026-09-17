@@ -139,6 +139,11 @@ hr { border: 0; height: 0.5px; background: var(--separator); margin: 16px 0; }
 }
 .ui-avatar--sm { width: 28px; height: 28px; border-radius: 7px; font-size: 12px; }
 .ui-avatar--lg { width: 56px; height: 56px; border-radius: 14px; font-size: 22px; }
+.ui-avatar--xs { width: 18px; height: 18px; border-radius: 5px; font-size: 10px; box-shadow: none; }
+/* The Joust mark (static/brand/joust.png, or the orange "J" when the file is missing) */
+.ui-avatar--joust.ui-avatar--initial { background: var(--joust); color: #fff; }
+/* Actor avatar inside a bubble's meta line ("[J] Joust · 2h ago") */
+.ui-bubble-meta .pd-msg-avatar { display: inline-flex; vertical-align: -5px; margin-right: 5px; }
 
 /* ---------------------------------------------------------------------
    Layout: room for the fixed tab bar (mobile) / sidebar (desktop).

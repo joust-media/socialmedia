@@ -159,6 +159,30 @@ join the Approved Pool and the composer like any tire image.
   extensions refused — so nothing dropped by FTP or upload can ever execute. Existing files
   are never overwritten; the text and the by-hand steps are in `media-hardening/`.
 
+## Clients and logos
+
+- **Studio → Clients** (admin, `studio.php?tab=clients`, also the "Clients" link on the Studio
+  chooser) lists every company and is the one place that creates or edits one: name, slug
+  (auto from the name, `[a-z0-9-]{2,40}`, unique — the review link is `?client=<slug>`),
+  feature label (the Tires tab's name), logo upload / replace / remove, and the Tires / Emails
+  module toggles. Everything posts to `client-admin.php` (admin + same-site only). Clients
+  are never deleted from the portal.
+- **Logo upload**: an image by content (PNG / JPG / GIF / WebP, ≤ 2 MB), resized to fit
+  512×512 and written to `uploads/logo_<slug>.png` (JPEG stays `.jpg`); `companies.logo_url`
+  is set to that app-relative path. Renaming a slug renames the file with it.
+- **Logo resolution** (`brandLogoUrl()` in `helpers.php`): the stored `logo_url` when its
+  file exists (an `uploads/...` value is re-rooted under the current folder, so a row that
+  still says `/socialmedia/uploads/x.png` keeps working after the rename) → the bundled
+  `static/brand/<slug>.png` when there is one → the initials avatar. So a client created
+  with slug `cometic` or `hmf` shows its mark before any upload. Details and how to replace a
+  mark: `static/brand/README.md`.
+- **Joust mark**: `static/brand/joust.png` is the favicon / touch icon (`appIconTags()`), the
+  sign-in card, the admin chooser header and the avatar of the Joust actor in comment threads
+  and the activity feed; clients keep their own logo / initials as the other actor.
+- If a client's logo went missing after the folder rename, check that
+  `portal/uploads/<file>` exists on the server (uploads are never deployed), or simply upload
+  it again in Studio → Clients.
+
 ## Not deployed
 
 `config.php` (live DB credentials), `uploads/`, `.htaccess` files, `error_log`, this README,
