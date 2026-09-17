@@ -43,7 +43,7 @@ creates `emails`, `email_groups` and `email_group_map`, and seeds the `emails` r
 `company_modules (company_id, module_id)` row; the same row by hand in phpMyAdmin works
 too). The Emails tab also appears automatically once a client has at least one email row.
 
-**Pages**
+**URLs**
 
 | URL | What it does |
 |-----|--------------|
@@ -100,6 +100,61 @@ trigger line). Clients only view flows and never see Draft / Needs-changes steps
   `format=flows-csv` downloads `<slug>-flows-YYYY-MM-DD.csv`, one row per step
   (`Flow, Position, ID, Title, Timing, Trigger, Subject Line, Preview Text, Status, URL`, Position 1-based).
 - Deleting an email removes it from every flow; an email's detail sheet lists the flows it is in.
+
+## Pages
+
+A per-client module for static HTML landing pages (and other one-off pages) that Joust
+builds per client and the client reviews inside the portal. It is the Emails module's twin:
+the same statuses (**Draft** admin only · **To Review** · **Approved** · **Needs changes**
+with a note · **Live**, which wins for display), the same client verbs (approve, request
+changes with a note of at least 3 characters, comment), the same admin verbs (send for
+review, reset, mark / unmark live — only an approved page can go live, delete), the same
+Home cards ("N pages ready for your review"; "M pages need changes" + the latest client
+notes on the admin's Needs-changes card), activity feed lines, digest labels and Pages tab
+badge (pending, not live). Clients only ever receive To Review / Approved / Live rows — the
+filter is in SQL and re-checked on deep links, partials and the endpoint.
+
+- **Migration**: `migrate.php` steps 27–28 create `pages` and `page_files` and seed the
+  `pages` row in `modules` (28b). Idempotent; until it has run there is no Pages tab, no
+  Studio tab, `pages.php` says "not set up yet" and the endpoints answer 404 / 409 / 503.
+- **Enabling the tab for a client**: Studio → Pages → "Enable Pages tab", or the Pages
+  toggle on the client's card in Studio → Clients (both write one `company_modules` row).
+  The tab also appears automatically once the client has at least one page row.
+- **Two sources per page**: *Upload* — the HTML and its assets live in
+  `media/pages/<client-slug>/<page-slug>/` (a sibling of `media/tires/` and
+  `media/library/`, outside the app folder, never touched by deploys) and the portal frames
+  `/media/pages/<client>/<slug>/<entry>`; *URL* — an external `http(s)://` address framed
+  like an email's rendered link (hosts that refuse framing still get "Open in new tab").
+- **Uploading** (Studio → Pages → Edit, or right after "Create page"; `page-upload.php`,
+  admin + same-site only, one file per request, ≤ 10 MB): `html htm css js json png jpg
+  jpeg gif webp svg ico woff woff2 ttf mp4 webm` only. Anything server-side is refused
+  anywhere in the dotted name (`.php .phtml .phar .cgi .pl .py .sh .shtml .shtm .stm .inc
+  .asp .jsp .cfm .hta .htaccess` — so `x.php.html` and `x.shtml.html` are refused too),
+  dotfiles and bad names are refused, an optional subfolder is `[a-z0-9_-]` segments at most
+  4 deep, images must decode and match their extension, SVG must be an `<svg>` document,
+  HTML / CSS / JS / JSON must not contain a PHP open tag, videos are sniffed. Uploading a
+  file with a name that exists **replaces** it (that is how a page is updated); the first
+  HTML file becomes the entry when none is set; "Set as entry" picks another `.html`.
+  Renaming a page's slug moves its folder; deleting a page removes the folder (contained —
+  a symlinked folder is refused and left alone).
+- **`media/` hardening**: every upload (re)writes `media/pages/.htaccess` (and
+  `media/.htaccess` when the parent has none) when missing: `Options -Indexes`, PHP engine
+  off, PHP / CGI handlers removed, server-side-include filters removed (`.shtml .shtm .stm`
+  and never `.html`), `.php* .cgi .pl .py .sh .shtml .inc .htaccess` denied outright. The
+  files are never overwritten once present, so a server-managed one stands.
+- **Preview**: `<iframe sandbox="allow-scripts allow-same-origin allow-forms allow-popups">`
+  with a Phone / Desktop toggle. `allow-same-origin` is deliberate — only the admin can
+  upload, the files are Joust's own work and PHP is off under `media/` — but it means an
+  uploaded page runs with the portal's origin. If clients ever get to upload, drop that one
+  token in `partials/components/page-detail.php`.
+
+| URL | What it does |
+|-----|--------------|
+| `pages.php?client=<slug>[&status=pending\|approved\|live\|denied\|draft\|all][&q=…][&page=<id>]` | List + detail sheet. Default segment is To Review; `page=<id>` deep-links one page. `denied` / `draft` are admin only. |
+| `page-status.php` (POST) | Approve / deny (note required) / comment / `action=submit` / `toggle_live&to=0\|1` / `delete_page`. Mirrors `email-status.php`. |
+| `page-upload.php` (POST, admin) | `page_id`, `client`, `action=upload` (`file`, optional `subfolder`, `batch`) / `delete_file` / `set_entry` (`name`). |
+| `add-page.php?client=<slug>[&edit=<id>]` | Admin create / edit form (title, slug, source, URL, entry file, description, status, live, notes) + the file uploader and delete on edit. |
+| `studio.php?client=<slug>&tab=pages` | Counts strip, New page, the list with Edit, the Pages-tab toggle. |
 
 ## Tire render series
 
@@ -164,12 +219,14 @@ join the Approved Pool and the composer like any tire image.
 - **Studio → Clients** (admin, `studio.php?tab=clients`, also the "Clients" link on the Studio
   chooser) lists every company and is the one place that creates or edits one: name, slug
   (auto from the name, `[a-z0-9-]{2,40}`, unique — the review link is `?client=<slug>`),
-  feature label (the Tires tab's name), logo upload / replace / remove, and the Tires / Emails
-  module toggles. Everything posts to `client-admin.php` (admin + same-site only). Clients
-  are never deleted from the portal.
+  feature label (the Tires tab's name), logo upload / replace / remove, and the Tires /
+  Emails / Pages module toggles. Everything posts to `client-admin.php` (admin + same-site
+  only). Clients are never deleted from the portal.
 - **Logo upload**: an image by content (PNG / JPG / GIF / WebP, ≤ 2 MB), resized to fit
   512×512 and written to `uploads/logo_<slug>.png` (JPEG stays `.jpg`); `companies.logo_url`
-  is set to that app-relative path. Renaming a slug renames the file with it.
+  is set to that app-relative path. Renaming a slug renames the file with it and moves the
+  client's `media/pages/<slug>/` folder (uploaded Pages) along; if that move fails the save
+  still goes through and the message says which folder to move by hand.
 - **Logo resolution** (`brandLogoUrl()` in `helpers.php`): the stored `logo_url` when its
   file exists (an `uploads/...` value is re-rooted under the current folder, so a row that
   still says `/socialmedia/uploads/x.png` keeps working after the rename) → the bundled

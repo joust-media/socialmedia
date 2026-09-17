@@ -8,7 +8,7 @@ if (!function_exists('esc') || !function_exists('isAdmin') || !isAdmin()) { http
  *
  *   - "New client" card: name, slug (auto from the name, editable), feature label, logo file
  *   - list of every company: logo (brandLogoUrl() → uploads/ → static/brand/<slug> → initials),
- *     name, slug, feature label, Tires / Emails module state; a row opens its edit card
+ *     name, slug, feature label, Tires / Emails / Pages module state; a row opens its edit card
  *   - edit card (?edit=<id>): the same fields, replace / remove logo, module toggles
  *
  * Every form posts to client-admin.php (studio.js submits them with fetch + FormData and
@@ -23,15 +23,15 @@ try {
 } catch (Throwable $scErr) {
     error_log('studio clients list failed: ' . $scErr->getMessage());
 }
-$scModules   = ['tires' => 'Tires tab', 'emails' => 'Emails tab'];
+$scModules   = ['tires' => 'Tires tab', 'emails' => 'Emails tab', 'pages' => 'Pages tab'];
 $scModuleIds = [];
 $scEnabled   = [];    // [company_id][module slug] = true
 try {
-    foreach ($pdo->query("SELECT id, slug FROM modules WHERE slug IN ('tires', 'emails')")->fetchAll() as $scM) {
+    foreach ($pdo->query("SELECT id, slug FROM modules WHERE slug IN ('tires', 'emails', 'pages')")->fetchAll() as $scM) {
         $scModuleIds[(string)$scM['slug']] = (int)$scM['id'];
     }
     if ($scModuleIds) {
-        $scSt = $pdo->query("SELECT cm.company_id, m.slug FROM company_modules cm INNER JOIN modules m ON m.id = cm.module_id WHERE m.slug IN ('tires', 'emails')");
+        $scSt = $pdo->query("SELECT cm.company_id, m.slug FROM company_modules cm INNER JOIN modules m ON m.id = cm.module_id WHERE m.slug IN ('tires', 'emails', 'pages')");
         foreach ($scSt->fetchAll() as $scR) { $scEnabled[(int)$scR['company_id']][(string)$scR['slug']] = true; }
     }
 } catch (Throwable $scErr) {
@@ -127,7 +127,9 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
                 <div class="ui-row-title"><?= esc($scLabel) ?></div>
                 <div class="ui-row-subtitle"><?= $scKey === 'tires'
                     ? 'Shows the ' . esc(trim((string)($scEdit['feature_label'] ?? '')) !== '' ? $scEdit['feature_label'] : 'Collections') . ' tab. It also appears on its own once the client has a tire.'
-                    : 'Shows the Emails tab even with zero emails. It also appears on its own once the client has an email.' ?></div>
+                    : ($scKey === 'pages'
+                        ? 'Shows the Pages tab even with zero pages. It also appears on its own once the client has a page.'
+                        : 'Shows the Emails tab even with zero emails. It also appears on its own once the client has an email.') ?></div>
               </div>
               <?php if (!$scHas): ?>
                 <span class="text-tertiary">Run migrate.php first</span>

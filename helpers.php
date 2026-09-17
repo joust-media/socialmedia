@@ -203,7 +203,7 @@ function clientNavItems(PDO $pdo, $client) {
     ");
     $s->execute([$client['id']]);
     foreach ($s->fetchAll() as $mod) {
-        if (($mod['slug'] ?? '') === 'emails') continue;   // Emails has its own tab (emails.php), not a features.php module
+        if (in_array($mod['slug'] ?? '', ['emails', 'pages'], true)) continue;   // Emails / Pages have their own tabs (emails.php / pages.php), not features.php modules
         $items[] = [
             'label' => $mod['plural_label'],
             'icon'  => $mod['icon'],
@@ -874,6 +874,7 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
     $emailIds   = [];
     $flowIds    = [];
     $seriesIds  = [];
+    $pageIds    = [];
     foreach ($grouped as $g) {
         if ($g['entity_type'] === 'tire_image')    { $imageIds[]  = (int)$g['entity_id']; }
         if ($g['entity_type'] === 'tire')          { $tireIds[]   = (int)$g['entity_id']; }
@@ -883,6 +884,7 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
         if ($g['entity_type'] === 'email')         { $emailIds[]  = (int)$g['entity_id']; }
         if ($g['entity_type'] === 'email_flow')    { $flowIds[]   = (int)$g['entity_id']; }
         if ($g['entity_type'] === 'tire_series')   { $seriesIds[] = (int)$g['entity_id']; }
+        if ($g['entity_type'] === 'page')          { $pageIds[]   = (int)$g['entity_id']; }
     }
     $withSeries = function_exists('hasTireSeries') && hasTireSeries($pdo);
     $imageMeta = [];
@@ -1035,6 +1037,20 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
             $flowMeta = [];
         }
     }
+    $pageMeta = [];
+    if ($pageIds && function_exists('hasPagesTable') && hasPagesTable($pdo)) {
+        $pageIds = array_values(array_unique($pageIds));
+        $ph = implode(',', array_fill(0, count($pageIds), '?'));
+        try {
+            $s = $pdo->prepare("SELECT id, title, slug FROM pages WHERE id IN ($ph)");
+            $s->execute($pageIds);
+            foreach ($s->fetchAll() as $r) {
+                $pageMeta[(int)$r['id']] = ['title' => (string)($r['title'] ?? ''), 'slug' => (string)($r['slug'] ?? '')];
+            }
+        } catch (Throwable $e) {
+            $pageMeta = [];
+        }
+    }
 
     foreach ($grouped as &$g) {
         if ($g['entity_type'] === 'tire_image' && isset($imageMeta[(int)$g['entity_id']])) {
@@ -1053,6 +1069,8 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
             $g['_meta'] = $flowMeta[(int)$g['entity_id']];
         } elseif ($g['entity_type'] === 'tire_series' && isset($seriesMeta[(int)$g['entity_id']])) {
             $g['_meta'] = $seriesMeta[(int)$g['entity_id']];
+        } elseif ($g['entity_type'] === 'page' && isset($pageMeta[(int)$g['entity_id']])) {
+            $g['_meta'] = $pageMeta[(int)$g['entity_id']];
         }
     }
     unset($g);
@@ -1096,6 +1114,11 @@ function actionLabel($action) {
         'edited_send_at'       => 'changed send date',
         'edited_html_url'      => 'changed email link',
         'edited_code'          => 'changed ID',
+        // pages (entity_type = 'page'; 'uploaded' is shared with tire series below)
+        'deleted_file'         => 'removed a file from',
+        'edited_slug'          => 'changed the address of',
+        'edited_entry'         => 'changed the entry file of',
+        'edited_source'        => 'changed the source of',
         // flows (entity_type = 'email_flow')
         'renamed'              => 'renamed',
         'step_added'           => 'added a step',
@@ -1174,6 +1197,11 @@ function activityLink($entry) {
             // Emails list with the row's detail open.
             $qs = http_build_query(array_merge($clientPair, ['email' => (int)$entry['entity_id']]));
             return pagePath('emails') . '?' . $qs;
+
+        case 'page':
+            // Pages list with the row's detail sheet open.
+            $qs = http_build_query(array_merge($clientPair, ['page' => (int)$entry['entity_id']]));
+            return pagePath('pages') . '?' . $qs;
 
         case 'email_flow':
             // The flow page (slug from _meta; the list when the flow is gone).
@@ -1280,6 +1308,11 @@ if (!function_exists('activityParentName')) {
             case 'email_flow':
                 return ['thing' => 'flow', 'name' => $firstLine($meta['name'] ?? '', 80),
                         'parent' => '', 'parent_key' => 'email_flow:' . $id];
+            case 'page':
+                // Title, else the slug (the folder name) — pages-lib.php pageDisplayLabel() order.
+                $pgTitle = $firstLine($meta['title'] ?? '', 80);
+                return ['thing' => 'page', 'name' => $pgTitle !== '' ? $pgTitle : $firstLine($meta['slug'] ?? '', 80),
+                        'parent' => '', 'parent_key' => 'page:' . $id];
             case 'company':
                 // Studio → Clients: the company row itself (created / updated / logo_changed).
                 return ['thing' => 'client', 'name' => $firstLine($entry['company_name'] ?? '', 80),
@@ -1329,6 +1362,8 @@ if (!function_exists('activityDeepLink')) {
                 return clientUrl('projects', $qs) . '#task-' . $id;
             case 'email':
                 return clientUrl('emails', $qs + ['email' => $id]);
+            case 'page':
+                return clientUrl('pages', $qs + ['page' => $id]);
             case 'email_flow':
                 $flowSlug = (string)($meta['slug'] ?? '');
                 return function_exists('emailFlowUrl')
@@ -1531,6 +1566,10 @@ if (!function_exists('activityFinalizeRows')) {
                     if (!$many && $r['name'] !== '') { $objT = $r['name']; $objH = '<em>' . $h($r['name']) . '</em>'; }
                     else                             { $objT = $objH = $many ? $n . ' flows' : 'a flow'; }
                     break;
+                case 'page':
+                    if (!$many && $r['name'] !== '') { $objT = $r['name']; $objH = '<em>' . $h($r['name']) . '</em>'; }
+                    else                             { $objT = $objH = $many ? $n . ' pages' : 'a page'; }
+                    break;
                 case 'series':
                     if (!$many && $r['name'] !== '') { $objT = 'the ' . $r['name'] . ' series'; $objH = 'the <em>' . $h($r['name']) . '</em> series'; }
                     else                             { $objT = $objH = $many ? $n . ' series' : 'a series'; }
@@ -1585,7 +1624,8 @@ if (!function_exists('activityFinalizeRows')) {
                           : ($r['thing'] === 'post' ? ($many ? $n . ' posts' : 'a post')
                           : ($r['thing'] === 'email' ? ($many ? $n . ' emails' : 'an email')
                           : ($r['thing'] === 'flow' ? ($many ? $n . ' flows' : 'a flow')
-                          : ($r['thing'] === 'series' ? ($many ? $n . ' series' : 'a series') : $objT)))));
+                          : ($r['thing'] === 'page' ? ($many ? $n . ' pages' : 'a page')
+                          : ($r['thing'] === 'series' ? ($many ? $n . ' series' : 'a series') : $objT))))));
                     $t = "$who removed $kind"; $hh = "$whoH removed " . $h($kind); break;
                 // tire series (entity_type = 'tire_series') + renders
                 case 'scanned':
@@ -1593,7 +1633,12 @@ if (!function_exists('activityFinalizeRows')) {
                     $t = "$who added new renders to $objT"; $hh = "$whoH added new renders to $objH"; break;
                 case 'uploaded':
                     $verb = 'uploaded'; $icon = 'photo'; $tone = 'accent';
-                    $t = "$who uploaded renders to $objT"; $hh = "$whoH uploaded renders to $objH"; break;
+                    // pages (entity_type = 'page'): files, not renders
+                    $what = $r['entity_type'] === 'page' ? 'files' : 'renders';
+                    $t = "$who uploaded $what to $objT"; $hh = "$whoH uploaded $what to $objH"; break;
+                case 'deleted_file':
+                    $verb = 'removed a file'; $icon = 'xmark'; $tone = 'neutral';
+                    $t = "$who removed a file from $objT"; $hh = "$whoH removed a file from $objH"; break;
                 case 'set_reference':
                     $verb = 'made the reference'; $icon = 'photo'; $tone = 'neutral';
                     $t = "$who made $objT the reference"; $hh = "$whoH made $objH the reference"; break;
@@ -1667,6 +1712,7 @@ if (!function_exists('activityFinalizeRows')) {
             if ($r['entity_type'] === 'task' && $icon === 'ellipsis') $icon = 'checklist';
             if ($r['entity_type'] === 'email' && $icon === 'ellipsis') $icon = 'mail';
             if ($r['entity_type'] === 'email_flow' && $icon === 'ellipsis') $icon = 'mail';
+            if ($r['entity_type'] === 'page' && in_array($icon, ['ellipsis', 'mail', 'photo'], true)) $icon = 'page';
             // One comment → quote it inline; several → the disclosure lists them.
             if (count($r['children']) === 1) {
                 $q = $r['children'][0]['text'];

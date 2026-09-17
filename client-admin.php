@@ -8,14 +8,15 @@
  *   action=update         id*, name*, slug*, feature_label
  *   action=logo_upload    id*, logo* (file)
  *   action=logo_remove    id*
- *   action=module_toggle  id*, module=tires|emails, to=1|0     (company_modules row)
+ *   action=module_toggle  id*, module=tires|emails|pages, to=1|0     (company_modules row)
  *   action=delete         → 405, never implemented here
  *
  * Slug: [a-z0-9-]{2,40}, unique (409 when taken). Logo: an image by content (getimagesize
  * + finfo agree: PNG / JPEG / GIF / WebP), ≤ 2 MB, resized with GD to fit 512×512 (aspect
  * kept), written as uploads/logo_<slug>.png (JPEG stays .jpg); companies.logo_url is set to
  * that app-relative path, which brandLogoUrl() re-roots under the current folder. Renaming a
- * slug renames a managed logo file with it.
+ * slug renames a managed logo file with it and moves the client's media/pages/<slug>/ folder
+ * (uploaded Pages live under the company slug; pages-lib.php) — both realpath-contained.
  *
  * Replies JSON ({ok, …, redirect}) when the request accepts JSON (studio.js fetch); a plain
  * form post is redirected back to studio.php?tab=clients with msg= / err= instead.
@@ -240,11 +241,27 @@ switch ($action) {
         $changed = [];
         foreach (['name', 'slug', 'feature_label'] as $k) { if ((string)($co[$k] ?? '') !== $f[$k]) $changed[] = $k; }
         $logoUrl = (string)$co['logo_url'];
+        $pagesMoveWarning = '';
         if (in_array('slug', $changed, true)) {
             // A managed logo file follows the slug (uploads/logo_<old>.<ext> → logo_<new>.<ext>).
             if (preg_match('#^uploads/logo_' . preg_quote((string)$co['slug'], '#') . '\.(png|jpe?g|gif|webp)$#', $logoUrl, $m) && is_file(__DIR__ . '/' . $logoUrl)) {
                 $newRel = 'uploads/logo_' . $f['slug'] . '.' . $m[1];
                 if (@rename(__DIR__ . '/' . $logoUrl, __DIR__ . '/' . $newRel)) { $logoUrl = $newRel; }
+            }
+            // Uploaded Pages live in media/pages/<company-slug>/… — move the folder so their files stay reachable.
+            // Both ends must be plain [a-z0-9-] slugs, the source must be a real (non-symlink) folder directly
+            // under media/pages/ (realpath agrees), and the target must not exist yet.
+            if (function_exists('pagesMediaRootPath') && caValidSlug((string)$co['slug']) && caValidSlug($f['slug'])) {
+                $pRoot = pagesMediaRootPath();
+                $pOld  = $pRoot . '/' . $co['slug'];
+                $pNew  = $pRoot . '/' . $f['slug'];
+                if (is_dir($pOld) && !is_link($pOld)) {
+                    $rootReal = realpath($pRoot); $oldReal = realpath($pOld);
+                    $contained = $rootReal !== false && $oldReal !== false && $oldReal === rtrim($rootReal, '/') . '/' . $co['slug'];
+                    if (!$contained || file_exists($pNew) || !@rename($pOld, $pNew)) {
+                        $pagesMoveWarning = ' The pages folder media/pages/' . $co['slug'] . '/ could not be moved to media/pages/' . $f['slug'] . '/ — move it by hand or the client\'s uploaded pages will not load.';
+                    }
+                }
             }
         }
         if ($changed) {
@@ -258,7 +275,7 @@ switch ($action) {
             caLog($pdo, $id, 'updated', 'Client updated: ' . $f['name'], implode(', ', $changed));
         }
         if ($scope !== '' && $scope === (string)$co['slug']) $scope = $f['slug'];   // the scoped client was renamed: follow it
-        $msg = $changed ? 'Saved ' . implode(', ', array_map(static fn($k) => str_replace('_', ' ', $k), $changed)) . ' for ' . $f['name'] . '.' : 'Nothing changed.';
+        $msg = ($changed ? 'Saved ' . implode(', ', array_map(static fn($k) => str_replace('_', ' ', $k), $changed)) . ' for ' . $f['name'] . '.' : 'Nothing changed.') . $pagesMoveWarning;
         caReply(200, ['message' => $msg, 'id' => $id, 'slug' => $f['slug'], 'name' => $f['name'], 'changed' => $changed, 'logo_url' => $logoUrl], $scope, $id);
     }
 
@@ -293,7 +310,7 @@ switch ($action) {
         $co = caCompany($pdo, $id);
         if (!$co) caReply(404, ['error' => 'Unknown client.'], $scope);
         $module = strtolower(trim((string)($_POST['module'] ?? '')));
-        if (!in_array($module, ['tires', 'emails'], true)) caReply(400, ['error' => 'Unknown module.'], $scope, $id);
+        if (!in_array($module, ['tires', 'emails', 'pages'], true)) caReply(400, ['error' => 'Unknown module.'], $scope, $id);
         $on = (int)($_POST['to'] ?? -1);
         if ($on !== 0 && $on !== 1) caReply(400, ['error' => 'to must be 1 or 0.'], $scope, $id);
         $st = $pdo->prepare("SELECT id FROM modules WHERE slug = ?");
@@ -306,7 +323,7 @@ switch ($action) {
         $flipped = false;
         if ($on === 1 && !$had)    { $pdo->prepare("INSERT IGNORE INTO company_modules (company_id, module_id, sort_order) VALUES (?, ?, ?)")->execute([$id, $mid, 99]); $flipped = true; }
         elseif ($on === 0 && $had) { $pdo->prepare("DELETE FROM company_modules WHERE company_id = ? AND module_id = ?")->execute([$id, $mid]); $flipped = true; }
-        $label = $module === 'tires' ? 'Tires tab' : 'Emails tab';
+        $label = ['tires' => 'Tires tab', 'emails' => 'Emails tab', 'pages' => 'Pages tab'][$module];
         if ($flipped) caLog($pdo, $id, 'updated', ($on ? 'Enabled ' : 'Disabled ') . $label . ' for ' . $co['name'], $module . ($on ? ' on' : ' off'));
         caReply(200, ['message' => $label . ($on ? ' enabled' : ' disabled') . ' for ' . $co['name'] . '.', 'id' => $id, 'module' => $module, 'enabled' => $on === 1], $scope, $id);
     }

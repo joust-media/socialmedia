@@ -1150,3 +1150,7 @@ if (!function_exists('emailValidUrl')) {
 // Flows (email_flows / email_flow_steps): hasEmailFlowsTable, emailFlowsForCompany, emailFlowSteps, …
 // Function definitions only — no DB work at load; see scratchpad flows-design.md.
 require_once __DIR__ . "/flows-lib.php";
+
+// Pages (pages / page_files): hasPagesTable, companyHasPages, pagesForCompany, pageViewUrl, …
+// Function definitions only — no DB work at load; see scratchpad pages-design.md.
+require_once __DIR__ . "/pages-lib.php";

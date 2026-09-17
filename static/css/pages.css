@@ -1,0 +1,181 @@
+/* =====================================================================
+   Joust client portal — Pages module
+   Loads after tokens/base/components/motion AND posts.css (the list and
+   detail reuse .pl-* / .pd-* from there). Self-contained twin of emails.css:
+     .pages-*  page chrome (toolbar, search)
+     .pgl-*    the page list row extras (icon tile, slug)
+     .pg-*     the page detail (preview frame, meta list, files, admin tools)
+               + the add-page.php file uploader
+   Only transform/opacity are animated.
+   ===================================================================== */
+
+/* ---------------------------------------------------------------------
+   Page chrome
+   --------------------------------------------------------------------- */
+.pages-toolbar { margin-bottom: 12px; }
+.pages-filters { display: flex; flex-direction: column; gap: 10px; margin: 0 0 16px; }
+.pages-search { display: flex; gap: 8px; align-items: center; }
+.pages-search-input { flex: 1 1 auto; min-width: 0; }
+
+/* ---------------------------------------------------------------------
+   List rows — .pl-item/.pl-card from posts.css with an icon tile
+   --------------------------------------------------------------------- */
+.pgl-card { --row-inset: 84px; }                                /* 16 + 56 tile + 12 gap */
+li + li > .pgl-card::before { left: 84px; }
+.pgl-tile {
+  width: 56px; height: 56px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-thumb);
+  background: var(--fill-tertiary); color: var(--label-secondary);
+}
+.pgl-tile .ui-icon { width: 26px; height: 26px; }
+.pgl-tile--pending  { background: rgba(255,149,0,.15);  color: var(--pending); }
+.pgl-tile--approved { background: rgba(52,199,89,.15);  color: var(--approve); }
+.pgl-tile--denied   { background: rgba(255,59,48,.15);  color: var(--deny); }
+.pgl-tile--live     { background: rgba(88,86,214,.15);  color: var(--scheduled); }
+.pgl-slug { -webkit-line-clamp: 1; display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+.pgl-slug code { font-family: var(--font-mono); font-size: 12px; color: var(--label-secondary); flex: 0 0 auto; }
+.pgl-desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.pg-source {
+  display: inline-block; padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--fill-tertiary); color: var(--label-secondary);
+  font-size: var(--text-caption); line-height: var(--lh-caption); font-weight: 600; letter-spacing: 0;
+  white-space: nowrap;
+}
+.pg-source--url { background: rgba(0,122,255,.12); color: var(--accent); }
+/* Queue actions align under the row body (56px tile) */
+.pgl-item.pl-item--queue .pl-queue-actions { padding-left: 84px; }
+@media (max-width: 479px) { .pgl-item.pl-item--queue .pl-queue-actions { padding-left: 16px; } }
+
+/* ---------------------------------------------------------------------
+   Detail — preview frame
+   --------------------------------------------------------------------- */
+.pg-head { flex-wrap: wrap; row-gap: 4px; }
+.pg-head .pd-type, .pg-head .pd-edited { white-space: nowrap; }
+.pg-head .pd-edited { margin-left: auto; }
+.pg-preview { margin: 0 -16px; padding: 0 16px 4px; }
+.pg-preview-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.pg-preview-toggle .ui-segmented-item { min-height: 28px; padding: 3px 12px; }
+.pg-preview-open { margin-right: -8px; }
+.pg-frame-wrap {
+  position: relative;
+  height: 70vh; min-height: 320px; max-height: 760px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #fff;                                    /* landing pages expect a white canvas in both themes */
+  box-shadow: 0 0 0 0.5px var(--separator);
+}
+.pg-frame {
+  display: block; border: 0;
+  width: 1280px; height: 100%;
+  transform-origin: 0 0;
+  background: #fff;
+}
+.pg-frame-wrap[data-preview-w="390"] { background: var(--fill-tertiary); }
+.pg-frame-wrap[data-preview-w="390"] .pg-frame { box-shadow: 0 0 0 0.5px var(--separator); background: #fff; }
+.pg-preview-hint { margin: 6px 2px 0; font-size: var(--text-caption); line-height: var(--lh-caption); }
+.pg-preview-hint a { color: var(--accent); text-decoration: none; }
+.pg-preview-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  min-height: 180px; padding: 24px;
+  border-radius: 12px;
+  background: var(--fill-tertiary); color: var(--label-secondary);
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); font-weight: 600;
+  text-align: center;
+}
+.pg-preview-empty .text-tertiary { font-weight: 400; font-size: var(--text-footnote); }
+.pg-preview-empty-icon { width: 32px; height: 32px; color: var(--label-tertiary); margin-bottom: 4px; }
+
+/* ---------------------------------------------------------------------
+   Detail — description, meta list, files
+   --------------------------------------------------------------------- */
+.pg-desc { margin: 14px 0 0; }
+.pg-desc-text { margin: 4px 0 0; font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead); }
+.pg-meta {
+  margin: 12px 0 4px; padding: 4px 14px;
+  border-radius: 12px;
+  background: var(--fill-tertiary);
+}
+.pg-meta-row { display: flex; gap: 12px; padding: 9px 0; }
+.pg-meta-row + .pg-meta-row { box-shadow: 0 -0.5px 0 var(--separator); }
+.pg-meta dt {
+  flex: 0 0 92px;
+  font-size: var(--text-caption); line-height: var(--lh-caption); letter-spacing: 0.2px;
+  font-weight: 600; text-transform: uppercase; color: var(--label-secondary);
+  padding-top: 2px;
+}
+.pg-meta dd {
+  flex: 1 1 auto; min-width: 0; margin: 0;
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead);
+  overflow-wrap: anywhere;
+}
+.pg-pre { white-space: pre-wrap; }
+.pg-code { font-family: var(--font-mono); font-size: 13px; }
+.pg-url { color: var(--accent); text-decoration: none; word-break: break-all; }
+.pg-notes-pill { margin-left: 6px; vertical-align: 1px; }
+.pg-files { margin: 14px 0 0; }
+.pg-file-list { margin: 6px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.pg-file {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 0;
+  font-size: var(--text-subhead); line-height: var(--lh-subhead);
+}
+.pg-file + .pg-file { box-shadow: 0 -0.5px 0 var(--separator); }
+.pg-file-name { flex: 1 1 auto; min-width: 0; font-family: var(--font-mono); font-size: 13px; color: var(--label); text-decoration: none; overflow-wrap: anywhere; }
+a.pg-file-name:hover { color: var(--accent); }
+.pg-file-meta { color: var(--label-secondary); font-size: var(--text-footnote); white-space: nowrap; }
+.pg-file-entry-tag { color: var(--approve); font-weight: 600; }
+.pg-file--entry .pg-file-name { font-weight: 600; }
+.pg-file-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.pg-files-empty { margin: 6px 0 0; }
+.pg-files-empty[hidden] { display: none; }   /* .studio-help sets display, so the attribute alone would lose */
+
+/* ---------------------------------------------------------------------
+   Detail — footer: admin status control + tools
+   --------------------------------------------------------------------- */
+.pg-status-ctl { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px; }
+.pg-status-ctl[hidden] { display: none; }
+.pg-status-ctl-label {
+  font-size: var(--text-caption); line-height: var(--lh-caption); letter-spacing: 0.2px;
+  font-weight: 600; text-transform: uppercase; color: var(--label-secondary);
+}
+.pg-status-ctl .ui-segmented-item {
+  flex: 1 1 auto; padding-inline: 6px; gap: 0;
+  font-size: var(--text-caption); letter-spacing: 0;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.page-pages .pd-actions .ui-btn--large {
+  padding-inline: 10px;
+  font-size: var(--text-subhead); letter-spacing: var(--ls-subhead);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.page-pages .pd-decide > .ui-btn, .page-pages .pd-admin-denied > .ui-btn { flex: 1 1 0; }
+.pg-admin-tools { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.pg-admin-tools .ui-btn .ui-icon { width: 14px; height: 14px; }
+.pg-delete { color: var(--deny); }
+.pd-state--draft { color: var(--label-secondary); background: var(--fill-tertiary); }
+.pd-decide[hidden], .pd-admin-draft[hidden], .pd-admin-approved[hidden], .pd-admin-denied[hidden], .pd-admin-live[hidden] { display: none; }
+
+/* ---------------------------------------------------------------------
+   add-page.php — file uploader card
+   --------------------------------------------------------------------- */
+.studio-page-files[hidden] { display: none; }
+.pg-subfolder { margin-top: 10px; max-width: 360px; }
+.pg-file-list--admin { margin-top: 12px; }
+.studio-page-form .studio-help code { font-family: var(--font-mono); font-size: var(--text-caption); word-break: break-all; }
+[data-page-when-source][hidden] { display: none; }
+
+/* ---------------------------------------------------------------------
+   Desktop: the detail is a right panel and the list stays usable (posts.css twin)
+   --------------------------------------------------------------------- */
+@media (min-width: 1024px) {
+  .page-pages .ui-sheet-root.is-detail .ui-sheet-backdrop { background: transparent; pointer-events: none; }
+  .page-pages .ui-sheet-root.is-detail .ui-sheet { box-shadow: var(--shadow-panel), -0.5px 0 0 var(--separator); }
+  .page-pages .pl-item.is-open .pl-card { background: var(--fill-tertiary); }
+  .pg-frame-wrap { height: 62vh; }
+}
+@media (min-width: 1440px) {
+  .page-pages:has(.ui-sheet-root.is-detail.is-open) .ui-nav-inner,
+  .page-pages:has(.ui-sheet-root.is-detail.is-open) .ui-page { margin-right: 480px; }
+}

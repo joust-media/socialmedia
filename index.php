@@ -161,6 +161,15 @@ if ($hasEmails) {
 }
 $pendingEmails = (int)$emailCounts['pending'];
 
+// Pages (module-gated; pages-lib.php): pending = awaiting the client, the same
+// rule as the Pages tab badge. Nothing here runs for a company without the module.
+$hasPages   = function_exists('companyHasPages') && companyHasPages($client, $pdo);
+$pageCounts = ['draft' => 0, 'pending' => 0, 'approved' => 0, 'denied' => 0, 'live' => 0, 'total' => 0];
+if ($hasPages) {
+    try { $pageCounts = pageCounts($pdo, $cid); } catch (Throwable $e) { error_log('index pages query failed: ' . $e->getMessage()); }
+}
+$pendingPages = (int)$pageCounts['pending'];
+
 // ---------------------------------------------------------------------
 // Coming up — next 3 approved or scheduled posts from today onwards,
 // merged with the Live emails above (date order; an email's send date is
@@ -218,6 +227,7 @@ if ($hasLog) {
 // ---------------------------------------------------------------------
 $needsPosts  = 0;
 $needsEmails = 0;
+$needsPages  = 0;
 $needsAssets = ['tire' => 0, 'library' => 0];
 $needsNotes  = [];
 if ($isAdmin) {
@@ -303,6 +313,43 @@ if ($isAdmin) {
                 }
                 if ($emailNotes) {
                     $needsNotes = array_merge($needsNotes, $emailNotes);
+                    usort($needsNotes, static function ($a, $b) { return $b['ts'] <=> $a['ts']; });
+                    $needsNotes = array_slice($needsNotes, 0, 3);
+                }
+            }
+        }
+
+        // Pages: same shape as the emails query — the newest client note per
+        // Needs-changes page, merged with the other notes by time.
+        if ($hasPages) {
+            $needsPages = (int)$pageCounts['denied'];
+            if ($hasLog && $needsPages > 0) {
+                $st = $pdo->prepare("
+                    SELECT c.entity_id, c.detail, c.created_at, pg.title, pg.slug
+                      FROM activity_log c
+                     INNER JOIN pages pg ON pg.id = c.entity_id
+                     WHERE c.company_id = ? AND c.entity_type = 'page' AND c.action = 'commented' AND c.actor = 'client'
+                       AND c.detail IS NOT NULL AND c.detail <> '' AND pg.status = 'denied' AND pg.live = 0
+                     ORDER BY c.created_at DESC, c.id DESC
+                     LIMIT 12
+                ");
+                $st->execute([$cid]);
+                $seen = []; $pageNotes = [];
+                foreach ($st->fetchAll() as $r) {
+                    $pid = (int)$r['entity_id'];
+                    if (isset($seen[$pid])) continue;       // one note per page — the newest
+                    $seen[$pid] = true;
+                    $pageNotes[] = [
+                        'text' => trim((string)$r['detail']),
+                        'on'   => pageDisplayLabel(['id' => $pid, 'title' => $r['title'] ?? '', 'slug' => $r['slug'] ?? '']),
+                        'when' => relativeTime($r['created_at']),
+                        'href' => pageUrl(['id' => $pid]),
+                        'ts'   => (int)strtotime((string)$r['created_at']),
+                    ];
+                    if (count($pageNotes) >= 3) break;
+                }
+                if ($pageNotes) {
+                    $needsNotes = array_merge($needsNotes, $pageNotes);
                     usort($needsNotes, static function ($a, $b) { return $b['ts'] <=> $a['ts']; });
                     $needsNotes = array_slice($needsNotes, 0, 3);
                 }
@@ -406,6 +453,7 @@ if ($isAdmin) {
         error_log('index needs-changes query failed: ' . $e->getMessage());
         $needsPosts  = 0;
         $needsEmails = 0;
+        $needsPages  = 0;
         $needsAssets = ['tire' => 0, 'library' => 0];
         $needsNotes  = [];
     }
@@ -441,6 +489,15 @@ if ($pendingEmails > 0) {
         'index' => count($cards),
     ]);
 }
+if ($pendingPages > 0) {
+    $cards[] = actionCard([
+        'count' => $pendingPages, 'noun' => 'page',
+        'one'   => 'is ready for your review', 'many' => 'ready for your review',
+        'href'  => pagesUrl(['status' => 'pending']),
+        'icon'  => 'page', 'subtitle' => 'Pages · To Review', 'tone' => 'accent',
+        'index' => count($cards),
+    ]);
+}
 if ($pendingLibrary > 0) {
     $cards[] = actionCard([
         'count' => $pendingLibrary, 'noun' => 'image',
@@ -472,16 +529,17 @@ if ($pendingCollections > 0) {
 <?php
   $queueUrl      = clientUrl('posts', ['status' => 'denied', 'month' => 'all']);
   $emailQueueUrl = $needsEmails > 0 ? emailsUrl(['status' => 'denied']) : '';
+  $pageQueueUrl  = $needsPages > 0 ? pagesUrl(['status' => 'denied']) : '';
   $assetsTotal   = $needsAssets['tire'] + $needsAssets['library'];
   $assetsUrl     = clientUrl('assets', ['view' => $needsAssets['library'] > 0 ? 'library' : 'collections', 'filter' => 'denied']);
 ?>
-<section class="home-section" aria-labelledby="home-changes" data-needs-changes="<?= (int)$needsPosts ?>"<?= $needsEmails > 0 ? ' data-needs-changes-emails="' . (int)$needsEmails . '"' : '' ?>>
+<section class="home-section" aria-labelledby="home-changes" data-needs-changes="<?= (int)$needsPosts ?>"<?= $needsEmails > 0 ? ' data-needs-changes-emails="' . (int)$needsEmails . '"' : '' ?><?= $needsPages > 0 ? ' data-needs-changes-pages="' . (int)$needsPages . '"' : '' ?>>
   <div class="home-section-head">
     <h2 class="ui-list-header" id="home-changes">Needs changes</h2>
-    <?php if ($needsPosts > 0): ?><a href="<?= h($queueUrl) ?>">Open queue</a><?php elseif ($needsEmails > 0): ?><a href="<?= h($emailQueueUrl) ?>">Open queue</a><?php endif; ?>
+    <?php if ($needsPosts > 0): ?><a href="<?= h($queueUrl) ?>">Open queue</a><?php elseif ($needsEmails > 0): ?><a href="<?= h($emailQueueUrl) ?>">Open queue</a><?php elseif ($needsPages > 0): ?><a href="<?= h($pageQueueUrl) ?>">Open queue</a><?php endif; ?>
   </div>
   <?php
-    if ($needsPosts + $needsEmails + $assetsTotal === 0) {
+    if ($needsPosts + $needsEmails + $needsPages + $assetsTotal === 0) {
         echo actionCardCaughtUp('Nothing waiting on you', 'No change requests from ' . $client['name'] . ' right now.');
     } else {
         $changeCards = [];
@@ -500,6 +558,15 @@ if ($pendingCollections > 0) {
                 'one'   => 'needs changes', 'many' => 'need changes',
                 'href'  => $emailQueueUrl,
                 'icon'  => 'mail', 'subtitle' => 'Emails · Needs changes · client notes inside', 'tone' => 'deny',
+                'index' => count($changeCards),
+            ]);
+        }
+        if ($needsPages > 0) {
+            $changeCards[] = actionCard([
+                'count' => $needsPages, 'noun' => 'page',
+                'one'   => 'needs changes', 'many' => 'need changes',
+                'href'  => $pageQueueUrl,
+                'icon'  => 'page', 'subtitle' => 'Pages · Needs changes · client notes inside', 'tone' => 'deny',
                 'index' => count($changeCards),
             ]);
         }

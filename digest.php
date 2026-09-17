@@ -221,6 +221,8 @@ function render_summary(array $rows, int $leftover, array $config) {
     $postIds = [];
     $emailLabels = [];
     $emailIds = [];
+    $pageLabels = [];
+    $pageIds = [];
     $flowLabels = [];
     $flowIds = [];
     $imageLabels = [];
@@ -232,6 +234,7 @@ function render_summary(array $rows, int $leftover, array $config) {
             if ($e['entity_type'] === 'post')        $postIds[]   = (int)$e['entity_id'];
             if ($e['entity_type'] === 'email')       $emailIds[]  = (int)$e['entity_id'];
             if ($e['entity_type'] === 'email_flow')  $flowIds[]   = (int)$e['entity_id'];
+            if ($e['entity_type'] === 'page')        $pageIds[]   = (int)$e['entity_id'];
             if ($e['entity_type'] === 'tire_image')  $imageIds[]  = (int)$e['entity_id'];
             if ($e['entity_type'] === 'tire_series') $seriesIds[] = (int)$e['entity_id'];
         }
@@ -297,6 +300,19 @@ function render_summary(array $rows, int $leftover, array $config) {
             $flowLabels = [];
         }
     }
+    if ($pageIds && function_exists('hasPagesTable') && hasPagesTable($pdo)) {
+        $pageIds = array_values(array_unique($pageIds));
+        $ph = implode(',', array_fill(0, count($pageIds), '?'));
+        try {
+            $s = $pdo->prepare("SELECT id, title, slug FROM pages WHERE id IN ($ph)");
+            $s->execute($pageIds);
+            foreach ($s->fetchAll() as $r) {
+                $pageLabels[(int)$r['id']] = 'Page ' . pageDisplayLabel($r);
+            }
+        } catch (Throwable $e) {
+            $pageLabels = [];
+        }
+    }
     if ($emailIds && function_exists('hasEmailsTable') && hasEmailsTable($pdo)) {
         $emailIds = array_values(array_unique($emailIds));
         $ph = implode(',', array_fill(0, count($emailIds), '?'));
@@ -353,6 +369,8 @@ function render_summary(array $rows, int $leftover, array $config) {
                 $entityLabel = $emailLabels[(int)$e['entity_id']] ?? ('Email #' . (int)$e['entity_id']);
             } elseif ($e['entity_type'] === 'email_flow') {
                 $entityLabel = $flowLabels[(int)$e['entity_id']] ?? ('Flow #' . (int)$e['entity_id']);
+            } elseif ($e['entity_type'] === 'page') {
+                $entityLabel = $pageLabels[(int)$e['entity_id']] ?? ('Page #' . (int)$e['entity_id']);
             } else {
                 $entityLabel = ucfirst($e['entity_type']) . ' #' . (int)$e['entity_id'];
             }
