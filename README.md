@@ -136,6 +136,14 @@ join the Approved Pool and the composer like any tire image.
   reference** (moves the image to the tire's reference set, sort_order 0) and **Delete image…**
   (row + file + thumb). Series renders show in the Approved Pool grouped per collection with
   series chips.
+- **Comments** (every Assets image — library and tire, any status, both seats): the viewer has a
+  "Comments (N)" panel under Approve / Deny with the image's thread (deny notes and replies, client
+  vs Joust bubbles) and a composer (Enter sends on desktop). The thread is fetched per image
+  (`assets.php?…&partial=comments&kind=tire|library&id=<id>` → `{count, html}`); posting is
+  `action=comment {id, comment}` to `tire-status.php` / `library-status.php` (1–2000 characters,
+  tenant-checked, same-site). Tiles with comments carry a count bubble (one grouped query per
+  page); the admin's Home "Latest notes" merges client comments on assets from the last 7 days
+  with the post / email notes, each linking to the viewer.
 - **Thumbnails**: `<series>/.thumbs/<stem>.jpg` (max 640 px) are generated with GD, up to 40 per
   page view, so a 200-image grid stays light; the viewer / downloads / posts use the original.
 - **Migration**: `migrate.php` steps 25–26 create `tire_series` and add `tire_images.series_id`

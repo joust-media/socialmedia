@@ -215,6 +215,39 @@ function clientNavItems(PDO $pdo, $client) {
 }
 
 /**
+ * Should this company see the Tires tab (assets.php?view=collections)? True when
+ * the 'tires' module is enabled for it (company_modules) OR at least one tires row
+ * exists, so the tab appears as soon as data does. Mirrors companyHasEmails():
+ * two LIMIT 1 probes, fetch() not COUNT, cached per company id for the request.
+ * The tab's label is companies.feature_label ("Tires" for Kenda) — see partials/tabbar.php.
+ */
+function companyHasTires(array $company, ?PDO $pdo = null): bool {
+    static $cache = [];
+    $cid = (int)($company['id'] ?? 0);
+    if ($cid <= 0) return false;
+    if (array_key_exists($cid, $cache)) return $cache[$cid];
+    if ($pdo === null) { $pdo = $GLOBALS['pdo'] ?? null; }
+    if (!$pdo instanceof PDO) return false;
+    try {
+        $s = $pdo->prepare("
+            SELECT cm.company_id
+              FROM company_modules cm
+             INNER JOIN modules m ON m.id = cm.module_id
+             WHERE cm.company_id = ? AND m.slug = 'tires'
+             LIMIT 1
+        ");
+        $s->execute([$cid]);
+        if ($s->fetch()) return $cache[$cid] = true;
+        $s = $pdo->prepare("SELECT id FROM tires WHERE company_id = ? LIMIT 1");
+        $s->execute([$cid]);
+        return $cache[$cid] = (bool)$s->fetch();
+    } catch (Throwable $e) {
+        error_log('companyHasTires failed: ' . $e->getMessage());
+        return $cache[$cid] = false;
+    }
+}
+
+/**
  * Render the page chrome for a client page: the large-title nav bar plus the
  * role-aware tab bar (partials/navbar.php + partials/tabbar.php).
  *
@@ -722,6 +755,29 @@ function latestCommentDates(PDO $pdo, $entityType, array $entityIds) {
     $stmt->execute(array_merge([$entityType], $entityIds));
     $out = [];
     foreach ($stmt as $row) { $out[(int)$row['entity_id']] = $row['last_at']; }
+    return $out;
+}
+
+/**
+ * Number of comments per entity (the rows commentThread() would return), keyed
+ * by entity_id — ONE grouped query for a whole page of tiles (assets.php badges).
+ * Ids without a comment are simply absent.
+ */
+function commentCounts(PDO $pdo, $entityType, array $entityIds) {
+    if (!$entityIds) return [];
+    $entityIds = array_values(array_unique(array_map('intval', $entityIds)));
+    $placeholders = implode(',', array_fill(0, count($entityIds), '?'));
+    $stmt = $pdo->prepare("
+        SELECT entity_id, COUNT(*) AS n
+          FROM activity_log
+         WHERE entity_type = ? AND action = 'commented'
+           AND detail IS NOT NULL AND detail <> ''
+           AND entity_id IN ($placeholders)
+         GROUP BY entity_id
+    ");
+    $stmt->execute(array_merge([$entityType], $entityIds));
+    $out = [];
+    foreach ($stmt->fetchAll() as $row) { $out[(int)$row['entity_id']] = (int)$row['n']; }
     return $out;
 }
 

@@ -27,17 +27,27 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
  * "Open video / Download" card when the browser can't decode the file
  * (e.g. .mov in Chrome). The card lives inside the slide, not in this shell.
  *
+ * Comments panel (below the actions, both seats, every status): "Comments (N)"
+ * toggle → the image's thread (commentThreadHtml() markup, fetched lazily from
+ * $viewerCommentsEndpoint + &kind=&id= when the panel opens or the image changes)
+ * and a composer posting action=comment {id, comment} to the item's endpoint
+ * (tire-status.php / library-status.php, which tenant-check and cap at 2000).
+ * Enter sends on desktop (pointer: fine), the button on touch; ←/→ keep working
+ * while the textarea is not focused.
+ *
  * Variables from the including scope (all optional, unset afterwards):
  *   $viewerId     default 'uiViewer'
  *   $viewerAdmin  bool — default isAdmin(); admin-only menu items are NOT rendered otherwise
- *   $viewerReplaceEndpoint  default basePath() . '/replace-image.php'
+ *   $viewerReplaceEndpoint   default basePath() . '/replace-image.php'
+ *   $viewerCommentsEndpoint  default clientUrl('assets.php', ['partial' => 'comments'])
  */
 $viewerId    = isset($viewerId) && $viewerId !== '' ? preg_replace('/[^a-zA-Z0-9_\-]/', '', (string)$viewerId) : 'uiViewer';
 $viewerAdmin = isset($viewerAdmin) ? (bool)$viewerAdmin : (function_exists('isAdmin') && isAdmin());
-$viewerReplaceEndpoint = isset($viewerReplaceEndpoint) ? (string)$viewerReplaceEndpoint : basePath() . '/replace-image.php';
+$viewerReplaceEndpoint  = isset($viewerReplaceEndpoint) ? (string)$viewerReplaceEndpoint : basePath() . '/replace-image.php';
+$viewerCommentsEndpoint = isset($viewerCommentsEndpoint) ? (string)$viewerCommentsEndpoint : clientUrl('assets.php', ['partial' => 'comments']);
 ?>
 <div class="ui-viewer" id="<?= esc($viewerId) ?>" data-viewer hidden aria-hidden="true" role="dialog" aria-modal="true" aria-label="Review image"
-     data-replace-endpoint="<?= esc($viewerReplaceEndpoint) ?>">
+     data-replace-endpoint="<?= esc($viewerReplaceEndpoint) ?>" data-comments-endpoint="<?= esc($viewerCommentsEndpoint) ?>">
   <header class="ui-viewer-top">
     <button type="button" class="ui-viewer-close" data-viewer-close aria-label="Close"><?= icon('xmark') ?></button>
     <div class="ui-viewer-heading">
@@ -84,6 +94,24 @@ $viewerReplaceEndpoint = isset($viewerReplaceEndpoint) ? (string)$viewerReplaceE
         <button type="submit" class="ui-btn ui-btn--deny" data-viewer-note-send disabled>Send &amp; deny</button>
       </div>
     </form>
+
+    <section class="ui-viewer-comments" data-viewer-comments aria-label="Comments">
+      <button type="button" class="ui-viewer-comments-toggle" data-viewer-comments-toggle aria-expanded="false" aria-controls="<?= esc($viewerId) ?>Comments">
+        <?= icon('bubble') ?><span class="ui-viewer-comments-label">Comments</span>
+        <span class="ui-viewer-comments-count" data-viewer-comments-count hidden>0</span>
+        <?= icon('chevron-down', 'ui-viewer-comments-chevron') ?>
+      </button>
+      <div class="ui-viewer-comments-panel" id="<?= esc($viewerId) ?>Comments" data-viewer-comments-panel hidden>
+        <div class="ui-viewer-thread" data-viewer-thread aria-live="polite"></div>
+        <form class="ui-viewer-composer" data-viewer-comment-form novalidate>
+          <label class="ui-visually-hidden" for="<?= esc($viewerId) ?>Comment">Add a comment</label>
+          <textarea class="ui-textarea ui-viewer-composer-input" id="<?= esc($viewerId) ?>Comment" data-viewer-comment-input rows="1" maxlength="2000" placeholder="Add a comment…"></textarea>
+          <button type="submit" class="ui-btn ui-btn--filled ui-btn--icon ui-viewer-composer-send" data-viewer-comment-send aria-label="Send" disabled>
+            <svg class="ui-icon ui-icon--arrow-up" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V4.5"/><path d="m5 11.5 7-7 7 7"/></svg>
+          </button>
+        </form>
+      </div>
+    </section>
   </div>
 
   <div class="ui-viewer-menu" data-viewer-menu role="menu" hidden>
@@ -99,4 +127,4 @@ $viewerReplaceEndpoint = isset($viewerReplaceEndpoint) ? (string)$viewerReplaceE
     <input type="file" class="ui-visually-hidden" data-viewer-replace-input accept="image/jpeg,image/png,image/gif,image/webp" tabindex="-1" aria-hidden="true">
   <?php endif; ?>
 </div>
-<?php unset($viewerId, $viewerAdmin, $viewerReplaceEndpoint); ?>
+<?php unset($viewerId, $viewerAdmin, $viewerReplaceEndpoint, $viewerCommentsEndpoint); ?>

@@ -186,6 +186,15 @@
 }
 .as-thumb-check .ui-icon { width: 13px; height: 13px; stroke-width: 3; }
 .as-thumb[data-status="approved"] .as-thumb-check { display: inline-flex; }
+
+/* Comment-count bubble (top-left; the status pill is bottom-left, check / select top-right) */
+.as-thumb-comments {
+  position: absolute; top: 6px; left: 6px;
+  gap: 3px; padding: 2px 6px 2px 5px; min-height: 20px; line-height: 14px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0; font-variant-numeric: tabular-nums;
+}
+.as-thumb-comments .ui-icon { width: 11px; height: 11px; }
+.as-thumb-comments[hidden] { display: none; }
 .as-thumb[data-status="denied"] img, .as-thumb[data-status="denied"] video, .as-thumb[data-status="denied"] .ui-video-tile { filter: grayscale(.6); opacity: .8; }   /* admin's Needs-changes filter only */
 
 /* Multi-select mode (batch Approve only) */
@@ -288,8 +297,8 @@ html:not(:has(.ui-tabbar)) .as-selectbar { bottom: 0; padding-bottom: max(10px, 
 .ui-viewer-slide {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
-  /* leave room for the bars so media is never hidden under glass */
-  padding: calc(64px + env(safe-area-inset-top)) 0 calc(96px + env(safe-area-inset-bottom));
+  /* leave room for the bars so media is never hidden under glass (bottom = actions + the Comments toggle row) */
+  padding: calc(64px + env(safe-area-inset-top)) 0 calc(136px + env(safe-area-inset-bottom));
   will-change: transform, opacity;
   transition: transform var(--dur-sheet) var(--ease-spring), opacity var(--dur-sheet) var(--ease-out);
 }
@@ -364,9 +373,60 @@ video.ui-viewer-media { width: 100%; background: #000; touch-action: auto; }
 .ui-viewer-note-hint { flex: 1 1 auto; margin: 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote); color: var(--label-secondary); }
 .ui-viewer-note-row .ui-btn { min-height: 40px; }
 
-/* "More" menu (anchored above the ⋯ button) */
+/* Comments panel — "Comments (N)" toggle row under the actions; thread + composer fold out below it */
+.ui-viewer-comments { max-width: 640px; margin: 6px auto 0; }
+.ui-viewer-comments-toggle {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; min-height: 36px; padding: 4px 8px;
+  border: 0; border-radius: 10px; background: transparent; color: var(--label-secondary);
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead); font-weight: 600;
+  text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.ui-viewer-comments-toggle:hover, .ui-viewer-comments-toggle:focus-visible, .ui-viewer-comments-toggle[aria-expanded="true"] { background: var(--fill-tertiary); color: var(--label); }
+.ui-viewer-comments-toggle .ui-icon { width: 18px; height: 18px; flex: 0 0 auto; }
+.ui-viewer-comments-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px;
+  background: var(--accent); color: #fff;
+  font-size: var(--text-caption); font-weight: 700; letter-spacing: 0; font-variant-numeric: tabular-nums;
+}
+.ui-viewer-comments-count[hidden] { display: none; }
+.ui-viewer-comments-chevron { margin-left: auto; transition: transform var(--dur-base) var(--ease-spring); }
+.ui-viewer-comments-toggle[aria-expanded="true"] .ui-viewer-comments-chevron { transform: rotate(180deg); }
+.ui-viewer-comments-panel { padding: 6px 0 0; animation: ui-fade-in var(--dur-base) var(--ease-out); }
+.ui-viewer-comments-panel[hidden] { display: none; }
+.ui-viewer-thread {
+  max-height: min(30vh, 260px); overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
+  padding: 2px 2px 8px; -webkit-overflow-scrolling: touch;
+}
+.ui-viewer-thread .ui-thread { gap: 8px; }
+.ui-viewer-thread .pd-msg { display: flex; flex-direction: column; }
+.ui-viewer-thread .pd-msg--client { align-items: flex-end; }
+.ui-viewer-thread .pd-msg--joust  { align-items: flex-start; }
+.ui-viewer-thread .ui-bubble { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ui-viewer-thread .ui-bubble--joust { background: rgba(118,118,128,.34); color: #fff; }
+.ui-viewer-thread .ui-bubble-meta { padding: 0 6px; color: var(--label-secondary); }
+.ui-viewer-thread .pd-thread-empty, .ui-viewer-thread-loading, .ui-viewer-thread-error {
+  margin: 6px 0 8px; text-align: center;
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote); color: var(--label-tertiary);
+}
+.ui-viewer-thread .pd-thread-empty[hidden] { display: none; }
+.ui-viewer-thread-error { color: var(--label-secondary); }
+.ui-viewer-composer { display: flex; align-items: flex-end; gap: 8px; }
+.ui-viewer-composer-input {
+  min-height: 40px; max-height: 120px; padding: 9px 12px; resize: none;
+  background: rgba(118,118,128,.22); color: #fff;
+}
+.ui-viewer-composer-send { width: 40px; height: 40px; min-height: 40px; flex: 0 0 auto; }
+.ui-viewer-composer-send .ui-icon { width: 20px; height: 20px; }
+.ui-viewer-composer-send[disabled] { opacity: .4; }
+/* With the panel open the bar is taller: keep the media above it */
+.ui-viewer.is-comments-open .ui-viewer-slide { padding-bottom: calc(136px + min(30vh, 260px) + 64px + env(safe-area-inset-bottom)); }
+
+/* "More" menu (anchored above the ⋯ button, which sits above the Comments row) */
 .ui-viewer-menu {
-  position: absolute; right: max(16px, env(safe-area-inset-right)); bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 4;
+  position: absolute; right: max(16px, env(safe-area-inset-right)); bottom: calc(126px + env(safe-area-inset-bottom)); z-index: 4;
   min-width: 220px; padding: 6px;
   background: rgba(36,36,38,.86); border-radius: 14px;
   -webkit-backdrop-filter: saturate(180%) blur(24px); backdrop-filter: saturate(180%) blur(24px);
@@ -428,6 +488,8 @@ video.ui-viewer-media { width: 100%; background: #000; touch-action: auto; }
   .as-thumb.is-flipping { transform: none !important; }
   .as-selectbar { transform: none; }
   .ui-viewer-menu, .ui-viewer-done-ring { animation: ui-fade-in var(--dur-fast) linear; }
+  .ui-viewer-comments-panel { animation: none; }
+  .ui-viewer-comments-chevron { transition: none; }
   .as-thumb:active, .as-chip:active, .ui-viewer-arrow:active { transform: none; }
   .ui-viewer-arrow:active { transform: translateY(-50%); }
 }

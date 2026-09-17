@@ -12,6 +12,9 @@
  *             a batch_id with the status-change row. commentThread($pdo,
  *             'library_image', $id) reads it back unchanged.
  *             REQUIRED (>= 3 chars) when status=denied → otherwise HTTP 422.
+ *   - action=comment — comment only (the viewer's Comments panel): `status` is
+ *             not needed and never changed; a non-empty message (>= 1 char
+ *             trimmed, <= 2000) becomes the 'commented' row; empty → HTTP 422.
  * Returns JSON { ok, id, status, comment }.
  */
 
@@ -37,13 +40,23 @@ $id      = (int)($_POST['id'] ?? 0);
 $status  = $_POST['status'] ?? '';
 $hasCmt  = array_key_exists('comment', $_POST);
 $comment = $hasCmt ? trim((string)$_POST['comment']) : '';
+// action=comment {id, comment}: a plain message in the image's thread (the viewer's
+// Comments panel), any status, client or admin. The status is left alone.
+$commentOnly = (($_POST['action'] ?? '') === 'comment');
 
 if ($id <= 0) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'Invalid id']);
     exit;
 }
-if (!in_array($status, ['pending', 'approved', 'denied'], true)) {
+if ($commentOnly) {
+    $status = '';
+    if (mb_strlen($comment, 'UTF-8') < 1) {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'Write a comment first.']);
+        exit;
+    }
+} elseif (!in_array($status, ['pending', 'approved', 'denied'], true)) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'Invalid status']);
     exit;
@@ -95,7 +108,7 @@ try {
     $actor     = actorFromPost();
     $batchId   = newBatchId();   // groups the status row and the comment row from this request
 
-    if ($row['status'] !== $status) {
+    if (!$commentOnly && $row['status'] !== $status) {
         $pdo->prepare("UPDATE library_images SET status = ? WHERE id = ?")
             ->execute([$status, $id]);
 
@@ -120,7 +133,7 @@ try {
     echo json_encode([
         'ok'      => true,
         'id'      => $id,
-        'status'  => $status,
+        'status'  => $commentOnly ? (string)$row['status'] : $status,
         'comment' => $comment !== '' ? $comment : null,
     ]);
 } catch (Exception $e) {

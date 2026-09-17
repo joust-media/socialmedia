@@ -211,8 +211,9 @@ if ($hasLog) {
 // queue; emails = Needs changes (denied, not live), the emails.php queue;
 // assets = denied tire / library images (assets.php filter=denied).
 // The latest client notes are activity_log 'commented' rows on those
-// posts / emails (a deny note is stored as one of these), newest first,
-// one per item, merged and capped at three.
+// posts / emails (a deny note is stored as one of these) plus the client's
+// comments on tire / library images from the last 7 days (any status, each
+// linking to the viewer), newest first, one per item, merged and capped at three.
 // ---------------------------------------------------------------------
 $needsPosts  = 0;
 $needsEmails = 0;
@@ -301,6 +302,100 @@ if ($isAdmin) {
                 }
                 if ($emailNotes) {
                     $needsNotes = array_merge($needsNotes, $emailNotes);
+                    usort($needsNotes, static function ($a, $b) { return $b['ts'] <=> $a['ts']; });
+                    $needsNotes = array_slice($needsNotes, 0, 3);
+                }
+            }
+        }
+
+        // Assets: the newest client comment per tire / library image from the last 7 days,
+        // whatever the image's status (a comment on an approved render is still a request),
+        // each deep-linking to the viewer. Merged with the post / email notes by time.
+        if ($hasLog) {
+            $st = $pdo->prepare("
+                SELECT c.entity_type, c.entity_id, c.detail, c.created_at
+                  FROM activity_log c
+                 WHERE c.company_id = ? AND c.entity_type IN ('tire_image', 'library_image')
+                   AND c.action = 'commented' AND c.actor = 'client'
+                   AND c.detail IS NOT NULL AND c.detail <> '' AND c.created_at >= ?
+                 ORDER BY c.created_at DESC, c.id DESC
+                 LIMIT 12
+            ");
+            $st->execute([$cid, date('Y-m-d H:i:s', time() - 7 * 86400)]);
+            $seen = []; $assetRows = [];
+            foreach ($st->fetchAll() as $r) {
+                $k = $r['entity_type'] . ':' . (int)$r['entity_id'];
+                if (isset($seen[$k])) continue;                 // one note per image — the newest
+                $seen[$k] = true;
+                $assetRows[] = $r;
+                if (count($assetRows) >= 3) break;
+            }
+            if ($assetRows) {
+                // Name the tire images "<series or tire> · <display label>" (one lookup; a row that no
+                // longer exists — image deleted — is dropped). Library images are just "an image in Library".
+                $tireIds = [];
+                foreach ($assetRows as $r) { if ($r['entity_type'] === 'tire_image') $tireIds[] = (int)$r['entity_id']; }
+                $imgMeta = [];
+                if ($tireIds) {
+                    $ph        = implode(',', array_fill(0, count($tireIds), '?'));
+                    $seriesOn  = function_exists('hasTireSeries') && hasTireSeries($pdo);
+                    $hasDn     = false;
+                    try { $hasDn = $pdo->query("SHOW COLUMNS FROM tire_images LIKE 'display_name'")->rowCount() > 0; } catch (Throwable $e) {}
+                    $dnSel     = $hasDn ? 'ti.display_name' : "'' AS display_name";
+                    $serSel    = $seriesOn ? 'ti.series_id' : 'NULL AS series_id';
+                    $st = $pdo->prepare("
+                        SELECT ti.id, ti.tire_id, ti.caption, {$dnSel}, {$serSel}, t.name AS tire_name
+                          FROM tire_images ti
+                         INNER JOIN tires t ON t.id = ti.tire_id
+                         WHERE t.company_id = ? AND ti.id IN ($ph)
+                    ");
+                    $st->execute(array_merge([$cid], $tireIds));
+                    $seriesIds = [];
+                    foreach ($st->fetchAll() as $r) {
+                        $sid = !empty($r['series_id']) ? (int)$r['series_id'] : 0;
+                        if ($sid > 0) $seriesIds[] = $sid;
+                        $imgMeta[(int)$r['id']] = [
+                            'tire_id'   => (int)$r['tire_id'],
+                            'series_id' => $sid,
+                            'tire_name' => trim((string)($r['tire_name'] ?? '')),
+                            'name'      => imageDisplayLabel(['display_name' => $r['display_name'] ?? '', 'caption' => $r['caption'] ?? '', 'id' => (int)$r['id']]),
+                        ];
+                    }
+                    $seriesNames = [];
+                    if ($seriesIds && $seriesOn) {
+                        try {
+                            $ph = implode(',', array_fill(0, count($seriesIds), '?'));
+                            $st = $pdo->prepare("SELECT id, name FROM tire_series WHERE id IN ($ph)");
+                            $st->execute(array_values(array_unique($seriesIds)));
+                            foreach ($st->fetchAll() as $r) { $seriesNames[(int)$r['id']] = (string)$r['name']; }
+                        } catch (Throwable $e) { $seriesNames = []; }
+                    }
+                }
+                $assetNotes = [];
+                foreach ($assetRows as $r) {
+                    $eid = (int)$r['entity_id'];
+                    if ($r['entity_type'] === 'tire_image') {
+                        if (!isset($imgMeta[$eid])) continue;
+                        $m = $imgMeta[$eid];
+                        $prefix = ($m['series_id'] > 0 && isset($seriesNames[$m['series_id']])) ? $seriesNames[$m['series_id']] : $m['tire_name'];
+                        $name = activityLooksLikeFilename($m['name']) ? 'an image' : $m['name'];
+                        $on   = ($prefix !== '' ? $prefix . ' · ' : '') . $name;
+                        $href = activityDeepLink(['entity_type' => 'tire_image', 'entity_id' => $eid, 'company_slug' => $client['slug'],
+                                                  '_meta' => ['tire_id' => $m['tire_id'], 'series_id' => $m['series_id']]]);
+                    } else {
+                        $on   = 'an image in Library';
+                        $href = activityDeepLink(['entity_type' => 'library_image', 'entity_id' => $eid, 'company_slug' => $client['slug']]);
+                    }
+                    $assetNotes[] = [
+                        'text' => trim((string)$r['detail']),
+                        'on'   => $on,
+                        'when' => relativeTime($r['created_at']),
+                        'href' => $href,
+                        'ts'   => (int)strtotime((string)$r['created_at']),
+                    ];
+                }
+                if ($assetNotes) {
+                    $needsNotes = array_merge($needsNotes, $assetNotes);
                     usort($needsNotes, static function ($a, $b) { return $b['ts'] <=> $a['ts']; });
                     $needsNotes = array_slice($needsNotes, 0, 3);
                 }
@@ -420,16 +515,18 @@ if ($pendingCollections > 0) {
             ]);
         }
         echo actionCardStack($changeCards);
-        if ($needsNotes) {
-            $notesHtml = '<ul class="home-notes" role="list">';
-            foreach ($needsNotes as $n) {
-                $q = mb_strlen($n['text']) > 160 ? rtrim(mb_substr($n['text'], 0, 159)) . '…' : $n['text'];
-                $notesHtml .= '<li><a class="home-note" href="' . h($n['href']) . '"><q>' . h($q) . '</q>'
-                            . '<span class="home-note-meta">on ' . h($n['on']) . ' · ' . h($n['when']) . '</span></a></li>';
-            }
-            $notesHtml .= '</ul>';
-            echo card($notesHtml, ['subtitle' => 'Latest notes from ' . $client['name'], 'class' => 'home-changes-notes']);
+    }
+    // Latest client notes: deny notes on posts / emails in the queues + comments on assets (any status),
+    // so a comment on an approved render still reaches Joust even when nothing is denied.
+    if ($needsNotes) {
+        $notesHtml = '<ul class="home-notes" role="list">';
+        foreach ($needsNotes as $n) {
+            $q = mb_strlen($n['text']) > 160 ? rtrim(mb_substr($n['text'], 0, 159)) . '…' : $n['text'];
+            $notesHtml .= '<li><a class="home-note" href="' . h($n['href']) . '"><q>' . h($q) . '</q>'
+                        . '<span class="home-note-meta">on ' . h($n['on']) . ' · ' . h($n['when']) . '</span></a></li>';
         }
+        $notesHtml .= '</ul>';
+        echo card($notesHtml, ['subtitle' => 'Latest notes from ' . $client['name'], 'class' => 'home-changes-notes']);
     }
   ?>
 </section>

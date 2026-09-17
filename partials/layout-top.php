@@ -18,7 +18,7 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
  *   $navLeading   raw HTML for the leading slot
  *   $navTrailing  raw HTML for the top-right slot (default: client avatar)
  *   $navLinks     [['label', 'href', 'primary' => bool], …] small button row under the title
- *   $activeTab    'home'|'assets'|'posts'|'projects'|'studio' (default: from script name)
+ *   $activeTab    'home'|'assets'|'tires'|'posts'|'emails'|'projects'|'studio' (default: from script name)
  *   $pageWide     true → 1200px content column (grids); default 720px
  *   $bodyClass    extra <body> classes
  *   $headExtra    raw HTML appended to <head> (page-specific <style>/<link>)

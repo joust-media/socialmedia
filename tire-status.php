@@ -6,6 +6,9 @@
  * Accepts POST: id (int = tire_images.id), and optionally:
  *   - status (pending|approved|denied)
  *   - comment (string, max 2000 chars; '' clears it)
+ *   - action=comment — comment only (the viewer's Comments panel): a non-empty
+ *     message (>= 1 char trimmed, <= 2000) becomes a 'commented' activity_log row
+ *     on the image whatever its status; empty → 422. Client seats are tenant-checked.
  * Returns JSON.
  */
 
@@ -257,6 +260,20 @@ $hasStat = array_key_exists('status', $_POST);
 $hasCmt  = array_key_exists('comment', $_POST);
 $status  = $_POST['status']  ?? null;
 $comment = $_POST['comment'] ?? null;
+
+// action=comment {id, comment}: a plain message in the image's thread (the viewer's
+// Comments panel), any status, client or admin. Never touches the status; an empty
+// message is a 422 rather than a "clear comment" (that stays the legacy comment='' path).
+$commentOnly = ($action === 'comment');
+if ($commentOnly) {
+    $hasStat = false; $status = null;
+    $hasCmt  = true;
+    if (mb_strlen(trim((string)$comment), 'UTF-8') < 1) {
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'Write a comment first.']);
+        exit;
+    }
+}
 
 if ($id <= 0) {
     http_response_code(400);
