@@ -46,11 +46,14 @@ $uiTabs = [
     'emails'   => ['label' => 'Emails',   'icon' => 'mail',      'page' => 'emails.php',
                    'scripts' => ['emails', 'email-status', 'flows', 'flow-status'],
                    'module' => 'emails'],
+    'pages'    => ['label' => 'Pages',    'icon' => 'page',      'page' => 'pages.php',
+                   'scripts' => ['pages', 'page-status'],
+                   'module' => 'pages'],
     'projects' => ['label' => 'Projects', 'icon' => 'checklist', 'page' => 'projects.php',
                    'scripts' => ['projects', 'add-project']],
     'studio'   => ['label' => 'Studio',   'icon' => 'wand',      'page' => 'studio.php',
                    'scripts' => ['admin', 'studio', 'add-post', 'add-feature', 'add-tire', 'batch', 'build',
-                                 'prompts', 'add-prompt', 'vehicles', 'add-vehicle', 'add-email', 'emails-io'],
+                                 'prompts', 'add-prompt', 'vehicles', 'add-vehicle', 'add-email', 'emails-io', 'add-page'],
                    'admin' => true],
 ];
 
@@ -66,7 +69,11 @@ if (!empty($client['id']) && isset($pdo) && $pdo instanceof PDO) {
         try { $uiHasTires = companyHasTires($client, $pdo); } catch (Throwable $uiErr) { $uiHasTires = false; }
     }
 }
-$uiModules = ['emails' => $uiHasEmails, 'tires' => $uiHasTires];
+$uiHasPages = false;   // Pages module (pages-lib.php): module enabled or at least one pages row
+if (!empty($client['id']) && isset($pdo) && $pdo instanceof PDO && function_exists('companyHasPages')) {
+    try { $uiHasPages = companyHasPages($client, $pdo); } catch (Throwable $uiErr) { $uiHasPages = false; }
+}
+$uiModules = ['emails' => $uiHasEmails, 'tires' => $uiHasTires, 'pages' => $uiHasPages];
 
 // Active tab: explicit override, else the current script name (+ the assets.php view).
 $uiActive = isset($activeTab) && $activeTab !== null ? (string)$activeTab : null;
@@ -96,6 +103,11 @@ if (!empty($client['id']) && isset($pdo) && $pdo instanceof PDO) {
             $uiSt = $pdo->prepare("SELECT COUNT(*) FROM emails WHERE company_id = ? AND status = 'pending' AND live = 0");
             $uiSt->execute([$uiCid]);
             $uiBadges['emails'] = (int)$uiSt->fetchColumn();
+        }
+        if ($uiHasPages) {
+            $uiSt = $pdo->prepare("SELECT COUNT(*) FROM pages WHERE company_id = ? AND status = 'pending' AND live = 0");
+            $uiSt->execute([$uiCid]);
+            $uiBadges['pages'] = (int)$uiSt->fetchColumn();
         }
 
         $uiSt = $pdo->prepare("
@@ -148,4 +160,4 @@ $uiBrandHref = clientUrl($uiIsAdmin && empty($client) ? 'admin.php' : 'index.php
     <div class="ui-tabbar-footer">Signed in as Joust · <a href="<?= esc(pagePath('logout')) ?>">Sign out</a></div>
   <?php endif; ?>
 </nav>
-<?php unset($uiTabs, $uiTiresLabel, $uiIsAdmin, $uiHasEmails, $uiHasTires, $uiModules, $uiActive, $uiScript, $uiKey, $uiTab, $uiBadges, $uiCid, $uiSt, $uiErr, $uiBrandName, $uiBrandHref, $uiIsActive, $uiCount, $uiCls); ?>
+<?php unset($uiTabs, $uiTiresLabel, $uiIsAdmin, $uiHasEmails, $uiHasTires, $uiHasPages, $uiModules, $uiActive, $uiScript, $uiKey, $uiTab, $uiBadges, $uiCid, $uiSt, $uiErr, $uiBrandName, $uiBrandHref, $uiIsActive, $uiCount, $uiCls); ?>

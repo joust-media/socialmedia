@@ -1115,6 +1115,74 @@ try {
             $steps[] = "• tire_images.series_id already exists — skipped.";
         }
     }
+
+    // 27. pages — static HTML landing pages reviewed per client (Pages tab).
+    //     One row per page: a folder media/pages/<client-slug>/<page-slug>/
+    //     holding index.html + assets (source = 'upload') or an external URL
+    //     (source = 'url'); review status + live flag like emails. See pages-lib.php.
+    if (!tableExists($pdo, 'pages')) {
+        $pdo->exec("
+            CREATE TABLE pages (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                company_id INT UNSIGNED NOT NULL,
+                title VARCHAR(160) NOT NULL DEFAULT '',
+                slug VARCHAR(120) NOT NULL,
+                source ENUM('upload','url') NOT NULL DEFAULT 'upload',
+                url VARCHAR(512) NULL,
+                entry VARCHAR(255) NOT NULL DEFAULT 'index.html',
+                description TEXT NULL,
+                status ENUM('draft','pending','approved','denied') NOT NULL DEFAULT 'draft',
+                live TINYINT(1) NOT NULL DEFAULT 0,
+                live_at DATETIME NULL,
+                sort_order INT NOT NULL DEFAULT 0,
+                notes TEXT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_company_slug (company_id, slug),
+                KEY ix_company_status (company_id, status, live)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `pages` table.";
+    } else {
+        $steps[] = "• `pages` table already exists — skipped.";
+    }
+
+    // 28. page_files — the files uploaded into a page's folder (relative path
+    //     inside the folder, e.g. 'index.html', 'css/style.css') so the portal
+    //     can list them, pick the entry file and clean up on delete.
+    if (!tableExists($pdo, 'page_files')) {
+        $pdo->exec("
+            CREATE TABLE page_files (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                page_id INT UNSIGNED NOT NULL,
+                filename VARCHAR(255) NOT NULL,
+                size INT UNSIGNED NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_page_file (page_id, filename),
+                KEY ix_page_files_page (page_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `page_files` table.";
+    } else {
+        $steps[] = "• `page_files` table already exists — skipped.";
+    }
+
+    // 28b. 'pages' module row — enable the Pages tab per client with one
+    //      company_modules (company_id, module_id) row (Studio → Pages toggles it).
+    //      The tab also appears automatically once a client has any pages row.
+    $s = $pdo->prepare("SELECT id FROM modules WHERE slug = 'pages'");
+    $s->execute();
+    $pagesModuleId = (int)$s->fetchColumn();
+    if (!$pagesModuleId) {
+        $pdo->prepare("
+            INSERT INTO modules (slug, singular_label, plural_label, icon)
+            VALUES ('pages', 'Page', 'Pages', '📄')
+        ")->execute();
+        $pagesModuleId = (int)$pdo->lastInsertId();
+        $steps[] = "✓ Seeded 'pages' module (id={$pagesModuleId}) — add a company_modules row per client to enable the Pages tab.";
+    } else {
+        $steps[] = "• 'pages' module already seeded (id={$pagesModuleId}).";
+    }
 } catch (Exception $e) {
     $errors[] = $e->getMessage();
 }
