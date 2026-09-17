@@ -75,7 +75,84 @@ Status, ID, Title, Sequence, Trigger, Subject Line, Preview Text, View Email, UR
 - Export is UTF-8 with BOM, CRLF rows, file name `<slug>-emails-YYYYMMDD.csv`. `format=json`
   gives the same data as JSON (`{version, company, groups, emails}`) and imports back.
 
+### Flows
+
+A **flow** is a named, ordered sequence of a client's emails ("Free" = F1 → F4 → F3 …; series
+can be mixed) shown as a vertical timeline on `flows.php?client=<slug>[&flow=<flow-slug>]`,
+with the timing between steps on the connector (a per-step override, else the email's first
+trigger line). Clients only view flows and never see Draft / Needs-changes steps; Joust edits.
+
+- **Migration**: `migrate.php` steps 23–24 create `email_flows` and `email_flow_steps`
+  (idempotent, nothing existing is altered). Until they exist the Flows button, chips and
+  page stay hidden ("Flows are not set up yet").
+- **First flows**: Studio → Emails → **Suggest flows from series** creates one flow per code
+  series present (F Free, N Essentials, P Pro, G Signature, L Lead, R Renewal, S System, … in the
+  series order), each with that series' emails ordered by their number; a series whose flow
+  already exists is skipped. "New flow" on `flows.php` starts an empty one.
+- **Edit mode** (`flows.php` → Edit, or `&edit=1`): drag handles / up-down buttons reorder
+  steps, "Add email" / the "+" on a connector insert from a picker of the client's emails,
+  "×" removes a step (the email is kept), tapping the timing pill edits the override; the
+  "…" menu renames, reorders or deletes flows. Every change posts to `flow-status.php`
+  (admin only, same-site, scoped to the posted client) and lands in the activity feed and digest.
+- **Export / import**: `emails-io.php?client=<slug>&format=json` now carries a `flows` list
+  (name, slug, description, steps by email code with 0-based positions and timing overrides)
+  and imports it back (upsert by slug; unknown codes are reported, not created).
+  `format=flows-csv` downloads `<slug>-flows-YYYY-MM-DD.csv`, one row per step
+  (`Flow, Position, ID, Title, Timing, Trigger, Subject Line, Preview Text, Status, URL`, Position 1-based).
+- Deleting an email removes it from every flow; an email's detail sheet lists the flows it is in.
+
+## Tire render series
+
+Each tire ("collection" in Assets) can carry any number of **series** — folders of generated
+real-life renders (images and MP4/WebM/MOV videos, typically ~200 per series) that the client
+reviews with the same approve / deny-with-note flow as the reference images. Approved renders
+join the Approved Pool and the composer like any tire image.
+
+- **Folder layout** (a sibling of `portal/`, next to the library): `media/tires/<tire-slug>/<series-folder>/<file>`.
+  The tire slug is the tire name lower-cased with runs of non-alphanumerics turned into `-`
+  ("Klever R/T" → `klever-r-t`; two tires with the same slug: the older keeps it, the newer gets
+  `-<id>`); the edit screen in Studio and the Renders tab show the exact folder (with a Copy
+  button). Any subfolder becomes a series named after it (`series-1` → "Series 1");
+  dot-folders, dotfiles, symlinks, non-media files and the `.mp4` twin of a `.mov` are ignored.
+- **Two ways in**:
+  1. **FTP**: create `media/tires/<tire-slug>/<series-folder>/` (create `media/tires/` next to
+     `media/library/` the first time), drop the files, then open Assets → Collections — the folder
+     is rescanned on every collections view, throttled by folder mtimes + 60 s — or press
+     **Rescan folders** in Studio → Renders (`tire-status.php` `action=rescan`, admin; the page
+     falls back to `assets.php?…&rescan=1`, also admin-only). Existing rows are never touched; a
+     removed file only stops showing up (its decisions stay).
+  2. **Upload in the portal**: Studio → **Renders** → pick the tire → pick a series or "New
+     series…" → drop files. One request per file (`tire-upload.php`, admin, same-site, 10 MB
+     images / 200 MB videos, sequential queue with progress + Retry), stored under the series
+     folder as `<original stem>.<ext>` (de-duplicated `-2`, `-3` …; the folder is created with
+     0755), falling back to `uploads/` when `media/tires` is not writable. Every file is
+     sniffed: images must decode as the format their extension claims, videos must carry the
+     container magic; anything else is 422.
+- **Review**: Assets → Collections → the tire shows a series switcher (Reference · Series 1 ·
+  …, default = the first series with something to review) over a paged grid (60 tiles + "Load
+  more"; the viewer keeps fetching as it walks). **Approve all remaining** (client or admin)
+  approves every pending render of the open series in one request. The admin "…" menu renames /
+  deletes the series (optionally deleting the files); in the viewer the admin can **Set as
+  reference** (moves the image to the tire's reference set, sort_order 0) and **Delete image…**
+  (row + file + thumb). Series renders show in the Approved Pool grouped per collection with
+  series chips.
+- **Thumbnails**: `<series>/.thumbs/<stem>.jpg` (max 640 px) are generated with GD, up to 40 per
+  page view, so a 200-image grid stays light; the viewer / downloads / posts use the original.
+- **Migration**: `migrate.php` steps 25–26 create `tire_series` and add `tire_images.series_id`
+  (one idempotent `ALTER TABLE tire_images ADD COLUMN series_id INT UNSIGNED NULL` — the only
+  change to an existing table). Until they exist everything behaves as before ("Render series
+  are not set up yet").
+- **Endpoints**: `tire-status.php` gains `approve_series` (client or admin), `delete_image`,
+  `set_reference`, `series_create` / `series_rename` / `series_delete` / `series_reorder`,
+  `rescan` (admin, same-site, scoped to the posted client). Reference images (the ≤6 in Studio)
+  are the rows without a series; the 6-image cap counts only those.
+- **`media/` hardening**: the first upload or rescan writes `media/tires/.htaccess` (and
+  `media/.htaccess` when the parent has none) — `Options -Indexes`, PHP engine off, script
+  extensions refused — so nothing dropped by FTP or upload can ever execute. Existing files
+  are never overwritten; the text and the by-hand steps are in `media-hardening/`.
+
 ## Not deployed
 
-`config.php` (live DB credentials), `uploads/`, `.htaccess` files, `error_log`, this README
-and `redirect-old-folder/` are excluded from both workflows and must be managed on the server.
+`config.php` (live DB credentials), `uploads/`, `.htaccess` files, `error_log`, this README,
+`redirect-old-folder/` and `media-hardening/` are excluded from both workflows and must be
+managed on the server. `media/` lives outside the app folder, so deploys never touch it.

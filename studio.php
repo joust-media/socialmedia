@@ -14,10 +14,15 @@
  *   Posts    — segment counts into posts.php + recent client responses (renderActivityFeed)
  *   Emails   — <section data-studio-emails> (present once migrate.php created the emails table);
  *              the Emails admin worker owns everything inside that section.
+ *   Renders  — tire series (tire-series-lib.php, feature-gated by hasTireSeries()): pick a tire +
+ *              series (or a new one), drop files → one XHR per file to tire-upload.php, rescan the
+ *              FTP folders, and manage the series list (rename / reorder / delete via tire-status.php).
+ *              &tab=renders&tire=<id>[&series=<id>] preselects (the Assets "Upload more…" deep link).
  */
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/auth.php';
+if (is_file(__DIR__ . '/tire-series-lib.php')) { require_once __DIR__ . '/tire-series-lib.php'; }
 requireAdmin();
 
 require_once __DIR__ . '/partials/components/post-detail.php';
@@ -104,8 +109,31 @@ if (!$client) {
 $tabs = ['compose' => 'Compose', 'batch' => 'Batch', 'uploads' => 'Uploads', 'posts' => 'Posts'];
 $hasEmails = hasEmailsTable($pdo);          // migration-gated; admin always gets the tab so the first email can be added
 if ($hasEmails) $tabs['emails'] = 'Emails';
+$hasRenders = function_exists('hasTireSeries') && hasTireSeries($pdo);   // tire series (migration-gated)
+if ($hasRenders) $tabs['renders'] = 'Renders';
 $tab  = strtolower(trim((string)($_GET['tab'] ?? 'compose')));
 if (!isset($tabs[$tab])) $tab = 'compose';
+
+// Renders: every tire of this client with its series (one lib call per tire) + the preselection from the URL.
+$rendersTires = []; $rendersTire = 0; $rendersSeries = 0;
+if ($hasRenders) {
+    $st = $pdo->prepare("SELECT id, name FROM tires WHERE company_id = ? ORDER BY name ASC");
+    $st->execute([(int)$client['id']]);
+    foreach ($st->fetchAll() as $t) {
+        $series = [];
+        foreach (tireSeriesForTire($pdo, (int)$t['id']) as $sr) {
+            $series[] = ['id' => (int)$sr['id'], 'name' => (string)$sr['name'], 'slug' => (string)($sr['slug'] ?? ''), 'folder' => (string)($sr['folder'] ?? ''),
+                         'counts' => ['pending' => (int)($sr['counts']['pending'] ?? 0), 'approved' => (int)($sr['counts']['approved'] ?? 0),
+                                      'denied' => (int)($sr['counts']['denied'] ?? 0), 'total' => (int)($sr['counts']['total'] ?? 0)]];
+        }
+        $rendersTires[] = ['id' => (int)$t['id'], 'name' => (string)$t['name'],
+                           'folder' => function_exists('tireFolderRel') ? (string)tireFolderRel($client, $t) : 'media/tires/' . safeFilenameStem($t['name']),
+                           'series' => $series];
+    }
+    $rendersTire = max(0, (int)($_GET['tire'] ?? 0));
+    if (!in_array($rendersTire, array_column($rendersTires, 'id'), true)) $rendersTire = $rendersTires ? (int)$rendersTires[0]['id'] : 0;
+    $rendersSeries = max(0, (int)($_GET['series'] ?? 0));
+}
 
 $pool         = studioApprovedPool($pdo, $client);
 $supportsType = hasPostTypeColumn($pdo);
@@ -175,6 +203,19 @@ $studioConfig = [
     'tabUrl'    => clientUrl('studio.php', ['tab' => '__TAB__']),
     'postUrl'   => clientUrl('posts.php', ['post' => '__ID__']),   // studio.js: "finish it in Posts" links
 ];
+if ($hasRenders) {
+    $studioConfig['renders'] = [
+        'endpoint'  => basePath() . '/tire-upload.php?client=' . rawurlencode($client['slug']),   // POST client, tire_id, series_id | new_series, batch, file (?client= so helpers.php scopes it too)
+        'status'    => basePath() . '/tire-status.php',            // series_create / series_rename / series_reorder / series_delete / rescan
+        'assetsUrl' => clientUrl('assets.php', ['view' => 'collections', 'item' => '__TIRE__', 'series' => '__SERIES__']),
+        'rescanUrl' => clientUrl('assets.php', ['view' => 'collections', 'item' => '__TIRE__', 'rescan' => 1, 'partial' => 1, 'offset' => 0]),   // fallback when tire-status.php has no rescan action
+        'tires'     => $rendersTires,
+        'tire'      => $rendersTire,
+        'series'    => $rendersSeries,
+        'maxMb'     => 10,      // images (tire-upload.php: 413 above)
+        'maxVideoMb' => 200,    // videos (bounded by the host's upload_max_filesize / post_max_size)
+    ];
+}
 
 $pageTitle   = 'Studio';
 $navSubtitle = $client['name'];
@@ -269,6 +310,83 @@ include __DIR__ . '/partials/layout-top.php';
   <?php endif; ?>
 </section>
 
+<?php if ($hasRenders): ?>
+<!-- Renders (tire series) ---------------------------------------------- -->
+<section class="studio-section" data-studio-section="renders"<?= $tab === 'renders' ? '' : ' hidden' ?>>
+  <div class="studio-renders" data-renders data-endpoint="<?= h($studioConfig['renders']['endpoint']) ?>" data-status-endpoint="<?= h($studioConfig['renders']['status']) ?>" data-max-mb="<?= (int)$studioConfig['renders']['maxMb'] ?>" data-max-video-mb="<?= (int)$studioConfig['renders']['maxVideoMb'] ?>">
+    <?php if (!$rendersTires): ?>
+      <div class="ui-empty">No tires yet for <?= h($client['name']) ?>. <a href="<?= h(clientUrl('add-feature.php', ['module' => 'tires'])) ?>">Create the first tire</a>, then upload its renders here.</div>
+    <?php else:
+      $rendersSel = $rendersTires[0];
+      foreach ($rendersTires as $t) { if ((int)$t['id'] === $rendersTire) { $rendersSel = $t; break; } }
+    ?>
+    <div class="studio-renders-grid">
+      <div class="studio-renders-pick">
+        <div class="studio-field-row">
+          <div class="studio-field"><label class="studio-label" for="rendersTire">Tire</label>
+            <select class="ui-select" id="rendersTire" data-renders-tire>
+              <?php foreach ($rendersTires as $t): ?>
+                <option value="<?= (int)$t['id'] ?>" data-folder="<?= h($t['folder']) ?>"<?= (int)$t['id'] === $rendersTire ? ' selected' : '' ?>><?= h($t['name']) ?><?= $t['series'] ? ' · ' . count($t['series']) . ' series' : '' ?></option>
+              <?php endforeach; ?>
+            </select></div>
+          <div class="studio-field"><label class="studio-label" for="rendersSeries">Series</label>
+            <select class="ui-select" id="rendersSeries" data-renders-series aria-describedby="rendersSeriesHelp"></select>
+            <input class="ui-input studio-renders-newname" type="text" data-renders-new-name maxlength="80" placeholder="Name the new series, e.g. Series 3" aria-label="New series name" hidden></div>
+        </div>
+        <p class="studio-help" id="rendersSeriesHelp">Uploads land in the chosen series; “New series…” creates one (named after the first file’s batch when left blank).</p>
+        <p class="studio-help studio-renders-folder">
+          <span>FTP folder:</span> <code data-renders-folder><?= h($rendersSel['folder']) ?>/</code>
+          <button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-renders-copy title="Copy the folder path">Copy</button>
+          <span class="text-tertiary">Drop a sub-folder per series (<code>…/Series 3/</code>), then rescan.</span>
+        </p>
+        <div class="studio-renders-actions">
+          <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-renders-rescan>Rescan folders</button>
+          <a class="ui-btn ui-btn--gray ui-btn--sm" data-renders-open href="<?= h(clientUrl('assets.php', ['view' => 'collections', 'item' => $rendersTire ?: null])) ?>">Open in Assets</a>
+        </div>
+      </div>
+
+      <label class="studio-dropzone studio-dropzone--lg" data-file-drop>
+        <input type="file" data-renders-input accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov" multiple>
+        <span class="studio-dropzone-icon"><?= icon('download') ?></span>
+        <span class="studio-dropzone-label">Drop renders here</span>
+        <span class="studio-dropzone-hint">JPG, PNG, GIF, WebP up to <?= (int)$studioConfig['renders']['maxMb'] ?> MB · MP4, WebM, MOV up to <?= (int)$studioConfig['renders']['maxVideoMb'] ?> MB · one upload at a time, each file lands in <strong data-renders-target>the chosen series</strong> as “To Review” for <?= h($client['name']) ?>.</span>
+      </label>
+    </div>
+
+    <div class="studio-renders-summary" data-renders-summary hidden>
+      <span data-renders-summary-text>0 uploaded</span>
+      <button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-renders-retry-all hidden>Retry failed</button>
+      <button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-renders-clear>Clear list</button>
+    </div>
+    <ul class="studio-uploadlist" data-renders-list role="list"></ul>
+    <template data-renders-item-template>
+      <li class="studio-upload-item" data-renders-item>
+        <div class="studio-upload-thumb" data-upload-thumb></div>
+        <div class="studio-upload-body">
+          <div class="studio-upload-name" data-upload-name></div>
+          <div class="studio-upload-meta text-secondary" data-upload-meta></div>
+          <div class="studio-progress" data-upload-progress hidden>
+            <div class="studio-progress-bar"><div class="studio-progress-fill" data-upload-fill></div></div>
+          </div>
+          <div class="studio-upload-status" data-upload-status></div>
+        </div>
+        <button type="button" class="ui-btn ui-btn--gray ui-btn--sm studio-upload-retry" data-renders-retry hidden>Retry</button>
+      </li>
+    </template>
+
+    <section class="ui-card studio-series-card" data-renders-series-card>
+      <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Series for <span data-renders-tire-name><?= h($rendersSel['name']) ?></span></h3>
+        <p class="ui-card-subtitle">What the client sees under this tire in Assets → Collections. Rename, reorder or remove a series here.</p></div></div>
+      <div class="ui-card-body">
+        <ul class="studio-series-list" data-renders-series-list role="list"></ul>
+        <p class="text-secondary studio-series-empty" data-renders-series-empty hidden>No series yet — upload files above or drop a folder by FTP and rescan.</p>
+      </div>
+    </section>
+    <?php endif; ?>
+  </div>
+</section>
+<?php endif; ?>
+
 <?php if ($hasEmails): ?>
 <!-- Emails ------------------------------------------------------------- -->
 <!-- Admin surface for the Emails module: counts, add / edit links, CSV + JSON export,
@@ -295,6 +413,17 @@ include __DIR__ . '/partials/layout-top.php';
   <div class="studio-emails-head" data-emails-actions>
     <a class="ui-btn ui-btn--filled" href="<?= h($emailFormUrl) ?>" data-emails-new><?= icon('plus') ?><span>New email</span></a>
     <?php if ($emailsOn): ?><a class="ui-btn ui-btn--gray" href="<?= h(emailsUrl(['status' => 'all'])) ?>" data-emails-open>Open emails</a><?php endif; ?>
+    <?php
+      // Flows (flows.php / flow-status.php): count button + a one-tap "suggest from series" seed when there are none.
+      $emailFlowsOn = function_exists('hasEmailFlowsTable') && function_exists('emailFlowsForCompany') && hasEmailFlowsTable($pdo);
+      $emailFlowN   = $emailFlowsOn ? count(emailFlowsForCompany($pdo, $emailCid)) : 0;
+    ?>
+    <?php if ($emailFlowsOn): ?>
+      <a class="ui-btn ui-btn--gray" href="<?= h(clientUrl('flows.php')) ?>" data-emails-flows>Flows <span class="ui-badge ui-badge--neutral" data-emails-flow-count><?= $emailFlowN ?></span></a>
+      <?php if ($emailFlowN === 0 && $emailRows): ?>
+        <button type="button" class="ui-btn ui-btn--tinted" data-action="seed_series" data-endpoint="<?= h(basePath() . '/flow-status.php') ?>" data-param-action="seed_series" data-reload data-toast="Flows created from the code series" data-emails-flows-seed title="One flow per code series (F, R, S…), in the series order">Suggest flows from series</button>
+      <?php endif; ?>
+    <?php endif; ?>
     <span class="ui-spacer"></span>
     <a class="ui-btn ui-btn--gray ui-btn--sm" href="<?= h(clientUrl('emails-io.php', ['format' => 'csv'])) ?>" data-emails-export="csv" title="Download the spreadsheet (Status, ID, Title, Sequence, Trigger, …)"><?= icon('download') ?><span>Export CSV</span></a>
     <a class="ui-btn ui-btn--gray ui-btn--sm" href="<?= h(clientUrl('emails-io.php', ['format' => 'json'])) ?>" data-emails-export="json" title="Download everything incl. groups and comment threads"><?= icon('download') ?><span>Export JSON</span></a>

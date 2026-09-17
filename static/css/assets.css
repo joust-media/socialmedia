@@ -83,6 +83,81 @@
 }
 
 /* ---------------------------------------------------------------------
+   Series (tire-series-lib.php): switcher chips, header row, admin menu,
+   "Load more" paging, Rename / Delete sheet forms
+   --------------------------------------------------------------------- */
+.as-series { max-width: var(--content-w); margin: -6px 0 12px; }
+.as-series-chip { font-weight: 600; }
+.as-chip-count--pending { background: var(--pending); color: #fff; }
+.as-chip.is-active .as-chip-count--pending { background: var(--pending); color: #fff; }
+.as-chip-count[hidden] { display: none; }
+.as-series-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  max-width: var(--content-w);
+  margin: 0 0 14px; padding: 10px 12px 10px 14px;
+  background: var(--bg-elevated); border-radius: 14px; box-shadow: var(--shadow-card);
+}
+.as-series-body { min-width: 0; }
+.as-series-title {
+  margin: 0; font-size: var(--text-headline); line-height: var(--lh-headline);
+  letter-spacing: var(--ls-headline); font-weight: var(--fw-headline);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.as-series-meta { margin: 2px 0 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote); color: var(--label-secondary); font-variant-numeric: tabular-nums; }
+.as-series-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.as-series-approve[hidden] { display: none; }
+.as-series-approve .ui-icon { width: 16px; height: 16px; stroke-width: 2.6; }
+.as-series-hint { max-width: var(--content-w); margin: -4px 0 14px; font-size: var(--text-footnote); line-height: var(--lh-footnote); }
+.as-series-hint a { color: var(--accent); text-decoration: none; font-weight: 600; }
+.as-series-hint code { font-family: var(--font-mono); font-size: var(--text-caption); }
+@media (max-width: 559px) {
+  .as-series-head { flex-wrap: wrap; }
+  .as-series-actions { width: 100%; justify-content: flex-end; }
+  .as-series-approve { flex: 1 1 auto; }
+}
+
+/* Admin "…" menu (anchored under the button) */
+.as-menu { position: relative; }
+.as-menu-btn { width: 36px; padding: 0; }
+.as-menu-btn .ui-icon { width: 20px; height: 20px; }
+.as-menu-list {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 40;
+  min-width: 210px; padding: 6px;
+  background: var(--bg-elevated); border-radius: 14px;
+  box-shadow: var(--shadow-card), 0 12px 40px rgba(0,0,0,.18), 0 0 0 0.5px var(--separator);
+  transform-origin: 100% 0;
+  animation: ui-viewer-pop var(--dur-base) var(--ease-spring);
+}
+.as-menu-list[hidden] { display: none; }
+.as-menu-item {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; min-height: 40px; padding: 8px 10px; border: 0; border-radius: 9px;
+  background: transparent; color: var(--label); text-decoration: none; text-align: left;
+  font-size: var(--text-subhead); letter-spacing: var(--ls-subhead); cursor: pointer;
+}
+.as-menu-item:hover, .as-menu-item:focus-visible { background: var(--fill-tertiary); }
+.as-menu-item .ui-icon { width: 18px; height: 18px; color: var(--label-secondary); }
+.as-menu-item.is-destructive { color: var(--deny); }
+.as-menu-item.is-destructive .ui-icon { color: var(--deny); }
+
+/* "Load more" under the grid */
+.as-more { display: flex; justify-content: center; padding: 12px 0 8px; }
+.as-more[hidden] { display: none; }
+.as-more-btn { min-width: 200px; gap: 6px; }
+.as-more-count { color: var(--label-secondary); font-weight: 500; font-variant-numeric: tabular-nums; }
+.as-more noscript a { margin-left: 8px; }
+
+/* Rename / Delete series forms (inside #uiSheet) */
+.as-series-form { display: flex; flex-direction: column; gap: 12px; }
+.as-series-form p { margin: 0; font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead); }
+.as-series-label { display: block; margin: 0; font-size: var(--text-footnote); font-weight: 600; text-transform: uppercase; letter-spacing: 0.2px; color: var(--label-secondary); }
+.as-series-help { margin: 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); }
+.as-series-check { display: flex; align-items: flex-start; gap: 10px; font-size: var(--text-subhead); line-height: var(--lh-subhead); }
+.as-series-check input { width: 20px; height: 20px; margin: 1px 0 0; accent-color: var(--deny); flex: 0 0 auto; }
+.as-series-check code { font-family: var(--font-mono); font-size: var(--text-caption); word-break: break-all; }
+.as-series-form-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
+
+/* ---------------------------------------------------------------------
    Grid tiles (components.css .ui-grid / .ui-thumb: 3-up → 6-up, 8px gutters,
    12px radius, square object-fit: cover)
    --------------------------------------------------------------------- */
@@ -201,7 +276,7 @@ html:not(:has(.ui-tabbar)) .as-selectbar { bottom: 0; padding-bottom: max(10px, 
   font-size: var(--text-headline); line-height: var(--lh-headline); letter-spacing: var(--ls-headline); font-weight: var(--fw-headline);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.ui-viewer-count { font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote); color: var(--label-secondary); font-variant-numeric: tabular-nums; }
+.ui-viewer-count { font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote); color: var(--label-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }   /* "<tire> · <series> · n of N" stays one line on phones */
 .ui-viewer-status { justify-self: end; }
 
 .ui-viewer-stage {
@@ -309,6 +384,7 @@ video.ui-viewer-media { width: 100%; background: #000; touch-action: auto; }
 .ui-viewer-menu-item:hover, .ui-viewer-menu-item:focus-visible { background: var(--fill-tertiary); }
 .ui-viewer-menu-item .ui-icon { width: 20px; height: 20px; color: var(--label-secondary); }
 .ui-viewer-menu-item[hidden] { display: none; }
+.ui-viewer-menu-item.is-destructive, .ui-viewer-menu-item.is-destructive .ui-icon { color: var(--deny); }
 
 /* Video fallback card (spec §6): rendered inside each video slide by App.video (.ui-video-fallback, components.css) */
 

@@ -1036,6 +1036,85 @@ try {
     } else {
         $steps[] = "• 'emails' module already seeded (id={$emailsModuleId}).";
     }
+
+    // 23. email_flows — a named, ordered sequence of a client's emails
+    //     ("Free" = F1 → F4 → C2 …). Admin builds them (flow-status.php),
+    //     clients view them (flows.php). See flows-lib.php.
+    if (!tableExists($pdo, 'email_flows')) {
+        $pdo->exec("
+            CREATE TABLE email_flows (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                company_id INT UNSIGNED NOT NULL,
+                name VARCHAR(120) NOT NULL,
+                slug VARCHAR(120) NOT NULL,
+                description TEXT NULL,
+                sort_order INT NOT NULL DEFAULT 0,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_company_slug (company_id, slug)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `email_flows` table.";
+    } else {
+        $steps[] = "• `email_flows` table already exists — skipped.";
+    }
+
+    // 24. email_flow_steps — the emails inside a flow, in order, with the
+    //     timing between steps ("3 days after F1") and an optional note.
+    if (!tableExists($pdo, 'email_flow_steps')) {
+        $pdo->exec("
+            CREATE TABLE email_flow_steps (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                flow_id INT UNSIGNED NOT NULL,
+                email_id INT UNSIGNED NOT NULL,
+                position INT NOT NULL DEFAULT 0,
+                timing_text VARCHAR(255) NULL,
+                note TEXT NULL,
+                UNIQUE KEY uq_flow_email (flow_id, email_id),
+                KEY ix_flow_pos (flow_id, position)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `email_flow_steps` table.";
+    } else {
+        $steps[] = "• `email_flow_steps` table already exists — skipped.";
+    }
+
+    // 25. tire_series — one row per render folder under media/tires/<tire-slug>/<folder>/
+    //     (see tire-series-lib.php). Scanned from disk or created by tire-upload.php.
+    if (!tableExists($pdo, 'tire_series')) {
+        $pdo->exec("
+            CREATE TABLE tire_series (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                tire_id INT UNSIGNED NOT NULL,
+                name VARCHAR(120) NOT NULL,
+                slug VARCHAR(120) NOT NULL,
+                folder VARCHAR(255) NULL DEFAULT NULL,
+                sort_order INT NOT NULL DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_tire_slug (tire_id, slug),
+                KEY ix_tire (tire_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `tire_series` table.";
+    } else {
+        $steps[] = "• `tire_series` table already exists — skipped.";
+    }
+
+    // 26. tire_images.series_id — NULL = a reference image (the admin's ≤6 uploads),
+    //     otherwise the series the render belongs to. The only change to an existing table.
+    if (tableExists($pdo, 'tire_images')) {
+        if (!columnExists($pdo, 'tire_images', 'series_id')) {
+            $pdo->exec("
+                ALTER TABLE tire_images
+                ADD COLUMN series_id INT UNSIGNED NULL DEFAULT NULL AFTER tire_id,
+                ADD KEY ix_series (series_id)
+            ");
+            $steps[] = "✓ Added tire_images.series_id.";
+        } else {
+            $steps[] = "• tire_images.series_id already exists — skipped.";
+        }
+    }
 } catch (Exception $e) {
     $errors[] = $e->getMessage();
 }

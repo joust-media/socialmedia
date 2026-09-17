@@ -1031,7 +1031,8 @@ if (!function_exists('emailExportJson')) {
                 'created_at' => $r['created_at'] ?? null, 'updated_at' => $r['updated_at'] ?? null,
             ];
         }
-        return ['version' => 1, 'company' => (string)($company['slug'] ?? ''), 'exported_at' => date('c'), 'groups' => $groups, 'emails' => $emails];
+        $flows = (function_exists('emailFlowsExport') && hasEmailFlowsTable($pdo)) ? emailFlowsExport($pdo, $cid) : [];
+        return ['version' => 1, 'company' => (string)($company['slug'] ?? ''), 'exported_at' => date('c'), 'groups' => $groups, 'emails' => $emails, 'flows' => $flows];
     }
 }
 
@@ -1129,6 +1130,9 @@ if (!function_exists('deleteEmail')) {
         $cid = (int)($email['company_id'] ?? 0);
         if ($id <= 0 || !hasEmailsTable($pdo)) return;
         $pdo->prepare("DELETE FROM email_group_map WHERE email_id = ?")->execute([$id]);
+        if (function_exists('hasEmailFlowsTable') && hasEmailFlowsTable($pdo)) {
+            $pdo->prepare("DELETE FROM email_flow_steps WHERE email_id = ?")->execute([$id]);   // no orphan flow steps
+        }
         $pdo->prepare("DELETE FROM emails WHERE id = ? AND company_id = ?")->execute([$id, $cid]);
         logEmailActivity($pdo, $actor, 'deleted', $id, 'Email ' . emailDisplayLabel($email) . ' deleted', null, null, $cid);
     }
@@ -1142,3 +1146,7 @@ if (!function_exists('emailValidUrl')) {
         return (bool)preg_match('#^https?://[^\s]+$#i', $url) && filter_var($url, FILTER_VALIDATE_URL) !== false;
     }
 }
+
+// Flows (email_flows / email_flow_steps): hasEmailFlowsTable, emailFlowsForCompany, emailFlowSteps, …
+// Function definitions only — no DB work at load; see scratchpad flows-design.md.
+require_once __DIR__ . "/flows-lib.php";

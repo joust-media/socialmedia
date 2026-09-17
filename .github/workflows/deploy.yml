@@ -60,3 +60,4 @@ jobs:
             error_log
             README.md
             redirect-old-folder/**
+            media-hardening/**

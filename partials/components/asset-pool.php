@@ -38,6 +38,9 @@
  *
  * Rendering (markup only; wired by static/js/studio.js)
  *   studioPickerHtml(array $pool, array $opts = []): string
+ *       Grouped: Library, then one <section data-pool-group="tire:<id>"> per collection with series chips
+ *       (data-series-filter="all|ref|<id>") when tire-series-lib.php is present; tiles carry data-series and
+ *       use tireImageThumb(); the assets[] values ("tire:<id>") are unchanged.
  *   studioPreviewHtml(array $post, array $brand, array $images = [], array $opts = []): string
  *   studioComposerHtml(array $ctx): string
  */
@@ -77,6 +80,21 @@ if (!function_exists('studioHasTireDisplayName')) {
         if ($cached !== null) return $cached;
         try {
             $cached = $pdo->query("SHOW COLUMNS FROM tire_images LIKE 'display_name'")->rowCount() > 0;
+        } catch (Throwable $e) {
+            $cached = false;
+        }
+        return $cached;
+    }
+}
+
+if (!function_exists('studioHasTireSeriesColumn')) {
+    /** tire_images.series_id exists once tire-series-lib.php's migration ran (NULL = a reference image). */
+    function studioHasTireSeriesColumn(PDO $pdo): bool
+    {
+        static $cached = null;
+        if ($cached !== null) return $cached;
+        try {
+            $cached = $pdo->query("SHOW COLUMNS FROM tire_images LIKE 'series_id'")->rowCount() > 0;
         } catch (Throwable $e) {
             $cached = false;
         }
@@ -127,17 +145,40 @@ if (!function_exists('studioAssetFromTireRow')) {
         $label = trim((string)($row['display_name'] ?? ''));
         if ($label === '') $label = trim((string)($row['caption'] ?? ''));
         if ($label === '') $label = 'Image #' . (int)$row['id'];
+        // Series rows (tire-series-lib.php): src/thumb come from the lib. Files dropped by FTP live in
+        // media/tires/<tire>/<series>/ next to the app (like libraryDir()), uploads in uploads/ as before.
+        $hasSeries = array_key_exists('series_id', $row) && function_exists('tireImageSrc');
+        $src   = $hasSeries ? (string)tireImageSrc($row) : $url;
+        $thumb = $hasSeries && function_exists('tireImageThumb') ? (string)tireImageThumb($row) : $src;
+        $rel   = ltrim($url, '/');
+        $dir   = '';
+        if (function_exists('tireImagePath')) {                        // the lib validates + realpath-contains (null when missing)
+            $path = (string)(tireImagePath($row) ?? '');
+            $dir  = $path !== '' && strpos($rel, 'media/tires/') === 0 ? dirname($path) : '';
+        } elseif (isset($row['path']) && (string)$row['path'] !== '') {
+            $path = (string)$row['path'];
+            $dir  = dirname($path);
+        } elseif (strpos($rel, 'media/tires/') === 0 && strpos($rel, '..') === false) {
+            $dir  = dirname(studioAppRoot()) . '/media/tires';      // sibling of the app folder (helpers.php libraryDir() convention)
+            $path = dirname(studioAppRoot()) . '/' . $rel;
+        } else {
+            $path = studioTireImagePath($url);
+        }
         return [
-            'kind'        => 'tire',
-            'id'          => (int)$row['id'],
-            'key'         => 'tire:' . (int)$row['id'],
-            'src'         => studioRootUrl($url),
-            'path'        => studioTireImagePath($url),
-            'label'       => $label,
-            'group'       => 'tire:' . (int)$row['tire_id'],
-            'group_label' => (string)($row['tire_name'] ?? 'Collection'),
-            'ext'         => $ext,
-            'media'       => (function_exists('isVideoExt') && isVideoExt($ext)) ? 'video' : 'image',
+            'kind'         => 'tire',
+            'id'           => (int)$row['id'],
+            'key'          => 'tire:' . (int)$row['id'],
+            'src'          => studioRootUrl($src),
+            'thumb'        => studioRootUrl($thumb !== '' ? $thumb : $src),
+            'path'         => $path,
+            'dir'          => $dir,
+            'label'        => $label,
+            'group'        => 'tire:' . (int)$row['tire_id'],
+            'group_label'  => (string)($row['tire_name'] ?? 'Collection'),
+            'series'       => !empty($row['series_id']) ? (string)(int)$row['series_id'] : 'ref',   // 'ref' = a reference image
+            'series_label' => (string)($row['series_name'] ?? ''),
+            'ext'          => $ext,
+            'media'        => (function_exists('isVideoExt') && isVideoExt($ext)) ? 'video' : 'image',
         ];
     }
 }
@@ -168,10 +209,13 @@ if (!function_exists('studioApprovedPool')) {
             }
         }
 
-        // Collections (tires module) — approved images, scoped by company through the tires JOIN
-        $nameSel = studioHasTireDisplayName($pdo) ? 'ti.display_name,' : "'' AS display_name,";
+        // Collections (tires module) — approved images, scoped by company through the tires JOIN.
+        // With tire series (tire-series-lib.php) each row also carries series_id so the picker can chip by series.
+        $nameSel   = studioHasTireDisplayName($pdo) ? 'ti.display_name,' : "'' AS display_name,";
+        $seriesOn  = function_exists('hasTireSeries') && hasTireSeries($pdo) && studioHasTireSeriesColumn($pdo);
+        $seriesSel = $seriesOn ? 'ti.series_id,' : '';
         $st = $pdo->prepare("
-            SELECT ti.id, ti.tire_id, ti.image_url, ti.caption, {$nameSel} ti.sort_order,
+            SELECT ti.id, ti.tire_id, ti.image_url, ti.caption, {$nameSel} {$seriesSel} ti.sort_order,
                    t.name AS tire_name
             FROM tire_images ti
             INNER JOIN tires t ON t.id = ti.tire_id
@@ -179,16 +223,42 @@ if (!function_exists('studioApprovedPool')) {
             ORDER BY t.name ASC, ti.sort_order ASC, ti.id ASC
         ");
         $st->execute([$cid]);
-        foreach ($st->fetchAll() as $row) {
+        $rows = $st->fetchAll();
+        $seriesNames = [];   // tire id → [series id → name] (one lib call per collection)
+        if ($seriesOn && function_exists('tireSeriesForTire')) {
+            foreach (array_unique(array_map('intval', array_column($rows, 'tire_id'))) as $tid) {
+                $seriesNames[$tid] = [];
+                foreach (tireSeriesForTire($pdo, $tid) as $sr) { $seriesNames[$tid][(int)$sr['id']] = (string)$sr['name']; }
+            }
+        }
+        foreach ($rows as $row) {
+            $tid = (int)$row['tire_id'];
+            if ($seriesOn) {
+                $row['series_name'] = !empty($row['series_id']) ? ($seriesNames[$tid][(int)$row['series_id']] ?? ('Series ' . (int)$row['series_id'])) : 'Reference';
+            }
             $a = studioAssetFromTireRow($row);
+            if ($a['path'] === '' || !is_file($a['path'])) continue;   // a render whose file left the folder is not offered
             $assets[] = $a;
             $counts['tire']++;
-            $tid = (int)$row['tire_id'];
             if (!isset($collections[$tid])) {
-                $collections[$tid] = ['id' => $tid, 'name' => (string)($row['tire_name'] ?? ''), 'count' => 0];
+                $collections[$tid] = ['id' => $tid, 'name' => (string)($row['tire_name'] ?? ''), 'count' => 0, 'series' => []];
             }
             $collections[$tid]['count']++;
+            if ($seriesOn) {   // series chips per collection: key 'ref' | '<id>' → approved count (ordered below)
+                $sk = $a['series'];
+                if (!isset($collections[$tid]['series'][$sk])) $collections[$tid]['series'][$sk] = ['key' => $sk, 'name' => $a['series_label'], 'count' => 0];
+                $collections[$tid]['series'][$sk]['count']++;
+            }
         }
+        // Chip order = Reference first, then the tire's series in their own (sort_order) sequence.
+        foreach ($collections as $tid => &$c) {
+            $ordered = [];
+            if (isset($c['series']['ref'])) $ordered[] = $c['series']['ref'];
+            foreach ($seriesNames[$tid] ?? [] as $sid => $sname) { if (isset($c['series'][(string)$sid])) $ordered[] = $c['series'][(string)$sid]; }
+            foreach ($c['series'] as $sk => $chip) { if ($sk !== 'ref' && !isset($seriesNames[$tid][(int)$sk])) $ordered[] = $chip; }
+            $c['series'] = $ordered;
+        }
+        unset($c);
 
         return ['assets' => $assets, 'collections' => array_values($collections), 'counts' => $counts];
     }
@@ -248,9 +318,10 @@ if (!function_exists('studioResolveAsset')) {
         }
 
         if ($kind === 'tire') {
-            $nameSel = studioHasTireDisplayName($pdo) ? 'ti.display_name,' : "'' AS display_name,";
+            $nameSel   = studioHasTireDisplayName($pdo) ? 'ti.display_name,' : "'' AS display_name,";
+            $seriesSel = (function_exists('hasTireSeries') && hasTireSeries($pdo) && studioHasTireSeriesColumn($pdo)) ? 'ti.series_id,' : '';
             $st = $pdo->prepare("
-                SELECT ti.id, ti.tire_id, ti.image_url, ti.caption, {$nameSel} ti.status,
+                SELECT ti.id, ti.tire_id, ti.image_url, ti.caption, {$nameSel} {$seriesSel} ti.status,
                        t.name AS tire_name
                 FROM tire_images ti
                 INNER JOIN tires t ON t.id = ti.tire_id
@@ -416,22 +487,50 @@ if (!function_exists('studioPickerHtml')) {
             }
             $out .= '</div>';
 
-            $out .= '<div class="ui-grid studio-pool" data-pool-grid role="listbox" aria-multiselectable="true" aria-label="Approved assets">';
+            // Grouped: Library first, then one section per collection (tire) with its series chips.
+            // Tiles keep data-asset-* (studio.js Picker) and add data-series ('ref' | '<id>') for the per-group chips.
+            $groups = [];
             foreach ($assets as $a) {
-                $on = in_array($a['key'], $selected, true);
-                $out .= '<button type="button" class="ui-thumb studio-asset' . ($on ? ' is-selected ui-thumb--selected' : '') . '" role="option"'
-                      . ' data-asset-key="' . $esc($a['key']) . '" data-asset-kind="' . $esc($a['kind']) . '" data-asset-id="' . (int)$a['id'] . '"'
-                      . ' data-asset-src="' . $esc($a['src']) . '" data-asset-label="' . $esc($a['label']) . '" data-asset-group="' . $esc($a['group']) . '"'
-                      . ' data-asset-group-label="' . $esc($a['group_label']) . '" data-asset-media="' . $esc($a['media']) . '"'
-                      . ' aria-selected="' . ($on ? 'true' : 'false') . '" title="' . $esc($a['label'] . ' — ' . $a['group_label']) . '">';
-                if ($a['media'] === 'video') {
-                    $out .= videoTile($a['src'], ['badgeClass' => 'studio-asset-duration']);
-                } else {
-                    $out .= '<img src="' . $esc($a['src']) . '" alt="' . $esc($a['label']) . '" loading="lazy" decoding="async">';
+                $gk = $a['group'];
+                if (!isset($groups[$gk])) $groups[$gk] = ['key' => $gk, 'label' => $a['group_label'], 'assets' => [], 'series' => []];
+                $groups[$gk]['assets'][] = $a;
+            }
+            foreach ($cols as $c) { if (isset($groups['tire:' . (int)$c['id']])) $groups['tire:' . (int)$c['id']]['series'] = $c['series'] ?? []; }
+
+            $out .= '<div class="studio-pool-groups" data-pool-grid role="listbox" aria-multiselectable="true" aria-label="Approved assets">';
+            foreach ($groups as $g) {
+                $hasSeries = count($g['series']) > 1 || (count($g['series']) === 1 && ($g['series'][0]['key'] ?? 'ref') !== 'ref');
+                $out .= '<section class="studio-pool-group" data-pool-group="' . $esc($g['key']) . '" data-series-active="all">'
+                      . '<header class="studio-pool-group-head"><h3 class="studio-pool-group-title">' . $esc($g['label']) . ' <span class="studio-chip-n">' . count($g['assets']) . '</span></h3>';
+                if ($hasSeries) {
+                    $out .= '<div class="studio-chips studio-chips--series" role="group" aria-label="' . $esc('Series in ' . $g['label']) . '">'
+                          . '<button type="button" class="studio-chip studio-chip--sm is-active" data-series-filter="all" aria-pressed="true">All</button>';
+                    foreach ($g['series'] as $sr) {
+                        $out .= '<button type="button" class="studio-chip studio-chip--sm" data-series-filter="' . $esc($sr['key']) . '" aria-pressed="false">' . $esc($sr['name'] !== '' ? $sr['name'] : ($sr['key'] === 'ref' ? 'Reference' : 'Series ' . $sr['key'])) . ' <span class="studio-chip-n">' . (int)$sr['count'] . '</span></button>';
+                    }
+                    $out .= '</div>';
                 }
-                $out .= '<span class="studio-asset-order" data-asset-order aria-hidden="true"></span>'
-                      . '<span class="ui-pill ui-pill--glass ui-pill--nodot ui-thumb-badge studio-asset-group">' . $esc($a['group_label']) . '</span>'
-                      . '</button>';
+                $out .= '</header><div class="ui-grid studio-pool">';
+                foreach ($g['assets'] as $a) {
+                    $on    = in_array($a['key'], $selected, true);
+                    $thumb = (string)($a['thumb'] ?? $a['src']);
+                    $pill  = (string)($a['series_label'] ?? '');
+                    $out .= '<button type="button" class="ui-thumb studio-asset' . ($on ? ' is-selected ui-thumb--selected' : '') . '" role="option"'
+                          . ' data-asset-key="' . $esc($a['key']) . '" data-asset-kind="' . $esc($a['kind']) . '" data-asset-id="' . (int)$a['id'] . '"'
+                          . ' data-asset-src="' . $esc($a['src']) . '" data-asset-label="' . $esc($a['label']) . '" data-asset-group="' . $esc($a['group']) . '"'
+                          . ' data-asset-group-label="' . $esc($a['group_label']) . '" data-asset-media="' . $esc($a['media']) . '"'
+                          . ($a['kind'] === 'tire' ? ' data-series="' . $esc($a['series'] ?? 'ref') . '"' : '')
+                          . ' aria-selected="' . ($on ? 'true' : 'false') . '" title="' . $esc($a['label'] . ' — ' . $a['group_label'] . ($pill !== '' ? ' · ' . $pill : '')) . '">';
+                    if ($a['media'] === 'video') {
+                        $out .= videoTile($a['src'], ['badgeClass' => 'studio-asset-duration', 'poster' => $thumb !== $a['src'] ? $thumb : '']);
+                    } else {
+                        $out .= '<img src="' . $esc($thumb) . '" alt="' . $esc($a['label']) . '" loading="lazy" decoding="async">';
+                    }
+                    $out .= '<span class="studio-asset-order" data-asset-order aria-hidden="true"></span>'
+                          . ($pill !== '' ? '<span class="ui-pill ui-pill--glass ui-pill--nodot ui-thumb-badge studio-asset-group">' . $esc($pill) . '</span>' : '')
+                          . '</button>';
+                }
+                $out .= '</div></section>';
             }
             $out .= '</div>';
             $out .= '<p class="ui-empty studio-pool-empty" data-pool-empty hidden>Nothing approved in this collection yet.</p>';

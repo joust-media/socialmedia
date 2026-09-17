@@ -11,6 +11,11 @@
                              admin sees is exactly what the client sees.
    App.studio.uploads(zone)  Drag-drop zone with per-file XHR progress; .MOV
                              shows the Safari-only warning before upload.
+   App.studio.renders(root)  Renders tab (tire series): tire + series pickers,
+                             sequential XHR per file to tire-upload.php (one
+                             batch id per drop, "New series…" created by the
+                             first file), retry, rescan, and the series list
+                             (rename / reorder / delete → tire-status.php).
    App.studio.batch(root)    Batch builder rows → batch-process.php.
    App.studio.linkTags(text) escape + wrap #tags in .ig-tag (same regex as posts.js).
    ===================================================================== */
@@ -203,19 +208,40 @@
     }
   };
 
+  /* Pool filter = one collection (or Library / All) via the top chips; inside a tire group the
+     series chips (data-series-filter, per group) narrow it further. Both are client-side only. */
   Picker.prototype.applyFilter = function (value) {
     this.filter = value || 'all';
-    var self = this, visible = 0;
+    var self = this;
     $$('[data-pool-filter]', this.root).forEach(function (chip) {
       var on = chip.dataset.poolFilter === self.filter;
       chip.classList.toggle('is-active', on);
       chip.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
+    this.applyVisibility();
+  };
+  Picker.prototype.applySeriesFilter = function (group, value) {
+    group.dataset.seriesActive = value || 'all';
+    $$('[data-series-filter]', group).forEach(function (chip) {
+      var on = chip.dataset.seriesFilter === group.dataset.seriesActive;
+      chip.classList.toggle('is-active', on);
+      chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    this.applyVisibility();
+  };
+  Picker.prototype.applyVisibility = function () {
+    var self = this, visible = 0;
     if (this.grid) {
       $$('[data-asset-key]', this.grid).forEach(function (btn) {
-        var show = self.filter === 'all' || btn.dataset.assetGroup === self.filter;
+        var group = btn.closest('[data-pool-group]');
+        var series = group ? (group.dataset.seriesActive || 'all') : 'all';
+        var show = (self.filter === 'all' || btn.dataset.assetGroup === self.filter)
+                && (series === 'all' || (btn.dataset.series || 'ref') === series);
         btn.hidden = !show;
         if (show) visible++;
+      });
+      $$('[data-pool-group]', this.grid).forEach(function (group) {
+        group.hidden = $$('[data-asset-key]:not([hidden])', group).length === 0;
       });
     }
     if (this.emptyEl) this.emptyEl.hidden = visible > 0;
@@ -226,6 +252,8 @@
     this.root.addEventListener('click', function (e) {
       var chip = e.target.closest('[data-pool-filter]');
       if (chip) { self.applyFilter(chip.dataset.poolFilter); return; }
+      var schip = e.target.closest('[data-series-filter]');
+      if (schip) { var g = schip.closest('[data-pool-group]'); if (g) self.applySeriesFilter(g, schip.dataset.seriesFilter); return; }
       var btn = e.target.closest('[data-asset-key]');
       if (btn && self.grid && self.grid.contains(btn)) { e.preventDefault(); self.toggle(btn.dataset.assetKey); return; }
       if (e.target.closest('[data-pick-clear]')) { self.clear(); return; }
@@ -624,6 +652,315 @@
   };
 
   /* ================================================================== */
+  /* Renders (tire series) → tire-upload.php, one XHR per file          */
+  /*   cfg.renders = {endpoint, status, assetsUrl, rescanUrl, tires:[{id,name,folder,series:[{id,name,slug,folder,counts}]}], tire, series, maxMb} */
+  /* ================================================================== */
+  var NEW_SERIES = '__new__';
+  function Renders(root) {
+    var self = this, rc = cfg.renders || {};
+    this.root = root; this.rc = rc;
+    this.endpoint = root.dataset.endpoint || rc.endpoint || 'tire-upload.php';
+    this.statusEndpoint = root.dataset.statusEndpoint || rc.status || 'tire-status.php';
+    this.maxMb = parseInt(root.dataset.maxMb, 10) || rc.maxMb || 10;                    // images
+    this.maxVideoMb = parseInt(root.dataset.maxVideoMb, 10) || rc.maxVideoMb || 200;   // videos
+    this.tires = rc.tires || [];
+    this.tireSel = $('[data-renders-tire]', root); this.seriesSel = $('[data-renders-series]', root); this.newName = $('[data-renders-new-name]', root);
+    this.input = $('[data-renders-input]', root); this.list = $('[data-renders-list]', root); this.tpl = $('[data-renders-item-template]', root);
+    this.seriesList = $('[data-renders-series-list]', root); this.seriesEmpty = $('[data-renders-series-empty]', root);
+    this.summary = $('[data-renders-summary]', root); this.summaryText = $('[data-renders-summary-text]', root);
+    this.queue = []; this.busy = false; this.jobs = []; this.createdSeries = {};
+    if (!this.tireSel || !this.seriesSel) return;
+    this.tireSel.addEventListener('change', function () { rc.series = 0; self.syncSeries(); });
+    this.seriesSel.addEventListener('change', function () { self.syncNewName(); });
+    if (this.newName) this.newName.addEventListener('input', function () { self.syncTarget(); });
+    var drop = $('[data-file-drop]', root);
+    if (drop && this.input) bindDrop(drop, this.input, function (files) { self.addAll(files); if (self.input) self.input.value = ''; });
+    root.addEventListener('click', function (e) {
+      if (e.target.closest('[data-renders-copy]')) { self.copyFolder(); return; }
+      if (e.target.closest('[data-renders-rescan]')) { self.rescan(e.target.closest('[data-renders-rescan]')); return; }
+      if (e.target.closest('[data-renders-clear]')) { self.clearList(); return; }
+      if (e.target.closest('[data-renders-retry-all]')) { self.retryFailed(); return; }
+      var retry = e.target.closest('[data-renders-retry]');
+      if (retry) { var item = retry.closest('[data-renders-item]'); if (item && item._job) self.retry(item._job); return; }
+      var row = e.target.closest('[data-series-row]');
+      if (!row) return;
+      if (e.target.closest('[data-series-up]'))     { self.moveSeries(row, -1); }
+      else if (e.target.closest('[data-series-down]')) { self.moveSeries(row, 1); }
+      else if (e.target.closest('[data-series-delete]')) { self.deleteSeries(row); }
+      else if (e.target.closest('[data-series-rename-save]')) { self.renameSeries(row); }
+    });
+    root.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && e.target.matches('[data-series-name]')) { e.preventDefault(); self.renameSeries(e.target.closest('[data-series-row]')); }
+    });
+    this.syncSeries();
+  }
+  Renders.prototype.tire = function () {
+    var id = parseInt(this.tireSel.value, 10);
+    for (var i = 0; i < this.tires.length; i++) if (this.tires[i].id === id) return this.tires[i];
+    return this.tires[0] || null;
+  };
+  Renders.prototype.seriesOf = function (tire, id) {
+    for (var i = 0; tire && i < tire.series.length; i++) if (tire.series[i].id === id) return tire.series[i];
+    return null;
+  };
+  /** Series <select> for the current tire (+ "New series…"); folder hint, Open link and the series card follow. */
+  Renders.prototype.syncSeries = function () {
+    var tire = this.tire(), rc = this.rc, want = parseInt(rc.series, 10) || 0, self = this;
+    if (!tire) return;
+    var html = tire.series.map(function (s) {
+      return '<option value="' + s.id + '">' + esc(s.name) + ' · ' + esc(String(s.counts.total)) + (s.counts.total === 1 ? ' file' : ' files') + '</option>';
+    }).join('') + '<option value="' + NEW_SERIES + '">New series…</option>';
+    this.seriesSel.innerHTML = html;
+    var pick = this.seriesOf(tire, want) ? String(want) : (tire.series.length ? String(tire.series[tire.series.length - 1].id) : NEW_SERIES);
+    this.seriesSel.value = pick;
+    var folder = $('[data-renders-folder]', this.root); if (folder) folder.textContent = (tire.folder || '') + '/';
+    var name = $('[data-renders-tire-name]', this.root); if (name) name.textContent = tire.name;
+    var open = $('[data-renders-open]', this.root);
+    if (open) open.href = (rc.assetsUrl || '').replace('__TIRE__', String(tire.id)).replace(/([&?])series=__SERIES__/, '');
+    this.syncNewName();
+    this.renderSeriesList();
+    $$('[data-renders-tire] option', this.root).forEach(function (o) {
+      var t = self.tires.filter(function (x) { return String(x.id) === o.value; })[0];
+      if (t) o.textContent = t.name + (t.series.length ? ' · ' + t.series.length + ' series' : '');
+    });
+  };
+  Renders.prototype.syncNewName = function () {
+    var isNew = this.seriesSel.value === NEW_SERIES;
+    if (this.newName) { this.newName.hidden = !isNew; if (isNew) { var t = this.tire(); if (!this.newName.value) this.newName.placeholder = 'Series ' + ((t ? t.series.length : 0) + 1); } }
+    this.syncTarget();
+  };
+  Renders.prototype.target = function () {
+    var tire = this.tire(); if (!tire) return null;
+    if (this.seriesSel.value === NEW_SERIES) {
+      var n = (this.newName && this.newName.value.trim()) || ('Series ' + (tire.series.length + 1));
+      return { tireId: tire.id, tireName: tire.name, seriesId: 0, newSeries: n, label: n + ' (new)' };
+    }
+    var s = this.seriesOf(tire, parseInt(this.seriesSel.value, 10));
+    return s ? { tireId: tire.id, tireName: tire.name, seriesId: s.id, newSeries: '', label: s.name } : null;
+  };
+  Renders.prototype.syncTarget = function () {
+    var t = this.target(), el = $('[data-renders-target]', this.root);
+    if (el) el.textContent = t ? (t.tireName + ' · ' + t.label) : 'the chosen series';
+  };
+  Renders.prototype.copyFolder = function () {
+    var code = $('[data-renders-folder]', this.root), text = code ? code.textContent : '';
+    if (!text) return;
+    var done = function () { toast('Folder path copied', { kind: 'success' }); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () { window.prompt('Copy the folder path', text); });
+    else window.prompt('Copy the folder path', text);
+  };
+  /** Rescan media/tires/<tire>/: tire-status.php action=rescan when the backend has it, else the assets.php &rescan=1 GET. */
+  Renders.prototype.rescan = function (btn) {
+    var self = this, tire = this.tire(), rc = this.rc;
+    if (!tire) return;
+    if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = 'Rescanning…'; }
+    var finish = function (ok, msg) {
+      if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); btn.textContent = 'Rescan folders'; }
+      if (ok) { toast(msg || 'Folders rescanned', { kind: 'success' }); window.location.href = (cfg.tabUrl || '').replace('__TAB__', 'renders') + '&tire=' + tire.id; }
+      else toast(msg || 'Rescan failed', { kind: 'error' });
+    };
+    App.post(this.statusEndpoint, { action: 'rescan', tire_id: tire.id, actor: App.actor }).then(function (res) {
+      if (res.ok) { var d = res.data || {}; finish(true, d.added !== undefined ? (d.added + ' new file' + (d.added === 1 ? '' : 's') + ' found') : ''); return; }
+      var url = (rc.rescanUrl || '').replace('__TIRE__', String(tire.id));
+      if (!url) { finish(false, res.error); return; }
+      fetch(url, { credentials: 'same-origin' }).then(function (r) { finish(r.ok, r.ok ? '' : 'Rescan failed (' + r.status + ')'); }, function () { finish(false, 'Network error'); });
+    });
+  };
+  /* ---- upload queue ---- */
+  Renders.prototype.addAll = function (files) {
+    var self = this, t = this.target();
+    if (!t) { toast('Pick a tire first.', { kind: 'error' }); return; }
+    if (!files.length) return;
+    var batch = 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);   // one batch id per drop
+    files.forEach(function (f) { self.add(f, t, batch); });
+    if (this.summary) this.summary.hidden = false;
+    this.syncSummary();
+  };
+  Renders.prototype.add = function (file, target, batch) {
+    var item = this.tpl.content.firstElementChild.cloneNode(true);
+    var job = { file: file, item: item, target: target, batch: batch, state: 'queued', tries: 0 };
+    item._job = job;
+    $('[data-upload-name]', item).textContent = file.name;
+    $('[data-upload-meta]', item).textContent = mb(file.size) + ' · ' + target.tireName + ' · ' + target.label;
+    var thumb = $('[data-upload-thumb]', item);
+    if (isVideoFile(file)) { thumb.innerHTML = ICON.play; }
+    else if (/^image\//.test(file.type)) { var img = document.createElement('img'); img.alt = ''; img.src = URL.createObjectURL(file); thumb.appendChild(img); }
+    this.list.appendChild(item);
+    this.jobs.push(job);
+    var status = $('[data-upload-status]', item);
+    var cap = isVideoFile(file) ? this.maxVideoMb : this.maxMb;   // tire-upload.php: images 10 MB, videos 200 MB
+    if (file.size > cap * 1024 * 1024) { this.fail(job, 'Over ' + cap + ' MB — not uploaded.', false); return; }
+    if (!/^image\/(jpeg|png|gif|webp)$/.test(file.type) && !/^video\/(mp4|webm|quicktime)$/.test(file.type) && ['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov'].indexOf(fileExt(file.name)) === -1) {
+      this.fail(job, 'Unsupported type — use JPG, PNG, GIF, WebP, MP4, WebM or MOV.', false); return;
+    }
+    status.textContent = 'Waiting…';
+    this.queue.push(job);
+    this.next();
+  };
+  Renders.prototype.fail = function (job, msg, retryable) {
+    job.state = 'failed';
+    var status = $('[data-upload-status]', job.item), prog = $('[data-upload-progress]', job.item), retry = $('[data-renders-retry]', job.item);
+    status.textContent = msg; status.classList.remove('is-ok'); status.classList.add('is-error');
+    if (prog) prog.hidden = true;
+    if (retry) retry.hidden = retryable === false;
+    job.retryable = retryable !== false;
+    this.syncSummary();
+  };
+  Renders.prototype.retry = function (job) {
+    if (job.state !== 'failed' || !job.retryable) return;
+    job.state = 'queued';
+    var status = $('[data-upload-status]', job.item), retry = $('[data-renders-retry]', job.item), fill = $('[data-upload-fill]', job.item);
+    status.textContent = 'Waiting…'; status.classList.remove('is-error');
+    if (retry) retry.hidden = true;
+    if (fill) fill.style.transform = 'translateX(-100%)';
+    this.queue.push(job);
+    this.syncSummary();
+    this.next();
+  };
+  Renders.prototype.retryFailed = function () { var self = this; this.jobs.forEach(function (j) { if (j.state === 'failed' && j.retryable) self.retry(j); }); };
+  Renders.prototype.clearList = function () {
+    this.jobs = this.jobs.filter(function (j) { return j.state === 'queued' || j.state === 'uploading'; });
+    $$('[data-renders-item]', this.list).forEach(function (li) { if (!li._job || (li._job.state !== 'queued' && li._job.state !== 'uploading')) li.remove(); });
+    if (this.summary) this.summary.hidden = this.jobs.length === 0;
+    this.syncSummary();
+  };
+  Renders.prototype.syncSummary = function () {
+    var ok = 0, fail = 0, left = 0, retry = 0;
+    this.jobs.forEach(function (j) { if (j.state === 'done') ok++; else if (j.state === 'failed') { fail++; if (j.retryable) retry++; } else left++; });
+    if (this.summaryText) this.summaryText.textContent = ok + ' uploaded' + (fail ? ' · ' + fail + ' failed' : '') + (left ? ' · ' + left + ' to go' : '');
+    var ra = $('[data-renders-retry-all]', this.root); if (ra) ra.hidden = retry === 0;
+  };
+  Renders.prototype.next = function () {
+    if (this.busy) return;
+    if (!this.queue.length) { this.finishBatch(); return; }
+    var self = this, job = this.queue.shift(), item = job.item, file = job.file, t = job.target;
+    var prog = $('[data-upload-progress]', item), fill = $('[data-upload-fill]', item), status = $('[data-upload-status]', item);
+    this.busy = true; job.state = 'uploading'; job.tries++;
+    prog.hidden = false; status.textContent = 'Uploading… 0%';
+    var fd = new FormData();
+    fd.append('client', cfg.client || (document.body.dataset.client || ''));
+    fd.append('tire_id', String(t.tireId));
+    // A "New series…" drop: the first file creates it; the reply's series.id is reused for the rest of the batch.
+    var created = this.createdSeries[job.batch];
+    if (t.seriesId) fd.append('series_id', String(t.seriesId));
+    else if (created) fd.append('series_id', String(created.id));
+    else fd.append('new_series', t.newSeries);
+    fd.append('batch', job.batch);
+    fd.append('actor', App.actor || 'admin');
+    fd.append('file', file, file.name);
+    var xhr = new XMLHttpRequest();
+    xhr.upload.addEventListener('progress', function (e) {
+      if (!e.lengthComputable) return;
+      var pct = Math.round(e.loaded / e.total * 100);
+      fill.style.transform = 'translateX(' + (pct - 100) + '%)';
+      status.textContent = 'Uploading… ' + pct + '%';
+    });
+    xhr.onload = function () {
+      var data = null; try { data = JSON.parse(xhr.responseText); } catch (e) {}
+      fill.style.transform = 'translateX(0)';
+      if (!data || data.ok === false || xhr.status >= 400 || !data.image) {
+        var msg = (data && data.error) || ('Upload failed (' + xhr.status + ')');
+        self.fail(job, msg, [400, 403, 404, 409, 413, 415, 422].indexOf(xhr.status) === -1);   // bad request / seat / type / size / not migrated: retrying the same file cannot help
+      } else {
+        job.state = 'done';
+        if (data.series && data.series.id) self.noteSeries(job, data.series);
+        var sid = (data.series && data.series.id) || t.seriesId || (created && created.id) || 0;
+        var link = (self.rc.assetsUrl || '').replace('__TIRE__', String(t.tireId)).replace('__SERIES__', String(sid)) + '&image=' + encodeURIComponent(data.image.id);
+        status.innerHTML = 'Uploaded · To Review — <a href="' + esc(link) + '">open in Assets</a>';
+        status.classList.add('is-ok');
+        if (data.image.thumb) { var th = $('[data-upload-thumb]', item); if (th && !isVideoFile(file)) th.innerHTML = '<img src="' + esc(data.image.thumb) + '" alt="">'; }
+      }
+      self.busy = false; self.syncSummary(); self.next();
+    };
+    xhr.onerror = function () { self.fail(job, 'Network error — try again.', true); self.busy = false; self.next(); };
+    xhr.open('POST', this.endpoint);
+    xhr.setRequestHeader('Accept', 'application/json');
+    xhr.send(fd);
+  };
+  /** The server created (or resolved) a series: remember it for the batch and show it in the pickers/list. */
+  Renders.prototype.noteSeries = function (job, series) {
+    var tire = null, t = job.target;
+    for (var i = 0; i < this.tires.length; i++) if (this.tires[i].id === t.tireId) tire = this.tires[i];
+    if (!tire) return;
+    if (!t.seriesId) this.createdSeries[job.batch] = series;
+    var s = this.seriesOf(tire, series.id);
+    if (!s) { s = { id: series.id, name: series.name || t.newSeries, slug: series.slug || '', folder: series.folder || '', counts: { pending: 0, approved: 0, denied: 0, total: 0 } }; tire.series.push(s); }
+    s.counts.pending++; s.counts.total++;
+    var wasNew = this.seriesSel.value === NEW_SERIES;
+    this.rc.series = wasNew ? s.id : parseInt(this.seriesSel.value, 10);
+    if (wasNew && this.newName) this.newName.value = '';
+    if (this.tireSel.value === String(tire.id)) this.syncSeries(); else this.renderSeriesList();
+  };
+  Renders.prototype.finishBatch = function () {
+    if (this._toasted === this.jobs.length || !this.jobs.length) return;
+    var ok = 0, fail = 0;
+    this.jobs.forEach(function (j) { if (j.state === 'done') ok++; else if (j.state === 'failed') fail++; });
+    if (ok + fail !== this.jobs.length) return;
+    this._toasted = this.jobs.length;
+    toast(ok + ' uploaded' + (fail ? ' · ' + fail + ' failed' : ''), { kind: fail ? 'error' : 'success', duration: 4000 });
+  };
+  /* ---- series list: rename / reorder / delete (tire-status.php) ---- */
+  Renders.prototype.renderSeriesList = function () {
+    var tire = this.tire(), self = this;
+    if (!this.seriesList || !tire) return;
+    this.seriesList.innerHTML = tire.series.map(function (s, i) {
+      var c = s.counts || {};
+      var line = (c.pending || 0) + ' to review · ' + (c.approved || 0) + ' approved' + ((c.denied || 0) ? ' · ' + c.denied + ' needs changes' : '') + ' · ' + (c.total || 0) + (c.total === 1 ? ' file' : ' files');
+      return '<li class="studio-series-row" data-series-row="' + s.id + '">'
+        + '<div class="studio-series-main"><input class="ui-input studio-series-name" type="text" maxlength="80" value="' + esc(s.name) + '" data-series-name aria-label="Series name">'
+        + '<button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-series-rename-save>Rename</button></div>'
+        + '<div class="studio-series-meta text-secondary">' + esc(line) + (s.folder ? ' · <code>' + esc(s.folder) + '/</code>' : '') + '</div>'
+        + '<div class="studio-series-ctl">'
+        + '<a class="ui-btn ui-btn--plain ui-btn--sm" href="' + esc((self.rc.assetsUrl || '').replace('__TIRE__', String(tire.id)).replace('__SERIES__', String(s.id))) + '">Open</a>'
+        + '<button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-series-up aria-label="Move ' + esc(s.name) + ' up"' + (i === 0 ? ' disabled' : '') + '>' + ICON.left + '</button>'
+        + '<button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-series-down aria-label="Move ' + esc(s.name) + ' down"' + (i === tire.series.length - 1 ? ' disabled' : '') + '>' + ICON.right + '</button>'
+        + '<button type="button" class="ui-btn ui-btn--plain ui-btn--sm studio-danger-btn" data-series-delete>Delete</button>'
+        + '</div></li>';
+    }).join('');
+    if (this.seriesEmpty) this.seriesEmpty.hidden = tire.series.length > 0;
+  };
+  Renders.prototype.renameSeries = function (row) {
+    var self = this, tire = this.tire(), id = parseInt(row.dataset.seriesRow, 10), s = this.seriesOf(tire, id);
+    var input = $('[data-series-name]', row), name = (input.value || '').trim();
+    if (!s || !name || name === s.name) return;
+    App.post(this.statusEndpoint, { action: 'series_rename', series_id: id, name: name, actor: App.actor }).then(function (res) {
+      if (!res.ok) { toast(res.error || 'Could not rename', { kind: 'error' }); input.value = s.name; return; }
+      s.name = (res.data && res.data.series && res.data.series.name) || name;
+      toast('Series renamed', { kind: 'success' });
+      self.syncSeries();
+    });
+  };
+  Renders.prototype.moveSeries = function (row, dir) {
+    var self = this, tire = this.tire(), id = parseInt(row.dataset.seriesRow, 10), i = -1;
+    tire.series.forEach(function (s, k) { if (s.id === id) i = k; });
+    var j = i + dir;
+    if (i < 0 || j < 0 || j >= tire.series.length) return;
+    var moved = tire.series.splice(i, 1)[0]; tire.series.splice(j, 0, moved);
+    this.syncSeries();
+    var params = { action: 'series_reorder', tire_id: tire.id, actor: App.actor };
+    tire.series.forEach(function (s, k) { params['ids[' + k + ']'] = s.id; });
+    App.post(this.statusEndpoint, params).then(function (res) {
+      if (res.ok) return;
+      var back = tire.series.splice(j, 1)[0]; tire.series.splice(i, 0, back);   // roll back
+      self.syncSeries();
+      toast(res.error || 'Could not reorder', { kind: 'error' });
+    });
+  };
+  Renders.prototype.deleteSeries = function (row) {
+    var self = this, tire = this.tire(), id = parseInt(row.dataset.seriesRow, 10), s = this.seriesOf(tire, id);
+    if (!s) return;
+    if (!window.confirm('Remove “' + s.name + '” (' + (s.counts.total || 0) + ' files) from ' + tire.name + '? The client will no longer see it.')) return;
+    var files = window.confirm('Also delete the files on disk?\n\nOK = delete the files too · Cancel = keep them in ' + (tire.folder || 'the tire folder') + '/' + (s.folder || s.slug || ''));
+    App.post(this.statusEndpoint, { action: 'series_delete', series_id: id, delete_files: files ? 1 : 0, actor: App.actor }).then(function (res) {
+      if (!res.ok) { toast(res.error || 'Could not delete', { kind: 'error' }); return; }
+      tire.series = tire.series.filter(function (x) { return x.id !== id; });
+      if (String(self.rc.series) === String(id)) self.rc.series = 0;
+      toast('Series deleted', { kind: 'success' });
+      self.syncSeries();
+    });
+  };
+
+  /* ================================================================== */
   /* Batch builder                                                      */
   /* ================================================================== */
   function Batch(root) {
@@ -837,6 +1174,7 @@
     preview:  function (form, root, picker) { return new Preview(form, root, picker); },
     composer: function (form) { return new Composer(form); },
     uploads:  function (zone) { return new Uploads(zone); },
+    renders:  function (root) { return new Renders(root); },
     batch:    function (root) { return new Batch(root); },
     linkTags: linkTags,
     formatWhen: formatWhen,
@@ -848,6 +1186,7 @@
     $$('[data-batch]').forEach(function (root) { App.studio.instances.batch = new Batch(root); });
     $$('[data-picker]').forEach(function (root) { if (!root._picker) new Picker(root); });
     $$('[data-upload-zone]').forEach(function (zone) { App.studio.instances.uploads = new Uploads(zone); });
+    $$('[data-renders]').forEach(function (root) { App.studio.instances.renders = new Renders(root); });
     initHub();
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
