@@ -557,7 +557,7 @@ include __DIR__ . '/partials/layout-top.php';
   </div>
 
   <?php if (!$pgOn): ?>
-    <div class="studio-alert studio-emails-off" role="status">The Pages tab is not showing for <?= h($client['name']) ?> yet — enable it below, or add the first page and it appears automatically.</div>
+    <div class="studio-alert studio-pages-off" role="status">The Pages tab is not showing for <?= h($client['name']) ?> yet — enable it below, or add the first page and it appears automatically.</div>
   <?php endif; ?>
 
   <?= insetListOpen(h($client['name']) . '\'s pages', ['raw' => true, 'attrs' => ['data-pages-counts' => '1']]) ?>
