@@ -11,6 +11,14 @@
        optimistic|ok|rolledBack, error}, 'viewer:navigate' {item, index},
        'viewer:replaced' {item, src}, 'viewer:close'.
      Swipe / ← → to navigate, pinch or double-tap to zoom, Esc to close.
+     Comments panel ("Comments (N)" under the actions, both seats, any status):
+       .openComments() .closeComments() .toggleComments() .loadThread(item)
+       .postComment(text) — thread fetched lazily (assets.php?partial=comments
+       &kind=&id= → {count, html}) when the panel opens or the image changes;
+       posting is optimistic (bubble + count, rollback + toast on failure) and
+       goes to the item's endpoint as action=comment {id, comment}. Enter sends
+       on desktop, the button on touch. Event 'viewer:comments' {item, count,
+       optimistic|ok|rolledBack} keeps the tile bubble in sync.
      After Approve or Deny the viewer auto-advances to the next pending item
      (review mode) or the next remaining item (browse mode); at the end it
      shows "All caught up" and closes on tap. Deny requires a note >= 3 chars,
@@ -47,6 +55,8 @@
   function emit(el, name, detail) { el.dispatchEvent(new CustomEvent(name, { bubbles: true, detail: detail || {} })); }
   function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
   function afterMs(ms, fn) { return setTimeout(fn, reduced() ? Math.min(ms, 160) : ms); }
+  function escapeHtml(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function finePointer() { return !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches); }
 
   /* ================================================================ */
   /* Viewer                                                            */
@@ -55,6 +65,7 @@
     root: null, refs: {}, items: [], index: -1, opts: {},
     isOpen: false, _closing: false, _slide: null, _lastFocus: null,
     _zoom: { scale: 1, tx: 0, ty: 0 },
+    _commentsOpen: false, _threads: {}, _threadReq: 0, _posting: false,
 
     init: function (root) {
       root = root || $('[data-viewer]');
@@ -73,9 +84,25 @@
         note: $('[data-viewer-note]', root), noteInput: $('[data-viewer-note-input]', root),
         noteHint: $('[data-viewer-note-hint]', root), noteSend: $('[data-viewer-note-send]', root), noteCancel: $('[data-viewer-note-cancel]', root),
         replace: $('[data-viewer-replace]', root), replaceInput: $('[data-viewer-replace-input]', root), manage: $('[data-viewer-manage]', root),
-        setRef: $('[data-viewer-set-reference]', root), del: $('[data-viewer-delete]', root)
+        setRef: $('[data-viewer-set-reference]', root), del: $('[data-viewer-delete]', root),
+        comments: $('[data-viewer-comments]', root), commentsToggle: $('[data-viewer-comments-toggle]', root),
+        commentsCount: $('[data-viewer-comments-count]', root), commentsPanel: $('[data-viewer-comments-panel]', root),
+        thread: $('[data-viewer-thread]', root), commentForm: $('[data-viewer-comment-form]', root),
+        commentInput: $('[data-viewer-comment-input]', root), commentSend: $('[data-viewer-comment-send]', root)
       };
       var self = this;
+
+      // Comments panel: toggle, composer (Enter sends on desktop, the button on touch), autosize
+      if (r.comments && r.commentsToggle && r.commentForm) {
+        r.commentsToggle.addEventListener('click', function () { self.toggleComments(); });
+        r.commentForm.addEventListener('submit', function (e) { e.preventDefault(); self.postComment(r.commentInput.value); });
+        r.commentInput.addEventListener('input', function () { self._autosize(); r.commentSend.disabled = !r.commentInput.value.trim() || self._posting; });
+        r.commentInput.addEventListener('keydown', function (e) {
+          if (e.key !== 'Enter' || e.shiftKey || e.isComposing || !finePointer()) return;
+          e.preventDefault();
+          if (r.commentInput.value.trim()) self.postComment(r.commentInput.value);
+        });
+      }
 
       $('[data-viewer-close]', root).addEventListener('click', function () { self.close(); });
       if (r.prev) r.prev.addEventListener('click', function () { self.prev(); });
@@ -124,6 +151,7 @@
       root.hidden = false;
       root.setAttribute('aria-hidden', 'false');
       this.hideDone(); this.hideNote(); this.closeMenu(); this.hideFallback();
+      this.closeComments(); this._threads = {};   // panel starts folded; threads are fetched fresh per open
       this.refs.bar.hidden = false;
       this.goTo(clamp(index || 0, 0, this.items.length - 1));
       requestAnimationFrame(function () { requestAnimationFrame(function () { root.classList.add('is-visible'); }); });
@@ -181,6 +209,7 @@
         afterMs(380, function () { if (old.parentNode) old.parentNode.removeChild(old); });
       }
       this.updateChrome();
+      if (this._commentsOpen) this.loadThread(item);   // lazy: only an open panel fetches the thread
       this._preload(i + 1); this._preload(i - 1);
       emit(this.root, 'viewer:navigate', { item: item, index: i });
     },
@@ -268,6 +297,149 @@
       $$('[data-tire-only]', r.menu).forEach(function (el) { el.hidden = item.kind !== 'tire'; });
       if (r.manage) { r.manage.href = item.manage || '#'; if (!item.manage) r.manage.hidden = true; }
       if (r.setRef && item.kind === 'tire') r.setRef.hidden = item.type === 'video' || item.isReference === true;   // the reference header is an <img>
+      this._setCommentCount(item, item.comments);
+    },
+
+    /* ---------------- comments panel (both seats, every status) ---------------- */
+    _commentKey: function (item) { return item.kind + ':' + item.id; },
+    _commentsUrl: function (item) {
+      var base = this.opts.commentsEndpoint || this.root.getAttribute('data-comments-endpoint') || '';
+      if (!base) return '';
+      return base + (base.indexOf('?') >= 0 ? '&' : '?') + 'kind=' + encodeURIComponent(item.kind) + '&id=' + encodeURIComponent(item.id);
+    },
+    toggleComments: function () { if (this._commentsOpen) this.closeComments(); else this.openComments(); },
+    openComments: function () {
+      var r = this.refs;
+      if (!r.comments || this._commentsOpen) return;
+      this._commentsOpen = true;
+      r.commentsPanel.hidden = false;
+      r.commentsToggle.setAttribute('aria-expanded', 'true');
+      this.root.classList.add('is-comments-open');
+      this.closeMenu();
+      this.loadThread(this.current());
+      if (finePointer()) setTimeout(function () { try { r.commentInput.focus({ preventScroll: true }); } catch (e) {} }, 30);   // no keyboard pop on touch
+    },
+    closeComments: function () {
+      var r = this.refs;
+      if (!r.comments || !this._commentsOpen) return;
+      this._commentsOpen = false;
+      r.commentsPanel.hidden = true;
+      r.commentsToggle.setAttribute('aria-expanded', 'false');
+      this.root.classList.remove('is-comments-open');
+      if (r.commentsPanel.contains(document.activeElement)) { try { r.commentsToggle.focus({ preventScroll: true }); } catch (e) {} }
+    },
+    /** "Comments (N)" on the toggle (+ the item's own count, which the grid tile mirrors). */
+    _setCommentCount: function (item, n) {
+      if (!item) return;
+      n = Math.max(0, parseInt(n, 10) || 0);
+      item.comments = n;
+      var r = this.refs;
+      if (r.commentsCount && this.current() === item) {
+        r.commentsCount.textContent = String(n);
+        r.commentsCount.hidden = n === 0;
+        r.commentsToggle.setAttribute('aria-label', n === 1 ? 'Comments, 1 comment' : 'Comments, ' + n + ' comments');
+      }
+    },
+    /** Fetch (or reuse) the thread of `item`: GET <comments endpoint>&kind=&id= → {ok, count, html}. Stale answers are dropped. */
+    loadThread: function (item, force) {
+      var r = this.refs, self = this;
+      if (!item || !r.thread) return Promise.resolve(null);
+      var key = this._commentKey(item), cached = this._threads[key];
+      if (cached && !force) {
+        r.thread.innerHTML = cached.html;
+        this._setCommentCount(item, cached.count);
+        this._scrollThread();
+        return Promise.resolve(cached);
+      }
+      var url = this._commentsUrl(item);
+      if (!url) return Promise.resolve(null);
+      r.thread.innerHTML = '<p class="ui-viewer-thread-loading">Loading comments…</p>';
+      var token = ++this._threadReq;
+      return fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+        .then(function (res) { return res.json().then(function (d) { return { ok: res.ok && !!d && d.ok === true, data: d }; }); })
+        .catch(function () { return { ok: false, data: null }; })
+        .then(function (res) {
+          if (token !== self._threadReq || self.current() !== item || !self._commentsOpen) return null;   // navigated on / folded meanwhile
+          if (!res.ok) { r.thread.innerHTML = '<p class="ui-viewer-thread-error">Could not load comments.</p>'; return null; }
+          var entry = { html: String(res.data.html || ''), count: parseInt(res.data.count, 10) || 0 };
+          self._threads[key] = entry;
+          r.thread.innerHTML = entry.html;
+          self._setCommentCount(item, entry.count);
+          emit(self.root, 'viewer:comments', { item: item, count: entry.count });
+          self._scrollThread();
+          return entry;
+        });
+    },
+    _scrollThread: function () { var t = this.refs.thread; if (t) t.scrollTop = t.scrollHeight; },
+    _autosize: function () {
+      var ta = this.refs.commentInput; if (!ta) return;
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(120, ta.scrollHeight) + 'px';
+    },
+    /** Append one bubble to the visible thread (same markup as commentBubble() / posts.js). */
+    _appendBubble: function (text, actor) {
+      var r = this.refs, list = $('[data-thread]', r.thread);
+      if (!list) {
+        r.thread.innerHTML = '<div class="ui-thread pd-thread ui-viewer-thread-list" data-thread data-count="0"></div>';
+        list = $('[data-thread]', r.thread);
+      }
+      var side = actor === 'client' ? 'client' : 'joust';
+      var who  = actor === 'client' ? 'You' : (actor === 'admin' ? 'Joust' : 'Note');
+      var msg  = document.createElement('div');
+      msg.className = 'pd-msg pd-msg--' + side + ' ui-enter';
+      msg.setAttribute('data-actor', actor);
+      msg.innerHTML = '<div class="ui-bubble ui-bubble--' + side + '">' + escapeHtml(text).replace(/\n/g, '<br>') + '</div>'
+                    + '<div class="ui-bubble-meta">' + who + ' · just now</div>';
+      var empty = $('[data-thread-empty]', list); if (empty) empty.hidden = true;
+      list.appendChild(msg);
+      list.setAttribute('data-count', String((parseInt(list.getAttribute('data-count'), 10) || 0) + 1));
+      this._scrollThread();
+      return msg;
+    },
+    _removeBubble: function (msg) {
+      if (!msg || !msg.parentNode) return;
+      var list = msg.parentNode;
+      list.removeChild(msg);
+      var n = Math.max(0, (parseInt(list.getAttribute('data-count'), 10) || 0) - 1);
+      list.setAttribute('data-count', String(n));
+      var empty = $('[data-thread-empty]', list); if (empty && n === 0) empty.hidden = false;
+    },
+    /** A deny note is a comment too: mirror it into the count / open thread (decide() calls this optimistically). */
+    _noteToThread: function (item, text, undo) {
+      if (!item) return;
+      var prev = item.comments || 0;
+      delete this._threads[this._commentKey(item)];
+      if (undo) { this._setCommentCount(item, prev - 1); emit(this.root, 'viewer:comments', { item: item, count: item.comments, rolledBack: true }); return; }
+      if (this._commentsOpen && this.current() === item) this._appendBubble(text, App.actor || 'client');
+      this._setCommentCount(item, prev + 1);
+      emit(this.root, 'viewer:comments', { item: item, count: item.comments, optimistic: true });
+    },
+    /** Optimistic: bubble + count now, POST action=comment, remove + restore the text + toast on failure. */
+    postComment: function (text) {
+      var item = this.current(), r = this.refs, self = this, root = this.root;
+      text = (text || '').trim();
+      if (!item || !text || !item.endpoint || this._posting || !r.commentForm) return Promise.resolve(null);
+      if (text.length > 2000) { toast('Comments are limited to 2000 characters', { kind: 'error' }); return Promise.resolve(null); }
+      this._posting = true;
+      var actor = App.actor || 'client', prevCount = item.comments || 0, key = this._commentKey(item);
+      var msg = this._appendBubble(text, actor);
+      this._setCommentCount(item, prevCount + 1);
+      emit(root, 'viewer:comments', { item: item, count: prevCount + 1, optimistic: true });
+      r.commentInput.value = ''; this._autosize(); r.commentSend.disabled = true;
+      delete this._threads[key];   // the next visit refetches (server timestamps)
+      return App.post(item.endpoint, { action: 'comment', id: item.id, comment: text, actor: actor }).then(function (res) {
+        self._posting = false;
+        if (!res.ok) {
+          self._removeBubble(msg);
+          self._setCommentCount(item, prevCount);
+          emit(root, 'viewer:comments', { item: item, count: prevCount, rolledBack: true, error: res.error });
+          if (self.current() === item && !r.commentInput.value.trim()) { r.commentInput.value = text; self._autosize(); r.commentSend.disabled = false; }
+          toast(res.error || 'Could not send', { kind: 'error' });
+        } else {
+          emit(root, 'viewer:comments', { item: item, count: prevCount + 1, ok: true, text: text });
+        }
+        return res;
+      });
     },
 
     /* ---------------- admin: set as reference / delete (tire images; the menu items exist only for admin) ---------------- */
@@ -336,11 +508,12 @@
       emit(root, 'viewer:decision', { item: item, status: status, prev: prev, optimistic: true });
 
       var params = { id: item.id, status: status, actor: App.actor };
-      if (comment) params.comment = comment;
+      if (comment) { params.comment = comment; this._noteToThread(item, comment); }   // the deny note is a comment in the thread too
       var p = App.post(item.endpoint, params).then(function (res) {
         item._busy = false;
         if (!res.ok) {
           item.status = prev;
+          if (comment) self._noteToThread(item, comment, true);
           if (self.current() === item) self.updateChrome();
           toast(res.error || 'Something went wrong', { kind: 'error' });
           emit(root, 'viewer:decision', { item: item, status: prev, prev: status, rolledBack: true, error: res.error });
@@ -472,10 +645,11 @@
         e.preventDefault();
         if (!this.refs.menu.hidden) this.closeMenu();
         else if (!this.refs.note.hidden) this.hideNote();
+        else if (this._commentsOpen) this.closeComments();
         else this.close();
         return;
       }
-      if (inField) return;
+      if (inField) return;   // typing in the composer / note: ←/→ stay in the text
       if (e.key === 'ArrowRight') { e.preventDefault(); this.next(); }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); this.prev(); }
       else if (e.key === 'Tab') this._trapFocus(e);
@@ -659,6 +833,11 @@
         var tile = e.detail.item.tile || self.findTile(e.detail.item.kind, e.detail.item.id);
         var img = tile && tile.querySelector('img'); if (img) img.src = e.detail.src;
       });
+      // Comment count (thread loaded / comment sent / deny note / rollback) → the tile's bubble
+      document.addEventListener('viewer:comments', function (e) {
+        var it = e.detail.item, tile = it.tile || self.findTile(it.kind, it.id);
+        if (tile) self.applyComments(tile, e.detail.count);
+      });
       // Admin deleted the image (or moved it to the Reference set): the tile leaves and the counts drop by one.
       document.addEventListener('viewer:removed', function (e) {
         var it = e.detail.item, tile = it.tile || self.findTile(it.kind, it.id);
@@ -704,7 +883,8 @@
     tileToItem: function (tile) {
       var d = tile.dataset;
       return { id: parseInt(d.id, 10), kind: d.kind, status: d.status, src: d.src, type: d.type || 'image', mime: d.mime || '',
-               label: d.label || '', download: d.download || '', endpoint: d.endpoint, manage: d.manage || '', twin: d.twin || '', tile: tile };
+               label: d.label || '', download: d.download || '', endpoint: d.endpoint, manage: d.manage || '', twin: d.twin || '',
+               comments: parseInt(d.comments, 10) || 0, tile: tile };
     },
     openAt: function (tile) {
       var self = this, items = this.tiles().map(function (t) { return self.tileToItem(t); });
@@ -820,6 +1000,15 @@
       tile.classList.toggle('ui-thumb--approved', status === 'approved');
       var dot = tile.querySelector('[data-status-dot]');
       if (dot) dot.className = 'ui-dot ui-dot--' + status;
+    },
+    /** Comment-count bubble on a tile (hidden at 0). */
+    applyComments: function (tile, n) {
+      n = Math.max(0, parseInt(n, 10) || 0);
+      tile.dataset.comments = String(n);
+      var b = tile.querySelector('[data-thumb-comments]');
+      if (!b) return;
+      b.hidden = n === 0;
+      var c = b.querySelector('[data-thumb-comments-count]'); if (c) c.textContent = String(n);
     },
     shouldLeave: function (status) {
       var filter = this.grid.dataset.filter;

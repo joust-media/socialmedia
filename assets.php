@@ -35,11 +35,17 @@
  *                      series wins over an inconsistent &series=)
  *   &offset=<n>        paging: the grid renders ASSETS_PAGE tiles from that offset
  *   &partial=1         answer with the tile markup only (the "Load more" fetch)
+ *   &partial=comments&kind=tire|library&id=<image id>
+ *                      JSON {ok, kind, id, count, html}: the image's comment thread
+ *                      (commentThreadHtml() over commentThread(): deny notes and plain
+ *                      comments, client vs Joust styling) for the viewer's Comments
+ *                      panel, fetched lazily per image. Tenant-checked like the grid.
  *   &rescan=1          ask syncTireSeries() to rescan media/tires/<tire>/ now
  */
 
 require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';
+require_once __DIR__ . '/partials/components/comment-thread.php';   // commentThreadHtml() for the viewer's Comments panel
 if (is_file(__DIR__ . '/tire-series-lib.php')) { require_once __DIR__ . '/tire-series-lib.php'; }
 
 $isAdmin  = isAdmin();
@@ -96,6 +102,44 @@ $hasDisplayName = false;
 try { $hasDisplayName = $pdo->query("SHOW COLUMNS FROM tire_images LIKE 'display_name'")->rowCount() > 0; } catch (Throwable $e) {}
 $nameSel   = $hasDisplayName ? ', ti.display_name' : ", '' AS display_name";
 $seriesSel = $seriesOn ? ', ti.series_id' : ", NULL AS series_id";   // tire_images.series_id (NULL = reference image) — tire-series-lib.php migration
+$hasLog    = hasActivityLog($pdo);
+
+// ---------------------------------------------------------------------
+// &partial=comments — the viewer's Comments panel: one image's thread as JSON.
+// Same tenant rules as the grid (the company of the page's client, and a client
+// seat never sees a denied image), so the answer is 404 for anything else.
+// ---------------------------------------------------------------------
+if (($_GET['partial'] ?? '') === 'comments') {
+    header('Content-Type: application/json');
+    header('Cache-Control: no-store');
+    $cKind = in_array($_GET['kind'] ?? '', ['library', 'tire'], true) ? (string)$_GET['kind'] : '';
+    $cId   = max(0, (int)($_GET['id'] ?? 0));
+    $hit   = null;
+    if ($cKind === 'library' && $cId > 0 && $libReady) {
+        $s = $pdo->prepare("SELECT id FROM library_images WHERE id = ? AND company_id = ?{$clientOnly}");
+        $s->execute([$cId, $cid]);
+        $hit = $s->fetch();
+    } elseif ($cKind === 'tire' && $cId > 0) {
+        $s = $pdo->prepare("SELECT ti.id FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id WHERE ti.id = ? AND t.company_id = ?{$clientOnlyTi}");
+        $s->execute([$cId, $cid]);
+        $hit = $s->fetch();
+    }
+    if (!$hit) {
+        http_response_code(404);
+        echo json_encode(['ok' => false, 'error' => 'Image not found']);
+        exit;
+    }
+    $rows = $hasLog ? commentThread($pdo, $cKind === 'tire' ? 'tire_image' : 'library_image', $cId) : [];
+    $rows = array_values(array_filter($rows, static function ($r) { return trim((string)($r['detail'] ?? '')) !== ''; }));
+    echo json_encode([
+        'ok'    => true,
+        'kind'  => $cKind,
+        'id'    => $cId,
+        'count' => count($rows),
+        'html'  => commentThreadHtml($rows, ['empty' => 'No comments yet.', 'class' => 'ui-viewer-thread-list']),
+    ], JSON_UNESCAPED_SLASHES);
+    exit;
+}
 
 // ---------------------------------------------------------------------
 // Deep link → resolve the item's view / collection / filter first so the
@@ -185,7 +229,9 @@ if (!function_exists('assetsTileHtml')) {
               . ' data-endpoint="' . esc($endpoint) . '"' . ($it['manage'] !== '' ? ' data-manage="' . esc($it['manage']) . '"' : '')
               . (!empty($it['twin']) ? ' data-twin="' . esc($it['twin']) . '"' : '')     // transcoded .mp4 next to a .mov → second <source> in the viewer
               . (isset($it['series']) && $it['series'] !== '' ? ' data-series="' . esc((string)$it['series']) . '"' : '')
-              . ' aria-label="' . esc('Open ' . $it['label'] . ', ' . $index . ' of ' . $total) . '">';
+              . ' data-comments="' . (int)($it['comments'] ?? 0) . '"'
+              . ' aria-label="' . esc('Open ' . $it['label'] . ', ' . $index . ' of ' . $total . (!empty($it['comments']) ? ', ' . (int)$it['comments'] . ($it['comments'] === 1 ? ' comment' : ' comments') : '')) . '">';
+        $nc = (int)($it['comments'] ?? 0);
         if ($it['type'] === 'video') {
             $out .= videoTile($it['src'], ['badge' => false, 'poster' => ($it['thumb'] ?? '') !== '' && $it['thumb'] !== $it['src'] ? $it['thumb'] : '']);   // poster when the lib made one, else dark tile + play glyph
         } else {
@@ -195,6 +241,9 @@ if (!function_exists('assetsTileHtml')) {
               . ($it['type'] === 'video' ? videoDurationBadge('as-badge-video') : '') . '</span>'
               . '<span class="as-thumb-check" aria-hidden="true">' . icon('checkmark') . '</span>'
               . '<span class="as-thumb-select" aria-hidden="true">' . icon('checkmark') . '</span>'
+              // Comment-count bubble (top-left; hidden at 0 so assets.js can reveal it after the first comment)
+              . '<span class="ui-pill ui-pill--glass ui-pill--nodot as-thumb-comments" data-thumb-comments' . ($nc > 0 ? '' : ' hidden') . ' aria-hidden="true">'
+              . icon('bubble') . '<span data-thumb-comments-count>' . $nc . '</span></span>'
               . '</button>';
         return $out;
     }
@@ -434,6 +483,14 @@ if ($view === 'library') {
     }
 }
 
+// Comment-count bubbles: ONE grouped query for the page of tiles (a grid holds a single kind).
+if ($items && $hasLog) {
+    $ids = array_map(static function ($it) { return (int)$it['id']; }, $items);
+    $nc  = commentCounts($pdo, $items[0]['kind'] === 'tire' ? 'tire_image' : 'library_image', $ids);
+    foreach ($items as &$it) { $it['comments'] = (int)($nc[(int)$it['id']] ?? 0); }
+    unset($it);
+}
+
 $isGrid       = ($view === 'library') || ($view === 'collections' && $collection);
 $pendingTotal = $libCounts['pending'] + $tireCounts['pending'];   // = the tab-bar badge
 $hasMore      = $isGrid && ($offset + count($items)) < $gridTotal;
@@ -646,6 +703,7 @@ include __DIR__ . '/partials/layout-top.php';
 // Full-screen viewer (hidden until App.viewer.open). Admin-only controls are
 // rendered inside the partial only when isAdmin().
 $viewerAdmin = $isAdmin;
+$viewerCommentsEndpoint = clientUrl('assets.php', ['partial' => 'comments']);   // Comments panel thread fetch (+ &kind=&id=)
 include __DIR__ . '/partials/components/media-viewer.php';
 
 // Admin series sheets (Rename / Delete) — markup only for admin; App.sheet fills #uiSheet from these templates.
@@ -693,6 +751,7 @@ $assetsConfig = [
         'tire'    => basePath() . '/tire-status.php',
         'replace' => basePath() . '/replace-image.php',
         'upload'  => basePath() . '/tire-upload.php',              // admin: one file per request into a series
+        'comments' => clientUrl('assets.php', ['partial' => 'comments']),   // + &kind=&id= → {ok, count, html} (viewer Comments panel)
     ],
     'labels'    => ['collections' => $collectionsLabel],
     // Viewer heading context "<tire> · <series>" (the count "n of N" is appended by App.viewer)

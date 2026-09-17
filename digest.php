@@ -345,6 +345,8 @@ function render_summary(array $rows, int $leftover, array $config) {
                 $entityLabel = $imageLabels[(int)$e['entity_id']] ?? ('Image #' . (int)$e['entity_id']);
             } elseif ($e['entity_type'] === 'tire_series') {
                 $entityLabel = $seriesLabels[(int)$e['entity_id']] ?? ('Series #' . (int)$e['entity_id']);
+            } elseif ($e['entity_type'] === 'library_image') {
+                $entityLabel = 'Library image #' . (int)$e['entity_id'];   // never the on-disk filename
             } elseif ($e['entity_type'] === 'task') {
                 $entityLabel = 'Task #' . (int)$e['entity_id'];
             } elseif ($e['entity_type'] === 'email') {

@@ -726,6 +726,29 @@ function latestCommentDates(PDO $pdo, $entityType, array $entityIds) {
 }
 
 /**
+ * Number of comments per entity (the rows commentThread() would return), keyed
+ * by entity_id — ONE grouped query for a whole page of tiles (assets.php badges).
+ * Ids without a comment are simply absent.
+ */
+function commentCounts(PDO $pdo, $entityType, array $entityIds) {
+    if (!$entityIds) return [];
+    $entityIds = array_values(array_unique(array_map('intval', $entityIds)));
+    $placeholders = implode(',', array_fill(0, count($entityIds), '?'));
+    $stmt = $pdo->prepare("
+        SELECT entity_id, COUNT(*) AS n
+          FROM activity_log
+         WHERE entity_type = ? AND action = 'commented'
+           AND detail IS NOT NULL AND detail <> ''
+           AND entity_id IN ($placeholders)
+         GROUP BY entity_id
+    ");
+    $stmt->execute(array_merge([$entityType], $entityIds));
+    $out = [];
+    foreach ($stmt->fetchAll() as $row) { $out[(int)$row['entity_id']] = (int)$row['n']; }
+    return $out;
+}
+
+/**
  * Pull recent activity for the feed panel. If $companyId is null, return
  * cross-client. Rows sharing a batch_id are returned grouped (one entry
  * with `actions` array) so the UI can collapse them.
