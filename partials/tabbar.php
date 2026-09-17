@@ -4,27 +4,43 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
 /**
  * Role-aware tab bar — fixed bottom on mobile, left sidebar at ≥1024px.
  *
- *   Client: Home · Assets · Posts · [Emails] · Projects
+ *   Client: Home · Assets · [Tires] · Posts · [Emails] · Projects
  *   Admin:  + Studio (Joust orange). The Studio tab is never rendered for a
  *           client — the role check is server-side (isAdmin()), not CSS.
+ *   Tires:  only for companies with the tires module enabled or at least one
+ *           tires row (companyHasTires(), helpers.php). Labelled with the
+ *           company's own word (companies.feature_label, "Tires" for Kenda;
+ *           "Collections" when unset) and linking to assets.php?view=collections.
  *   Emails: only for companies with the emails module enabled or at least one
  *           email row (companyHasEmails(), emails-lib.php) — same for both roles.
  *
  * Reads from the including scope: $client, $pdo (helpers.php globals) and an
- * optional $activeTab override ('home'|'assets'|'posts'|'emails'|'projects'|'studio').
- * When $activeTab is not set the active tab is derived from SCRIPT_NAME.
+ * optional $activeTab override ('home'|'assets'|'tires'|'posts'|'emails'|'projects'|'studio').
+ * When $activeTab is not set the active tab is derived from SCRIPT_NAME; on
+ * assets.php, ?view=collections (or a tire deep link, kind=tire) → Tires.
+ * 'tires' falls back to Assets when the company has no Tires tab.
  *
- * Badges on Assets, Posts and Emails = items awaiting the client's action (pending),
- * scoped to the current client. A DB hiccup can never break the nav.
+ * Badges on Assets, Tires, Posts and Emails = items awaiting the client's action
+ * (pending), scoped to the current client. With a Tires tab present the Assets
+ * badge is pending library images only and Tires is pending tire images, so a
+ * render never counts twice; without it Assets carries both. A DB hiccup can
+ * never break the nav. Every tab carries data-tab="<key>" for the page scripts
+ * (assets.js keeps the right badge live after a decision).
  *
  * ONE place to update when later phases ship the new pages:
  * change 'page' (and the 'scripts' aliases) below.
  */
+$uiTiresLabel = trim((string)($client['feature_label'] ?? ''));
+if ($uiTiresLabel === '') { $uiTiresLabel = 'Collections'; }
+
 $uiTabs = [
     'home'     => ['label' => 'Home',     'icon' => 'house',     'page' => 'index.php',
                    'scripts' => ['index']],
     'assets'   => ['label' => 'Assets',   'icon' => 'photo',     'page' => 'assets.php',
                    'scripts' => ['library', 'features', 'tires', 'assets']],
+    'tires'    => ['label' => $uiTiresLabel, 'icon' => 'tire',   'page' => 'assets.php',
+                   'query' => ['view' => 'collections'], 'scripts' => [],
+                   'module' => 'tires'],
     'posts'    => ['label' => 'Posts',    'icon' => 'grid',      'page' => 'posts.php',
                    'scripts' => ['feed', 'posts']],
     'emails'   => ['label' => 'Emails',   'icon' => 'mail',      'page' => 'emails.php',
@@ -40,23 +56,34 @@ $uiTabs = [
 
 $uiIsAdmin = function_exists('isAdmin') && isAdmin();
 
-// Module-gated tab (Emails): shown only when the scoped company has the module / any rows.
-$uiHasEmails = false;
-if (!empty($client['id']) && isset($pdo) && $pdo instanceof PDO && function_exists('companyHasEmails')) {
-    try { $uiHasEmails = companyHasEmails($client, $pdo); } catch (Throwable $uiErr) { $uiHasEmails = false; }
+// Module-gated tabs (Tires, Emails): shown only when the scoped company has the module / any rows.
+$uiHasEmails = false; $uiHasTires = false;
+if (!empty($client['id']) && isset($pdo) && $pdo instanceof PDO) {
+    if (function_exists('companyHasEmails')) {
+        try { $uiHasEmails = companyHasEmails($client, $pdo); } catch (Throwable $uiErr) { $uiHasEmails = false; }
+    }
+    if (function_exists('companyHasTires')) {
+        try { $uiHasTires = companyHasTires($client, $pdo); } catch (Throwable $uiErr) { $uiHasTires = false; }
+    }
 }
+$uiModules = ['emails' => $uiHasEmails, 'tires' => $uiHasTires];
 
-// Active tab: explicit override, else the current script name.
+// Active tab: explicit override, else the current script name (+ the assets.php view).
 $uiActive = isset($activeTab) && $activeTab !== null ? (string)$activeTab : null;
 if ($uiActive === null) {
     $uiScript = strtolower(basename((string)($_SERVER['SCRIPT_NAME'] ?? ''), '.php'));
     foreach ($uiTabs as $uiKey => $uiTab) {
         if (in_array($uiScript, $uiTab['scripts'], true)) { $uiActive = $uiKey; break; }
     }
+    if ($uiActive === 'assets' && $uiScript === 'assets'
+        && ((($_GET['view'] ?? '') === 'collections') || (($_GET['kind'] ?? '') === 'tire') || (int)($_GET['image'] ?? 0) > 0)) {
+        $uiActive = 'tires';
+    }
 }
+if ($uiActive === 'tires' && !$uiHasTires) { $uiActive = 'assets'; }   // no Tires tab → collections live under Assets
 
 // Badge counts — pending items only, scoped to the client, never fatal.
-$uiBadges = ['assets' => 0, 'posts' => 0, 'emails' => 0];
+$uiBadges = ['assets' => 0, 'tires' => 0, 'posts' => 0, 'emails' => 0];
 if (!empty($client['id']) && isset($pdo) && $pdo instanceof PDO) {
     try {
         $uiCid = (int)$client['id'];
@@ -77,7 +104,7 @@ if (!empty($client['id']) && isset($pdo) && $pdo instanceof PDO) {
             WHERE t.company_id = ? AND ti.status = 'pending'
         ");
         $uiSt->execute([$uiCid]);
-        $uiBadges['assets'] = (int)$uiSt->fetchColumn();
+        $uiBadges[$uiHasTires ? 'tires' : 'assets'] = (int)$uiSt->fetchColumn();
 
         if (function_exists('hasLibraryImagesTable') && hasLibraryImagesTable($pdo)) {
             $uiSt = $pdo->prepare("SELECT COUNT(*) FROM library_images WHERE company_id = ? AND status = 'pending'");
@@ -86,7 +113,7 @@ if (!empty($client['id']) && isset($pdo) && $pdo instanceof PDO) {
         }
     } catch (Throwable $uiErr) {
         error_log('tabbar badge query failed: ' . $uiErr->getMessage());
-        $uiBadges = ['assets' => 0, 'posts' => 0, 'emails' => 0];
+        $uiBadges = ['assets' => 0, 'tires' => 0, 'posts' => 0, 'emails' => 0];
     }
 }
 
@@ -101,13 +128,13 @@ $uiBrandHref = clientUrl($uiIsAdmin && empty($client) ? 'admin.php' : 'index.php
   <ul class="ui-tabbar-list">
     <?php foreach ($uiTabs as $uiKey => $uiTab):
       if (!empty($uiTab['admin']) && !$uiIsAdmin) continue;   // admin-only tab: not rendered for clients
-      if (!empty($uiTab['module']) && !$uiHasEmails) continue; // module-gated tab (Emails): company has no emails
+      if (!empty($uiTab['module']) && empty($uiModules[$uiTab['module']])) continue; // module-gated tab (Tires / Emails): company has none
       $uiIsActive = ($uiKey === $uiActive);
       $uiCount    = $uiBadges[$uiKey] ?? 0;
       $uiCls      = 'ui-tab ui-tab--' . $uiKey . ($uiIsActive ? ' is-active' : '');
     ?>
       <li>
-        <a class="<?= esc($uiCls) ?>" href="<?= esc(clientUrl($uiTab['page'])) ?>"<?= $uiIsActive ? ' aria-current="page"' : '' ?>>
+        <a class="<?= esc($uiCls) ?>" href="<?= esc(clientUrl($uiTab['page'], $uiTab['query'] ?? [])) ?>"<?= $uiIsActive ? ' aria-current="page"' : '' ?> data-tab="<?= esc($uiKey) ?>">
           <?= icon($uiTab['icon']) ?>
           <span class="ui-tab-label"><?= esc($uiTab['label']) ?></span>
           <?php if ($uiCount > 0): ?>
@@ -121,4 +148,4 @@ $uiBrandHref = clientUrl($uiIsAdmin && empty($client) ? 'admin.php' : 'index.php
     <div class="ui-tabbar-footer">Signed in as Joust · <a href="<?= esc(pagePath('logout')) ?>">Sign out</a></div>
   <?php endif; ?>
 </nav>
-<?php unset($uiTabs, $uiIsAdmin, $uiHasEmails, $uiActive, $uiScript, $uiKey, $uiTab, $uiBadges, $uiCid, $uiSt, $uiErr, $uiBrandName, $uiBrandHref, $uiIsActive, $uiCount, $uiCls); ?>
+<?php unset($uiTabs, $uiTiresLabel, $uiIsAdmin, $uiHasEmails, $uiHasTires, $uiModules, $uiActive, $uiScript, $uiKey, $uiTab, $uiBadges, $uiCid, $uiSt, $uiErr, $uiBrandName, $uiBrandHref, $uiIsActive, $uiCount, $uiCls); ?>

@@ -492,7 +492,7 @@ if ($items && $hasLog) {
 }
 
 $isGrid       = ($view === 'library') || ($view === 'collections' && $collection);
-$pendingTotal = $libCounts['pending'] + $tireCounts['pending'];   // = the tab-bar badge
+$pendingTotal = $libCounts['pending'] + $tireCounts['pending'];   // = the Assets + Tires tab badges (split by partials/tabbar.php)
 $hasMore      = $isGrid && ($offset + count($items)) < $gridTotal;
 
 // ---------------------------------------------------------------------
@@ -513,7 +513,7 @@ $pageTitle  = 'Assets';
 $htmlTitle  = 'Assets — ' . $client['name'];
 $pageWide   = true;
 $navWide    = true;
-$activeTab  = 'assets';
+$activeTab  = $view === 'collections' ? 'tires' : 'assets';   // Tires tab (tabbar falls back to Assets when the company has none)
 $bodyClass  = 'as-body';
 $headExtra  = '<link rel="stylesheet" href="' . esc(staticUrl('css/assets.css')) . '">';
 if ($collection) {

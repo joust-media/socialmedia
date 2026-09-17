@@ -1108,7 +1108,8 @@
       var seg = $('.ui-segmented-item.is-active .ui-segmented-count');
       if (seg) { var v = Math.max(0, (parseInt(seg.textContent, 10) || 0) + delta); if (v > 0) seg.textContent = String(v); else seg.remove(); }
       else if (delta > 0) { var act = $('.ui-segmented-item.is-active'); if (act) act.insertAdjacentHTML('beforeend', ' <span class="ui-segmented-count">1</span>'); }
-      var tab = $('.ui-tab--assets');
+      // Tab-bar badge: the Tires tab (data-tab="tires", collections view) when the company has one, else Assets
+      var tab = (this.cfg.view === 'collections' && $('.ui-tab[data-tab="tires"]')) || $('.ui-tab[data-tab="assets"]') || $('.ui-tab--assets');
       if (tab) {
         var badge = $('.ui-badge', tab), n = Math.max(0, (badge ? (parseInt(badge.textContent, 10) || 0) : 0) + delta);
         if (n > 0) { if (!badge) { badge = document.createElement('span'); badge.className = 'ui-badge ui-tab-badge'; tab.appendChild(badge); } badge.textContent = n > 99 ? '99+' : String(n); badge.setAttribute('aria-label', n + ' to review'); }
