@@ -46,7 +46,14 @@ if (!function_exists('activityFeed')) {
             if (!empty($r['edits']))    $meta[] = implode(', ', array_map('strval', (array)$r['edits']));
             if (!empty($r['company_name']) && !empty($opts['showCompany'])) array_unshift($meta, (string)$r['company_name']);
 
-            $inner  = '<div class="ui-row-leading ui-row-leading--icon activity-icon activity-icon--' . $esc($tone) . '" aria-hidden="true">' . $iconHtml . '</div>';
+            // Who did it, as a small badge on the action icon: the Joust mark for admin rows, the
+            // client's logo / initials for client rows (cross-client feeds carry each row's company).
+            $actorHtml = '';
+            if (function_exists('actorAvatar') && !empty($r['actor'])) {
+                $co = ['name' => (string)($r['company_name'] ?? ''), 'slug' => (string)($r['company_slug'] ?? ''), 'logo_url' => (string)($r['company_logo_url'] ?? '')];
+                $actorHtml = actorAvatar((string)$r['actor'], $co, 'ui-avatar--xs activity-actor');
+            }
+            $inner  = '<div class="ui-row-leading ui-row-leading--icon activity-icon activity-icon--' . $esc($tone) . '" aria-hidden="true">' . $iconHtml . $actorHtml . '</div>';
             $inner .= '<div class="ui-row-body">';
             $title  = '<span class="ui-row-title ui-row-title--wrap activity-title">' . (string)($r['html'] ?? $esc($r['text'] ?? '')) . '</span>';
             $inner .= $hasDisc ? '<a class="activity-link" href="' . $esc($href) . '">' . $title . '</a>' : $title;

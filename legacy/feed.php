@@ -112,7 +112,7 @@ $postsStmt = $pdo->prepare("
            $postedSel
            $typeSel
            $postUpdatedSel
-           c.name AS company_name, c.logo_url AS company_logo
+           c.name AS company_name, c.logo_url AS company_logo, c.slug AS company_slug
     FROM posts p
     INNER JOIN companies c ON c.id = p.company_id
     $whereSql
@@ -1133,7 +1133,7 @@ function buildFilterUrl($cats, $month, $statuses = null) {
              data-post-type="<?= h($postType) ?>">
       <div class="post-header">
         <img class="post-logo"
-             src="<?= h(brandLogoUrl($post['company_logo'])) ?>"
+             src="<?= h(brandLogoUrl($post['company_logo'], (string)($post['company_slug'] ?? ''))) ?>"
              alt="<?= h($post['company_name']) ?> logo">
         <div class="post-meta">
           <div class="post-name"><?= h($post['company_name']) ?></div>

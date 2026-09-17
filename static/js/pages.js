@@ -1,28 +1,31 @@
 /* =====================================================================
-   Joust client portal — emails.js  (Emails module; the posts.js twin)
+   Joust client portal — pages.js  (Pages module; the emails.js twin)
    Extends the global App from app.js; never edits it. Loads BEFORE app.js
-   (deferred, emitted by emails.php's $footExtra) so deep links wait for 'app:ready'.
+   (deferred, emitted by pages.php's / add-page.php's $footExtra) so deep links
+   wait for 'app:ready'.
 
    App.swipe                       same API as posts.js (guarded copy — posts.js is not loaded here)
-   App.emails.open(id, {deny})     open the email detail sheet (inline template or partial fetch)
-   App.emails.close()
-   App.emails.decide(id, status, note, {toast})  optimistic approve / needs changes (+ required note) / route (admin)
-   App.emails.resubmit(id)         admin work queue: denied → pending, the row leaves the queue
-   App.emails.submit(id)           admin: draft → pending ("Send for review")
-   App.emails.toggleLive(id, to)   admin: live 0↔1 (to=1 needs status approved — server answers 409)
-   App.emails.remove(id)           admin: delete (confirm)
-   App.emails.comment(id, text)
-   Events: 'emails:decided' {id, status, ok}, 'emails:open' {id}, 'emails:close' {id}
+   App.pages.open(id, {deny})      open the page detail sheet (inline template or partial fetch)
+   App.pages.close()
+   App.pages.decide(id, status, note, {toast})  optimistic approve / needs changes (+ required note) / route (admin)
+   App.pages.resubmit(id)          admin work queue: denied → pending, the row leaves the queue
+   App.pages.submit(id)            admin: draft → pending ("Send for review")
+   App.pages.toggleLive(id, to)    admin: live 0↔1 (to=1 needs status approved — server answers 409)
+   App.pages.remove(id)            admin: delete (confirm) — the folder goes too
+   App.pages.comment(id, text)
+   App.pageForm                    add-page.php: slug auto-fill, source chips, Live guard
+   App.pageFiles                   add-page.php: sequential XHR uploader → page-upload.php, delete file, set entry
+   Events: 'pages:decided' {id, status, ok}, 'pages:open' {id}, 'pages:close' {id}
    ===================================================================== */
 (function (window, document) {
   'use strict';
 
   var App = window.App = window.App || {};
-  var cfg = window.EmailsConfig || {};
+  var cfg = window.PagesConfig || {};
   var $  = function (sel, root) { return (root || document).querySelector(sel); };
   var $$ = function (sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); };
 
-  var ENDPOINT = cfg.endpoint || 'email-status.php';
+  var ENDPOINT = cfg.endpoint || 'page-status.php';
   var DESKTOP  = window.matchMedia ? window.matchMedia('(min-width: 1024px)') : { matches: false };
   var LABELS   = { draft: 'Draft', pending: 'To Review', approved: 'Approved', denied: 'Needs changes', live: 'Live' };
   var PILL     = { draft: 'neutral', pending: 'pending', approved: 'approved', denied: 'denied', live: 'scheduled' };
@@ -36,7 +39,7 @@
 
   /* ================================================================== */
   /* App.swipe — transform-only, velocity-aware, rubber-banded            */
-  /* (identical to posts.js; defined only when no other script did)      */
+  /* (identical to posts.js / emails.js; defined only when no other script did) */
   /* ================================================================== */
   App.swipe = App.swipe || {
     attach: function (root, opts) {
@@ -142,9 +145,9 @@
   };
 
   /* ================================================================== */
-  /* App.emails — detail sheet + actions                                  */
+  /* App.pages — detail sheet + actions                                   */
   /* ================================================================== */
-  var E = App.emails = {
+  var P = App.pages = {
     current: null,        // { id, item, root }
     _pushed: false,
     counts: cfg.counts || {},
@@ -152,36 +155,36 @@
   };
 
   function sheetRoot() { return $('#uiSheet'); }
-  function itemEl(id) { return $('[data-email-item="' + id + '"]'); }
-  function ed(root) { return $('.ed[data-email-detail]', root || sheetRoot()); }
+  function itemEl(id) { return $('[data-page-item="' + id + '"]'); }
+  function pg(root) { return $('.pg[data-page-detail]', root || sheetRoot()); }
 
   /* ---- counts ------------------------------------------------------- */
   function bumpCount(seg, delta) {
     if (!seg) return;
-    E.counts[seg] = Math.max(0, (E.counts[seg] || 0) + delta);
-    if (seg !== 'all') E.counts.all = Math.max(0, (E.counts.all || 0) + delta);
-    var n = E.counts[seg];
+    P.counts[seg] = Math.max(0, (P.counts[seg] || 0) + delta);
+    if (seg !== 'all') P.counts.all = Math.max(0, (P.counts.all || 0) + delta);
+    var n = P.counts[seg];
     var item = $('.ui-segmented-item[data-segment="' + seg + '"] .ui-segmented-count');
     if (item) item.textContent = n;
-    if (seg === E.segment) { var hdr = $('[data-segment-count]'); if (hdr) hdr.textContent = n; }
-    if (E.segment === 'all') { var h2 = $('[data-segment-count]'); if (h2) h2.textContent = E.counts.all; }
+    if (seg === P.segment) { var hdr = $('[data-segment-count]'); if (hdr) hdr.textContent = n; }
+    if (P.segment === 'all') { var h2 = $('[data-segment-count]'); if (h2) h2.textContent = P.counts.all; }
     if (seg === 'pending') {
-      var badge = $('.ui-tab--emails .ui-badge');
+      var badge = $('.ui-tab--pages .ui-badge');
       if (badge) { badge.textContent = n > 99 ? '99+' : n; badge.hidden = n === 0; }
     }
   }
   function maybeEmpty() {
-    var list = $('[data-emails-items]');
+    var list = $('[data-pages-items]');
     if (!list || list.children.length) return;
-    var group = $('[data-emails-list]'); if (!group) return;
+    var group = $('[data-pages-list]'); if (!group) return;
     group.hidden = true;
-    var empty = $('[data-emails-empty]');
+    var empty = $('[data-pages-empty]');
     if (!empty) {
       empty = document.createElement('div');
       empty.className = 'ui-empty posts-empty ui-enter';
-      empty.setAttribute('data-emails-empty', '');
-      empty.textContent = E.segment === 'pending' ? 'All caught up — nothing left to review.'
-                        : (E.segment === 'denied' ? 'Nothing needs changes — the queue is clear.' : 'Nothing here.');
+      empty.setAttribute('data-pages-empty', '');
+      empty.textContent = P.segment === 'pending' ? 'All caught up — nothing left to review.'
+                        : (P.segment === 'denied' ? 'Nothing needs changes — the queue is clear.' : 'Nothing here.');
       group.parentNode.insertBefore(empty, group);
     }
     empty.hidden = false;
@@ -189,17 +192,17 @@
 
   /* ---- detail loading ----------------------------------------------- */
   function detailHtml(id) {
-    var tpl = $('template[data-email-template="' + id + '"]');
+    var tpl = $('template[data-page-template="' + id + '"]');
     if (tpl) return Promise.resolve(tpl.innerHTML);
     if (!cfg.partialUrl) return Promise.reject(new Error('No detail available'));
     return fetch(cfg.partialUrl.replace('__ID__', encodeURIComponent(id)), { credentials: 'same-origin', headers: { 'Accept': 'text/html' } })
-      .then(function (res) { if (!res.ok) throw new Error('Could not load this email'); return res.text(); });
+      .then(function (res) { if (!res.ok) throw new Error('Could not load this page'); return res.text(); });
   }
 
   function splitDetail(html) {
     var box = document.createElement('div');
     box.innerHTML = html;
-    var art = $('.ed[data-email-detail]', box);
+    var art = $('.pg[data-page-detail]', box);
     if (!art) return { body: html, footer: '' };
     var body = $('[data-pd-body]', art), footer = $('[data-pd-footer]', art);
     var shell = art.cloneNode(false);
@@ -207,11 +210,11 @@
     return { body: shell.outerHTML, footer: footer ? footer.outerHTML : '' };
   }
 
-  E.open = function (id, opts) {
+  P.open = function (id, opts) {
     opts = opts || {};
     id = String(id);
     var item = itemEl(id);
-    var title = item ? (item.getAttribute('data-title') || 'Email') : 'Email';
+    var title = item ? (item.getAttribute('data-title') || 'Page') : 'Page';
     return detailHtml(id).then(function (html) {
       var parts = splitDetail(html);
       var root = sheetRoot();
@@ -228,55 +231,55 @@
       }
       $$('.pl-item.is-open').forEach(function (el) { el.classList.remove('is-open'); });
       if (item) item.classList.add('is-open');
-      E.current = { id: id, item: item, root: root };
+      P.current = { id: id, item: item, root: root };
       initPreview(root);
       autosize($('[data-comment-input]', root));
       syncState(root);
       if (opts.deny) openDeny(root);
-      if (!opts.silent) pushEmail(id);
-      document.dispatchEvent(new CustomEvent('emails:open', { detail: { id: id } }));
+      if (!opts.silent) pushPage(id);
+      document.dispatchEvent(new CustomEvent('pages:open', { detail: { id: id } }));
       return root;
     }).catch(function (err) {
-      toast(err && err.message ? err.message : 'Could not open this email', 'error');
+      toast(err && err.message ? err.message : 'Could not open this page', 'error');
       return null;
     });
   };
 
-  E.close = function () { if (App.sheet.current === sheetRoot()) App.sheet.close(); };
+  P.close = function () { if (App.sheet.current === sheetRoot()) App.sheet.close(); };
 
-  /* history: ?email=ID ⇄ sheet */
-  function urlWithEmail(id) {
+  /* history: ?page=ID ⇄ sheet */
+  function urlWithPage(id) {
     var u = new URL(window.location.href);
-    if (id) u.searchParams.set('email', id); else u.searchParams.delete('email');
+    if (id) u.searchParams.set('page', id); else u.searchParams.delete('page');
     return u.pathname + u.search + u.hash;
   }
-  function pushEmail(id) {
+  function pushPage(id) {
     try {
-      if (E._pushed) history.replaceState({ email: id }, '', urlWithEmail(id));
-      else { history.pushState({ email: id }, '', urlWithEmail(id)); E._pushed = true; }
+      if (P._pushed) history.replaceState({ page: id }, '', urlWithPage(id));
+      else { history.pushState({ page: id }, '', urlWithPage(id)); P._pushed = true; }
     } catch (e) {}
   }
   window.addEventListener('popstate', function (e) {
-    var id = e.state && e.state.email;
-    if (!id) { E._pushed = false; if (E.current) { E.current = null; E.close(); } }
-    else if (!E.current || E.current.id !== String(id)) { E._pushed = true; E.open(id, { silent: true }); }
+    var id = e.state && e.state.page;
+    if (!id) { P._pushed = false; if (P.current) { P.current = null; P.close(); } }
+    else if (!P.current || P.current.id !== String(id)) { P._pushed = true; P.open(id, { silent: true }); }
   });
-  window.addEventListener('scroll', function () { if (E.current && DESKTOP.matches) E._lastY = window.scrollY || 0; }, { passive: true });
+  window.addEventListener('scroll', function () { if (P.current && DESKTOP.matches) P._lastY = window.scrollY || 0; }, { passive: true });
   document.addEventListener('sheet:close', function (e) {
     if (e.detail.sheet !== sheetRoot()) return;
-    var cur = E.current; E.current = null;
-    if (DESKTOP.matches && E._lastY != null) { var y = E._lastY; E._lastY = null; requestAnimationFrame(function () { window.scrollTo(0, y); }); }
+    var cur = P.current; P.current = null;
+    if (DESKTOP.matches && P._lastY != null) { var y = P._lastY; P._lastY = null; requestAnimationFrame(function () { window.scrollTo(0, y); }); }
     e.detail.sheet.classList.remove('is-detail');
     $$('.pl-item.is-open').forEach(function (el) { el.classList.remove('is-open'); });
-    if (E._pushed) { E._pushed = false; try { history.back(); } catch (err) {} }
-    document.dispatchEvent(new CustomEvent('emails:close', { detail: { id: cur ? cur.id : null } }));
+    if (P._pushed) { P._pushed = false; try { history.back(); } catch (err) {} }
+    document.dispatchEvent(new CustomEvent('pages:close', { detail: { id: cur ? cur.id : null } }));
   });
 
   /* ---- preview frame: Phone / Desktop width, scaled to fit ----------- */
   function fitPreview(root) {
     var wrap = $('[data-preview-frame-wrap]', root); if (!wrap) return;
     var frame = $('[data-preview-frame]', wrap); if (!frame) return;
-    var w = parseInt(wrap.getAttribute('data-preview-w') || '650', 10) || 650;
+    var w = parseInt(wrap.getAttribute('data-preview-w') || '1280', 10) || 1280;
     var avail = wrap.clientWidth || w;
     var scale = Math.min(1, avail / w);
     var h = wrap.clientHeight || 480;
@@ -289,9 +292,9 @@
   function initPreview(root) {
     var wrap = $('[data-preview-frame-wrap]', root); if (!wrap) return;
     fitPreview(root);
-    if (!E._fitBound) {
-      E._fitBound = true;
-      window.addEventListener('resize', function () { if (E.current) fitPreview(E.current.root); });
+    if (!P._fitBound) {
+      P._fitBound = true;
+      window.addEventListener('resize', function () { if (P.current) fitPreview(P.current.root); });
     }
   }
   function setPreviewWidth(root, w) {
@@ -306,7 +309,7 @@
 
   /* ---- state sync (which footer rows show) ------------------------- */
   function syncState(root) {
-    var art = ed(root); if (!art) return;
+    var art = pg(root); if (!art) return;
     var status = art.getAttribute('data-status') || 'draft';
     var live = art.getAttribute('data-live') === '1';
     var key = keyOf(status, live);
@@ -331,9 +334,6 @@
       var on = b.getAttribute('data-set-status') === status;
       b.classList.toggle('is-active', on); b.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
-    // "send date has passed" note: only for live emails whose date is before today (data-past from PHP)
-    var pastNote = $('[data-send-past]', root);
-    if (pastNote) pastNote.hidden = !(live && art.getAttribute('data-past') === '1');
   }
 
   function applyPill(pill, key) {
@@ -344,7 +344,7 @@
     pill.textContent = LABELS[key] || key;
   }
   function applyStatus(id, status, live) {
-    var art = ed(); var item = itemEl(id);
+    var art = pg(); var item = itemEl(id);
     if (art && art.getAttribute('data-id') !== String(id)) art = null;
     [art, item].forEach(function (el) {
       if (!el) return;
@@ -354,16 +354,15 @@
       el.setAttribute('data-key', key);
       applyPill($('.ui-pill[data-status-pill]', el), key);
       if (el === item) {
-        var tile = $('.el-code-tile', item);
-        if (tile) tile.className = tile.className.replace(/\bel-code-tile--\w+\b/g, '').trim() + ' el-code-tile--' + key;
-        item.classList.toggle('pl-item--past', key === 'live' && item.getAttribute('data-past') === '1');
+        var tile = $('.pgl-tile', item);
+        if (tile) tile.className = tile.className.replace(/\bpgl-tile--\w+\b/g, '').trim() + ' pgl-tile--' + key;
       }
     });
     if (art) syncState(art.closest('.ui-sheet-root') || document);
   }
 
   function snapshot(id) {
-    var art = ed(); var item = itemEl(id);
+    var art = pg(); var item = itemEl(id);
     var src = (art && art.getAttribute('data-id') === String(id)) ? art : item;
     if (!src) return null;
     return { status: src.getAttribute('data-status'), live: src.getAttribute('data-live') === '1' };
@@ -386,17 +385,17 @@
     if (!document.contains(item) && rec && rec.parent) {
       var next = rec.next && rec.next.parentNode === rec.parent ? rec.next : null;
       rec.parent.insertBefore(item, next);
-      var group = $('[data-emails-list]'); if (group) group.hidden = false;
-      var empty = $('[data-emails-empty]'); if (empty) empty.hidden = true;
+      var group = $('[data-pages-list]'); if (group) group.hidden = false;
+      var empty = $('[data-pages-empty]'); if (empty) empty.hidden = true;
     }
     item.classList.remove('ui-leave', 'is-busy', 'is-settling', 'is-swiping');
     item.removeAttribute('data-swipe-dir');
     var card = $('.pl-card', item); if (card) card.style.transform = '';
   }
-  function stays(seg) { return E.segment === 'all' || seg === E.segment; }
+  function stays(seg) { return P.segment === 'all' || seg === P.segment; }
 
   /* ---- decide: approve / needs changes(+note) / route (admin) -------- */
-  E.decide = function (id, status, note, opts) {
+  P.decide = function (id, status, note, opts) {
     id = String(id);
     opts = opts || {};
     var before = snapshot(id);
@@ -422,7 +421,7 @@
       } else {
         delete removed[id];
         if (item) item.classList.remove('is-busy');
-        var art = ed();
+        var art = pg();
         if (art && art.getAttribute('data-id') === id) {
           if (status === 'approved') {
             var line = $('[data-approved-line]', art.closest('.ui-sheet-root') || document);
@@ -436,32 +435,32 @@
         else if (status === 'denied') toast(App.role === 'admin' ? 'Marked as needs changes' : 'Sent to Joust', 'success');
         else if (status === 'pending') toast(before.status === 'draft' ? 'Sent for review' : 'Back in To Review');
         else toast('Moved to Draft');
-        if (status === 'denied' && App.role !== 'admin' && E.current && E.current.id === id) setTimeout(E.close, 700);
+        if (status === 'denied' && App.role !== 'admin' && P.current && P.current.id === id) setTimeout(P.close, 700);
       }
-      document.dispatchEvent(new CustomEvent('emails:decided', { detail: { id: id, status: status, ok: res.ok } }));
+      document.dispatchEvent(new CustomEvent('pages:decided', { detail: { id: id, status: status, ok: res.ok } }));
       return res;
     });
   };
 
   /* ---- work queue (admin): denied → pending -------------------------- */
-  E.resubmit = function (id) {
+  P.resubmit = function (id) {
     id = String(id);
     var item = itemEl(id);
     var btns = item ? $$('[data-resubmit]', item) : [];
     btns.forEach(function (b) { b.disabled = true; });
-    if (E.current && E.current.id === id && E.segment === 'denied') E.close();
-    return E.decide(id, 'pending', null, { toast: 'Resubmitted — back in To Review' }).then(function (res) {
+    if (P.current && P.current.id === id && P.segment === 'denied') P.close();
+    return P.decide(id, 'pending', null, { toast: 'Resubmitted — back in To Review' }).then(function (res) {
       if (!res || !res.ok) btns.forEach(function (b) { b.disabled = false; });
       return res;
     });
   };
 
   /* ---- admin: draft → pending ----------------------------------------- */
-  E.submit = function (id) {
-    return E.decide(id, 'pending', null, { toast: 'Sent for review' });
+  P.submit = function (id) {
+    return P.decide(id, 'pending', null, { toast: 'Sent for review' });
   };
 
-  E.toggleLive = function (id, to) {
+  P.toggleLive = function (id, to) {
     id = String(id);
     var before = snapshot(id); if (!before) return Promise.resolve(null);
     var live = to === 1 || to === '1' || to === true;
@@ -484,16 +483,18 @@
     });
   };
 
-  E.remove = function (id) {
+  P.remove = function (id) {
     id = String(id);
-    if (!window.confirm('Delete this email? Its comments and history stay in the activity log. This cannot be undone.')) return Promise.resolve(null);
-    return App.post(ENDPOINT, { action: 'delete_email', id: id, actor: App.actor }).then(function (res) {
+    var art = pg();
+    var isUpload = !(art && art.getAttribute('data-id') === id && art.getAttribute('data-source') === 'url');
+    if (!window.confirm('Delete this page?' + (isUpload ? ' Its folder and every uploaded file are removed too.' : '') + ' Its comments and history stay in the activity log. This cannot be undone.')) return Promise.resolve(null);
+    return App.post(ENDPOINT, { action: 'delete_page', id: id, actor: App.actor }).then(function (res) {
       if (!res.ok) { toast(res.error || 'Delete failed', 'error'); return res; }
       var before = snapshot(id);
       if (before) bumpCount(keyOf(before.status, before.live), -1);
-      if (E.current && E.current.id === id) E.close();
+      if (P.current && P.current.id === id) P.close();
       leaveList(id);
-      toast('Email deleted', 'success');
+      toast('Page deleted', 'success');
       return res;
     });
   };
@@ -508,7 +509,7 @@
     msg.className = 'pd-msg pd-msg--' + side + ' ui-enter';
     msg.setAttribute('data-actor', actor);
     msg.innerHTML = '<div class="ui-bubble ui-bubble--' + side + '">' + escapeHtml(text).replace(/\n/g, '<br>') + '</div>'
-                  + '<div class="ui-bubble-meta">' + (App.actorAvatar ? App.actorAvatar(actor) : '') + who + ' · just now</div>';
+                  + '<div class="ui-bubble-meta">' + who + ' · just now</div>';
     var empty = $('[data-thread-empty]', thread); if (empty) empty.hidden = true;
     thread.appendChild(msg);
     var n = (parseInt(thread.getAttribute('data-count') || '0', 10) || 0) + 1;
@@ -523,12 +524,12 @@
     var body = $('[data-sheet-body]', root); if (body) body.scrollTop = body.scrollHeight;
   }
 
-  E.comment = function (id, text) {
+  P.comment = function (id, text) {
     text = (text || '').trim();
     if (!text) return Promise.resolve(null);
     return App.post(ENDPOINT, { id: id, comment: text, actor: App.actor }).then(function (res) {
       if (!res.ok) { toast(res.error || 'Could not send', 'error'); return res; }
-      var art = ed(); if (art && art.getAttribute('data-id') === String(id)) appendComment(art, text, App.actor);
+      var art = pg(); if (art && art.getAttribute('data-id') === String(id)) appendComment(art, text, App.actor);
       return res;
     });
   };
@@ -556,49 +557,50 @@
   }
 
   /* ================================================================== */
-  /* Wiring                                                              */
+  /* Wiring — pages.php                                                  */
   /* ================================================================== */
-  function init() {
-    var list = $('[data-emails-list]');
+  function initList() {
+    var list = $('[data-pages-list]');
     if (list) {
       App.swipe.attach(list, {
         card: '.pl-card',
         canSwipe: function (item) {
-          // Only a waiting (pending, not live) email can be decided from the list; the server re-checks.
+          // Only a waiting (pending, not live) page can be decided from the list; the server re-checks.
           return item.getAttribute('data-status') === 'pending' && item.getAttribute('data-live') !== '1';
         },
         commitOut: 'right',
         onCommit: function (item, dir) {
           var id = item.getAttribute('data-id');
-          if (dir === 'right') E.decide(id, 'approved');
-          else E.open(id, { deny: true });
+          if (dir === 'right') P.decide(id, 'approved');
+          else P.open(id, { deny: true });
         }
       });
     }
 
     // open detail
     document.addEventListener('click', function (e) {
-      var opener = e.target.closest('[data-email-open]');
+      var opener = e.target.closest('[data-page-open]');
       if (!opener) return;
       if (e.metaKey || e.ctrlKey || e.shiftKey) return;
       e.preventDefault();
-      E.open(opener.getAttribute('data-email-open'));
+      P.open(opener.getAttribute('data-page-open'));
     });
 
-    // work queue: Resubmit for review (admin-only markup; email-status.php enforces the role)
+    // work queue: Resubmit for review (admin-only markup; page-status.php enforces the role)
     document.addEventListener('click', function (e) {
       var btn = e.target.closest('[data-resubmit]');
       if (!btn || btn.disabled) return;
       e.preventDefault();
-      E.resubmit(btn.getAttribute('data-resubmit'));
+      P.resubmit(btn.getAttribute('data-resubmit'));
     });
 
     // everything inside the sheet
     document.addEventListener('click', function (e) {
       var root = sheetRoot(); if (!root || !root.contains(e.target)) return;
-      var art = ed(root); if (!art) return;
+      var art = pg(root); if (!art) return;
       var id = art.getAttribute('data-id');
       var t = e.target;
+      if (t.closest('[data-page-open-tab]')) return;   // plain link: let the browser open the tab
 
       var pw = t.closest('[data-preview-width]');
       if (pw) { setPreviewWidth(root, pw.getAttribute('data-preview-width')); return; }
@@ -606,40 +608,40 @@
       var decide = t.closest('[data-decide]');
       if (decide) {
         var st = decide.getAttribute('data-decide');
-        if (st === 'denied') openDeny(root); else E.decide(id, st);
+        if (st === 'denied') openDeny(root); else P.decide(id, st);
         return;
       }
       var setSt = t.closest('[data-set-status]');
       if (setSt) {
         var to = setSt.getAttribute('data-set-status');
         if (to === art.getAttribute('data-status')) return;
-        if (to === 'denied') openDeny(root); else E.decide(id, to);
+        if (to === 'denied') openDeny(root); else P.decide(id, to);
         return;
       }
       if (t.closest('[data-deny-cancel]')) { var f = $('[data-deny-form]', root); if (f) f.hidden = true; return; }
-      if (t.closest('[data-resubmit-detail]')) { E.decide(id, 'pending', null, { toast: 'Resubmitted — back in To Review' }); return; }
-      if (t.closest('[data-submit]')) { E.submit(id); return; }
+      if (t.closest('[data-resubmit-detail]')) { P.decide(id, 'pending', null, { toast: 'Resubmitted — back in To Review' }); return; }
+      if (t.closest('[data-submit]')) { P.submit(id); return; }
 
       var tl = t.closest('[data-toggle-live]');
-      if (tl) { E.toggleLive(id, tl.getAttribute('data-toggle-live')); return; }
-      if (t.closest('[data-delete-email]')) { E.remove(id); return; }
+      if (tl) { P.toggleLive(id, tl.getAttribute('data-toggle-live')); return; }
+      if (t.closest('[data-delete-page]')) { P.remove(id); return; }
     });
 
     document.addEventListener('submit', function (e) {
       var root = sheetRoot(); if (!root || !root.contains(e.target)) return;
-      var art = ed(root); if (!art) return;
+      var art = pg(root); if (!art) return;
       var form = e.target;
       e.preventDefault();
       if (form.hasAttribute('data-deny-form')) {
         if (!validateDeny(form)) { var ta = $('[data-deny-note]', form); if (ta) ta.focus(); return; }
-        E.decide(art.getAttribute('data-id'), 'denied', $('[data-deny-note]', form).value.trim());
+        P.decide(art.getAttribute('data-id'), 'denied', $('[data-deny-note]', form).value.trim());
         return;
       }
       if (form.hasAttribute('data-comment-form')) {
         var input = $('[data-comment-input]', form), text = input ? input.value.trim() : '';
         if (!text) return;
         var send = $('[data-comment-send]', form); if (send) send.disabled = true;
-        E.comment(art.getAttribute('data-id'), text).then(function (res) {
+        P.comment(art.getAttribute('data-id'), text).then(function (res) {
           if (res && res.ok && input) { input.value = ''; autosize(input); }
           if (send) send.disabled = !(input && input.value.trim());
         });
@@ -660,16 +662,218 @@
       var form = e.target.closest('form'); if (form && form.requestSubmit) form.requestSubmit(); else if (form) form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
     });
 
-    // deep link (?email=ID): open once the shared App (sheet, toast) is ready —
-    // emails.js is a deferred script emitted BEFORE app.js, so App.sheet may not exist yet.
-    if (cfg.openEmail) {
+    // deep link (?page=ID): open once the shared App (sheet, toast) is ready —
+    // pages.js is a deferred script emitted BEFORE app.js, so App.sheet may not exist yet.
+    if (cfg.openPage) {
       var openDeepLink = function () {
-        try { history.replaceState({ email: null }, '', urlWithEmail(null)); } catch (err) {}
-        E.open(cfg.openEmail);
+        try { history.replaceState({ page: null }, '', urlWithPage(null)); } catch (err) {}
+        P.open(cfg.openPage);
       };
       if (App._inited && App.sheet) openDeepLink();
       else document.addEventListener('app:ready', openDeepLink, { once: true });
     }
+  }
+
+  /* ================================================================== */
+  /* App.pageForm — add-page.php: slug auto-fill, source chips, Live guard */
+  /* ================================================================== */
+  function slugify(s) {
+    return String(s || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120).replace(/-+$/, '');
+  }
+  App.pageForm = {
+    init: function (form) {
+      var title = $('[data-page-title]', form), slug = $('[data-page-slug]', form), folder = $('[data-page-folder]', form);
+      var status = $('[data-page-status]', form), live = $('[data-email-live]', form), chip = $('[data-email-live-chip]', form), help = $('[data-email-live-help]', form);
+      var locked = !!(slug && slug.hasAttribute('data-page-slug-locked'));   // editing: never overwrite an existing slug
+      var touched = !locked && !!(slug && slug.value);                        // re-rendered form: keep what the admin typed
+      function syncFolder() {
+        if (!folder) return;
+        var base = folder.textContent.replace(/\/[^\/]*\/?$/, '/');
+        folder.textContent = base + (slug && slug.value ? slugify(slug.value) : '<slug>') + '/';
+      }
+      if (title && slug) {
+        title.addEventListener('input', function () { if (!locked && !touched) { slug.value = slugify(title.value); syncFolder(); } });
+        slug.addEventListener('input', function () { touched = slug.value !== ''; syncFolder(); });
+        slug.addEventListener('blur', function () { slug.value = slugify(slug.value); syncFolder(); });
+      }
+      function syncLive() {
+        var ok = status && status.value === 'approved';
+        if (live) { live.disabled = !ok; if (!ok) live.checked = false; }
+        if (chip) chip.classList.toggle('is-active', !!(live && live.checked));
+        if (help) help.hidden = ok;
+      }
+      if (status) status.addEventListener('change', syncLive);
+      if (live) live.addEventListener('change', syncLive);
+      syncLive();
+      function syncSource() {
+        var cur = ($('[data-page-source]:checked', form) || {}).value || 'upload';
+        $$('[data-page-source-chip]', form).forEach(function (c) { c.classList.toggle('is-active', c.getAttribute('data-page-source-chip') === cur); });
+        $$('[data-page-when-source]', form).forEach(function (el) { el.hidden = el.getAttribute('data-page-when-source') !== cur; });
+        var files = $('[data-page-files]'); if (files) files.hidden = cur !== 'upload';
+      }
+      form.addEventListener('change', function (e) { if (e.target.matches('[data-page-source]')) syncSource(); });
+      syncSource();
+    }
+  };
+
+  /* ================================================================== */
+  /* App.pageFiles — add-page.php: uploader → page-upload.php            */
+  /* ================================================================== */
+  function mb(bytes) { return (bytes / 1024 / 1024).toFixed(bytes > 10 * 1024 * 1024 ? 0 : 1) + ' MB'; }
+  function fmtBytes(b) { if (b >= 1048576) return (b / 1048576).toFixed(1).replace(/\.0$/, '') + ' MB'; if (b >= 1024) return Math.round(b / 1024) + ' KB'; return b + ' B'; }
+  function fileExt(name) { var m = String(name || '').toLowerCase().match(/\.([a-z0-9]+)$/); return m ? m[1] : ''; }
+
+  function PageFiles(root, fc) {
+    this.root = root; this.fc = fc;
+    this.input = $('[data-page-files-input]', root); this.zone = $('[data-page-dropzone]', root);
+    this.sub = $('[data-page-subfolder]', root); this.list = $('[data-page-upload-list]', root);
+    this.rows = $('[data-page-file-rows]', root); this.empty = $('[data-page-files-empty]', root); this.count = $('[data-page-files-count]', root);
+    this.queue = []; this.busy = false; this.batch = 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    this.entry = fc.entry || 'index.html';
+    var self = this;
+    if (this.input) this.input.addEventListener('change', function () { self.add(self.input.files); self.input.value = ''; });
+    if (this.zone) {
+      ['dragenter', 'dragover'].forEach(function (ev) { self.zone.addEventListener(ev, function (e) { e.preventDefault(); self.zone.classList.add('is-dragover'); }); });
+      ['dragleave', 'drop'].forEach(function (ev) { self.zone.addEventListener(ev, function (e) { e.preventDefault(); self.zone.classList.remove('is-dragover'); }); });
+      this.zone.addEventListener('drop', function (e) { if (e.dataTransfer && e.dataTransfer.files) self.add(e.dataTransfer.files); });
+    }
+    root.addEventListener('click', function (e) {
+      var del = e.target.closest('[data-page-delete-file]');
+      if (del) { self.remove(del.getAttribute('data-page-delete-file'), del); return; }
+      var ent = e.target.closest('[data-page-set-entry]');
+      if (ent) { self.setEntry(ent.getAttribute('data-page-set-entry'), ent); return; }
+    });
+  }
+  PageFiles.prototype.subfolder = function () {
+    var v = this.sub ? this.sub.value.trim().replace(/^\/+|\/+$/g, '') : '';
+    return v;
+  };
+  PageFiles.prototype.add = function (files) {
+    var self = this, sub = this.subfolder();
+    if (sub && !/^[a-z0-9_\-\/]+$/.test(sub) || /(^|\/)\.\.?(\/|$)/.test(sub)) { toast('Subfolder may only use a-z, 0-9, - and _ (e.g. img or assets/fonts)', 'error'); return; }
+    Array.prototype.slice.call(files || []).forEach(function (file) {
+      var li = document.createElement('li');
+      li.className = 'studio-upload-item';
+      var ext = fileExt(file.name), bad = '';
+      if (/^\./.test(file.name)) bad = 'Hidden files are not allowed';
+      else if ((self.fc.exts || []).indexOf(ext) === -1) bad = 'Unsupported type .' + (ext || '?');
+      else if (file.size > (self.fc.maxMb || 10) * 1024 * 1024) bad = 'Over ' + (self.fc.maxMb || 10) + ' MB (' + mb(file.size) + ')';
+      li.innerHTML = '<div class="studio-upload-body"><div class="studio-upload-name">' + escapeHtml((sub ? sub + '/' : '') + file.name) + '</div>'
+                   + '<div class="studio-upload-meta text-tertiary">' + escapeHtml(mb(file.size)) + '</div>'
+                   + '<div class="studio-progress" data-upload-progress hidden><div class="studio-progress-bar"><div class="studio-progress-fill" data-upload-fill style="transform:translateX(-100%)"></div></div></div>'
+                   + '<div class="studio-upload-status' + (bad ? ' is-error' : '') + '" data-upload-status>' + (bad ? escapeHtml(bad) : 'Queued') + '</div></div>';
+      if (self.list) { self.list.hidden = false; self.list.appendChild(li); }
+      if (!bad) self.queue.push({ file: file, item: li, sub: sub });
+    });
+    this.next();
+  };
+  PageFiles.prototype.next = function () {
+    if (this.busy || !this.queue.length) return;
+    var self = this, job = this.queue.shift(), item = job.item, file = job.file;
+    var prog = $('[data-upload-progress]', item), fill = $('[data-upload-fill]', item), status = $('[data-upload-status]', item);
+    this.busy = true;
+    if (prog) prog.hidden = false;
+    status.textContent = 'Uploading… 0%';
+    var fd = new FormData();
+    fd.append('client', this.fc.client || (document.body.dataset.client || ''));
+    fd.append('page_id', String(this.fc.pageId));
+    fd.append('subfolder', job.sub || '');
+    fd.append('batch', this.batch);
+    fd.append('actor', App.actor || 'admin');
+    fd.append('file', file, file.name);
+    var xhr = new XMLHttpRequest();
+    xhr.upload.addEventListener('progress', function (e) {
+      if (!e.lengthComputable) return;
+      var pct = Math.round(e.loaded / e.total * 100);
+      if (fill) fill.style.transform = 'translateX(' + (pct - 100) + '%)';
+      status.textContent = 'Uploading… ' + pct + '%';
+    });
+    xhr.onload = function () {
+      var data = null; try { data = JSON.parse(xhr.responseText); } catch (e) {}
+      if (fill) fill.style.transform = 'translateX(0)';
+      if (!data || data.ok === false || xhr.status >= 400 || !data.file) {
+        status.textContent = (data && data.error) || ('Upload failed (' + xhr.status + ')');
+        status.classList.add('is-error');
+      } else {
+        status.innerHTML = (data.file.replaced ? 'Replaced' : 'Uploaded') + ' — <a href="' + escapeHtml(data.file.url) + '" target="_blank" rel="noopener">open</a>';
+        status.classList.add('is-ok');
+        if (data.page && data.page.entry) self.entry = data.page.entry;
+        self.upsertRow(data.file.name, data.file.size, data.file.url);
+        if (data.page && typeof data.page.file_count === 'number') self.setCount(data.page.file_count);
+      }
+      self.busy = false; self.next();
+      if (!self.queue.length) { var ok = $$('.studio-upload-status.is-ok', self.list).length, bad = $$('.studio-upload-status.is-error', self.list).length; toast(ok + ' uploaded' + (bad ? ' · ' + bad + ' failed' : ''), bad ? 'error' : 'success'); }
+    };
+    xhr.onerror = function () { status.textContent = 'Network error — try again.'; status.classList.add('is-error'); self.busy = false; self.next(); };
+    xhr.open('POST', this.fc.endpoint || 'page-upload.php');
+    xhr.setRequestHeader('Accept', 'application/json');
+    xhr.send(fd);
+  };
+  PageFiles.prototype.setCount = function (n) {
+    if (this.count) this.count.textContent = n;
+    if (this.empty) this.empty.hidden = n > 0;
+  };
+  PageFiles.prototype.rowFor = function (name) { return this.rows ? $('[data-page-file="' + name.replace(/"/g, '\\"') + '"]', this.rows) : null; };
+  PageFiles.prototype.upsertRow = function (name, size, url) {
+    if (!this.rows) return;
+    var isEntry = name === this.entry, isHtml = /^html?$/.test(fileExt(name));
+    var html = '<a class="pg-file-name" href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(name) + '</a>'
+             + '<span class="pg-file-meta">' + escapeHtml(fmtBytes(size)) + (isEntry ? ' · <span class="pg-file-entry-tag">entry</span>' : '') + '</span>'
+             + '<span class="pg-file-actions">' + (!isEntry && isHtml ? '<button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-page-set-entry="' + escapeHtml(name) + '">Set as entry</button>' : '')
+             + '<button type="button" class="ui-btn ui-btn--plain ui-btn--sm studio-danger-btn" data-page-delete-file="' + escapeHtml(name) + '">Delete</button></span>';
+    var li = this.rowFor(name);
+    if (!li) { li = document.createElement('li'); li.setAttribute('data-page-file', name); li.classList.add('ui-enter'); this.rows.appendChild(li); }
+    li.className = 'pg-file' + (isEntry ? ' pg-file--entry' : '');
+    li.innerHTML = html;
+    if (isEntry) this.markEntry(name);
+  };
+  PageFiles.prototype.markEntry = function (name) {
+    var self = this;
+    this.entry = name;
+    var entryInput = $('[data-page-entry-input]'); if (entryInput) entryInput.value = name;
+    var entryCode = $('[data-page-entry]'); if (entryCode) entryCode.textContent = name;
+    $$('[data-page-file]', this.rows).forEach(function (li) {
+      var n = li.getAttribute('data-page-file'), on = n === name;
+      li.classList.toggle('pg-file--entry', on);
+      var meta = $('.pg-file-meta', li);
+      if (meta) { meta.innerHTML = meta.innerHTML.replace(/ · <span class="pg-file-entry-tag">entry<\/span>/, '') + (on ? ' · <span class="pg-file-entry-tag">entry</span>' : ''); }
+      var btn = $('[data-page-set-entry]', li);
+      if (on && btn) btn.remove();
+      else if (!on && !btn && /^html?$/.test(fileExt(n))) {
+        var acts = $('.pg-file-actions', li);
+        if (acts) acts.insertAdjacentHTML('afterbegin', '<button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-page-set-entry="' + escapeHtml(n) + '">Set as entry</button>');
+      }
+    });
+  };
+  PageFiles.prototype.remove = function (name, btn) {
+    var self = this;
+    if (!window.confirm('Delete ' + name + ' from this page?')) return;
+    if (btn) btn.disabled = true;
+    App.post(this.fc.endpoint || 'page-upload.php', { action: 'delete_file', page_id: this.fc.pageId, name: name, client: this.fc.client }).then(function (res) {
+      if (!res.ok) { if (btn) btn.disabled = false; toast(res.error || 'Could not delete', 'error'); return; }
+      var li = self.rowFor(name); if (li) li.remove();
+      if (res.data && res.data.page) self.setCount(res.data.page.file_count);
+      toast('Deleted ' + name, 'success');
+    });
+  };
+  PageFiles.prototype.setEntry = function (name, btn) {
+    var self = this;
+    if (btn) btn.disabled = true;
+    App.post(this.fc.endpoint || 'page-upload.php', { action: 'set_entry', page_id: this.fc.pageId, name: name, client: this.fc.client }).then(function (res) {
+      if (btn) btn.disabled = false;
+      if (!res.ok) { toast(res.error || 'Could not set the entry file', 'error'); return; }
+      self.markEntry(name);
+      toast(name + ' is now the entry file', 'success');
+    });
+  };
+  App.pageFiles = { create: function (root, fc) { return new PageFiles(root, fc); } };
+
+  function init() {
+    if ($('[data-pages-list]') || cfg.openPage) initList();
+    var form = $('[data-page-form]'); if (form) App.pageForm.init(form);
+    var filesRoot = $('[data-page-files]');
+    if (filesRoot && window.PageFilesConfig) App.pageFiles.instance = App.pageFiles.create(filesRoot, window.PageFilesConfig);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

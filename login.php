@@ -55,6 +55,12 @@ $cssUrl = static function (string $name) use ($base): string {
     $file = __DIR__ . '/static/css/' . $name;
     return $base . '/static/css/' . $name . (is_file($file) ? '?v=' . filemtime($file) : '');
 };
+// The Joust mark (static/brand/joust*.png) — favicon, touch icon and the brand row; '' when a file is missing.
+$brandUrl = static function (string $name) use ($base): string {
+    $file = __DIR__ . '/static/brand/' . $name;
+    return is_file($file) ? $base . '/static/brand/' . $name . '?v=' . filemtime($file) : '';
+};
+$joustLogo = $brandUrl('joust.png');
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -65,7 +71,10 @@ $cssUrl = static function (string $name) use ($base): string {
 <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
 <title>Sign in — Joust Admin</title>
-<link rel="stylesheet" href="<?= h($cssUrl('tokens.css')) ?>">
+<?php if ($brandUrl('joust-32.png') !== ''): ?><link rel="icon" type="image/png" sizes="32x32" href="<?= h($brandUrl('joust-32.png')) ?>">
+<?php endif; ?><?php if ($joustLogo !== ''): ?><link rel="icon" type="image/png" sizes="512x512" href="<?= h($joustLogo) ?>">
+<?php endif; ?><?php if ($brandUrl('joust-180.png') !== ''): ?><link rel="apple-touch-icon" sizes="180x180" href="<?= h($brandUrl('joust-180.png')) ?>">
+<?php endif; ?><link rel="stylesheet" href="<?= h($cssUrl('tokens.css')) ?>">
 <link rel="stylesheet" href="<?= h($cssUrl('base.css')) ?>">
 <style>
   .wrap {
@@ -91,6 +100,7 @@ $cssUrl = static function (string $name) use ($base): string {
     display: flex; align-items: center; justify-content: center;
     font-weight: 800; font-size: 18px; letter-spacing: 0;
   }
+  .brand-mark--img { object-fit: cover; background: transparent; box-shadow: inset 0 0 0 0.5px var(--separator); }
   h1 {
     margin: 0 0 4px;
     font-size: var(--text-title2); line-height: var(--lh-title2);
@@ -140,7 +150,11 @@ $cssUrl = static function (string $name) use ($base): string {
 <div class="wrap">
   <form class="card" method="POST" action="<?= h($base . '/login' . $ext . ($returnRaw ? '?return=' . urlencode($returnUrl) : '')) ?>">
     <div class="brand">
-      <div class="brand-mark">J</div>
+      <?php if ($joustLogo !== ''): ?>
+        <img class="brand-mark brand-mark--img" src="<?= h($joustLogo) ?>" alt="" width="36" height="36">
+      <?php else: ?>
+        <div class="brand-mark">J</div>
+      <?php endif; ?>
       <span>Joust Media</span>
     </div>
     <h1>Sign in</h1>

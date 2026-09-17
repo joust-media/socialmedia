@@ -456,7 +456,7 @@
    --------------------------------------------------------------------- */
 .studio-emails-head { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0 0 16px; }
 .studio-emails-head .ui-spacer { flex: 1 1 auto; }
-.studio-emails-off { margin: 0 0 16px; }
+.studio-emails-off, .studio-pages-off { margin: 0 0 16px; }
 .studio-groups { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
 .studio-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .studio-group-form { display: flex; flex: 1 1 auto; align-items: center; gap: 8px; min-width: 0; }
@@ -489,4 +489,36 @@
 @media (max-width: 600px) {
   .studio-email-list .ui-row-trailing .ui-btn { display: none; }
   .studio-group-form .studio-group-n { flex-basis: 100%; order: 3; }
+}
+
+/* ---------------------------------------------------------------------
+   Clients (partials/studio-clients.php)
+   --------------------------------------------------------------------- */
+.studio-clients { display: flex; flex-direction: column; gap: 4px; }
+.studio-client-card { margin-bottom: 20px; }
+.studio-client-head { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.studio-client-head .ui-card-subtitle { margin-top: 2px; }
+.studio-client-form { display: flex; flex-direction: column; gap: 14px; }
+.studio-client-form--inline { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 10px; }
+.studio-client-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.studio-client-status { font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary); }
+.studio-client-status:empty { display: none; }
+/* file input styled as a button */
+.studio-client-file { position: relative; overflow: hidden; cursor: pointer; }
+.studio-client-file input[type="file"] { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+.studio-client-file:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.studio-clients .ui-btn[hidden] { display: none; }   /* the no-JS "Upload" button (studio.js submits on file pick) */
+.studio-client-logo, .studio-client-modules { margin-top: 20px; padding-top: 16px; box-shadow: inset 0 0.5px 0 var(--separator); }
+.studio-client-logo-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+.studio-client-modlist { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.studio-client-mod-row { display: flex; align-items: center; gap: 12px; }
+.studio-client-mod-body { flex: 1 1 auto; min-width: 0; }
+.studio-client-mod-body .ui-row-subtitle { white-space: normal; }
+.studio-client-mod { color: var(--approve); font-weight: 600; }
+.studio-clients .ui-row.is-editing { background: var(--fill-tertiary); }
+.studio-clients .ui-row-subtitle { white-space: normal; }
+.studio-clients .ui-row-subtitle code { font-size: 12px; }
+@media (max-width: 600px) {
+  .studio-clients .ui-row-trailing .ui-btn { display: none; }
+  .studio-client-mod-row { flex-wrap: wrap; }
 }

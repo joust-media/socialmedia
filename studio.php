@@ -46,6 +46,11 @@ $navLinks = [
 // MODE A — no client selected: chooser
 // =============================================================
 if (!$client) {
+    // ?tab=clients without a client: the Clients manager on its own (the first place a
+    // brand-new portal can create its first company — no client to scope to yet).
+    $clientsOnly = strtolower(trim((string)($_GET['tab'] ?? ''))) === 'clients';
+    array_unshift($navLinks, ['label' => 'Clients', 'href' => pagePath('studio') . '?tab=clients', 'attrs' => ['data-studio-clients-link' => '1']]);
+
     $companies = $pdo->query("
         SELECT c.id, c.name, c.slug, c.logo_url,
                (SELECT COUNT(*) FROM posts WHERE posts.company_id = c.id AND posts.status = 'pending') AS pending_count,
@@ -55,15 +60,27 @@ if (!$client) {
         ORDER BY c.name ASC
     ")->fetchAll();
 
-    $pageTitle   = 'Studio';
-    $navSubtitle = 'Choose a client';
+    $pageTitle   = $clientsOnly ? 'Clients' : 'Studio';
+    $navSubtitle = $clientsOnly ? 'Studio' : 'Choose a client';
     $activeTab   = 'studio';
-    $navTrailing = '';
+    $navTrailing = joustAvatar();          // the admin surface carries the Joust mark, not a client's
     $bodyClass   = 'page-studio page-studio-chooser';
     $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">';
+    if ($clientsOnly) {
+        $navBack   = ['href' => pagePath('studio'), 'label' => 'Studio'];
+        $navLinks  = [];
+        $footExtra = '<script>window.StudioConfig = ' . json_encode(['base' => basePath(), 'clientAdmin' => basePath() . '/client-admin.php',
+                         'clientsUrl' => pagePath('studio') . '?tab=clients'], JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n"
+                   . '<script src="' . h(staticUrl('js/studio.js')) . '" defer></script>';
+    }
     include __DIR__ . '/partials/layout-top.php';
     ?>
     <?php if ($flash): ?><div class="studio-alert studio-alert--ok" role="status"><?= h($flash) ?></div><?php endif; ?>
+    <?php if ($clientsOnly) {
+        include __DIR__ . '/partials/studio-clients.php';
+        include __DIR__ . '/partials/layout-bottom.php';
+        exit;
+    } ?>
 
     <?php if (!$companies): ?>
       <div class="ui-empty">No clients in the <code>companies</code> table yet.</div>
@@ -109,8 +126,11 @@ if (!$client) {
 $tabs = ['compose' => 'Compose', 'batch' => 'Batch', 'uploads' => 'Uploads', 'posts' => 'Posts'];
 $hasEmails = hasEmailsTable($pdo);          // migration-gated; admin always gets the tab so the first email can be added
 if ($hasEmails) $tabs['emails'] = 'Emails';
+$hasPages = function_exists('hasPagesTable') && hasPagesTable($pdo);   // Pages module (migration-gated; pages-lib.php)
+if ($hasPages) $tabs['pages'] = 'Pages';
 $hasRenders = function_exists('hasTireSeries') && hasTireSeries($pdo);   // tire series (migration-gated)
 if ($hasRenders) $tabs['renders'] = 'Renders';
+$tabs['clients'] = 'Clients';                 // company management (partials/studio-clients.php → client-admin.php)
 $tab  = strtolower(trim((string)($_GET['tab'] ?? 'compose')));
 if (!isset($tabs[$tab])) $tab = 'compose';
 
@@ -202,6 +222,8 @@ $studioConfig = [
     'tab'       => $tab,
     'tabUrl'    => clientUrl('studio.php', ['tab' => '__TAB__']),
     'postUrl'   => clientUrl('posts.php', ['post' => '__ID__']),   // studio.js: "finish it in Posts" links
+    'clientAdmin' => basePath() . '/client-admin.php',             // Clients tab endpoint (create / update / logo / modules)
+    'clientsUrl'  => clientUrl('studio.php', ['tab' => 'clients']),
 ];
 if ($hasRenders) {
     $studioConfig['renders'] = [
@@ -527,5 +549,93 @@ include __DIR__ . '/partials/layout-top.php';
   </section>
 </section>
 <?php endif; ?>
+
+<?php if ($hasPages): ?>
+<!-- Pages -------------------------------------------------------------- -->
+<!-- Admin surface for the Pages module (pages-lib.php): counts strip → pages.php segments,
+     New page, the list with Edit, and the per-client Pages-tab toggle (add-page.php). -->
+<section class="studio-section" data-studio-section="pages" data-studio-pages<?= $tab === 'pages' ? '' : ' hidden' ?>>
+  <?php
+    $pgCid     = (int)$client['id'];
+    $pgCounts  = pageCounts($pdo, $pgCid);
+    $pgOn      = companyHasPages($client, $pdo);
+    $pgModOn   = pagesModuleEnabled($pdo, $pgCid);
+    $pgRows    = pagesForCompany($pdo, $pgCid);
+    $pgFiles   = pageFileCounts($pdo, array_map(static function ($r) { return (int)$r['id']; }, $pgRows));
+    $pgFormUrl = clientUrl('add-page.php');
+    $pgSegs    = [
+        ['key' => 'pending',  'title' => 'To Review',     'subtitle' => 'Waiting for the client',           'icon' => 'page',      'tint' => 'var(--pending)'],
+        ['key' => 'approved', 'title' => 'Approved',      'subtitle' => 'Ready to go live',                 'icon' => 'checkmark', 'tint' => 'var(--approve)'],
+        ['key' => 'live',     'title' => 'Live',          'subtitle' => 'Published',                        'icon' => 'calendar',  'tint' => 'var(--scheduled)'],
+        ['key' => 'denied',   'title' => 'Needs changes', 'subtitle' => 'Work queue · client notes',        'icon' => 'xmark',     'tint' => 'var(--deny)'],
+        ['key' => 'draft',    'title' => 'Draft',         'subtitle' => 'Admin only · not sent for review', 'icon' => 'grid',      'tint' => 'var(--label-secondary)'],
+    ];
+  ?>
+  <div class="studio-emails-head" data-pages-actions>
+    <a class="ui-btn ui-btn--filled" href="<?= h($pgFormUrl) ?>" data-pages-new><?= icon('plus') ?><span>New page</span></a>
+    <?php if ($pgOn): ?><a class="ui-btn ui-btn--gray" href="<?= h(pagesUrl(['status' => 'all'])) ?>" data-pages-open>Open pages</a><?php endif; ?>
+  </div>
+
+  <?php if (!$pgOn): ?>
+    <div class="studio-alert studio-pages-off" role="status">The Pages tab is not showing for <?= h($client['name']) ?> yet — enable it below, or add the first page and it appears automatically.</div>
+  <?php endif; ?>
+
+  <?= insetListOpen(h($client['name']) . '\'s pages', ['raw' => true, 'attrs' => ['data-pages-counts' => '1']]) ?>
+    <?php foreach ($pgSegs as $seg): ?>
+      <?= insetRow([
+          'href'      => pagesUrl(['status' => $seg['key']]),
+          'icon'      => $seg['icon'],
+          'iconStyle' => 'color:' . $seg['tint'],
+          'title'     => $seg['title'],
+          'subtitle'  => $seg['subtitle'],
+          'trailing'  => '<span class="studio-count" data-pages-count="' . h($seg['key']) . '">' . (int)$pgCounts[$seg['key']] . '</span>',
+          'attrs'     => ['data-pages-segment' => $seg['key']],
+      ]) ?>
+    <?php endforeach; ?>
+  <?= insetListClose((int)$pgCounts['total'] . ' page' . ((int)$pgCounts['total'] === 1 ? '' : 's') . ' in total. The client sees To Review, Approved and Live.') ?>
+
+  <?= insetListOpen('All pages (' . count($pgRows) . ')', ['class' => 'studio-email-list', 'attrs' => ['data-pages-list' => '1']]) ?>
+    <?php if (!$pgRows): ?>
+      <li><div class="ui-row"><div class="ui-row-body"><div class="ui-row-subtitle">No pages yet — add one, then upload its HTML and assets.</div></div></div></li>
+    <?php endif; ?>
+    <?php foreach ($pgRows as $pg):
+        $pgSrc = strtolower((string)($pg['source'] ?? 'upload')) === 'url' ? 'url' : 'upload';
+        $pgN   = (int)($pgFiles[(int)$pg['id']] ?? 0);
+        $sub   = '<span class="studio-email-groups">/' . h($pg['slug']) . '</span> · ' . ($pgSrc === 'url' ? 'URL' : 'Upload · ' . $pgN . ' file' . ($pgN === 1 ? '' : 's'));
+    ?>
+      <?= insetRow([
+          'href'        => clientUrl('add-page.php', ['edit' => (int)$pg['id']]),
+          'title'       => pageDisplayLabel($pg),
+          'wrap'        => true,
+          'subtitle'    => $sub,
+          'rawSubtitle' => true,
+          'trailing'    => pageStatusPill($pg) . '<span class="ui-btn ui-btn--gray ui-btn--sm">Edit</span>',
+          'chevron'     => false,
+          'attrs'       => ['data-page-row' => (int)$pg['id'], 'data-page-slug' => $pg['slug']],
+      ]) ?>
+    <?php endforeach; ?>
+  <?= insetListClose('Edit opens the form with the file uploader; Open pages shows the client view with the review thread.') ?>
+
+  <section class="ui-card studio-module-card" data-pages-module>
+    <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Pages tab for <?= h($client['name']) ?></h3>
+      <p class="ui-card-subtitle"><?= $pgModOn ? 'Enabled — the Pages tab shows for the client even with zero pages.' : 'Not enabled — the tab still appears once this client has at least one page.' ?></p></div>
+      <div class="ui-card-aside"><?= statusPill($pgModOn ? 'approved' : 'neutral', false, ['label' => $pgModOn ? 'On' : 'Off', 'attrs' => ['data-pages-module-state' => $pgModOn ? 'on' : 'off']]) ?></div></div>
+    <div class="ui-card-footer">
+      <form method="POST" action="<?= h($pgFormUrl) ?>" class="studio-inline-form">
+        <input type="hidden" name="action" value="module_toggle">
+        <input type="hidden" name="to" value="<?= $pgModOn ? 0 : 1 ?>">
+        <button type="submit" class="ui-btn <?= $pgModOn ? 'ui-btn--gray' : 'ui-btn--filled' ?>" data-pages-module-toggle><?= $pgModOn ? 'Disable Pages tab' : 'Enable Pages tab' ?></button>
+      </form>
+    </div>
+  </section>
+</section>
+<?php endif; ?>
+
+<!-- Clients ------------------------------------------------------------ -->
+<!-- Company management: list, "New client", per-client edit (name / slug / feature label /
+     logo / module toggles). Every action posts to client-admin.php (partials/studio-clients.php). -->
+<section class="studio-section" data-studio-section="clients"<?= $tab === 'clients' ? '' : ' hidden' ?>>
+  <?php include __DIR__ . '/partials/studio-clients.php'; ?>
+</section>
 
 <?php include __DIR__ . '/partials/layout-bottom.php'; ?>
