@@ -21,6 +21,8 @@
  * Contract: scratchpad/tire-series-design.md.
  */
 
+require_once __DIR__ . '/media-lib.php';   // media/ hardening + permissions, shared with pages-lib.php
+
 // ---------------------------------------------------------------------
 // Gate
 // ---------------------------------------------------------------------
@@ -436,11 +438,11 @@ if (!function_exists('ensureTireThumb')) {
                 $im = $canvas;
             }
             $dir = dirname($thumb);
-            if (!is_dir($dir)) { @mkdir($dir, 0755, true); }
+            if (!is_dir($dir)) { mediaMkdir($dir); }   // .thumbs/ 0755 whatever the umask: Apache must read it
             if (!is_dir($dir)) { imagedestroy($im); return null; }
             $ok = @imagejpeg($im, $thumb, 82);
             imagedestroy($im);
-            if ($ok) { @chmod($thumb, 0644); return $thumb; }
+            if ($ok) { mediaChmodPath($thumb); return $thumb; }
             return null;
         } catch (Throwable $e) {
             error_log('ensureTireThumb failed: ' . $e->getMessage());
@@ -886,40 +888,24 @@ if (!function_exists('logTireSeriesActivity')) {
 // ---------------------------------------------------------------------
 
 if (!function_exists('tireMediaHtaccessText')) {
-    /** The .htaccess written into media/tires/ (and media/ when absent): no PHP/CGI, no directory listing. */
+    /** The .htaccess written into media/tires/: the shared media-lib.php text (no PHP/CGI, no directory listing, every directive guarded). */
     function tireMediaHtaccessText(): string {
-        return "# Written by the portal (tire-series-lib.php): this folder only serves static files.\n"
-             . "# Re-created on the next upload / rescan if removed. Same text as media-hardening/htaccess.txt.\n"
-             . "Options -Indexes\n"
-             . "<IfModule mod_php.c>\n    php_flag engine off\n</IfModule>\n"
-             . "<IfModule mod_php7.c>\n    php_flag engine off\n</IfModule>\n"
-             . "<IfModule mod_php8.c>\n    php_flag engine off\n</IfModule>\n"
-             . "RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .pht .phar .cgi .pl .py .sh\n"
-             . "RemoveType .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .pht .phar\n"
-             . "<FilesMatch \"(?i)\\.(php\\d?|phtml|phps|pht|phar|cgi|pl|py|sh|htaccess)$\">\n"
-             . "    <IfModule mod_authz_core.c>\n        Require all denied\n    </IfModule>\n"
-             . "    <IfModule !mod_authz_core.c>\n        Order allow,deny\n        Deny from all\n    </IfModule>\n"
-             . "</FilesMatch>\n";
+        return mediaHtaccessText('tire-series-lib.php');
     }
 }
 
 if (!function_exists('ensureTireMediaHtaccess')) {
     /**
-     * Make sure media/tires/.htaccess exists (and media/.htaccess when the parent has none).
-     * Called on every upload and scan; writes only when the file is missing, never overwrites
-     * a server-managed one. Returns the number of files written. Never fatal.
+     * Make sure media/tires/.htaccess is the current text (media-lib.php): written when missing,
+     * rewritten when it carries an older marker of ours, never touched when it is not ours. An
+     * old media/.htaccess of ours at the parent level is removed (the portal no longer manages
+     * that level — it governed media/library/ too). Called on every upload and scan; returns the
+     * number of files written or updated. Never fatal.
      */
     function ensureTireMediaHtaccess(): int {
-        $n = 0;
-        $tires = tireMediaRootPath();
-        $media = mediaRootPath();
-        foreach ([$media, $tires] as $dir) {
-            if (!is_dir($dir)) continue;
-            $file = $dir . '/.htaccess';
-            if (is_file($file)) continue;
-            if (@file_put_contents($file, tireMediaHtaccessText()) !== false) { @chmod($file, 0644); $n++; }
-        }
-        return $n;
+        $r = mediaEnsureHtaccess(tireMediaRootPath(), 'tire-series-lib.php');
+        mediaRemoveParentHtaccess(mediaRootPath());
+        return in_array($r['action'], ['written', 'updated'], true) ? 1 : 0;
     }
 }
 

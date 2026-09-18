@@ -26,6 +26,8 @@
  * arguments that default to null fall back to the global $pdo.
  */
 
+require_once __DIR__ . '/media-lib.php';   // media/ hardening + permissions, shared with tire-series-lib.php
+
 if (!function_exists('pagesPdo')) {
     /** (internal) Resolve the PDO to use: the argument, else the global. */
     function pagesPdo(?PDO $pdo = null): ?PDO {
@@ -407,53 +409,28 @@ if (!function_exists('pageViewUrl')) {
 
 if (!function_exists('pageMediaHtaccessText')) {
     /**
-     * The .htaccess written into media/pages/ (and media/ when absent): the tire kit's text
-     * (no PHP/CGI, no directory listing) plus the server-side-include block below — an
-     * uploaded .html must stay inert even on a host with mod_include enabled. Only
-     * directives every AllowOverride FileInfo/Options setup accepts; no Options +/-Includes
-     * (a host that allows only Options=Indexes would answer 500 for the whole folder).
+     * The .htaccess written into media/pages/: the ONE shared text of media-lib.php (same as
+     * media/tires/). No PHP/CGI, no directory listing, no server-side-include filter on .html,
+     * script-ish names refused — and every directive except `Options -Indexes` inside an
+     * <IfModule> guard, so a cPanel host with PHP-FPM / LSAPI never answers 500 for the folder.
      */
     function pageMediaHtaccessText(): string {
-        $ssi = "# Pages: no server-side includes either (.shtml .shtm .stm, and never .html/.htm)\n"
-             . "RemoveHandler .shtml .shtm .stm .inc\n"
-             . "<IfModule mod_include.c>\n"
-             . "    RemoveOutputFilter .shtml .shtm .stm .html .htm\n"
-             . "    XBitHack off\n"
-             . "</IfModule>\n";
-        if (function_exists('tireMediaHtaccessText')) {
-            $text = str_replace('tire-series-lib.php', 'pages-lib.php', tireMediaHtaccessText());
-            $text = str_replace('|sh|htaccess)$', '|sh|shtml|shtm|stm|inc|htaccess)$', $text);
-            $pos  = strpos($text, '<FilesMatch');
-            return $pos !== false ? substr($text, 0, $pos) . $ssi . substr($text, $pos) : $text . $ssi;
-        }
-        return "# Written by the portal (pages-lib.php): this folder only serves static files.\n"
-             . "Options -Indexes\n"
-             . "<IfModule mod_php.c>\n    php_flag engine off\n</IfModule>\n"
-             . "<IfModule mod_php7.c>\n    php_flag engine off\n</IfModule>\n"
-             . "<IfModule mod_php8.c>\n    php_flag engine off\n</IfModule>\n"
-             . "RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .pht .phar .cgi .pl .py .sh\n"
-             . "RemoveType .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .pht .phar\n"
-             . $ssi
-             . "<FilesMatch \"(?i)\\.(php\\d?|phtml|phps|pht|phar|cgi|pl|py|sh|shtml|shtm|stm|inc|htaccess)$\">\n"
-             . "    <IfModule mod_authz_core.c>\n        Require all denied\n    </IfModule>\n"
-             . "    <IfModule !mod_authz_core.c>\n        Order allow,deny\n        Deny from all\n    </IfModule>\n"
-             . "</FilesMatch>\n";
+        return mediaHtaccessText('pages-lib.php');
     }
 }
 
 if (!function_exists('ensurePagesMediaHtaccess')) {
-    /** Make sure media/pages/.htaccess exists (and media/.htaccess when the parent has none). Writes only when missing. */
+    /**
+     * Make sure media/pages/.htaccess is the current text: written when missing, rewritten when
+     * it carries an older marker of ours, never touched when it is not ours. An old media/.htaccess
+     * of ours at the parent level is removed (that level is no longer managed by the portal).
+     * Returns the number of files written or updated.
+     */
     function ensurePagesMediaHtaccess(): int {
-        $n = 0;
         $pages = pagesMediaRootPath();
-        $media = dirname($pages);
-        foreach ([$media, $pages] as $dir) {
-            if (!is_dir($dir)) continue;
-            $file = $dir . '/.htaccess';
-            if (is_file($file)) continue;
-            if (@file_put_contents($file, pageMediaHtaccessText()) !== false) { @chmod($file, 0644); $n++; }
-        }
-        return $n;
+        $r = mediaEnsureHtaccess($pages, 'pages-lib.php');
+        mediaRemoveParentHtaccess(dirname($pages));
+        return in_array($r['action'], ['written', 'updated'], true) ? 1 : 0;
     }
 }
 

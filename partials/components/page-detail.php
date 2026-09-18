@@ -119,6 +119,23 @@ if (!function_exists('renderPageDetail')) {
                         ? ($source === 'url' ? 'Add the page URL in Edit to show a preview here.' : 'Upload ' . pgEsc($entry) . ' (and its assets) in Edit to show a preview here.')
                         : 'Joust will add the preview shortly.') . '</span></div>';
         }
+        // Admin-only "Server check" (upload pages with files): can Apache serve the entry file? Filesystem
+        // facts only — is_file / permission bits of the file and its folders, the version of our
+        // media/pages/.htaccess, a leftover media/.htaccess of ours (media-lib.php mediaServerCheck) — never
+        // an HTTP request to self. "Repair" posts page-upload.php action=repair_media (pages.js).
+        if ($admin && $source === 'upload' && $files && function_exists('mediaServerCheck') && function_exists('pageFilePath') && function_exists('pagesMediaRootPath')) {
+            $entryPath = pageFilePath($company, $page, $entry, false);
+            if ($entryPath !== null) {
+                $chk = mediaServerCheck($entryPath, mediaRootPath(), pagesMediaRootPath());
+                $out .= '<p class="pg-server-check' . ($chk['ok'] ? '' : ' pg-server-check--warn') . '" data-server-check="' . ($chk['ok'] ? 'ok' : 'warn') . '"'
+                      . ' data-repair-endpoint="' . pgEsc(pgUrl('page-upload.php')) . '" role="status">'
+                      . $ico($chk['ok'] ? 'checkmark' : 'xmark', 'pg-server-check-icon')
+                      . '<span class="pg-server-check-label">Server check</span>'
+                      . '<span class="pg-server-check-text" data-server-check-text>' . pgEsc($chk['summary']) . '</span>'
+                      . (!$chk['ok'] ? '<button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-page-repair>Repair</button>' : '')
+                      . '</p>';
+            }
+        }
         $out .= '</section>';
 
         // ---- 2. Description + meta list -----------------------------------------------------

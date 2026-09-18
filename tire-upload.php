@@ -21,6 +21,8 @@
  *   chunk_finish  upload_id → validates the spooled file exactly like the single path, moves it
  *                 into the series folder, inserts the row; same reply as the single path
  *   chunk_abort   upload_id → deletes the spool
+ *   repair_media  (admin) rewrite media/tires/.htaccess when old / missing, drop an old media/.htaccess of
+ *                 ours, chmod media/tires/ to 0644 / 0755 (capped) → {ok, summary, rules, parent, perms}
  * The spool lives in media/tires/.spool/ (dot-prefixed: never scanned, deny-all .htaccess), the
  * sidecar's client must match the posted `client`, and every action is admin + same-site only.
  *
@@ -55,10 +57,27 @@ function tireUploadFail(int $code, string $msg, array $extra = []): void {
 
 $action = (string)($_POST['action'] ?? $_GET['action'] ?? 'upload');
 $chunkActions = ['probe', 'chunk_init', 'chunk_put', 'chunk_status', 'chunk_finish', 'chunk_abort'];
-if ($action !== 'upload' && !in_array($action, $chunkActions, true)) { tireUploadFail(400, 'Unknown action'); }
+if ($action !== 'upload' && $action !== 'repair_media' && !in_array($action, $chunkActions, true)) { tireUploadFail(400, 'Unknown action'); }
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' && !($action === 'probe' && $_SERVER['REQUEST_METHOD'] === 'GET')) { tireUploadFail(405, 'Method not allowed'); }
 requireSameSiteFetch();   // cross-site requests get a JSON 403 (helpers.php)
 if (!currentAdmin()) { tireUploadFail(403, 'Admin sign-in required'); }
+
+// =====================================================================
+// repair_media (admin, no DB needed) — the "Repair server rules" button in Studio → Renders:
+// media/tires/.htaccess (re)written when missing / older than ours, an old media/.htaccess of ours
+// removed, every file / folder under media/tires/ made 0644 / 0755 (capped at 5 000 entries per
+// call). Replies {ok, summary, rules, parent, perms}.
+// =====================================================================
+if ($action === 'repair_media') {
+    $root = tireMediaRootPath();
+    if (!is_dir($root)) { mediaMkdir($root, mediaRootPath()); }
+    $rep = mediaRepair($root, 'tire-series-lib.php', is_dir($root) ? $root : null, 5000, mediaRootPath());
+    $rep['scope'] = 'media/tires';
+    if (!$rep['ok']) { http_response_code(500); }
+    echo json_encode($rep);
+    exit;
+}
+
 if (!hasTireSeries($pdo)) { tireUploadFail(409, 'Render series are not set up yet — run migrate.php.'); }
 
 $maxImageBytes   = 10 * 1024 * 1024;          // matches add-feature.php
@@ -69,10 +88,10 @@ $iniMax          = (string)(ini_get('upload_max_filesize') ?: '?');
 /** Spool root: media/tires when it exists / can be created, else the app's uploads/ (same fallback as the store). */
 function tireUploadSpoolRoot(): string {
     $root = tireMediaRootPath();
-    if (!is_dir($root)) { @mkdir($root, 0755, true); }
+    if (!is_dir($root)) { mediaMkdir($root, mediaRootPath()); }   // 0755 whatever the umask
     if (is_dir($root) && is_writable($root)) { ensureTireMediaHtaccess(); return $root; }
     $up = __DIR__ . '/uploads';
-    if (!is_dir($up)) { @mkdir($up, 0755, true); }
+    if (!is_dir($up)) { mediaMkdir($up); }
     return $up;
 }
 
@@ -156,7 +175,7 @@ function tireUploadResolveSeries(PDO $pdo, array $tire, int $seriesId, string $n
 function tireUploadStore(PDO $pdo, array $company, array $tire, array $series, string $srcPath, string $origName, string $ext, bool $isVideo, string $batchId, bool $uploaded, array $extraReply = []): void {
     $storage  = 'media';
     $mediaDir = tireSeriesFolderPath($company, $tire, $series);   // <root>/<slug [a-z0-9-]>/<folder: no slashes, no dot prefix>
-    if (!is_dir($mediaDir)) { @mkdir($mediaDir, 0755, true); }
+    mediaMkdir($mediaDir, mediaRootPath());   // created folders 0755 whatever the umask; the chain up to media/ made traversable
     if (is_dir($mediaDir)) {
         // Containment: the resolved folder must sit exactly two levels under media/tires/ (no symlink escape).
         // (When realpath() cannot resolve — stream-wrapped harness — the textually validated path stands, like tireImagePath().)
@@ -170,7 +189,7 @@ function tireUploadStore(PDO $pdo, array $company, array $tire, array $series, s
     if (!is_dir($mediaDir) || !is_writable($mediaDir)) {
         $storage = 'uploads';
         $mediaDir = __DIR__ . '/uploads';
-        if (!is_dir($mediaDir)) { @mkdir($mediaDir, 0755, true); }
+        if (!is_dir($mediaDir)) { mediaMkdir($mediaDir); }
         if (!is_dir($mediaDir) || !is_writable($mediaDir)) {
             tireUploadFail(500, 'Neither media/tires/ nor uploads/ is writable on the server.');
         }
@@ -194,7 +213,7 @@ function tireUploadStore(PDO $pdo, array $company, array $tire, array $series, s
     if (file_exists($dest)) { tireUploadFail(500, 'Could not pick a free file name'); }
     $moved = $uploaded ? move_uploaded_file($srcPath, $dest) : (@rename($srcPath, $dest) || (@copy($srcPath, $dest) && @unlink($srcPath)));
     if (!$moved) { tireUploadFail(500, 'Failed to save the file (check folder permissions)'); }
-    @chmod($dest, 0644);
+    mediaChmodPath($dest);   // 0644: the upload tmp / chunk spool file was 0600 (unreadable by Apache)
 
     $tireId = (int)$tire['id'];
     try {

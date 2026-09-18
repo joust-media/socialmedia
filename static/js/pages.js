@@ -556,6 +556,32 @@
     return ok;
   }
 
+  /**
+   * Admin: "Repair" on the sheet's Server check line → page-upload.php action=repair_media
+   * (media/pages/.htaccess rewritten when old / missing, an old media/.htaccess of ours removed,
+   * files 0644 / folders 0755 under media/pages/<client>/). The reply carries a fresh check of
+   * the entry file, which replaces the line's text in place.
+   */
+  function repairMedia(art, btn) {
+    var line = btn.closest('[data-server-check]');
+    var endpoint = (line && line.getAttribute('data-repair-endpoint')) || 'page-upload.php';
+    btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = 'Repairing…';
+    return App.post(endpoint, { action: 'repair_media', page_id: art.getAttribute('data-id'), actor: App.actor }).then(function (res) {
+      btn.disabled = false; btn.removeAttribute('aria-busy'); btn.textContent = 'Repair';
+      var d = res.data || {};
+      if (!res.ok) { toast(res.error || 'Repair failed', 'error'); return res; }
+      toast(d.summary || 'Server rules repaired', 'success');
+      if (line && d.check) {
+        var text = $('[data-server-check-text]', line);
+        if (text) text.textContent = d.check.summary || '';
+        line.setAttribute('data-server-check', d.check.ok ? 'ok' : 'warn');
+        line.classList.toggle('pg-server-check--warn', !d.check.ok);
+        if (d.check.ok) btn.hidden = true;
+      }
+      return res;
+    });
+  }
+
   /* ================================================================== */
   /* Wiring — pages.php                                                  */
   /* ================================================================== */
@@ -625,6 +651,8 @@
       var tl = t.closest('[data-toggle-live]');
       if (tl) { P.toggleLive(id, tl.getAttribute('data-toggle-live')); return; }
       if (t.closest('[data-delete-page]')) { P.remove(id); return; }
+      var rep = t.closest('[data-page-repair]');
+      if (rep && !rep.disabled) { repairMedia(art, rep); return; }
     });
 
     document.addEventListener('submit', function (e) {

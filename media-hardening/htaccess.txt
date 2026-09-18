@@ -1,5 +1,6 @@
-# Written by the portal (tire-series-lib.php): this folder only serves static files.
-# Re-created on the next upload / rescan if removed. Same text as media-hardening/htaccess.txt.
+# joust-portal-media v2
+# Written by the portal (media-lib.php): this folder only serves static files.
+# Re-created on the next upload / rescan (or Studio > Repair server rules) if removed.
 Options -Indexes
 <IfModule mod_php.c>
     php_flag engine off
@@ -10,14 +11,26 @@ Options -Indexes
 <IfModule mod_php8.c>
     php_flag engine off
 </IfModule>
-RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .pht .phar .cgi .pl .py .sh
-RemoveType .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .pht .phar
-<FilesMatch "(?i)\.(php\d?|phtml|phps|pht|phar|cgi|pl|py|sh|htaccess)$">
-    <IfModule mod_authz_core.c>
-        Require all denied
+<IfModule mod_mime.c>
+    RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .phar .pl .py .cgi .shtml .shtm .stm .inc
+    RemoveType .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .phar .pl .py .cgi .shtml .shtm .stm .inc
+</IfModule>
+<IfModule mod_include.c>
+    <IfModule mod_mime.c>
+        RemoveOutputFilter .shtml .shtm .stm .html .htm
     </IfModule>
-    <IfModule !mod_authz_core.c>
+</IfModule>
+<IfModule mod_authz_core.c>
+    <FilesMatch "\.(php|phtml|php[3-8]|phps|phar|pl|py|cgi|shtml|shtm|stm|inc|htaccess)$">
+        Require all denied
+    </FilesMatch>
+</IfModule>
+<IfModule !mod_authz_core.c>
+    <FilesMatch "\.(php|phtml|php[3-8]|phps|phar|pl|py|cgi|shtml|shtm|stm|inc|htaccess)$">
         Order allow,deny
         Deny from all
-    </IfModule>
-</FilesMatch>
+    </FilesMatch>
+</IfModule>
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options nosniff
+</IfModule>

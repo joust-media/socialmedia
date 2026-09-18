@@ -151,7 +151,7 @@ function caStoreLogo(array $co, ?array $file): array {
     $isJpeg = (int)$info[2] === IMAGETYPE_JPEG;
     $ext    = $isJpeg ? 'jpg' : 'png';
     $dir    = __DIR__ . '/uploads';
-    if (!is_dir($dir)) { @mkdir($dir, 0755, true); }
+    if (!is_dir($dir)) { function_exists('mediaMkdir') ? mediaMkdir($dir) : @mkdir($dir, 0755, true); }   // 0755 whatever the umask
     if (!is_dir($dir) || !is_writable($dir)) { imagedestroy($im); return ['code' => 500, 'error' => 'uploads/ is not writable.']; }
     foreach (caManagedLogoFiles((string)$co['slug']) as $old) { @unlink($old); }   // one managed file per slug
     $dest = $dir . '/logo_' . $co['slug'] . '.' . $ext;
@@ -160,7 +160,7 @@ function caStoreLogo(array $co, ?array $file): array {
     $outW = imagesx($im); $outH = imagesy($im);
     imagedestroy($im);
     if (!$ok || !is_file($dest)) return ['code' => 500, 'error' => 'Could not write the logo file.'];
-    @chmod($dest, 0644);
+    function_exists('mediaChmodPath') ? mediaChmodPath($dest) : @chmod($dest, 0644);   // world-readable for Apache
     return ['code' => 200, 'logo_url' => 'uploads/logo_' . $co['slug'] . '.' . $ext, 'width' => $outW, 'height' => $outH];
 }
 

@@ -688,6 +688,7 @@
     root.addEventListener('click', function (e) {
       if (e.target.closest('[data-renders-copy]')) { self.copyFolder(); return; }
       if (e.target.closest('[data-renders-rescan]')) { self.rescan(e.target.closest('[data-renders-rescan]')); return; }
+      if (e.target.closest('[data-renders-repair]')) { self.repair(e.target.closest('[data-renders-repair]')); return; }
       if (e.target.closest('[data-renders-clear]')) { self.clearList(); return; }
       if (e.target.closest('[data-renders-retry-all]')) { self.retryFailed(); return; }
       if (e.target.closest('[data-renders-resume-discard]')) { self.discardResume(); return; }
@@ -784,6 +785,18 @@
       var url = (rc.rescanUrl || '').replace('__TIRE__', String(tire.id));
       if (!url) { finish(false, res.error); return; }
       fetch(url, { credentials: 'same-origin' }).then(function (r) { finish(r.ok, r.ok ? '' : 'Rescan failed (' + r.status + ')'); }, function () { finish(false, 'Network error'); });
+    });
+  };
+  /** "Repair server rules": tire-upload.php action=repair_media — media/tires/.htaccess rewritten when old / missing,
+   *  an old media/.htaccess of ours removed, every render made readable (0644 / 0755). The reply's summary is toasted. */
+  Renders.prototype.repair = function (btn) {
+    if (btn && btn.disabled) return;
+    if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = 'Repairing…'; }
+    App.post(this.endpoint, { action: 'repair_media', actor: App.actor }).then(function (res) {
+      if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); btn.textContent = 'Repair server rules'; }
+      var d = res.data || {};
+      if (res.ok) toast(d.summary || 'Server rules repaired', { kind: 'success' });
+      else toast(res.error || 'Repair failed', { kind: 'error' });
     });
   };
   /* ---- upload queue ---- */
@@ -1476,4 +1489,20 @@
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initClients);
   else initClients();
+
+  /* Studio → Pages: "Repair server rules" → page-upload.php action=repair_media (media/pages/<client>/:
+     .htaccess rewritten when old / missing, files 0644 / folders 0755), then a reload so the row glyphs refresh. */
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-pages-repair]');
+    if (!btn || btn.disabled) return;
+    var endpoint = btn.getAttribute('data-endpoint') || 'page-upload.php';
+    btn.disabled = true; btn.setAttribute('aria-busy', 'true');
+    App.post(endpoint, { action: 'repair_media', actor: App.actor }).then(function (res) {
+      btn.disabled = false; btn.removeAttribute('aria-busy');
+      var d = res.data || {};
+      if (!res.ok) { toast(res.error || 'Repair failed', { kind: 'error' }); return; }
+      toast(d.summary || 'Server rules repaired', { kind: 'success' });
+      window.setTimeout(function () { window.location.reload(); }, 900);
+    });
+  });
 })(window, document);

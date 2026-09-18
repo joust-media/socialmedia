@@ -6,6 +6,8 @@
  *   client        company slug — must be the page's company (403 otherwise; helpers.php scopes it too)
  *   page_id       pages.id (source must be 'upload')
  *   action        upload (default) | delete_file | set_entry | probe | chunk_init | chunk_put | chunk_status | chunk_finish | chunk_abort
+ *                 | repair_media (admin: rewrite media/pages/.htaccess when old / missing, drop an old media/.htaccess
+ *                   of ours, chmod media/pages/<client>/ to 0644 / 0755; + 'check' of the entry file when page_id is posted)
  *   file          the upload (action=upload): html htm css js json png jpg jpeg gif webp svg ico
  *                 woff woff2 ttf mp4 webm, ≤ 10 MB; images must decode and match their extension
  *   subfolder     optional relative folder inside the page folder ('img', 'assets/fonts'):
@@ -24,7 +26,9 @@
  * the same name is REPLACED — that is how a page gets updated), upserts page_files, logs
  * page/uploaded. File names are sanitised (pageSanitizeFilename): basename only, no dotfiles,
  * no .php/.phtml/.htaccess anywhere in the dotted chain (415), unknown extensions 415,
- * dotfiles / traversal 400. media/pages/.htaccess (no PHP, no listing) is (re)written on every upload.
+ * dotfiles / traversal 400. media/pages/.htaccess (media-lib.php text: no PHP, no listing, every directive
+ * guarded) is (re)written on every upload when missing or older than ours; stored files are chmod 0644 and
+ * created folders 0755 whatever the umask (Apache reads them as another user on shared hosting).
  *
  * Replies JSON {ok, file:{name, size, url, entry}, page:{id, entry, file_count}, batch}
  *   delete_file → {ok, name, deleted, page:{…}}   set_entry → {ok, page:{…}}
@@ -53,10 +57,40 @@ function pageUploadSummary(PDO $pdo, array $page): array {
 }
 
 $action = (string)($_POST['action'] ?? $_GET['action'] ?? 'upload');
-if (!in_array($action, ['upload', 'delete_file', 'set_entry', 'probe', 'chunk_init', 'chunk_put', 'chunk_status', 'chunk_finish', 'chunk_abort'], true)) { pageUploadFail(400, 'Unknown action'); }
+if (!in_array($action, ['upload', 'delete_file', 'set_entry', 'probe', 'chunk_init', 'chunk_put', 'chunk_status', 'chunk_finish', 'chunk_abort', 'repair_media'], true)) { pageUploadFail(400, 'Unknown action'); }
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' && !($action === 'probe' && $_SERVER['REQUEST_METHOD'] === 'GET')) { pageUploadFail(405, 'Method not allowed'); }
 requireSameSiteFetch();   // cross-site requests get a JSON 403 (helpers.php)
 if (!currentAdmin()) { pageUploadFail(403, 'Admin sign-in required'); }
+
+// =====================================================================
+// repair_media (admin, no DB needed) — the "Repair server rules" button: media/pages/.htaccess
+// (re)written when missing / older than ours, an old media/.htaccess of ours removed, and every
+// file / folder under media/pages/<client>/ (or all of media/pages/ without a client) made
+// 0644 / 0755 — capped at 5 000 entries per call. Replies {ok, summary, rules, parent, perms}
+// plus 'check' (mediaServerCheck of the entry file) when a page_id is posted.
+// =====================================================================
+if ($action === 'repair_media') {
+    $root = pagesMediaRootPath();
+    if (!is_dir($root)) { mediaMkdir($root, mediaRootPath()); }
+    $slug  = postedClientSlug();
+    $scope = ($slug !== '' && preg_match('/^[a-z0-9\-]+$/', $slug) && is_dir($root . '/' . $slug) && !is_link($root . '/' . $slug)) ? $root . '/' . $slug : $root;
+    $rep   = mediaRepair($root, 'pages-lib.php', $scope, 5000, mediaRootPath());
+    $rep['scope'] = 'media/pages' . ($scope !== $root ? '/' . $slug : '');
+    $pageId = (int)($_POST['page_id'] ?? 0);
+    if ($pageId > 0 && hasPagesTable($pdo)) {
+        $page = pageById($pdo, $pageId);
+        if ($page && ($slug === '' || (string)$page['company_slug'] === $slug) && strtolower((string)$page['source']) === 'upload') {
+            $co = ['id' => (int)$page['company_id'], 'slug' => (string)$page['company_slug']];
+            $entry = trim((string)($page['entry'] ?? 'index.html'));
+            $path = pageFileRelValid($entry) ? pageFilePath($co, $page, $entry, false) : null;
+            if ($path !== null) { $rep['check'] = mediaServerCheck($path, mediaRootPath(), $root); }
+        }
+    }
+    if (!$rep['ok']) { http_response_code(500); }
+    echo json_encode($rep);
+    exit;
+}
+
 if (!hasPagesTable($pdo)) { pageUploadFail(409, 'Pages are not set up yet — run migrate.php.'); }
 
 $maxBytes       = 10 * 1024 * 1024;               // single request (and the text cap for chunked)
@@ -68,7 +102,7 @@ $textExts       = ['html', 'htm', 'css', 'js', 'json'];
 /** Spool root: media/pages (created when missing). Null when it cannot be written. */
 function pageUploadSpoolRoot(): ?string {
     $root = pagesMediaRootPath();
-    if (!is_dir($root)) { @mkdir($root, 0755, true); }
+    if (!is_dir($root)) { mediaMkdir($root, mediaRootPath()); }   // 0755 whatever the umask (Apache must traverse it)
     if (!is_dir($root) || !is_writable($root)) return null;
     ensurePagesMediaHtaccess();
     return $root;
@@ -161,7 +195,9 @@ function pageUploadStore(PDO $pdo, array $company, array $page, string $srcPath,
     $dir = pageFolderContained($company, $page);
     if ($dir === null) { pageUploadFail(500, 'Page folder resolves outside media/pages/'); }
     $destDir = $subfolder !== '' ? $dir . '/' . $subfolder : $dir;
-    if (!is_dir($destDir)) { @mkdir($destDir, 0755, true); }
+    // Created folders are 0755 whatever the umask, and the chain up to media/ is made traversable:
+    // Apache usually runs as another user than PHP on shared hosting and must read what lands here.
+    mediaMkdir($destDir, mediaRootPath());
     if (!is_dir($destDir) || !is_writable($destDir)) {
         pageUploadFail(500, 'media/pages/ is not writable on the server — create it next to the portal folder and give it write permission.');
     }
@@ -185,7 +221,7 @@ function pageUploadStore(PDO $pdo, array $company, array $page, string $srcPath,
     $replaced = is_file($dest) ? 1 : 0;
     $moved = $uploaded ? move_uploaded_file($srcPath, $dest) : (@rename($srcPath, $dest) || (@copy($srcPath, $dest) && @unlink($srcPath)));
     if (!$moved) { pageUploadFail(500, 'Failed to save the file (check folder permissions)'); }
-    @chmod($dest, 0644);
+    mediaChmodPath($dest);   // 0644: the upload tmp / chunk spool file was 0600 (unreadable by Apache)
 
     try {
         $pdo->beginTransaction();

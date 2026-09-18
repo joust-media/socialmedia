@@ -136,7 +136,7 @@ if ($type === 'tire') {
     }
 }
 if (!$inPlace) {
-    if (!is_dir($uploadsDir)) { @mkdir($uploadsDir, 0755, true); }
+    if (!is_dir($uploadsDir)) { function_exists('mediaMkdir') ? mediaMkdir($uploadsDir) : @mkdir($uploadsDir, 0755, true); }
     $prefix  = $isVideo ? 'vid_' : 'img_';
     $newName = uniqid($prefix, true) . '.' . $ext;
     $newName = preg_replace('/[^a-zA-Z0-9_.\-]/', '', $newName);
@@ -149,7 +149,7 @@ if (!move_uploaded_file($tmpName, $dest)) {
     echo json_encode(['ok' => false, 'error' => 'Failed to save file (check ' . ($inPlace ? 'media/tires/' : 'uploads/') . ' permissions)']);
     exit;
 }
-@chmod($dest, 0644);
+function_exists('mediaChmodPath') ? mediaChmodPath($dest) : @chmod($dest, 0644);   // 0644: the upload tmp was 0600 (unreadable by Apache as another user)
 
 try {
     // post_images has a media_type column once migrate.php has run; tire_images doesn't.
