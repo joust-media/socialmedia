@@ -379,6 +379,17 @@
 .studio-renders-summary .ui-btn[hidden] { display: none; }
 .studio-upload-item .studio-upload-retry { align-self: center; flex: 0 0 auto; }
 .studio-upload-item .studio-upload-retry[hidden] { display: none; }
+.studio-renders-note { margin: 8px 0 0; }
+/* "Resume N unfinished uploads" banner (chunked uploads found in localStorage after a reload) */
+.studio-resume {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 12px 0 0; padding: 12px 14px;
+  background: var(--bg-elevated); border-radius: var(--radius-list);
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary);
+}
+.studio-resume[hidden] { display: none; }
+.studio-resume-text { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
+.studio-resume-pick { cursor: pointer; }
+.studio-resume-pick input[hidden] { display: none; }
 .studio-series-card { margin-top: 20px; }
 .studio-series-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
 .studio-series-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; padding: 10px 0; }

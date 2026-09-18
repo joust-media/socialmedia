@@ -247,7 +247,8 @@ if (!function_exists('videoTile')) {
     {
         $poster = trim((string)($opts['poster'] ?? ''));
         $badge  = !array_key_exists('badge', $opts) || $opts['badge'];
-        $out  = '<span class="ui-video-tile' . (!empty($opts['class']) ? ' ' . videoEsc($opts['class']) : '') . ($poster !== '' ? ' has-poster' : '') . '"' . videoThumbAttrs($url) . '>';
+        $bytes  = (int)($opts['bytes'] ?? 0);   // file size when known: App.video skips the poster probe on very large files (tiles never preload them)
+        $out  = '<span class="ui-video-tile' . (!empty($opts['class']) ? ' ' . videoEsc($opts['class']) : '') . ($poster !== '' ? ' has-poster' : '') . '"' . videoThumbAttrs($url) . ($bytes > 0 ? ' data-video-bytes="' . $bytes . '"' : '') . '>';
         $out .= '<img class="ui-video-poster" data-video-poster alt="" decoding="async"' . ($poster !== '' ? ' src="' . videoEsc($poster) . '"' : ' hidden') . '>';
         $out .= '<span class="ui-video-glyph" aria-hidden="true">' . (function_exists('icon') ? icon('play') : '') . '</span>';
         if ($badge) {

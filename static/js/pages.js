@@ -731,8 +731,11 @@
     this.rows = $('[data-page-file-rows]', root); this.empty = $('[data-page-files-empty]', root); this.count = $('[data-page-files-count]', root);
     this.queue = []; this.busy = false; this.batch = 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     this.entry = fc.entry || 'index.html';
+    this.chunk = App.chunkUpload || null; this.info = null; this.infoP = null; this.pending = [];   // chunk-upload.js: large files in pieces
+    this.resumeBox = $('[data-page-resume]', root); this.resumeInput = $('[data-page-resume-input]', root);
     var self = this;
     if (this.input) this.input.addEventListener('change', function () { self.add(self.input.files); self.input.value = ''; });
+    if (this.resumeInput) this.resumeInput.addEventListener('change', function () { self.resumeFiles(Array.prototype.slice.call(self.resumeInput.files || [])); self.resumeInput.value = ''; });
     if (this.zone) {
       ['dragenter', 'dragover'].forEach(function (ev) { self.zone.addEventListener(ev, function (e) { e.preventDefault(); self.zone.classList.add('is-dragover'); }); });
       ['dragleave', 'drop'].forEach(function (ev) { self.zone.addEventListener(ev, function (e) { e.preventDefault(); self.zone.classList.remove('is-dragover'); }); });
@@ -743,8 +746,27 @@
       if (del) { self.remove(del.getAttribute('data-page-delete-file'), del); return; }
       var ent = e.target.closest('[data-page-set-entry]');
       if (ent) { self.setEntry(ent.getAttribute('data-page-set-entry'), ent); return; }
+      if (e.target.closest('[data-page-resume-discard]')) { self.discardResume(); return; }
+      var cancel = e.target.closest('[data-page-cancel]');
+      if (cancel) { var li = cancel.closest('.studio-upload-item'); if (li && li._job) self.cancel(li._job); return; }
     });
+    this.offerResume();
   }
+  /** Probe page-upload.php once (chunk size + per-type caps); null → single requests only. */
+  PageFiles.prototype.probe = function () {
+    if (this.infoP) return this.infoP;
+    var self = this;
+    this.infoP = (this.chunk ? this.chunk.probe(this.fc.endpoint || 'page-upload.php') : Promise.resolve(null)).then(function (info) { self.info = info; return info; }, function () { return null; });
+    return this.infoP;
+  };
+  /** The size cap for a file: from the probe (video / text / asset) when chunking works, else the single-request 10 MB. */
+  PageFiles.prototype.limitFor = function (file, info) {
+    var ext = fileExt(file.name), single = (this.fc.maxMb || 10) * 1024 * 1024;
+    if (!info || !info.max_file_bytes) return single;
+    if ((info.video_exts || ['mp4', 'webm']).indexOf(ext) !== -1) return info.max_file_bytes.video || single;
+    if ((info.text_exts || ['html', 'htm', 'css', 'js', 'json']).indexOf(ext) !== -1) return info.max_file_bytes.text || single;
+    return info.max_file_bytes.asset || single;
+  };
   PageFiles.prototype.subfolder = function () {
     var v = this.sub ? this.sub.value.trim().replace(/^\/+|\/+$/g, '') : '';
     return v;
@@ -752,29 +774,133 @@
   PageFiles.prototype.add = function (files) {
     var self = this, sub = this.subfolder();
     if (sub && !/^[a-z0-9_\-\/]+$/.test(sub) || /(^|\/)\.\.?(\/|$)/.test(sub)) { toast('Subfolder may only use a-z, 0-9, - and _ (e.g. img or assets/fonts)', 'error'); return; }
-    Array.prototype.slice.call(files || []).forEach(function (file) {
-      var li = document.createElement('li');
-      li.className = 'studio-upload-item';
-      var ext = fileExt(file.name), bad = '';
-      if (/^\./.test(file.name)) bad = 'Hidden files are not allowed';
-      else if ((self.fc.exts || []).indexOf(ext) === -1) bad = 'Unsupported type .' + (ext || '?');
-      else if (file.size > (self.fc.maxMb || 10) * 1024 * 1024) bad = 'Over ' + (self.fc.maxMb || 10) + ' MB (' + mb(file.size) + ')';
-      li.innerHTML = '<div class="studio-upload-body"><div class="studio-upload-name">' + escapeHtml((sub ? sub + '/' : '') + file.name) + '</div>'
-                   + '<div class="studio-upload-meta text-tertiary">' + escapeHtml(mb(file.size)) + '</div>'
-                   + '<div class="studio-progress" data-upload-progress hidden><div class="studio-progress-bar"><div class="studio-progress-fill" data-upload-fill style="transform:translateX(-100%)"></div></div></div>'
-                   + '<div class="studio-upload-status' + (bad ? ' is-error' : '') + '" data-upload-status>' + (bad ? escapeHtml(bad) : 'Queued') + '</div></div>';
-      if (self.list) { self.list.hidden = false; self.list.appendChild(li); }
-      if (!bad) self.queue.push({ file: file, item: li, sub: sub });
-    });
+    Array.prototype.slice.call(files || []).forEach(function (file) { self.addOne(file, sub, null); });
     this.next();
+  };
+  /** One list row + queue entry. $resume = a ledger entry (upload_id + subfolder) to continue. */
+  PageFiles.prototype.addOne = function (file, sub, resume) {
+    var li = document.createElement('li');
+    li.className = 'studio-upload-item';
+    var ext = fileExt(file.name), bad = '';
+    if (/^\./.test(file.name)) bad = 'Hidden files are not allowed';
+    else if ((this.fc.exts || []).indexOf(ext) === -1) bad = 'Unsupported type .' + (ext || '?');
+    else if (!this.chunk && file.size > (this.fc.maxMb || 10) * 1024 * 1024) bad = 'Over ' + (this.fc.maxMb || 10) + ' MB (' + mb(file.size) + ')';   // with chunking the probe's caps decide in next()
+    li.innerHTML = '<div class="studio-upload-body"><div class="studio-upload-name">' + escapeHtml((sub ? sub + '/' : '') + file.name) + '</div>'
+                 + '<div class="studio-upload-meta text-tertiary">' + escapeHtml(mb(file.size)) + (resume ? ' · resuming' : '') + '</div>'
+                 + '<div class="studio-progress" data-upload-progress hidden><div class="studio-progress-bar"><div class="studio-progress-fill" data-upload-fill style="transform:translateX(-100%)"></div></div></div>'
+                 + '<div class="studio-upload-status' + (bad ? ' is-error' : '') + '" data-upload-status>' + (bad ? escapeHtml(bad) : 'Queued') + '</div></div>'
+                 + '<button type="button" class="ui-btn ui-btn--plain ui-btn--sm studio-upload-retry studio-upload-cancel" data-page-cancel hidden>Cancel</button>';
+    if (this.list) { this.list.hidden = false; this.list.appendChild(li); }
+    var job = { file: file, item: li, sub: sub, uploadId: resume ? resume.id : null, ctl: null, state: bad ? 'failed' : 'queued' };
+    li._job = job;
+    if (!bad) this.queue.push(job);
+    return job;
+  };
+  PageFiles.prototype.cancel = function (job) {
+    if (job.state === 'queued') { this.queue = this.queue.filter(function (j) { return j !== job; }); this.failJob(job, 'Cancelled'); return; }
+    if (job.state === 'uploading' && job.ctl) job.ctl.abort();
+  };
+  PageFiles.prototype.failJob = function (job, msg) {
+    var status = $('[data-upload-status]', job.item), prog = $('[data-upload-progress]', job.item), cancel = $('[data-page-cancel]', job.item);
+    job.state = 'failed';
+    status.textContent = msg; status.classList.remove('is-ok'); status.classList.add('is-error');
+    if (prog) prog.hidden = true;
+    if (cancel) cancel.hidden = true;
+  };
+  PageFiles.prototype.doneJob = function (job, data) {
+    var self = this, status = $('[data-upload-status]', job.item), fill = $('[data-upload-fill]', job.item);
+    job.state = 'done';
+    if (fill) fill.style.transform = 'translateX(0)';
+    status.innerHTML = (data.file.replaced ? 'Replaced' : 'Uploaded') + ' — <a href="' + escapeHtml(data.file.url) + '" target="_blank" rel="noopener">open</a>';
+    status.classList.remove('is-error'); status.classList.add('is-ok');
+    if (data.page && data.page.entry) self.entry = data.page.entry;
+    self.upsertRow(data.file.name, data.file.size, data.file.url);
+    if (data.page && typeof data.page.file_count === 'number') self.setCount(data.page.file_count);
+  };
+  PageFiles.prototype.settle = function () {
+    var self = this;
+    this.busy = false; this.next();
+    if (!this.queue.length && !this.busy) { var ok = $$('.studio-upload-status.is-ok', self.list).length, bad = $$('.studio-upload-status.is-error', self.list).length; toast(ok + ' uploaded' + (bad ? ' · ' + bad + ' failed' : ''), bad ? 'error' : 'success'); }
   };
   PageFiles.prototype.next = function () {
     if (this.busy || !this.queue.length) return;
     var self = this, job = this.queue.shift(), item = job.item, file = job.file;
-    var prog = $('[data-upload-progress]', item), fill = $('[data-upload-fill]', item), status = $('[data-upload-status]', item);
-    this.busy = true;
+    var prog = $('[data-upload-progress]', item), status = $('[data-upload-status]', item);
+    this.busy = true; job.state = 'uploading';
     if (prog) prog.hidden = false;
     status.textContent = 'Uploading… 0%';
+    this.probe().then(function (info) {
+      var limit = self.limitFor(file, info);
+      if (file.size > limit) { self.failJob(job, 'Over ' + fmtBytes(limit) + ' (' + mb(file.size) + ')'); self.settle(); return; }
+      if (self.chunk && info && (job.uploadId || file.size > info.chunk_size)) self.sendChunked(job, info);
+      else self.sendSingle(job);
+    });
+  };
+  /** Chunked path (chunk-upload.js): init → pieces with progress / retry → finish; the ledger entry survives a reload. */
+  PageFiles.prototype.sendChunked = function (job, info) {
+    var self = this, item = job.item, file = job.file, endpoint = this.fc.endpoint || 'page-upload.php';
+    var fill = $('[data-upload-fill]', item), status = $('[data-upload-status]', item), cancel = $('[data-page-cancel]', item);
+    var client = this.fc.client || (document.body.dataset.client || '');
+    var fields = { client: client, page_id: this.fc.pageId, subfolder: job.sub || '', batch: this.batch, actor: App.actor || 'admin' };
+    if (cancel) cancel.hidden = false;
+    var ctl = this.chunk.send({
+      endpoint: endpoint, file: file, fields: fields, chunkSize: info.chunk_size, uploadId: job.uploadId || null,
+      onInit: function (d) {
+        job.uploadId = d.upload_id;
+        self.chunk.remember({ id: d.upload_id, kind: 'page', endpoint: endpoint, client: client, name: file.name, size: file.size, type: file.type || '',
+                              fields: { page_id: self.fc.pageId, subfolder: job.sub || '' }, label: (job.sub ? job.sub + '/' : '') + file.name });
+      },
+      onProgress: function (p) { if (fill) fill.style.transform = 'translateX(' + (p.pct - 100) + '%)'; status.textContent = 'Uploading… ' + p.text; },
+      onRetry: function (r) { status.textContent = 'Connection hiccup — retrying that piece (' + r.attempt + ' of ' + r.max + ')…'; }
+    });
+    job.ctl = ctl;
+    ctl.promise.then(function (data) {
+      job.ctl = null; if (cancel) cancel.hidden = true;
+      self.chunk.forget(job.uploadId); job.uploadId = null;
+      self.doneJob(job, data);
+      self.settle();
+    }, function (e) {
+      job.ctl = null; if (cancel) cancel.hidden = true;
+      if (e && e.aborted) { self.chunk.forget(job.uploadId); job.uploadId = null; self.failJob(job, 'Cancelled'); self.settle(); return; }
+      if (!(e && e.retryable) || (e && e.expired)) { self.chunk.forget(job.uploadId); job.uploadId = null; }
+      self.failJob(job, ((e && e.error) || 'Upload failed') + (job.uploadId ? ' — reload the page to resume.' : ''));
+      self.settle();
+    });
+  };
+  /* ---- resume after a reload (ledger in localStorage; the user re-picks the same files) ---- */
+  PageFiles.prototype.offerResume = function () {
+    if (!this.chunk || !this.resumeBox) return;
+    var self = this, client = this.fc.client || (document.body.dataset.client || '');
+    this.pending = this.chunk.list({ kind: 'page', client: client }).filter(function (e) { return e.fields && String(e.fields.page_id) === String(self.fc.pageId); });
+    var n = this.pending.length;
+    this.resumeBox.hidden = n === 0;
+    var t = $('[data-page-resume-text]', this.resumeBox);
+    if (t && n) t.textContent = 'Resume ' + n + ' unfinished upload' + (n === 1 ? '' : 's') + ': ' + this.pending.map(function (e) { return e.label + ' (' + mb(e.size) + ')'; }).join(', ') + '. Pick the same file' + (n === 1 ? '' : 's') + ' again and the upload continues where it stopped.';
+  };
+  PageFiles.prototype.resumeFiles = function (files) {
+    var self = this, matched = [], unmatched = [];
+    files.forEach(function (f) {
+      var e = self.pending.filter(function (p) { return p.name === f.name && Number(p.size) === f.size && matched.indexOf(p) === -1; })[0];
+      if (!e) { unmatched.push(f.name); return; }
+      matched.push(e);
+      self.addOne(f, (e.fields && e.fields.subfolder) || '', e);
+    });
+    if (unmatched.length) toast(unmatched.length + ' file' + (unmatched.length === 1 ? ' does' : 's do') + ' not match an unfinished upload (same name and size needed): ' + unmatched.join(', '), 'error');
+    this.pending = this.pending.filter(function (p) { return matched.indexOf(p) === -1; });
+    this.resumeBox.hidden = this.pending.length === 0;
+    this.next();
+  };
+  PageFiles.prototype.discardResume = function () {
+    var self = this;
+    if (!this.pending.length) return;
+    if (!window.confirm('Discard ' + this.pending.length + ' unfinished upload' + (this.pending.length === 1 ? '' : 's') + '? The pieces already sent are deleted from the server.')) return;
+    this.pending.forEach(function (e) { self.chunk.abortStored(e); });
+    this.offerResume();
+  };
+  /** Single-request path (small files). */
+  PageFiles.prototype.sendSingle = function (job) {
+    var self = this, item = job.item, file = job.file;
+    var fill = $('[data-upload-fill]', item), status = $('[data-upload-status]', item);
     var fd = new FormData();
     fd.append('client', this.fc.client || (document.body.dataset.client || ''));
     fd.append('page_id', String(this.fc.pageId));
@@ -792,20 +918,11 @@
     xhr.onload = function () {
       var data = null; try { data = JSON.parse(xhr.responseText); } catch (e) {}
       if (fill) fill.style.transform = 'translateX(0)';
-      if (!data || data.ok === false || xhr.status >= 400 || !data.file) {
-        status.textContent = (data && data.error) || ('Upload failed (' + xhr.status + ')');
-        status.classList.add('is-error');
-      } else {
-        status.innerHTML = (data.file.replaced ? 'Replaced' : 'Uploaded') + ' — <a href="' + escapeHtml(data.file.url) + '" target="_blank" rel="noopener">open</a>';
-        status.classList.add('is-ok');
-        if (data.page && data.page.entry) self.entry = data.page.entry;
-        self.upsertRow(data.file.name, data.file.size, data.file.url);
-        if (data.page && typeof data.page.file_count === 'number') self.setCount(data.page.file_count);
-      }
-      self.busy = false; self.next();
-      if (!self.queue.length) { var ok = $$('.studio-upload-status.is-ok', self.list).length, bad = $$('.studio-upload-status.is-error', self.list).length; toast(ok + ' uploaded' + (bad ? ' · ' + bad + ' failed' : ''), bad ? 'error' : 'success'); }
+      if (!data || data.ok === false || xhr.status >= 400 || !data.file) self.failJob(job, (data && data.error) || ('Upload failed (' + xhr.status + ')'));
+      else self.doneJob(job, data);
+      self.settle();
     };
-    xhr.onerror = function () { status.textContent = 'Network error — try again.'; status.classList.add('is-error'); self.busy = false; self.next(); };
+    xhr.onerror = function () { self.failJob(job, 'Network error — try again.'); self.settle(); };
     xhr.open('POST', this.fc.endpoint || 'page-upload.php');
     xhr.setRequestHeader('Accept', 'application/json');
     xhr.send(fd);

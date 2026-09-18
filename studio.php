@@ -235,7 +235,7 @@ if ($hasRenders) {
         'tire'      => $rendersTire,
         'series'    => $rendersSeries,
         'maxMb'     => 10,      // images (tire-upload.php: 413 above)
-        'maxVideoMb' => 200,    // videos (bounded by the host's upload_max_filesize / post_max_size)
+        'maxVideoMb' => 4096,   // videos: sent in pieces (chunk-upload-lib.php), so the host's upload_max_filesize no longer caps them
     ];
 }
 
@@ -248,6 +248,7 @@ $bodyClass   = 'page-studio page-studio-hub';
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">' . "\n"
              . '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">';
 $footExtra   = '<script>window.StudioConfig = ' . json_encode($studioConfig, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n"
+             . '<script src="' . h(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n"   // App.chunkUpload (Renders: large videos in pieces, resumable)
              . '<script src="' . h(staticUrl('js/studio.js')) . '" defer></script>';
 
 include __DIR__ . '/partials/layout-top.php';
@@ -371,8 +372,15 @@ include __DIR__ . '/partials/layout-top.php';
         <input type="file" data-renders-input accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov" multiple>
         <span class="studio-dropzone-icon"><?= icon('download') ?></span>
         <span class="studio-dropzone-label">Drop renders here</span>
-        <span class="studio-dropzone-hint">JPG, PNG, GIF, WebP up to <?= (int)$studioConfig['renders']['maxMb'] ?> MB · MP4, WebM, MOV up to <?= (int)$studioConfig['renders']['maxVideoMb'] ?> MB · one upload at a time, each file lands in <strong data-renders-target>the chosen series</strong> as “To Review” for <?= h($client['name']) ?>.</span>
+        <span class="studio-dropzone-hint">JPG, PNG, GIF, WebP up to <?= (int)$studioConfig['renders']['maxMb'] ?> MB · MP4, WebM, MOV up to <?= (int)round($studioConfig['renders']['maxVideoMb'] / 1024) ?> GB · one upload at a time, each file lands in <strong data-renders-target>the chosen series</strong> as “To Review” for <?= h($client['name']) ?>.</span>
       </label>
+      <p class="studio-help studio-renders-note" data-renders-note>Videos of any size are supported; uploads are sent in pieces and can resume after a dropped connection or a page reload.</p>
+    </div>
+
+    <div class="studio-resume" data-renders-resume hidden role="status">
+      <span class="studio-resume-text" data-renders-resume-text>Resume unfinished uploads</span>
+      <label class="ui-btn ui-btn--filled ui-btn--sm studio-resume-pick">Pick the files<input type="file" data-renders-resume-input accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov" multiple hidden></label>
+      <button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-renders-resume-discard>Discard</button>
     </div>
 
     <div class="studio-renders-summary" data-renders-summary hidden>
@@ -393,6 +401,7 @@ include __DIR__ . '/partials/layout-top.php';
           <div class="studio-upload-status" data-upload-status></div>
         </div>
         <button type="button" class="ui-btn ui-btn--gray ui-btn--sm studio-upload-retry" data-renders-retry hidden>Retry</button>
+        <button type="button" class="ui-btn ui-btn--plain ui-btn--sm studio-upload-retry studio-upload-cancel" data-renders-cancel hidden>Cancel</button>
       </li>
     </template>
 

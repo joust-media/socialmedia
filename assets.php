@@ -233,7 +233,7 @@ if (!function_exists('assetsTileHtml')) {
               . ' aria-label="' . esc('Open ' . $it['label'] . ', ' . $index . ' of ' . $total . (!empty($it['comments']) ? ', ' . (int)$it['comments'] . ($it['comments'] === 1 ? ' comment' : ' comments') : '')) . '">';
         $nc = (int)($it['comments'] ?? 0);
         if ($it['type'] === 'video') {
-            $out .= videoTile($it['src'], ['badge' => false, 'poster' => ($it['thumb'] ?? '') !== '' && $it['thumb'] !== $it['src'] ? $it['thumb'] : '']);   // poster when the lib made one, else dark tile + play glyph
+            $out .= videoTile($it['src'], ['badge' => false, 'poster' => ($it['thumb'] ?? '') !== '' && $it['thumb'] !== $it['src'] ? $it['thumb'] : '', 'bytes' => (int)($it['bytes'] ?? 0)]);   // poster when the lib made one, else dark tile + play glyph (no probe on huge files)
         } else {
             $out .= '<img src="' . esc($thumb) . '" alt="" loading="lazy" decoding="async">';   // .ui-thumb is a fixed 1:1 box, so lazy tiles never reflow
         }
@@ -409,12 +409,15 @@ if ($view === 'library') {
                 $src   = assetsRootUrl((string)tireImageSrc($r));
                 $thumb = assetsRootUrl((string)tireImageThumb($r));
                 $meta  = assetMediaMeta((string)($r['image_url'] ?? $src));
-                $twin  = $meta['type'] === 'video' ? videoTwinUrl($src, function_exists('tireImagePath') ? tireImagePath($r) : null) : '';
+                $path  = $meta['type'] === 'video' && function_exists('tireImagePath') ? tireImagePath($r) : null;
+                $twin  = $meta['type'] === 'video' ? videoTwinUrl($src, $path) : '';
+                $bytes = $path !== null && is_file($path) ? (int)@filesize($path) : 0;   // one stat per video tile: lets the grid skip poster probes on multi-GB renders
             } else {
                 $src   = basePath() . '/' . ltrim((string)$r['image_url'], '/');
                 $thumb = $src;
                 $meta  = assetMediaMeta((string)$r['image_url']);
                 $twin  = $meta['type'] === 'video' ? videoTwinUrl($src) : '';
+                $bytes = 0;
             }
             $label = trim((string)(($r['display_name'] ?? '') ?: (($r['caption'] ?? '') ?: '')));
             if ($label === '') { $label = (string)$collection['name'] . ($seriesActive ? ' · ' . $seriesActive['name'] : '') . ' · ' . $n; }
@@ -432,6 +435,7 @@ if ($view === 'library') {
                 'manage'   => $isAdmin ? clientUrl('add-feature.php', ['module' => 'tires', 'edit_item' => $itemId]) : '',
                 'twin'     => $twin,
                 'series'   => $seriesKey,
+                'bytes'    => $bytes,
             ];
         }
     } else {
