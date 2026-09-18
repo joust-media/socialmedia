@@ -77,6 +77,19 @@ if (!function_exists('renderPageDetail')) {
             $hasEntry = false;
         }
 
+        // An oversized entry HTML (over mediaHtmlWarnBytes(), 400 KB): hosts with ModSecurity response-body
+        // inspection answer 500 for it, so the frame would only show a server error — the preview is
+        // replaced by a notice (Open in new tab stays) and the admin's Server check line offers Extract.
+        $entryPath = null; $entryBytes = 0; $entryLarge = false;
+        if ($source === 'upload' && $hasEntry && function_exists('pageFilePath') && function_exists('mediaHtmlWarnBytes')) {
+            $entryPath = pageFilePath($company, $page, $entry, false);
+            if ($entryPath !== null && !is_link($entryPath) && is_file($entryPath)) {
+                clearstatcache(true, $entryPath);
+                $entryBytes = (int)@filesize($entryPath);
+                $entryLarge = $entryBytes > mediaHtmlWarnBytes();
+            }
+        }
+
         $approvedAt   = !empty($page['approved_at']) ? strtotime((string)$page['approved_at']) : false;
         $approvedLine = 'Approved' . ($approvedAt ? ' ' . date('M j', $approvedAt) : '') . ' · Joust will make it live';
 
@@ -105,7 +118,13 @@ if (!function_exists('renderPageDetail')) {
             $out .= '<a class="ui-btn ui-btn--plain ui-btn--sm pg-preview-open" href="' . pgEsc($viewUrl) . '" target="_blank" rel="noopener noreferrer" data-page-open-tab>Open in new tab</a>';
         }
         $out .= '</div>';
-        if ($hasEntry) {
+        if ($hasEntry && $entryLarge) {
+            $out .= '<div class="pg-preview-empty pg-preview-large" data-preview-placeholder data-preview-large="' . $entryBytes . '">' . $ico('page', 'pg-preview-empty-icon')
+                  . '<span>Preview off — ' . pgEsc($entry) . ' is ' . pgEsc(mediaFormatBytes($entryBytes)) . '</span>'
+                  . '<span class="text-tertiary">' . ($admin
+                        ? 'Hosts often reject HTML responses over ~512 KB (ModSecurity), so the frame would show a server error. Extract the embedded images below, or reduce the file, and the preview returns.'
+                        : 'This page is too large to frame here — use Open in new tab.') . '</span></div>';
+        } elseif ($hasEntry) {
             $out .= '<div class="pg-frame-wrap" data-preview-frame-wrap data-preview-w="1280">'
                   . '<iframe class="pg-frame" data-preview-frame sandbox="allow-scripts allow-same-origin allow-forms allow-popups" referrerpolicy="no-referrer" loading="lazy" src="' . pgEsc($viewUrl) . '"'
                   . ' title="' . pgEsc($label . ' preview') . '" width="1280"></iframe>'
@@ -123,16 +142,28 @@ if (!function_exists('renderPageDetail')) {
         // facts only — is_file / permission bits of the file and its folders, the version of our
         // media/pages/.htaccess, a leftover media/.htaccess of ours (media-lib.php mediaServerCheck) — never
         // an HTTP request to self. "Repair" posts page-upload.php action=repair_media (pages.js).
+        // An HTML file over mediaHtmlWarnBytes() (the entry on disk, any other .html row in page_files) is a problem too:
+        // "Extract embedded images" posts action=extract_inline (pages.js); Repair only shows for the other problems.
         if ($admin && $source === 'upload' && $files && function_exists('mediaServerCheck') && function_exists('pageFilePath') && function_exists('pagesMediaRootPath')) {
-            $entryPath = pageFilePath($company, $page, $entry, false);
-            if ($entryPath !== null) {
-                $chk = mediaServerCheck($entryPath, mediaRootPath(), pagesMediaRootPath());
+            $chkPath = pageFilePath($company, $page, $entry, false);
+            if ($chkPath !== null) {
+                $chk = mediaServerCheck($chkPath, mediaRootPath(), pagesMediaRootPath());
+                $sizeProblems = !empty($chk['html']['large']) ? 1 : 0;
+                foreach ($files as $f) {
+                    $fn = (string)($f['filename'] ?? '');
+                    if ($fn === $entry || !in_array(strtolower((string)pathinfo($fn, PATHINFO_EXTENSION)), ['html', 'htm'], true)) continue;
+                    if ((int)($f['size'] ?? 0) > mediaHtmlWarnBytes()) { $chk['problems'][] = mediaHtmlTooLargeProblem($fn, (int)$f['size']); $sizeProblems++; }
+                }
+                if ($sizeProblems > 0 && $chk['ok']) { $chk['ok'] = false; $chk['summary'] = implode(' · ', $chk['problems']); }
+                elseif ($sizeProblems > 0) { $chk['summary'] = implode(' · ', $chk['problems']); }
+                $otherProblems = count($chk['problems']) - $sizeProblems;
                 $out .= '<p class="pg-server-check' . ($chk['ok'] ? '' : ' pg-server-check--warn') . '" data-server-check="' . ($chk['ok'] ? 'ok' : 'warn') . '"'
                       . ' data-repair-endpoint="' . pgEsc(pgUrl('page-upload.php')) . '" role="status">'
                       . $ico($chk['ok'] ? 'checkmark' : 'xmark', 'pg-server-check-icon')
                       . '<span class="pg-server-check-label">Server check</span>'
                       . '<span class="pg-server-check-text" data-server-check-text>' . pgEsc($chk['summary']) . '</span>'
-                      . (!$chk['ok'] ? '<button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-page-repair>Repair</button>' : '')
+                      . ($otherProblems > 0 ? '<button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-page-repair>Repair</button>' : '')
+                      . ($sizeProblems > 0 ? '<button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-page-extract title="Move every embedded base64 image, font and video out of the HTML into assets/ files next to it">Extract embedded images</button>' : '')
                       . '</p>';
             }
         }

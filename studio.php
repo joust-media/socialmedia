@@ -578,6 +578,10 @@ include __DIR__ . '/partials/layout-top.php';
     $pgModOn   = pagesModuleEnabled($pdo, $pgCid);
     $pgRows    = pagesForCompany($pdo, $pgCid);
     $pgFiles   = pageFileCounts($pdo, array_map(static function ($r) { return (int)$r['id']; }, $pgRows));
+    // HTML files over ~400 KB per page (page_files sizes): a host with ModSecurity response-body inspection
+    // answers 500 for them → an "Extract embedded images" row under the page (page-upload.php action=extract_inline).
+    $pgLarge   = function_exists('pageLargeHtmlFiles') ? pageLargeHtmlFiles($pdo, array_map(static function ($r) { return (int)$r['id']; }, $pgRows)) : [];
+    $pgExtractEndpoint = basePath() . '/page-upload.php?client=' . rawurlencode($client['slug']);
     $pgFormUrl = clientUrl('add-page.php');
     $pgSegs    = [
         ['key' => 'pending',  'title' => 'To Review',     'subtitle' => 'Waiting for the client',           'icon' => 'page',      'tint' => 'var(--pending)'],
@@ -639,6 +643,22 @@ include __DIR__ . '/partials/layout-top.php';
           'chevron'     => false,
           'attrs'       => ['data-page-row' => (int)$pg['id'], 'data-page-slug' => $pg['slug']],
       ]) ?>
+      <?php if (!empty($pgLarge[(int)$pg['id']])):
+          $pgLargeNames = [];
+          foreach ($pgLarge[(int)$pg['id']] as $ln => $lb) { $pgLargeNames[] = $ln . ' is ' . mediaFormatBytes((int)$lb); }
+      ?>
+      <?= insetRow([
+          'icon'        => 'xmark',
+          'iconStyle'   => 'color:var(--deny)',
+          'class'       => 'studio-page-large',
+          'title'       => implode(' · ', $pgLargeNames),
+          'wrap'        => true,
+          'subtitle'    => 'Hosts often reject HTML responses over ~512 KB (ModSecurity) — extract the embedded images into files next to the page.',
+          'trailing'    => '<button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-pages-extract="' . (int)$pg['id'] . '" data-endpoint="' . h($pgExtractEndpoint) . '">Extract embedded images</button>',
+          'chevron'     => false,
+          'attrs'       => ['data-page-large' => (int)$pg['id']],
+      ]) ?>
+      <?php endif; ?>
     <?php endforeach; ?>
   <?= insetListClose('Edit opens the form with the file uploader; Open pages shows the client view with the review thread.') ?>
 

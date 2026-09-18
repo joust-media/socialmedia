@@ -287,6 +287,34 @@ if (!function_exists('mediaChmodTree')) {
 // Diagnostics + repair
 // ---------------------------------------------------------------------
 
+if (!function_exists('mediaFormatBytes')) {
+    /** '12 KB' / '1.4 MB' (same format as pageFormatBytes(); media-lib.php loads before pages-lib.php). */
+    function mediaFormatBytes(int $bytes): string {
+        if ($bytes >= 1024 * 1024) return rtrim(rtrim(number_format($bytes / (1024 * 1024), 1), '0'), '.') . ' MB';
+        if ($bytes >= 1024) return (int)round($bytes / 1024) . ' KB';
+        return $bytes . ' B';
+    }
+}
+
+if (!function_exists('mediaHtmlWarnBytes')) {
+    /**
+     * An HTML file above this size gets the "hosts often reject HTML responses over ~512 KB" warning.
+     * cPanel's ModSecurity ships with SecResponseBodyLimit 524288 and SecResponseBodyLimitAction Reject:
+     * a text/html response over the limit is answered with a 500 (images / video are not body-scanned).
+     * 400 KB leaves headroom for gzip / chunked framing differences between hosts.
+     */
+    function mediaHtmlWarnBytes(): int {
+        return 400 * 1024;
+    }
+}
+
+if (!function_exists('mediaHtmlTooLargeProblem')) {
+    /** The one warning line for an oversized HTML file (mediaServerCheck() and the Studio / sheet markup share it). */
+    function mediaHtmlTooLargeProblem(string $name, int $bytes): string {
+        return $name . ' is ' . mediaFormatBytes($bytes) . ' — hosts often reject HTML responses over ~512 KB (ModSecurity). Extract embedded images or reduce the file.';
+    }
+}
+
 if (!function_exists('mediaServerCheck')) {
     /**
      * Would Apache serve this file? No HTTP — just the filesystem facts an admin needs:
@@ -297,7 +325,9 @@ if (!function_exists('mediaServerCheck')) {
      *    'problems' => [..strings..], 'file' => [name, exists, readable, perms],
      *    'dirs' => [[path (relative to the docroot), perms, ok], …],
      *    'rules' => [file, version, state: ok | old | missing | foreign],
-     *    'parent' => [file, state: absent | ours | foreign]]
+     *    'parent' => [file, state: absent | ours | foreign],
+     *    'html'  => [bytes, large: bool]   — an .html / .htm over mediaHtmlWarnBytes() is a problem too
+     *                                        (ModSecurity response-body limit → 500; see mediaHtmlWarnBytes)]
      */
     function mediaServerCheck(string $file, ?string $stopDir = null, ?string $rulesDir = null): array {
         $file     = mediaNormPath($file);
@@ -318,6 +348,14 @@ if (!function_exists('mediaServerCheck')) {
             $problems[] = $name . ' is missing on the server';
         } elseif (!$readable) {
             $problems[] = $name . ' is not readable by the web server (' . ($perms !== '' ? $perms : '?') . ', needs 0644)';
+        }
+
+        // HTML size: hosts with ModSecurity response-body inspection answer 500 for a text/html
+        // file over their limit (cPanel default 512 KB); images / video are not inspected.
+        $htmlBytes = 0; $htmlLarge = false;
+        if ($exists && in_array(strtolower((string)pathinfo($file, PATHINFO_EXTENSION)), ['html', 'htm'], true)) {
+            $htmlBytes = (int)@filesize($file);
+            if ($htmlBytes > mediaHtmlWarnBytes()) { $htmlLarge = true; $problems[] = mediaHtmlTooLargeProblem($name, $htmlBytes); }
         }
 
         // folders: parent → … → stopDir
@@ -362,6 +400,7 @@ if (!function_exists('mediaServerCheck')) {
             'dirs'   => $dirs,
             'rules'  => ['file' => $rel($rulesFile), 'version' => $rv, 'state' => $rulesState],
             'parent' => ['file' => $rel($parentFile), 'state' => $parentState],
+            'html'   => ['bytes' => $htmlBytes, 'large' => $htmlLarge],
         ];
     }
 }

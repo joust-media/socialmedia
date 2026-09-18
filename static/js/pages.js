@@ -582,6 +582,39 @@
     });
   }
 
+  /**
+   * Admin: "Extract embedded images" on the Server check line → page-upload.php action=extract_inline
+   * (every base64 data: URI in the page's HTML files becomes a file under assets/, the reference is
+   * rewritten). The reply carries the summary + a fresh check of the entry; the sheet is reloaded so
+   * the preview (switched off while the entry is over ~400 KB) comes back.
+   */
+  function extractInline(art, btn) {
+    var line = btn.closest('[data-server-check]');
+    var endpoint = (line && line.getAttribute('data-repair-endpoint')) || 'page-upload.php';
+    var id = art.getAttribute('data-id');
+    btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = 'Extracting…';
+    return App.post(endpoint, { action: 'extract_inline', page_id: id, actor: App.actor }).then(function (res) {
+      btn.disabled = false; btn.removeAttribute('aria-busy'); btn.textContent = 'Extract embedded images';
+      var d = res.data || {};
+      if (!res.ok) { toast(res.error || 'Extraction failed', 'error'); return res; }
+      var t = d.totals || {};
+      toast(d.summary || 'Done', t.extracted > 0 ? 'success' : (t.skipped > 0 || t.failed > 0 ? 'error' : 'success'));
+      if (line && d.check) {
+        var text = $('[data-server-check-text]', line);
+        if (text) text.textContent = d.check.summary || '';
+        line.setAttribute('data-server-check', d.check.ok ? 'ok' : 'warn');
+        line.classList.toggle('pg-server-check--warn', !d.check.ok);
+        if (d.check.html && !d.check.html.large) btn.hidden = true;
+      }
+      if (t.extracted > 0 && cfg.partialUrl) {
+        // the inline <template> (if any) still holds the old markup: drop it so the reopen fetches the partial
+        var tpl = $('template[data-page-template="' + id + '"]'); if (tpl) tpl.remove();
+        P.open(id, { silent: true });
+      }
+      return res;
+    });
+  }
+
   /* ================================================================== */
   /* Wiring — pages.php                                                  */
   /* ================================================================== */
@@ -653,6 +686,8 @@
       if (t.closest('[data-delete-page]')) { P.remove(id); return; }
       var rep = t.closest('[data-page-repair]');
       if (rep && !rep.disabled) { repairMedia(art, rep); return; }
+      var ext = t.closest('[data-page-extract]');
+      if (ext && !ext.disabled) { extractInline(art, ext); return; }
     });
 
     document.addEventListener('submit', function (e) {
@@ -792,6 +827,7 @@
     var ext = fileExt(file.name), single = (this.fc.maxMb || 10) * 1024 * 1024;
     if (!info || !info.max_file_bytes) return single;
     if ((info.video_exts || ['mp4', 'webm']).indexOf(ext) !== -1) return info.max_file_bytes.video || single;
+    if (ext === 'html' || ext === 'htm') return info.max_file_bytes.html || info.max_file_bytes.text || single;   // embedded assets are extracted server-side
     if ((info.text_exts || ['html', 'htm', 'css', 'js', 'json']).indexOf(ext) !== -1) return info.max_file_bytes.text || single;
     return info.max_file_bytes.asset || single;
   };
@@ -840,6 +876,12 @@
     job.state = 'done';
     if (fill) fill.style.transform = 'translateX(0)';
     status.innerHTML = (data.file.replaced ? 'Replaced' : 'Uploaded') + ' — <a href="' + escapeHtml(data.file.url) + '" target="_blank" rel="noopener">open</a>';
+    // HTML with embedded base64 assets: the server moved them into assets/ files ("Extracted 14 images · 5.4 MB → 180 KB")
+    var ex = data.extract;
+    if (ex && (ex.extracted > 0 || ex.skipped > 0 || ex.failed > 0)) {
+      status.innerHTML += ' · <span data-upload-extract>' + escapeHtml(ex.summary || '') + '</span>';
+      (ex.files || []).forEach(function (f) { self.upsertRow(f.name, f.size, f.url); });
+    }
     status.classList.remove('is-error'); status.classList.add('is-ok');
     if (data.page && data.page.entry) self.entry = data.page.entry;
     self.upsertRow(data.file.name, data.file.size, data.file.url);

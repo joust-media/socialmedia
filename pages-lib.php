@@ -473,6 +473,262 @@ if (!function_exists('renamePageFolder')) {
 }
 
 // ---------------------------------------------------------------------
+// Embedded assets: base64 data: URIs in uploaded HTML → files under assets/
+//
+// A single-file landing page (images, fonts, even video inlined as data: URIs) can be
+// megabytes of text/html. Shared hosts with ModSecurity response-body inspection answer
+// 500 for HTML responses over their limit (cPanel default 512 KB; images and video are not
+// inspected), so page-upload.php extracts every embedded asset into a real file next to
+// the HTML and rewrites the reference. Nothing else in the markup is touched.
+// ---------------------------------------------------------------------
+
+if (!function_exists('pageInlineAssetMaxHtmlBytes')) {
+    /** The largest HTML file the extractor (and the chunked HTML upload) accepts. */
+    function pageInlineAssetMaxHtmlBytes(): int {
+        return 64 * 1024 * 1024;
+    }
+}
+
+if (!function_exists('pageInlineAssetMinBase64')) {
+    /** data: URIs shorter than this (base64 chars, ≈ 190 bytes) stay inline — a 1×1 pixel is not worth a file. */
+    function pageInlineAssetMinBase64(): int {
+        return 256;
+    }
+}
+
+if (!function_exists('pageInlineAssetExt')) {
+    /** MIME type of a data: URI → the stored extension ('' = not a type we extract). */
+    function pageInlineAssetExt(string $mime): string {
+        static $map = [
+            'image/png' => 'png', 'image/jpeg' => 'jpg', 'image/jpg' => 'jpg', 'image/pjpeg' => 'jpg', 'image/gif' => 'gif',
+            'image/webp' => 'webp', 'image/svg+xml' => 'svg', 'image/x-icon' => 'ico', 'image/vnd.microsoft.icon' => 'ico',
+            'font/woff2' => 'woff2', 'application/font-woff2' => 'woff2', 'application/x-font-woff2' => 'woff2',
+            'font/woff' => 'woff', 'application/font-woff' => 'woff', 'application/x-font-woff' => 'woff',
+            'font/ttf' => 'ttf', 'font/truetype' => 'ttf', 'font/sfnt' => 'ttf', 'application/font-sfnt' => 'ttf',
+            'application/x-font-ttf' => 'ttf', 'application/x-font-truetype' => 'ttf',
+            'text/css' => 'css',
+            'video/mp4' => 'mp4', 'video/webm' => 'webm',
+        ];
+        return $map[strtolower(trim($mime))] ?? '';
+    }
+}
+
+if (!function_exists('pageInlineAssetIsImage')) {
+    function pageInlineAssetIsImage(string $ext): bool {
+        return in_array($ext, ['png', 'jpg', 'gif', 'webp', 'svg', 'ico'], true);
+    }
+}
+
+if (!function_exists('pageInlineBlobValid')) {
+    /**
+     * Is a decoded data: URI body really what its MIME type says? Images must decode
+     * (getimagesizefromstring) AND match the extension; SVG must start with <svg / <?xml and carry no
+     * <script, no on*= handler and no PHP tag; fonts by magic bytes (wOFF / wOF2 / \0\1\0\0 / true /
+     * OTTO); ICO by its header; CSS must not carry a PHP tag or <script; MP4 / WebM by the same
+     * container sniff as videoFileLooksValid() (ftyp brands / EBML). Anything else: false.
+     */
+    function pageInlineBlobValid(string $bytes, string $ext): bool {
+        if (strlen($bytes) < 8) return false;
+        switch ($ext) {
+            case 'png': case 'jpg': case 'gif': case 'webp':
+                $info = @getimagesizefromstring($bytes);
+                if ($info === false || (int)($info[0] ?? 0) <= 0 || (int)($info[1] ?? 0) <= 0) return false;
+                $byType = [IMAGETYPE_JPEG => 'jpg', IMAGETYPE_PNG => 'png', IMAGETYPE_GIF => 'gif'];
+                if (defined('IMAGETYPE_WEBP')) $byType[IMAGETYPE_WEBP] = 'webp';
+                return ($byType[(int)($info[2] ?? 0)] ?? '') === $ext;
+            case 'svg':
+                $head = ltrim(substr($bytes, 0, 4096), " \t\r\n\xEF\xBB\xBF");
+                if (stripos($head, '<svg') !== 0 && stripos($head, '<?xml') !== 0) return false;
+                return stripos($bytes, '<script') === false && !preg_match('/<\?php|<\?=/i', $bytes) && !preg_match('/\son[a-z]+\s*=/i', $bytes);
+            case 'woff':  return strncmp($bytes, 'wOFF', 4) === 0;
+            case 'woff2': return strncmp($bytes, 'wOF2', 4) === 0;
+            case 'ttf':   return strncmp($bytes, "\0\1\0\0", 4) === 0 || strncmp($bytes, 'true', 4) === 0 || strncmp($bytes, 'OTTO', 4) === 0;
+            case 'ico':   return strncmp($bytes, "\0\0\1\0", 4) === 0;
+            case 'css':   return !preg_match('/<\?php|<\?=|<script/i', $bytes);
+            case 'webm':  return strncmp($bytes, "\x1A\x45\xDF\xA3", 4) === 0;
+            case 'mp4':
+                if (strncmp($bytes, "\x1A\x45\xDF\xA3", 4) === 0 || substr($bytes, 4, 4) !== 'ftyp') return false;
+                $size = (int)(unpack('N', substr($bytes, 0, 4))[1] ?? 0);
+                return $size >= 8 && in_array(substr($bytes, 8, 4), ['isom', 'iso2', 'iso5', 'iso6', 'mp41', 'mp42', 'avc1', 'qt  ', 'M4V ', 'mp71', 'dash'], true);
+        }
+        return false;
+    }
+}
+
+if (!function_exists('pageBumpMemoryLimit')) {
+    /** Raise memory_limit to at least 512M (when the host allows ini_set) before holding a large HTML body + one decoded blob. */
+    function pageBumpMemoryLimit(): void {
+        $cur = trim((string)ini_get('memory_limit'));
+        if ($cur === '-1' || $cur === '') return;
+        $n = (int)$cur;
+        switch (strtolower(substr($cur, -1))) {
+            case 'g': $n *= 1024;   // fall through
+            case 'm': $n *= 1024;   // fall through
+            case 'k': $n *= 1024;
+        }
+        if ($n > 0 && $n < 512 * 1024 * 1024) @ini_set('memory_limit', '512M');
+    }
+}
+
+if (!function_exists('pageExtractInlineAssets')) {
+    /**
+     * Rewrite base64 data: URIs in an HTML string into files. Every `data:<mime>;base64,<b64>` whose
+     * MIME is one of pageInlineAssetExt() and whose body is at least pageInlineAssetMinBase64()
+     * chars — wherever it sits: src / srcset / poster / href attributes, CSS url(…) in <style> blocks
+     * and style="" attributes, even a JS string — is decoded, validated (pageInlineBlobValid) and
+     * written to <$dir>/<$assetsRel>/<sha1-12>.<ext> (content-addressed, so identical blobs share one
+     * file and re-running is a no-op), and the reference becomes "<assetsRel>/<name>". A blob that
+     * fails validation stays inline and is counted as skipped. Nothing else in the markup changes.
+     *
+     * The scan is linear (stripos + strspn + one anchored preg_match per candidate), never a regex
+     * over the whole document, so a 50 MB file costs the document + one decoded blob in memory.
+     * Limits: base64 only (a percent-encoded `data:image/svg+xml,%3Csvg…` stays inline), no
+     * whitespace inside the base64 run (a wrapped URI is left alone).
+     *
+     * Returns ['html', 'extracted' => references rewritten, 'files' => [name => bytes] (written or
+     * reused this call), 'skipped', 'failed' => write errors, 'bytes_saved', 'html_bytes_before', 'html_bytes_after'].
+     */
+    function pageExtractInlineAssets(string $html, string $dir, string $assetsRel = 'assets'): array {
+        $before = strlen($html);
+        $out = ['html' => $html, 'extracted' => 0, 'files' => [], 'skipped' => 0, 'failed' => 0, 'bytes_saved' => 0,
+                'html_bytes_before' => $before, 'html_bytes_after' => $before];
+        if ($before === 0 || $dir === '' || stripos($html, 'data:') === false) return $out;
+        $min = pageInlineAssetMinBase64();
+        $b64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+        $assetsDir = rtrim($dir, '/') . '/' . $assetsRel;
+        $written = [];
+        $result = ''; $last = 0; $pos = 0;
+        while (($p = stripos($html, 'data:', $pos)) !== false) {
+            $pos = $p + 5;
+            $prev = $p > 0 ? $html[$p - 1] : ' ';
+            if (strpos("\"'(,= \t\r\n", $prev) === false) continue;      // "metadata:" and friends: not the start of a URL
+            if (!preg_match('/\Gdata:([a-z0-9.+\-]+\/[a-z0-9.+\-]+)(?:;[a-z0-9\-]+=[a-z0-9.\-_]*)*;base64,/i', $html, $m, 0, $p)) continue;
+            $ext   = pageInlineAssetExt($m[1]);
+            $start = $p + strlen($m[0]);
+            $len   = strspn($html, $b64, $start);
+            $end   = $start + $len;
+            $next  = $end < $before ? $html[$end] : ' ';
+            $pos   = max($pos, $end);
+            if ($ext === '' || $len < $min) continue;
+            if (strpos("\"') ,>< \t\r\n\\", $next) === false) continue;   // runs into a non-delimiter: leave it alone
+            $bytes = base64_decode(substr($html, $start, $len), true);
+            if ($bytes === false || $bytes === '' || !pageInlineBlobValid($bytes, $ext)) { $out['skipped']++; continue; }
+            $name = substr(sha1($bytes), 0, 12) . '.' . $ext;
+            $path = $assetsDir . '/' . $name;
+            if (!isset($written[$name])) {
+                if (!is_dir($assetsDir) && !(function_exists('mediaMkdir') ? mediaMkdir($assetsDir) : (@mkdir($assetsDir, 0755, true) || is_dir($assetsDir)))) { $out['failed']++; continue; }
+                if (is_link($path) || (file_exists($path) && !is_file($path))) { $out['failed']++; continue; }
+                // content-addressed: an existing file of that name and size IS this blob — nothing to write
+                if (!is_file($path) || (int)@filesize($path) !== strlen($bytes)) {
+                    if (@file_put_contents($path, $bytes) === false) { $out['failed']++; continue; }
+                }
+                if (function_exists('mediaChmodPath')) mediaChmodPath($path); else @chmod($path, 0644);
+                $written[$name] = strlen($bytes);
+            }
+            unset($bytes);
+            $result .= substr($html, $last, $p - $last) . $assetsRel . '/' . $name;
+            $last = $end;
+            $out['extracted']++;
+        }
+        $out['files'] = $written;
+        if ($out['extracted'] === 0) return $out;
+        $result .= substr($html, $last);
+        $out['html'] = $result;
+        $out['html_bytes_after'] = strlen($result);
+        $out['bytes_saved'] = $before - strlen($result);
+        return $out;
+    }
+}
+
+if (!function_exists('pageExtractInlineAssetsFile')) {
+    /**
+     * pageExtractInlineAssets() over one stored HTML file: assets go to <its folder>/assets/, the file
+     * is rewritten in place (temp file + rename, 0644) only when something was extracted. $rel is the
+     * page-relative name ('index.html', 'pages/start.html'); the returned 'files' are page-relative too
+     * ('assets/ab12cd34ef56.png', 'pages/assets/…') and 'name' echoes $rel. Returns null when the file is
+     * missing, over pageInlineAssetMaxHtmlBytes() or its assets folder would not be a valid page path
+     * (5 levels deep). A failed rewrite reports extracted 0 / failed 1 and leaves the HTML as it was.
+     */
+    function pageExtractInlineAssetsFile(string $path, string $rel): ?array {
+        if (is_link($path) || !is_file($path)) return null;
+        clearstatcache(true, $path);
+        $size = (int)filesize($path);
+        if ($size > pageInlineAssetMaxHtmlBytes()) return null;
+        $sub = strpos($rel, '/') !== false ? substr($rel, 0, strrpos($rel, '/')) : '';
+        $assetsSub = ($sub !== '' ? $sub . '/' : '') . 'assets';
+        if (!pageSubfolderValid($assetsSub)) return null;
+        pageBumpMemoryLimit();
+        $html = @file_get_contents($path);
+        if ($html === false) return null;
+        $r = pageExtractInlineAssets($html, dirname($path), 'assets');
+        unset($html);
+        $files = [];
+        foreach ($r['files'] as $name => $bytes) $files[$assetsSub . '/' . $name] = $bytes;
+        $r['files'] = $files;
+        $r['name'] = $rel;
+        if ($r['extracted'] > 0) {
+            $tmp = $path . '.tmp-' . bin2hex(random_bytes(4));
+            if (@file_put_contents($tmp, $r['html']) === false || !@rename($tmp, $path)) {
+                @unlink($tmp);
+                $r['failed']++; $r['extracted'] = 0; $r['bytes_saved'] = 0; $r['html_bytes_after'] = $r['html_bytes_before'];
+            } else {
+                if (function_exists('mediaChmodPath')) mediaChmodPath($path); else @chmod($path, 0644);
+            }
+        }
+        unset($r['html']);
+        return $r;
+    }
+}
+
+if (!function_exists('pageExtractSummaryText')) {
+    /** 'Extracted 14 images · 5.4 MB → 180 KB' (+ ' · 1 skipped'), 'Nothing to extract', or the failure. */
+    function pageExtractSummaryText(array $r): string {
+        $n = (int)($r['extracted'] ?? 0); $sk = (int)($r['skipped'] ?? 0); $failed = (int)($r['failed'] ?? 0);
+        if ($n === 0) {
+            if ($failed) return 'Could not write the extracted files (check folder permissions)';
+            return $sk ? $sk . ' embedded file' . ($sk === 1 ? '' : 's') . ' could not be extracted (not a valid image / font)' : 'Nothing to extract';
+        }
+        $files = is_array($r['files'] ?? null) ? $r['files'] : [];
+        $count = count($files);
+        $allImages = $count > 0;
+        foreach ($files as $name => $b) { if (!pageInlineAssetIsImage(strtolower((string)pathinfo((string)$name, PATHINFO_EXTENSION)))) { $allImages = false; break; } }
+        $noun = $allImages ? 'image' : 'file';
+        $s = 'Extracted ' . $count . ' ' . $noun . ($count === 1 ? '' : 's') . ($n > $count ? ' (' . $n . ' references)' : '')
+           . ' · ' . pageFormatBytes((int)($r['html_bytes_before'] ?? 0)) . ' → ' . pageFormatBytes((int)($r['html_bytes_after'] ?? 0));
+        if ($sk) $s .= ' · ' . $sk . ' skipped';
+        if ($failed) $s .= ' · ' . $failed . ' failed';
+        return $s;
+    }
+}
+
+if (!function_exists('pageLargeHtmlFiles')) {
+    /**
+     * [page_id => [filename => size]] of the .html / .htm rows in page_files over $minBytes
+     * (default mediaHtmlWarnBytes()) for a set of pages — the Studio list and the sheet use it to offer
+     * "Extract embedded images". Sizes are the recorded ones (refreshed on every upload / extraction).
+     */
+    function pageLargeHtmlFiles(PDO $pdo, array $pageIds, ?int $minBytes = null): array {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $pageIds), static function ($i) { return $i > 0; })));
+        $out = [];
+        if (!$ids || !hasPagesTable($pdo)) return $out;
+        $min = $minBytes ?? (function_exists('mediaHtmlWarnBytes') ? mediaHtmlWarnBytes() : 400 * 1024);
+        $ph = implode(',', array_fill(0, count($ids), '?'));
+        try {
+            $s = $pdo->prepare("SELECT page_id, filename, size FROM page_files WHERE page_id IN ($ph) AND size > ?");
+            $s->execute(array_merge($ids, [$min]));
+            foreach ($s->fetchAll() as $r) {
+                $name = (string)$r['filename'];
+                if (!in_array(strtolower((string)pathinfo($name, PATHINFO_EXTENSION)), ['html', 'htm'], true)) continue;
+                $out[(int)$r['page_id']][$name] = (int)$r['size'];
+            }
+        } catch (Throwable $e) {
+            error_log('pageLargeHtmlFiles: ' . $e->getMessage());
+        }
+        return $out;
+    }
+}
+
+// ---------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------
 
