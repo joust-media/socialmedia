@@ -85,7 +85,8 @@
     right: '<svg class="ui-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>',
     x:     '<svg class="ui-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
     play:  '<svg class="ui-icon" viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>',
-    check: '<svg class="ui-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5L19 7"/></svg>'
+    check: '<svg class="ui-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5L19 7"/></svg>',
+    drive: '<svg class="ui-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3.5h6l6.5 11.5-3 5.5H5.5l-3-5.5z"/><path d="M2.5 15h19M15 3.5 8.5 15"/></svg>'
   };
 
   /* ================================================================== */
@@ -670,6 +671,8 @@
     this.tires = rc.tires || [];
     this.chunk = App.chunkUpload || null; this.info = null; this.infoP = null;          // chunk-upload.js: probe once, then chunk files above chunk_size
     this.tireSel = $('[data-renders-tire]', root); this.seriesSel = $('[data-renders-series]', root); this.newName = $('[data-renders-new-name]', root);
+    this.newDrive = $('[data-renders-new-drive]', root);                                  // Google Drive link for a "New series…" (posted as series_drive once the first file created it)
+    this.driveOn = !!(rc.driveOn || this.newDrive);
     this.input = $('[data-renders-input]', root); this.list = $('[data-renders-list]', root); this.tpl = $('[data-renders-item-template]', root);
     this.seriesList = $('[data-renders-series-list]', root); this.seriesEmpty = $('[data-renders-series-empty]', root);
     this.summary = $('[data-renders-summary]', root); this.summaryText = $('[data-renders-summary-text]', root);
@@ -698,9 +701,14 @@
       else if (e.target.closest('[data-series-down]')) { self.moveSeries(row, 1); }
       else if (e.target.closest('[data-series-delete]')) { self.deleteSeries(row); }
       else if (e.target.closest('[data-series-rename-save]')) { self.renameSeries(row); }
+      else if (e.target.closest('[data-series-drive-save]')) { self.saveDrive(row); }
     });
     root.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && e.target.matches('[data-series-name]')) { e.preventDefault(); self.renameSeries(e.target.closest('[data-series-row]')); }
+      if (e.key === 'Enter' && e.target.matches('[data-series-drive]')) { e.preventDefault(); self.saveDrive(e.target.closest('[data-series-row]')); }
+    });
+    root.addEventListener('input', function (e) {
+      if (e.target.matches('[data-series-drive]')) { e.target.removeAttribute('aria-invalid'); var w = e.target.closest('[data-series-drive-wrap]'); if (w) w.classList.toggle('is-dirty', true); }
     });
     this.syncSeries();
     this.offerResume();
@@ -738,6 +746,7 @@
   Renders.prototype.syncNewName = function () {
     var isNew = this.seriesSel.value === NEW_SERIES;
     if (this.newName) { this.newName.hidden = !isNew; if (isNew) { var t = this.tire(); if (!this.newName.value) this.newName.placeholder = 'Series ' + ((t ? t.series.length : 0) + 1); } }
+    if (this.newDrive) this.newDrive.hidden = !isNew;
     this.syncTarget();
   };
   Renders.prototype.target = function () {
@@ -999,11 +1008,21 @@
     if (!tire) return;
     if (!t.seriesId) this.createdSeries[job.batch] = series;
     var s = this.seriesOf(tire, series.id);
-    if (!s) { s = { id: series.id, name: series.name || t.newSeries, slug: series.slug || '', folder: series.folder || '', counts: { pending: 0, approved: 0, denied: 0, total: 0 } }; tire.series.push(s); }
+    if (!s) { s = { id: series.id, name: series.name || t.newSeries, slug: series.slug || '', folder: series.folder || '', drive_url: series.drive_url || null, counts: { pending: 0, approved: 0, denied: 0, total: 0 } }; tire.series.push(s); }
     s.counts.pending++; s.counts.total++;
     var wasNew = this.seriesSel.value === NEW_SERIES;
     this.rc.series = wasNew ? s.id : parseInt(this.seriesSel.value, 10);
     if (wasNew && this.newName) this.newName.value = '';
+    // A "New series…" drop with a Drive link: the first file created the series, now attach the link to it (once).
+    if (wasNew && this.newDrive && this.newDrive.value.trim() && !s.drive_url) {
+      var url = this.newDrive.value.trim(), self = this;
+      this.newDrive.value = '';
+      App.post(this.statusEndpoint, { action: 'series_drive', series_id: s.id, drive_url: url, actor: App.actor }).then(function (res) {
+        if (!res.ok) { toast(res.error || 'Could not save the Google Drive link', { kind: 'error', duration: 6000 }); self.renderSeriesList(); return; }
+        s.drive_url = (res.data && res.data.series && res.data.series.drive_url) || url;
+        self.renderSeriesList();
+      });
+    }
     if (this.tireSel.value === String(tire.id)) this.syncSeries(); else this.renderSeriesList();
   };
   Renders.prototype.finishBatch = function () {
@@ -1021,10 +1040,18 @@
     this.seriesList.innerHTML = tire.series.map(function (s, i) {
       var c = s.counts || {};
       var line = (c.pending || 0) + ' to review · ' + (c.approved || 0) + ' approved' + ((c.denied || 0) ? ' · ' + c.denied + ' needs changes' : '') + ' · ' + (c.total || 0) + (c.total === 1 ? ' file' : ' files');
-      return '<li class="studio-series-row" data-series-row="' + s.id + '">'
+      var drive = self.driveOn
+        ? '<div class="studio-series-drive' + (s.drive_url ? ' is-set' : '') + '" data-series-drive-wrap>' + ICON.drive
+          + '<input class="ui-input studio-series-drive-input" type="url" maxlength="512" inputmode="url" autocomplete="off" spellcheck="false" value="' + esc(s.drive_url || '') + '" placeholder="Google Drive link (optional)" data-series-drive aria-label="Google Drive link for ' + esc(s.name) + '">'
+          + '<button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-series-drive-save>Save</button>'
+          + '<a class="ui-btn ui-btn--plain ui-btn--sm studio-series-drive-open" href="' + esc(s.drive_url || '#') + '" target="_blank" rel="noopener noreferrer" data-series-drive-open' + (s.drive_url ? '' : ' hidden') + '>Open</a>'
+          + '</div>'
+        : '';
+      return '<li class="studio-series-row' + (drive ? ' studio-series-row--drive' : '') + '" data-series-row="' + s.id + '">'
         + '<div class="studio-series-main"><input class="ui-input studio-series-name" type="text" maxlength="80" value="' + esc(s.name) + '" data-series-name aria-label="Series name">'
         + '<button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-series-rename-save>Rename</button></div>'
         + '<div class="studio-series-meta text-secondary">' + esc(line) + (s.folder ? ' · <code>' + esc(s.folder) + '/</code>' : '') + '</div>'
+        + drive
         + '<div class="studio-series-ctl">'
         + '<a class="ui-btn ui-btn--plain ui-btn--sm" href="' + esc((self.rc.assetsUrl || '').replace('__TIRE__', String(tire.id)).replace('__SERIES__', String(s.id))) + '">Open</a>'
         + '<button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-series-up aria-label="Move ' + esc(s.name) + ' up"' + (i === 0 ? ' disabled' : '') + '>' + ICON.left + '</button>'
@@ -1043,6 +1070,24 @@
       s.name = (res.data && res.data.series && res.data.series.name) || name;
       toast('Series renamed', { kind: 'success' });
       self.syncSeries();
+    });
+  };
+  /** Google Drive link of a series (tire-status.php series_drive): '' removes it; the server validates the host. */
+  Renders.prototype.saveDrive = function (row) {
+    var self = this, tire = this.tire(), id = parseInt(row.dataset.seriesRow, 10), s = this.seriesOf(tire, id);
+    var input = $('[data-series-drive]', row), url = input ? (input.value || '').trim() : '';
+    if (!s || !input || url === (s.drive_url || '')) return;
+    if (url && !/^https:\/\/(www\.)?(drive\.google\.com|docs\.google\.com|photos\.google\.com|photos\.app\.goo\.gl)\//i.test(url)) {
+      input.setAttribute('aria-invalid', 'true'); input.focus();
+      toast('Enter a Google Drive share link (https://drive.google.com/…)', { kind: 'error', duration: 5000 }); return;
+    }
+    var btn = $('[data-series-drive-save]', row); if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }
+    App.post(this.statusEndpoint, { action: 'series_drive', series_id: id, drive_url: url, actor: App.actor }).then(function (res) {
+      if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); }
+      if (!res.ok) { input.setAttribute('aria-invalid', 'true'); input.focus(); toast(res.error || 'Could not save the Google Drive link', { kind: 'error', duration: 6000 }); return; }
+      s.drive_url = (res.data && res.data.series && res.data.series.drive_url) || (url || null);
+      toast(s.drive_url ? 'Google Drive link saved' : 'Google Drive link removed', { kind: 'success' });
+      self.renderSeriesList();
     });
   };
   Renders.prototype.moveSeries = function (row, dir) {

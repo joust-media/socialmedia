@@ -1183,6 +1183,19 @@ try {
     } else {
         $steps[] = "• 'pages' module already seeded (id={$pagesModuleId}).";
     }
+
+    // 29. tire_series.drive_url — an optional Google Drive share link per series: the client
+    //     gets an "Open in Google Drive" button on the series (Assets → Collections) as an
+    //     alternative way to browse the renders. Additive on the table step 25 created;
+    //     tireSeriesHasDriveUrl() (tire-series-lib.php) gates every read/write until this runs.
+    if (tableExists($pdo, 'tire_series')) {
+        if (!columnExists($pdo, 'tire_series', 'drive_url')) {
+            $pdo->exec("ALTER TABLE tire_series ADD COLUMN drive_url VARCHAR(512) NULL DEFAULT NULL AFTER folder");
+            $steps[] = "✓ Added tire_series.drive_url (Google Drive link per series).";
+        } else {
+            $steps[] = "• tire_series.drive_url already exists — skipped.";
+        }
+    }
 } catch (Exception $e) {
     $errors[] = $e->getMessage();
 }

@@ -950,21 +950,58 @@
         document.addEventListener('click', function (e) { if (!menu.hidden && !e.target.closest('[data-series-menu-root]')) { menu.hidden = true; menuBtn.setAttribute('aria-expanded', 'false'); } });
         document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !menu.hidden) { menu.hidden = true; menuBtn.setAttribute('aria-expanded', 'false'); menuBtn.focus(); } });
       }
-      var rename = $('[data-series-rename]'), del = $('[data-series-delete]');
+      var rename = $('[data-series-rename]'), del = $('[data-series-delete]'), driveEdit = $('[data-series-drive-edit]');
       if (rename) rename.addEventListener('click', function () { if (menu) menu.hidden = true; self.seriesSheet('rename'); });
+      if (driveEdit) driveEdit.addEventListener('click', function () { if (menu) menu.hidden = true; self.seriesSheet('rename', { focus: 'drive' }); });
       if (del) del.addEventListener('click', function () { if (menu) menu.hidden = true; self.seriesSheet('delete'); });
       if (!s) return;
+      // Viewer "…" menu: "Open series in Google Drive" for the series the grid shows (tire_series.drive_url)
+      this.applyDrive(s.driveUrl || null);
     },
-    /** Open the admin Rename / Delete form (templates rendered by assets.php for admin only) in the generic sheet. */
-    seriesSheet: function (kind) {
+    /** Show / hide the header "Open in Google Drive" button, the switcher chip glyph, the viewer menu row and the admin menu label for the current series. */
+    applyDrive: function (url) {
+      var s = this.cfg.series; if (!s) return;
+      s.driveUrl = url || null;
+      var actions = $('[data-series-actions]'), btn = $('[data-series-drive]', actions || document), tpl = $('[data-series-drive-template]');
+      if (url) {
+        if (!btn && actions && tpl) { actions.insertAdjacentHTML('afterbegin', tpl.innerHTML); btn = $('[data-series-drive]', actions); }
+        if (btn) { btn.href = url; btn.hidden = false; btn.title = 'Open ' + (s.name || 'series') + ' in Google Drive (new tab)'; }
+      } else if (btn) { btn.remove(); }
+      var chip = $('[data-series-chip="' + s.key + '"]');
+      if (chip) {
+        var glyph = $('[data-series-drive-chip]', chip), svg = tpl && tpl.content ? tpl.content.querySelector('svg') : null;
+        if (url && !glyph && svg) {
+          glyph = document.createElement('span');
+          glyph.className = 'as-chip-drive'; glyph.setAttribute('data-series-drive-chip', s.key);
+          glyph.title = 'Also in Google Drive'; glyph.setAttribute('aria-label', 'Also in Google Drive');
+          glyph.appendChild(svg.cloneNode(true)); chip.appendChild(glyph);
+        } else if (!url && glyph) glyph.remove();
+      }
+      var row = $('[data-viewer-drive]');
+      if (row) { row.hidden = !url; if (url) row.href = url; }
+      var edit = $('[data-series-drive-edit]');
+      if (edit) { var icon = edit.querySelector('svg'); edit.textContent = url ? 'Edit Google Drive link…' : 'Add Google Drive link…'; if (icon) edit.insertBefore(icon, edit.firstChild); }
+    },
+    /** Open the admin Rename / Delete form (templates rendered by assets.php for admin only) in the generic sheet. opts.focus = 'drive' lands on the Drive field. */
+    seriesSheet: function (kind, opts) {
       var self = this, s = this.cfg.series, tpl = $('[data-series-form="' + kind + '"]');
+      opts = opts || {};
       if (!s || !s.id || !tpl || !App.sheet) return;
-      var title = kind === 'rename' ? 'Rename series' : 'Delete series';
+      var title = kind === 'rename' ? (opts.focus === 'drive' ? 'Google Drive link' : 'Rename series') : 'Delete series';
       var root = App.sheet.open('#uiSheet', { title: title, html: tpl.innerHTML, footer: '' });
       if (!root) return;
       var form = $('[data-series-form-el]', root);
-      if (!form || form._bound) return;
+      if (!form) return;
+      var driveInput = $('[data-series-drive-input]', form);
+      if (driveInput) { driveInput.value = s.driveUrl || ''; if (opts.focus === 'drive') { try { driveInput.focus(); driveInput.select(); } catch (err) {} } }
+      if (form._bound) return;
       form._bound = true;
+      var driveError = function (msg) {
+        var help = $('[data-series-drive-help]', form);
+        if (driveInput) { driveInput.setAttribute('aria-invalid', msg ? 'true' : 'false'); if (msg) { try { driveInput.focus(); } catch (err) {} } }
+        if (help) { if (!help._text) help._text = help.textContent; help.textContent = msg || help._text; help.classList.toggle('is-error', !!msg); }
+      };
+      if (driveInput) driveInput.addEventListener('input', function () { driveError(''); });
       form.addEventListener('submit', function (e) {
         e.preventDefault();
         var btn = $('[data-series-form-submit]', form), endpoint = (self.cfg.endpoints || {}).tire || 'tire-status.php';
@@ -973,15 +1010,26 @@
         if (kind === 'rename') {
           var input = $('[name="name"]', form), name = (input.value || '').trim();
           if (name.length < 1) { input.focus(); done(); return; }
-          App.post(endpoint, { action: 'series_rename', series_id: s.id, name: name, actor: App.actor }).then(done).then(function (res) {
-            if (!res.ok) { toast(res.error || 'Could not rename', { kind: 'error' }); return; }
+          var params = { action: 'series_rename', series_id: s.id, name: name, actor: App.actor };
+          var drive = driveInput ? (driveInput.value || '').trim() : null;
+          if (driveInput) {
+            if (drive && !/^https:\/\/(www\.)?(drive\.google\.com|docs\.google\.com|photos\.google\.com|photos\.app\.goo\.gl)\//i.test(drive)) { driveError('Enter a Google Drive share link (https://drive.google.com/…)'); done(); return; }
+            params.drive_url = drive;   // '' clears the link
+          }
+          App.post(endpoint, params).then(done).then(function (res) {
+            if (!res.ok) {
+              if (driveInput && /Drive/i.test(res.error || '')) { driveError(res.error); return; }
+              toast(res.error || 'Could not rename', { kind: 'error' }); return;
+            }
             var shown = (res.data && res.data.series && res.data.series.name) || name;
+            var before = s.driveUrl || null, after = (res.data && res.data.series && res.data.series.drive_url) || (driveInput ? (drive || null) : before);
             s.name = shown;
             $$('[data-series-title]').forEach(function (el) { el.textContent = shown; });
             var chip = $('[data-series-chip="' + s.key + '"]'); if (chip) chip.firstChild.textContent = shown;
             self.cfg.context = (s.tire || '') + ' · ' + shown;
+            self.applyDrive(after);
             App.sheet.close();
-            toast('Series renamed', { kind: 'success' });
+            toast(after !== before ? (after ? 'Google Drive link saved' : 'Google Drive link removed') : 'Series renamed', { kind: 'success' });
           });
         } else {
           var cb = $('[name="delete_files"]', form);

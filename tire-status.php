@@ -76,12 +76,13 @@ if ($action === 'delete_tire') {
 //   approve_series {series_id}            client or admin — approves every pending render of the series
 //   delete_image {id}                     admin — row + file + thumb
 //   set_reference {id}                    admin — moves the image to sort_order 0 among the reference images
-//   series_create {tire_id, name}         admin
-//   series_rename {series_id, name}       admin
+//   series_create {tire_id, name, drive_url?}   admin — drive_url: optional Google Drive share link
+//   series_rename {series_id, name, drive_url?} admin — drive_url only touched when the field is posted ('' clears)
+//   series_drive  {series_id, drive_url}        admin — set / clear the Google Drive link (logs drive_linked / drive_unlinked)
 //   series_delete {series_id, delete_files} admin
 //   series_reorder {tire_id, ids[]}       admin
 //   rescan {tire_id?}                     admin — syncTireSeries() now (one tire, or every tire of the posted client)
-$seriesActions = ['approve_series', 'delete_image', 'set_reference', 'series_create', 'series_rename', 'series_delete', 'series_reorder', 'rescan'];
+$seriesActions = ['approve_series', 'delete_image', 'set_reference', 'series_create', 'series_rename', 'series_drive', 'series_delete', 'series_reorder', 'rescan'];
 if (in_array($action, $seriesActions, true)) {
     $fail = static function (int $code, string $msg): void {
         http_response_code($code);
@@ -104,6 +105,27 @@ if (in_array($action, $seriesActions, true)) {
         $scope = postedClientSlug();
         if ($scope !== '' && $scope !== (string)$t['company_slug']) { $fail(403, 'This tire belongs to another client'); }
         return $t;
+    };
+    /** The posted drive_url (trimmed; '' = clear) or null when the field was not posted at all. 400 when it is not a
+     *  Google Drive share link; 409 when the column is missing (migrate.php 29) and a link was actually given. */
+    $driveFromPost = static function () use ($pdo, $fail): ?string {
+        if (!array_key_exists('drive_url', $_POST)) return null;
+        $url = trim((string)$_POST['drive_url']);
+        if ($url === '') return '';
+        if (mb_strlen($url, 'UTF-8') > 512) { $fail(400, 'That link is too long (max 512 characters)'); }
+        if (!tireSeriesValidDriveUrl($url)) { $fail(400, tireSeriesDriveUrlError()); }
+        if (!tireSeriesHasDriveUrl($pdo)) { $fail(409, 'Google Drive links are not set up yet — run migrate.php.'); }
+        return $url;
+    };
+    /** One drive_linked / drive_unlinked activity row when the link actually changed. */
+    $logDrive = static function (array $tire, array $series, ?string $before, ?string $after) use ($pdo, $actor, $batchId): void {
+        if (($before ?? '') === ($after ?? '')) return;
+        $label = (string)$tire['name'] . ' · ' . (string)$series['name'];
+        if ($after !== null && $after !== '') {
+            logTireSeriesActivity($pdo, $actor, 'drive_linked', (int)$series['id'], 'Linked a Google Drive folder to ' . $label, $after, $batchId, (int)$tire['company_id']);
+        } else {
+            logTireSeriesActivity($pdo, $actor, 'drive_unlinked', (int)$series['id'], 'Removed the Google Drive link from ' . $label, $before, $batchId, (int)$tire['company_id']);
+        }
     };
     try {
         switch ($action) {
@@ -167,14 +189,32 @@ if (in_array($action, $seriesActions, true)) {
                 $name = trim((string)($_POST['name'] ?? ''));
                 if ($name === '') { $fail(400, 'Series name is required'); }
                 if (mb_strlen($name, 'UTF-8') > 120) { $fail(400, 'Series name is too long (max 120 characters)'); }
+                $drive = $driveFromPost();   // validated before anything is written
                 $pdo->beginTransaction();
-                $series = createTireSeries($pdo, (int)$tire['id'], $name);
+                $series = createTireSeries($pdo, (int)$tire['id'], $name, $drive !== null && $drive !== '' ? $drive : null);
                 if (empty($series['created'])) { $pdo->rollBack(); $fail(409, 'A series with that name already exists on this tire'); }
                 unset($series['created']);
                 logTireSeriesActivity($pdo, $actor, 'created', (int)$series['id'],
                     'Created series ' . (string)$tire['name'] . ' · ' . $series['name'], null, $batchId, (int)$tire['company_id']);
+                $logDrive($tire, $series, null, $series['drive_url'] ?? null);
                 $pdo->commit();
                 echo json_encode(['ok' => true, 'series' => $series]);
+                exit;
+            }
+            case 'series_drive': {
+                $sid = (int)($_POST['series_id'] ?? 0);
+                if ($sid <= 0) { $fail(400, 'Invalid series_id'); }
+                $series = tireSeriesById($pdo, $sid);
+                if (!$series) { $fail(404, 'Series not found'); }
+                $tire = $loadTire((int)$series['tire_id']);
+                if (!array_key_exists('drive_url', $_POST)) { $fail(400, 'drive_url is required (empty to remove the link)'); }
+                $drive = $driveFromPost();
+                if (!tireSeriesHasDriveUrl($pdo)) { $fail(409, 'Google Drive links are not set up yet — run migrate.php.'); }
+                $pdo->beginTransaction();
+                $row = setTireSeriesDriveUrl($pdo, $sid, $drive === '' ? null : $drive);
+                $logDrive($tire, $series, $series['drive_url'] ?? null, $row['drive_url'] ?? null);
+                $pdo->commit();
+                echo json_encode(['ok' => true, 'series' => $row]);
                 exit;
             }
             case 'series_rename': {
@@ -186,11 +226,16 @@ if (in_array($action, $seriesActions, true)) {
                 $name = trim((string)($_POST['name'] ?? ''));
                 if ($name === '') { $fail(400, 'Series name is required'); }
                 if (mb_strlen($name, 'UTF-8') > 120) { $fail(400, 'Series name is too long (max 120 characters)'); }
+                $drive = $driveFromPost();   // null = field not posted → the link stays as it is
                 $pdo->beginTransaction();
                 $row = renameTireSeries($pdo, $sid, $name);
                 if ($name !== $series['name']) {
                     logTireSeriesActivity($pdo, $actor, 'renamed', $sid,
                         'Renamed series ' . $series['name'] . ' → ' . $name . ' (' . (string)$tire['name'] . ')', null, $batchId, (int)$tire['company_id']);
+                }
+                if ($drive !== null && tireSeriesHasDriveUrl($pdo) && ($drive === '' ? null : $drive) !== ($series['drive_url'] ?? null)) {
+                    $row = setTireSeriesDriveUrl($pdo, $sid, $drive === '' ? null : $drive) ?: $row;
+                    $logDrive($tire, $series, $series['drive_url'] ?? null, $row['drive_url'] ?? null);
                 }
                 $pdo->commit();
                 echo json_encode(['ok' => true, 'series' => $row]);

@@ -1131,6 +1131,8 @@ function actionLabel($action) {
         'scanned'              => 'scanned in',
         'uploaded'             => 'uploaded',
         'set_reference'        => 'made the reference image',
+        'drive_linked'         => 'linked a Google Drive folder to',
+        'drive_unlinked'       => 'removed the Google Drive link from',
     ];
     return $map[$action] ?? str_replace('_', ' ', $action);
 }
@@ -1385,7 +1387,7 @@ if (!function_exists('activityPrimaryAction')) {
             'denied' => 1, 'approved' => 2, 'reset_pending' => 3, 'submitted' => 3,
             'posted' => 4, 'unposted' => 5, 'marked_live' => 4, 'unmarked_live' => 5,
             'seeded' => 5, 'scanned' => 5, 'uploaded' => 5, 'created' => 6, 'deleted' => 7, 'imported' => 7,
-            'set_reference' => 12,
+            'set_reference' => 12, 'drive_linked' => 23, 'drive_unlinked' => 23,
             'task_created' => 8, 'task_toggled' => 9, 'task_deleted' => 10, 'task_updated' => 11,
             'edited_schedule' => 12, 'renamed_post' => 13, 'renamed' => 13, 'renamed_image' => 14,
             'edited_caption' => 15, 'edited_hashtags' => 16, 'edited_type' => 17,
@@ -1642,6 +1644,12 @@ if (!function_exists('activityFinalizeRows')) {
                 case 'set_reference':
                     $verb = 'made the reference'; $icon = 'photo'; $tone = 'neutral';
                     $t = "$who made $objT the reference"; $hh = "$whoH made $objH the reference"; break;
+                case 'drive_linked':
+                    $verb = 'linked Google Drive'; $icon = 'drive'; $tone = 'accent';
+                    $t = "$who linked a Google Drive folder to $objT"; $hh = "$whoH linked a Google Drive folder to $objH"; break;
+                case 'drive_unlinked':
+                    $verb = 'removed the Google Drive link'; $icon = 'drive'; $tone = 'neutral';
+                    $t = "$who removed the Google Drive link from $objT"; $hh = "$whoH removed the Google Drive link from $objH"; break;
                 // flows (entity_type = 'email_flow')
                 case 'renamed':
                     $verb = 'renamed'; $icon = 'mail'; $tone = 'neutral';

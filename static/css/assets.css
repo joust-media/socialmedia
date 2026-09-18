@@ -107,13 +107,25 @@
 .as-series-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .as-series-approve[hidden] { display: none; }
 .as-series-approve .ui-icon { width: 16px; height: 16px; stroke-width: 2.6; }
+/* "Open in Google Drive" — the client's alternative way into the series (tire_series.drive_url); a secondary CTA in the accent tint */
+.as-series-drive { gap: 7px; font-weight: 600; box-shadow: inset 0 0 0 1px rgba(0,122,255,.22); }
+.as-series-drive:hover, .as-series-drive:focus-visible { background: rgba(0,122,255,.2); }
+.as-series-drive .ui-icon { width: 17px; height: 17px; stroke-width: 2; }
+.as-series-drive[hidden] { display: none; }
+/* Drive glyphs: on the series switcher chip and in the collections list (subtle, label-tertiary) */
+.as-chip-drive { display: inline-flex; align-items: center; color: var(--label-tertiary); margin-left: -2px; }
+.as-chip-drive .ui-icon { width: 14px; height: 14px; stroke-width: 2; }
+.as-chip.is-active .as-chip-drive { color: inherit; opacity: .7; }
+.as-collection-drive { display: inline-flex; align-items: center; color: var(--label-tertiary); margin-right: 2px; }
+.as-collection-drive .ui-icon { width: 16px; height: 16px; stroke-width: 2; }
 .as-series-hint { max-width: var(--content-w); margin: -4px 0 14px; font-size: var(--text-footnote); line-height: var(--lh-footnote); }
 .as-series-hint a { color: var(--accent); text-decoration: none; font-weight: 600; }
 .as-series-hint code { font-family: var(--font-mono); font-size: var(--text-caption); }
 @media (max-width: 559px) {
   .as-series-head { flex-wrap: wrap; }
-  .as-series-actions { width: 100%; justify-content: flex-end; }
+  .as-series-actions { width: 100%; flex-wrap: wrap; justify-content: flex-end; }
   .as-series-approve { flex: 1 1 auto; }
+  .as-series-drive { flex: 1 1 100%; justify-content: center; min-height: 40px; font-size: var(--text-subhead); }   /* full width under the counts line */
 }
 
 /* Admin "…" menu (anchored under the button) */
@@ -152,6 +164,10 @@
 .as-series-form p { margin: 0; font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead); }
 .as-series-label { display: block; margin: 0; font-size: var(--text-footnote); font-weight: 600; text-transform: uppercase; letter-spacing: 0.2px; color: var(--label-secondary); }
 .as-series-help { margin: 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); }
+.as-series-label + .ui-input { margin-top: -4px; }
+.as-series-help + .as-series-label { margin-top: 6px; }
+.as-series-form .ui-input[aria-invalid="true"] { box-shadow: inset 0 0 0 1.5px var(--deny); }
+.as-series-help.is-error { color: var(--deny); }
 .as-series-check { display: flex; align-items: flex-start; gap: 10px; font-size: var(--text-subhead); line-height: var(--lh-subhead); }
 .as-series-check input { width: 20px; height: 20px; margin: 1px 0 0; accent-color: var(--deny); flex: 0 0 auto; }
 .as-series-check code { font-family: var(--font-mono); font-size: var(--text-caption); word-break: break-all; }

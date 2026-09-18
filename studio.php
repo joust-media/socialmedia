@@ -144,7 +144,8 @@ if ($hasRenders) {
         foreach (tireSeriesForTire($pdo, (int)$t['id']) as $sr) {
             $series[] = ['id' => (int)$sr['id'], 'name' => (string)$sr['name'], 'slug' => (string)($sr['slug'] ?? ''), 'folder' => (string)($sr['folder'] ?? ''),
                          'counts' => ['pending' => (int)($sr['counts']['pending'] ?? 0), 'approved' => (int)($sr['counts']['approved'] ?? 0),
-                                      'denied' => (int)($sr['counts']['denied'] ?? 0), 'total' => (int)($sr['counts']['total'] ?? 0)]];
+                                      'denied' => (int)($sr['counts']['denied'] ?? 0), 'total' => (int)($sr['counts']['total'] ?? 0)],
+                         'drive_url' => !empty($sr['drive_url']) ? (string)$sr['drive_url'] : null];   // Google Drive share link (migrate.php 29)
         }
         $rendersTires[] = ['id' => (int)$t['id'], 'name' => (string)$t['name'],
                            'folder' => function_exists('tireFolderRel') ? (string)tireFolderRel($client, $t) : 'media/tires/' . safeFilenameStem($t['name']),
@@ -154,6 +155,7 @@ if ($hasRenders) {
     if (!in_array($rendersTire, array_column($rendersTires, 'id'), true)) $rendersTire = $rendersTires ? (int)$rendersTires[0]['id'] : 0;
     $rendersSeries = max(0, (int)($_GET['series'] ?? 0));
 }
+$rendersDriveOn = $hasRenders && function_exists('tireSeriesHasDriveUrl') && tireSeriesHasDriveUrl($pdo);   // tire_series.drive_url present → Drive link fields
 
 $pool         = studioApprovedPool($pdo, $client);
 $supportsType = hasPostTypeColumn($pdo);
@@ -228,7 +230,8 @@ $studioConfig = [
 if ($hasRenders) {
     $studioConfig['renders'] = [
         'endpoint'  => basePath() . '/tire-upload.php?client=' . rawurlencode($client['slug']),   // POST client, tire_id, series_id | new_series, batch, file (?client= so helpers.php scopes it too)
-        'status'    => basePath() . '/tire-status.php',            // series_create / series_rename / series_reorder / series_delete / rescan
+        'status'    => basePath() . '/tire-status.php',            // series_create / series_rename / series_drive / series_reorder / series_delete / rescan
+        'driveOn'   => $rendersDriveOn,                            // Drive link fields (series list + "New series…") only once migrate.php 29 ran
         'assetsUrl' => clientUrl('assets.php', ['view' => 'collections', 'item' => '__TIRE__', 'series' => '__SERIES__']),
         'rescanUrl' => clientUrl('assets.php', ['view' => 'collections', 'item' => '__TIRE__', 'rescan' => 1, 'partial' => 1, 'offset' => 0]),   // fallback when tire-status.php has no rescan action
         'tires'     => $rendersTires,
@@ -354,7 +357,10 @@ include __DIR__ . '/partials/layout-top.php';
             </select></div>
           <div class="studio-field"><label class="studio-label" for="rendersSeries">Series</label>
             <select class="ui-select" id="rendersSeries" data-renders-series aria-describedby="rendersSeriesHelp"></select>
-            <input class="ui-input studio-renders-newname" type="text" data-renders-new-name maxlength="80" placeholder="Name the new series, e.g. Series 3" aria-label="New series name" hidden></div>
+            <input class="ui-input studio-renders-newname" type="text" data-renders-new-name maxlength="80" placeholder="Name the new series, e.g. Series 3" aria-label="New series name" hidden>
+            <?php if ($rendersDriveOn): ?>
+              <input class="ui-input studio-renders-newdrive" type="url" data-renders-new-drive maxlength="512" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Google Drive link (optional) — https://drive.google.com/…" aria-label="Google Drive link for the new series" hidden>
+            <?php endif; ?></div>
         </div>
         <p class="studio-help" id="rendersSeriesHelp">Uploads land in the chosen series; “New series…” creates one (named after the first file’s batch when left blank).</p>
         <p class="studio-help studio-renders-folder">
@@ -407,7 +413,7 @@ include __DIR__ . '/partials/layout-top.php';
 
     <section class="ui-card studio-series-card" data-renders-series-card>
       <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Series for <span data-renders-tire-name><?= h($rendersSel['name']) ?></span></h3>
-        <p class="ui-card-subtitle">What the client sees under this tire in Assets → Collections. Rename, reorder or remove a series here.</p></div></div>
+        <p class="ui-card-subtitle">What the client sees under this tire in Assets → Collections. Rename, reorder or remove a series here<?= $rendersDriveOn ? ', and paste a Google Drive share link to give the client an “Open in Google Drive” button on it' : '' ?>.</p></div></div>
       <div class="ui-card-body">
         <ul class="studio-series-list" data-renders-series-list role="list"></ul>
         <p class="text-secondary studio-series-empty" data-renders-series-empty hidden>No series yet — upload files above or drop a folder by FTP and rescan.</p>

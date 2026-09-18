@@ -13,6 +13,9 @@
  * Tables: tire_series + tire_images.series_id (migrate.php steps 25–26). Every
  * query is gated on hasTireSeries() so a deploy that has not run migrate.php
  * behaves exactly as before (no series, every row a reference row, no scan).
+ * tire_series.drive_url (step 29, gated on tireSeriesHasDriveUrl()) holds an
+ * optional Google Drive share link per series — the client's "Open in Google
+ * Drive" button on the series header in Assets → Collections.
  *
  * All functions are function_exists-guarded and do no work at load.
  * Contract: scratchpad/tire-series-design.md.
@@ -46,6 +49,60 @@ if (!function_exists('hasTireSeries')) {
         } catch (Throwable $e) {
             return $cached = false;
         }
+    }
+}
+
+if (!function_exists('tireSeriesHasDriveUrl')) {
+    /** tire_series.drive_url exists? (migrate.php 29) Cached per request; false until hasTireSeries(). */
+    function tireSeriesHasDriveUrl(?PDO $pdo = null): bool {
+        static $cached = null;
+        if ($cached !== null) return $cached;
+        if ($pdo === null) { $pdo = $GLOBALS['pdo'] ?? null; }
+        if (!$pdo instanceof PDO) return false;   // not cached: a later call may have a PDO
+        if (!hasTireSeries($pdo)) return $cached = false;
+        try {
+            $s = $pdo->prepare("
+                SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'tire_series' AND COLUMN_NAME = 'drive_url'
+            ");
+            $s->execute();
+            return $cached = (int)$s->fetchColumn() > 0;
+        } catch (Throwable $e) {
+            return $cached = false;
+        }
+    }
+}
+
+if (!function_exists('tireSeriesDriveHosts')) {
+    /** Hosts a series' Drive link may point at (Google Drive / Docs share links + Google Photos albums). */
+    function tireSeriesDriveHosts(): array {
+        return ['drive.google.com', 'docs.google.com', 'photos.google.com', 'photos.app.goo.gl'];
+    }
+}
+
+if (!function_exists('tireSeriesValidDriveUrl')) {
+    /**
+     * A usable Google Drive share link: https:// only, host on the tireSeriesDriveHosts() list
+     * (or a www. alias), ≤ 512 chars, no whitespace / control characters / quotes / angle brackets.
+     */
+    function tireSeriesValidDriveUrl(string $url): bool {
+        $url = trim($url);
+        if ($url === '' || strlen($url) > 512) return false;
+        if (preg_match('/[\s\x00-\x1f\x7f"\'<>\\\\]/', $url)) return false;
+        $p = @parse_url($url);
+        if (!is_array($p) || strtolower((string)($p['scheme'] ?? '')) !== 'https') return false;
+        if (isset($p['user']) || isset($p['pass']) || isset($p['port'])) return false;
+        $host = strtolower((string)($p['host'] ?? ''));
+        if (str_starts_with($host, 'www.')) $host = substr($host, 4);
+        return in_array($host, tireSeriesDriveHosts(), true);
+    }
+}
+
+if (!function_exists('tireSeriesDriveUrlError')) {
+    /** The message the UI shows for a rejected link (one wording everywhere). */
+    function tireSeriesDriveUrlError(): string {
+        return 'Enter a Google Drive share link (https://drive.google.com/…)';
     }
 }
 
@@ -422,6 +479,7 @@ if (!function_exists('tireSeriesNormalizeRow')) {
             'name'       => (string)($s['name'] ?? ''),
             'slug'       => (string)($s['slug'] ?? ''),
             'folder'     => ($s['folder'] ?? null) === null || $s['folder'] === '' ? null : (string)$s['folder'],
+            'drive_url'  => ($s['drive_url'] ?? null) === null || trim((string)$s['drive_url']) === '' ? null : trim((string)$s['drive_url']),   // NULL before migrate.php 29
             'sort_order' => (int)($s['sort_order'] ?? 0),
             'created_at' => $s['created_at'] ?? null,
             'updated_at' => $s['updated_at'] ?? null,
@@ -522,13 +580,17 @@ if (!function_exists('ensureTireSeries')) {
      * row is returned as is (its folder is filled in when NULL and
      * $opts['folder'] is given). A new row gets name = $opts['name'] ??
      * tireSeriesHumanName($nameOrFolder), folder = $opts['folder'] ?? null,
-     * sort_order = max + 1. Never logs — callers do. Throws on DB errors.
+     * sort_order = max + 1, drive_url = $opts['drive_url'] (validated, only once migrate.php 29
+     * ran). Never logs — callers do. Throws on DB errors.
      */
     function ensureTireSeries(PDO $pdo, int $tireId, string $nameOrFolder, array $opts = []): array {
         if ($tireId <= 0) throw new InvalidArgumentException('Invalid tire id');
         if (!hasTireSeries($pdo)) throw new RuntimeException('tire_series is not available (run migrate.php)');
         $slug   = tireSlugify($nameOrFolder);
         $folder = isset($opts['folder']) && trim((string)$opts['folder']) !== '' ? (string)$opts['folder'] : null;
+        $drive  = isset($opts['drive_url']) && trim((string)$opts['drive_url']) !== '' ? trim((string)$opts['drive_url']) : null;
+        if ($drive !== null && !tireSeriesValidDriveUrl($drive)) throw new InvalidArgumentException(tireSeriesDriveUrlError());
+        if ($drive !== null && !tireSeriesHasDriveUrl($pdo)) throw new RuntimeException('tire_series.drive_url is not available (run migrate.php)');
         $s = $pdo->prepare("SELECT * FROM tire_series WHERE tire_id = ? AND slug = ?");
         $s->execute([$tireId, $slug]);
         $row = $s->fetch();
@@ -544,25 +606,56 @@ if (!function_exists('ensureTireSeries')) {
         $m = $pdo->prepare("SELECT COALESCE(MAX(sort_order), 0) FROM tire_series WHERE tire_id = ?");
         $m->execute([$tireId]);
         $sort = (int)$m->fetchColumn() + 1;
-        $ins = $pdo->prepare("INSERT INTO tire_series (tire_id, name, slug, folder, sort_order) VALUES (?, ?, ?, ?, ?)");
-        $ins->execute([$tireId, $name, $slug, $folder, $sort]);
+        if ($drive !== null) {
+            $ins = $pdo->prepare("INSERT INTO tire_series (tire_id, name, slug, folder, drive_url, sort_order) VALUES (?, ?, ?, ?, ?, ?)");
+            $ins->execute([$tireId, $name, $slug, $folder, $drive, $sort]);
+        } else {
+            $ins = $pdo->prepare("INSERT INTO tire_series (tire_id, name, slug, folder, sort_order) VALUES (?, ?, ?, ?, ?)");
+            $ins->execute([$tireId, $name, $slug, $folder, $sort]);
+        }
         $id = (int)$pdo->lastInsertId();
         $now = date('Y-m-d H:i:s');
         return tireSeriesNormalizeRow([
-            'id' => $id, 'tire_id' => $tireId, 'name' => $name, 'slug' => $slug, 'folder' => $folder,
+            'id' => $id, 'tire_id' => $tireId, 'name' => $name, 'slug' => $slug, 'folder' => $folder, 'drive_url' => $drive,
             'sort_order' => $sort, 'created_at' => $now, 'updated_at' => $now,
         ]);
     }
 }
 
 if (!function_exists('createTireSeries')) {
-    /** ensureTireSeries() for a UI-created series: folder = slug (the upload target). Returns ['created' => bool] + the row. */
-    function createTireSeries(PDO $pdo, int $tireId, string $name): array {
+    /**
+     * ensureTireSeries() for a UI-created series: folder = slug (the upload target), optional Drive
+     * link ($driveUrl, validated — InvalidArgumentException when it is not a Google Drive share link).
+     * Returns ['created' => bool] + the row.
+     */
+    function createTireSeries(PDO $pdo, int $tireId, string $name, ?string $driveUrl = null): array {
         $slug = tireSlugify($name);
         $existing = tireSeriesBySlug($pdo, $tireId, $slug);
         if ($existing) return $existing + ['created' => false];
-        $row = ensureTireSeries($pdo, $tireId, $name, ['name' => trim($name), 'folder' => $slug]);
+        $opts = ['name' => trim($name), 'folder' => $slug];
+        if ($driveUrl !== null && trim($driveUrl) !== '') $opts['drive_url'] = trim($driveUrl);
+        $row = ensureTireSeries($pdo, $tireId, $name, $opts);
         return $row + ['created' => true];
+    }
+}
+
+if (!function_exists('setTireSeriesDriveUrl')) {
+    /**
+     * Set (or clear with null / '') the Google Drive link of a series. The URL is trimmed and must
+     * pass tireSeriesValidDriveUrl() (InvalidArgumentException otherwise); RuntimeException before
+     * migrate.php 29. Returns the row (drive_url patched in) or null for an unknown series.
+     */
+    function setTireSeriesDriveUrl(PDO $pdo, int $seriesId, ?string $url): ?array {
+        if ($seriesId <= 0 || !hasTireSeries($pdo)) return null;
+        $url = $url === null ? null : trim($url);
+        if ($url === '') $url = null;
+        if ($url !== null && !tireSeriesValidDriveUrl($url)) throw new InvalidArgumentException(tireSeriesDriveUrlError());
+        if (!tireSeriesHasDriveUrl($pdo)) throw new RuntimeException('tire_series.drive_url is not available (run migrate.php)');
+        $row = tireSeriesById($pdo, $seriesId);
+        if (!$row) return null;
+        $pdo->prepare("UPDATE tire_series SET drive_url = ? WHERE id = ?")->execute([$url, $seriesId]);
+        $row['drive_url'] = $url;   // harnesses whose UPDATE is a no-op still see the new value
+        return $row;
     }
 }
 
@@ -768,7 +861,7 @@ if (!function_exists('tireSeriesNamesForImages')) {
 // ---------------------------------------------------------------------
 
 if (!function_exists('logTireSeriesActivity')) {
-    /** activity_log row with entity_type 'tire_series' (actions: created, renamed, deleted, scanned, uploaded, approved). company_id looked up when not given. */
+    /** activity_log row with entity_type 'tire_series' (actions: created, renamed, deleted, scanned, uploaded, approved, drive_linked, drive_unlinked). company_id looked up when not given. */
     function logTireSeriesActivity(PDO $pdo, string $actor, string $action, int $seriesId, string $summary,
                                    ?string $detail = null, ?string $batchId = null, ?int $companyId = null): void {
         if ($companyId === null || $companyId <= 0) {
