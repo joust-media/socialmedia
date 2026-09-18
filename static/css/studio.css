@@ -476,6 +476,11 @@
    Emails tab (Studio), add-email.php, emails-io.php preview
    --------------------------------------------------------------------- */
 .studio-emails-head { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0 0 16px; }
+/* Pages list: server-check glyph after the file count (icon only; title carries the detail) */
+.studio-page-check { display: inline-flex; align-items: center; vertical-align: middle; margin-left: 2px; }
+.studio-page-check .ui-icon { width: 12px; height: 12px; }
+.studio-page-check--ok { color: var(--approve); }
+.studio-page-check--warn { color: var(--deny); }
 .studio-emails-head .ui-spacer { flex: 1 1 auto; }
 .studio-emails-off, .studio-pages-off { margin: 0 0 16px; }
 .studio-groups { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }

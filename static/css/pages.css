@@ -76,6 +76,13 @@ li + li > .pgl-card::before { left: 84px; }
 .pg-frame-wrap[data-preview-w="390"] .pg-frame { box-shadow: 0 0 0 0.5px var(--separator); background: #fff; }
 .pg-preview-hint { margin: 6px 2px 0; font-size: var(--text-caption); line-height: var(--lh-caption); }
 .pg-preview-hint a { color: var(--accent); text-decoration: none; }
+/* Admin-only "Server check" line under the preview (page-detail.php): file / folder bits + rules version, Repair when off */
+.pg-server-check { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; margin: 6px 2px 0; font-size: var(--text-caption); line-height: var(--lh-caption); color: var(--label-secondary); }
+.pg-server-check .pg-server-check-icon { width: 14px; height: 14px; flex: none; color: var(--approve); }
+.pg-server-check-label { font-weight: 600; color: var(--label-primary); }
+.pg-server-check--warn { color: var(--deny); }
+.pg-server-check--warn .pg-server-check-icon, .pg-server-check--warn .pg-server-check-label { color: var(--deny); }
+.pg-server-check .ui-btn { margin-left: 2px; }
 .pg-preview-empty {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
   min-height: 180px; padding: 24px;

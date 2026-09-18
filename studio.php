@@ -370,6 +370,7 @@ include __DIR__ . '/partials/layout-top.php';
         </p>
         <div class="studio-renders-actions">
           <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-renders-rescan>Rescan folders</button>
+          <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-renders-repair title="Rewrite the media/tires/ server rules (.htaccess) and make every render readable by the web server (0644 / 0755)">Repair server rules</button>
           <a class="ui-btn ui-btn--gray ui-btn--sm" data-renders-open href="<?= h(clientUrl('assets.php', ['view' => 'collections', 'item' => $rendersTire ?: null])) ?>">Open in Assets</a>
         </div>
       </div>
@@ -589,6 +590,7 @@ include __DIR__ . '/partials/layout-top.php';
   <div class="studio-emails-head" data-pages-actions>
     <a class="ui-btn ui-btn--filled" href="<?= h($pgFormUrl) ?>" data-pages-new><?= icon('plus') ?><span>New page</span></a>
     <?php if ($pgOn): ?><a class="ui-btn ui-btn--gray" href="<?= h(pagesUrl(['status' => 'all'])) ?>" data-pages-open>Open pages</a><?php endif; ?>
+    <button type="button" class="ui-btn ui-btn--gray" data-pages-repair data-endpoint="<?= h(basePath() . '/page-upload.php?client=' . rawurlencode($client['slug'])) ?>" title="Rewrite the media/pages/ server rules (.htaccess) and make every uploaded file readable by the web server (0644 / 0755)">Repair server rules</button>
   </div>
 
   <?php if (!$pgOn): ?>
@@ -617,6 +619,15 @@ include __DIR__ . '/partials/layout-top.php';
         $pgSrc = strtolower((string)($pg['source'] ?? 'upload')) === 'url' ? 'url' : 'upload';
         $pgN   = (int)($pgFiles[(int)$pg['id']] ?? 0);
         $sub   = '<span class="studio-email-groups">/' . h($pg['slug']) . '</span> · ' . ($pgSrc === 'url' ? 'URL' : 'Upload · ' . $pgN . ' file' . ($pgN === 1 ? '' : 's'));
+        // Server check glyph (icon only; the sheet on pages.php spells it out): can Apache serve the entry file?
+        if ($pgSrc === 'upload' && $pgN > 0 && function_exists('mediaServerCheck')) {
+            $pgEntry = trim((string)($pg['entry'] ?? 'index.html'));
+            $pgPath  = pageFilePath($client, $pg, $pgEntry !== '' ? $pgEntry : 'index.html', false);
+            if ($pgPath !== null) {
+                $pgChk = mediaServerCheck($pgPath, mediaRootPath(), pagesMediaRootPath());
+                $sub  .= ' <span class="studio-page-check studio-page-check--' . ($pgChk['ok'] ? 'ok' : 'warn') . '" data-page-check="' . ($pgChk['ok'] ? 'ok' : 'warn') . '" title="' . h('Server check: ' . $pgChk['summary']) . '" role="img" aria-label="' . h('Server check: ' . $pgChk['summary']) . '">' . icon($pgChk['ok'] ? 'checkmark' : 'xmark') . '</span>';
+            }
+        }
     ?>
       <?= insetRow([
           'href'        => clientUrl('add-page.php', ['edit' => (int)$pg['id']]),

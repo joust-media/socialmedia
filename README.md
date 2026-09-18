@@ -138,11 +138,19 @@ filter is in SQL and re-checked on deep links, partials and the endpoint.
   HTML file becomes the entry when none is set; "Set as entry" picks another `.html`.
   Renaming a page's slug moves its folder; deleting a page removes the folder (contained —
   a symlinked folder is refused and left alone).
-- **`media/` hardening**: every upload (re)writes `media/pages/.htaccess` (and
-  `media/.htaccess` when the parent has none) when missing: `Options -Indexes`, PHP engine
-  off, PHP / CGI handlers removed, server-side-include filters removed (`.shtml .shtm .stm`
-  and never `.html`), `.php* .cgi .pl .py .sh .shtml .inc .htaccess` denied outright. The
-  files are never overwritten once present, so a server-managed one stands.
+- **`media/` hardening** (`media-lib.php`, shared with Renders): every upload writes
+  `media/pages/.htaccess` when missing and rewrites it when it carries an older marker of ours
+  (`# joust-portal-media vN`): `Options -Indexes` first and alone, then — every line inside an
+  `<IfModule>` guard so a cPanel host with PHP-FPM / LSAPI never answers 500 for the folder —
+  PHP engine off, PHP / CGI handlers and types removed, the server-side-include filter removed
+  (`.shtml .shtm .stm` and never `.html`), `.php* .cgi .pl .py .shtml .inc .htaccess` denied
+  outright, `nosniff`. A file without our marker is never touched. The portal no longer writes
+  `media/.htaccess` at the parent level and deletes one that carries our marker. Stored files
+  are `chmod 0644`, created folders `0755`, whatever the umask (Apache reads them as another
+  user on shared hosting). Studio → Pages → **Repair server rules** (`page-upload.php`
+  `action=repair_media`) rewrites the rules and fixes permissions under `media/pages/<client>/`;
+  the admin sheet shows a **Server check** line (file / folder bits, rules version) with a
+  *Repair* button when something is off. Details: `media-hardening/README.md`.
 - **Preview**: `<iframe sandbox="allow-scripts allow-same-origin allow-forms allow-popups">`
   with a Phone / Desktop toggle. `allow-same-origin` is deliberate — only the admin can
   upload, the files are Joust's own work and PHP is off under `media/` — but it means an
@@ -211,10 +219,14 @@ join the Approved Pool and the composer like any tire image.
   `set_reference`, `series_create` / `series_rename` / `series_delete` / `series_reorder`,
   `rescan` (admin, same-site, scoped to the posted client). Reference images (the ≤6 in Studio)
   are the rows without a series; the 6-image cap counts only those.
-- **`media/` hardening**: the first upload or rescan writes `media/tires/.htaccess` (and
-  `media/.htaccess` when the parent has none) — `Options -Indexes`, PHP engine off, script
-  extensions refused — so nothing dropped by FTP or upload can ever execute. Existing files
-  are never overwritten; the text and the by-hand steps are in `media-hardening/`.
+- **`media/` hardening**: the first upload or rescan writes `media/tires/.htaccess` (the
+  `media-lib.php` text shared with Pages — `Options -Indexes`, then PHP engine off, script
+  handlers removed and script-ish names refused, every directive `<IfModule>`-guarded) so
+  nothing dropped by FTP or upload can ever execute; an older file of ours is rewritten, a
+  foreign one never touched, and an old `media/.htaccess` of ours is removed. Uploads and
+  thumbs are `chmod 0644` / folders `0755`. Studio → Renders → **Repair server rules**
+  (`tire-upload.php` `action=repair_media`) rewrites the rules and fixes permissions under
+  `media/tires/`. The text and the by-hand steps are in `media-hardening/`.
 
 ## Large uploads (chunked, resumable)
 
