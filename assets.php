@@ -478,8 +478,8 @@ if ($view === 'library') {
             if ($seriesOn) {
                 foreach ($ids as $tid) {
                     $list = tireSeriesForTire($pdo, $tid);
-                    $sum  = ['series' => count($list), 'pending' => 0];
-                    foreach ($list as $sr) { $sum['pending'] += (int)($sr['counts']['pending'] ?? 0); }
+                    $sum  = ['series' => count($list), 'pending' => 0, 'drive' => false];
+                    foreach ($list as $sr) { $sum['pending'] += (int)($sr['counts']['pending'] ?? 0); if (!empty($sr['drive_url'])) $sum['drive'] = true; }
                     $seriesSummary[$tid] = $sum;
                 }
             }
@@ -577,12 +577,16 @@ include __DIR__ . '/partials/layout-top.php';
         $thumb = isset($thumbs[$tid])
             ? '<img src="' . esc($thumbs[$tid]) . '" alt="" loading="lazy">'
             : icon('photo');
+        // A small Drive glyph before the badge when at least one series of the tire has a Google Drive link.
+        $driveGlyph = !empty($seriesSummary[$tid]['drive'])
+            ? '<span class="as-collection-drive" data-collection-drive title="Also in Google Drive" aria-label="Also in Google Drive">' . icon('drive') . '</span>'
+            : '';
         echo insetRow([
             'href'     => clientUrl('assets.php', ['view' => 'collections', 'item' => $tid]),
             'leading'  => $thumb,
             'title'    => (string)$c['name'],
             'subtitle' => implode(' · ', $parts),
-            'trailing' => $p > 0 ? '<span class="ui-badge">' . ($p > 99 ? '99+' : $p) . '</span>' : '',
+            'trailing' => $driveGlyph . ($p > 0 ? '<span class="ui-badge">' . ($p > 99 ? '99+' : $p) . '</span>' : ''),
             'chevron'  => true,
             'attrs'    => ['id' => 'collection-' . $tid, 'data-collection' => $tid],
         ]);
@@ -619,12 +623,12 @@ include __DIR__ . '/partials/layout-top.php';
     <?php if ($seriesOn && $seriesList): // ---- series switcher (Reference · Series 1 · Series 2 …) + header row ---- ?>
       <nav class="as-filters as-series" aria-label="Series" data-series-switcher>
         <?php
-          $chips = [['key' => 'ref', 'label' => 'Reference', 'pending' => (int)$refCounts['pending']]];
-          foreach ($seriesList as $sr) { $chips[] = ['key' => (string)(int)$sr['id'], 'label' => (string)$sr['name'], 'pending' => (int)($sr['counts']['pending'] ?? 0)]; }
+          $chips = [['key' => 'ref', 'label' => 'Reference', 'pending' => (int)$refCounts['pending'], 'drive' => false]];
+          foreach ($seriesList as $sr) { $chips[] = ['key' => (string)(int)$sr['id'], 'label' => (string)$sr['name'], 'pending' => (int)($sr['counts']['pending'] ?? 0), 'drive' => !empty($sr['drive_url'])]; }
           foreach ($chips as $ch): $on = $ch['key'] === $seriesKey; ?>
           <a class="as-chip as-series-chip<?= $on ? ' is-active' : '' ?>" href="<?= esc(assetsUrl(['series' => $ch['key'], 'offset' => null])) ?>"
              data-series-chip="<?= esc($ch['key']) ?>"<?= $on ? ' aria-current="page"' : '' ?>>
-            <?= esc($ch['label']) ?><span class="as-chip-count as-chip-count--pending" data-series-pending="<?= esc($ch['key']) ?>"<?= $ch['pending'] > 0 ? '' : ' hidden' ?>><?= $ch['pending'] ?></span>
+            <?= esc($ch['label']) ?><span class="as-chip-count as-chip-count--pending" data-series-pending="<?= esc($ch['key']) ?>"<?= $ch['pending'] > 0 ? '' : ' hidden' ?>><?= $ch['pending'] ?></span><?= $ch['drive'] ? '<span class="as-chip-drive" data-series-drive-chip="' . esc($ch['key']) . '" title="Also in Google Drive" aria-label="Also in Google Drive">' . icon('drive') . '</span>' : '' ?>
           </a>
         <?php endforeach; ?>
       </nav>
@@ -633,13 +637,18 @@ include __DIR__ . '/partials/layout-top.php';
         $headCounts = $seriesActive ? ($seriesActive['counts'] ?? []) + ['total' => 0] : $refCounts;
         $headPending = (int)($headCounts['pending'] ?? 0);
         $studioUploadUrl = clientUrl('studio.php', ['tab' => 'renders', 'tire' => $itemId, 'series' => $seriesActive ? (int)$seriesActive['id'] : null]);
+        $headDrive = $seriesActive ? (string)($seriesActive['drive_url'] ?? '') : '';   // the series' Google Drive share link ('' = none)
       ?>
       <section class="as-series-head" data-series-head data-series-id="<?= esc($seriesKey) ?>" aria-label="<?= esc($seriesActive ? $seriesActive['name'] : 'Reference images') ?>">
         <div class="as-series-body">
           <h2 class="as-series-title" data-series-title><?= esc($seriesActive ? $seriesActive['name'] : 'Reference images') ?></h2>
           <p class="as-series-meta" data-series-meta><?= esc(assetsCountsLine($headCounts, $isAdmin, true)) ?></p>
         </div>
-        <div class="as-series-actions">
+        <div class="as-series-actions" data-series-actions>
+          <?php if ($headDrive !== ''): // client + admin: the same renders in the client's Google Drive (new tab) ?>
+            <a class="ui-btn ui-btn--sm ui-btn--tinted as-series-drive" href="<?= esc($headDrive) ?>" target="_blank" rel="noopener noreferrer"
+               data-series-drive title="<?= esc('Open ' . $seriesActive['name'] . ' in Google Drive (new tab)') ?>"><?= icon('drive') ?><span>Open in Google Drive</span></a>
+          <?php endif; ?>
           <?php if ($seriesActive && $headPending > 0): // client + admin: approve every remaining pending render of this series ?>
             <button type="button" class="ui-btn ui-btn--sm ui-btn--approve ui-btn--tinted as-series-approve"
                     data-action="approve_series" data-endpoint="<?= esc(basePath() . '/tire-status.php') ?>"
@@ -654,6 +663,7 @@ include __DIR__ . '/partials/layout-top.php';
                 <a class="as-menu-item" role="menuitem" href="<?= esc($studioUploadUrl) ?>" data-series-upload><?= icon('plus') ?>Upload more…</a>
                 <?php if ($seriesActive): ?>
                   <button type="button" class="as-menu-item" role="menuitem" data-series-rename><?= icon('wand') ?>Rename series…</button>
+                  <button type="button" class="as-menu-item" role="menuitem" data-series-drive-edit><?= icon('drive') ?><?= $headDrive !== '' ? 'Edit Google Drive link…' : 'Add Google Drive link…' ?></button>
                   <button type="button" class="as-menu-item is-destructive" role="menuitem" data-series-delete><?= icon('xmark') ?>Delete series…</button>
                 <?php endif; ?>
               </div>
@@ -718,8 +728,17 @@ if ($isAdmin && $seriesOn && $seriesActive):
       <label class="studio-label as-series-label" for="seriesRenameName">Series name</label>
       <input class="ui-input" type="text" id="seriesRenameName" name="name" maxlength="80" required value="<?= esc($seriesActive['name']) ?>" data-sheet-autofocus>
       <p class="as-series-help text-secondary">The folder on disk keeps its name; only the label the client sees changes.</p>
+      <?php if (function_exists('tireSeriesHasDriveUrl') && tireSeriesHasDriveUrl($pdo)): // migrate.php 29 ?>
+        <label class="studio-label as-series-label" for="seriesRenameDrive">Google Drive link <span class="text-tertiary">(optional)</span></label>
+        <input class="ui-input" type="url" id="seriesRenameDrive" name="drive_url" maxlength="512" inputmode="url" autocomplete="off" spellcheck="false"
+               placeholder="https://drive.google.com/drive/folders/…" value="<?= esc((string)($seriesActive['drive_url'] ?? '')) ?>" data-series-drive-input>
+        <p class="as-series-help text-secondary" data-series-drive-help>Paste the share link of the folder that holds these renders — the client gets an “Open in Google Drive” button on this series. Leave blank to remove it.</p>
+      <?php endif; ?>
       <div class="as-series-form-actions"><button type="button" class="ui-btn ui-btn--gray" data-sheet-close>Cancel</button><button type="submit" class="ui-btn ui-btn--filled" data-series-form-submit>Save</button></div>
     </form>
+  </template>
+  <template data-series-drive-template>
+    <a class="ui-btn ui-btn--sm ui-btn--tinted as-series-drive" href="#" target="_blank" rel="noopener noreferrer" data-series-drive><?= icon('drive') ?><span>Open in Google Drive</span></a>
   </template>
   <template data-series-form="delete">
     <form class="as-series-form" data-series-form-el="delete" novalidate>
@@ -739,7 +758,8 @@ if ($seriesOn && $collection) {
         'tire'    => (string)$collection['name'],
         'tireId'  => $itemId,
         'tireUrl' => clientUrl('assets.php', ['view' => 'collections', 'item' => $itemId]),
-        'list'    => array_map(static function ($sr) { return ['id' => (int)$sr['id'], 'name' => (string)$sr['name'], 'counts' => $sr['counts'] ?? []]; }, $seriesList),
+        'driveUrl' => $seriesActive && !empty($seriesActive['drive_url']) ? (string)$seriesActive['drive_url'] : null,   // the "Open in Google Drive" link (header button + viewer menu)
+        'list'    => array_map(static function ($sr) { return ['id' => (int)$sr['id'], 'name' => (string)$sr['name'], 'counts' => $sr['counts'] ?? [], 'drive_url' => !empty($sr['drive_url']) ? (string)$sr['drive_url'] : null]; }, $seriesList),
     ];
 }
 $assetsConfig = [

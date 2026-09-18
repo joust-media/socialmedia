@@ -116,6 +116,7 @@ $viewerCommentsEndpoint = isset($viewerCommentsEndpoint) ? (string)$viewerCommen
 
   <div class="ui-viewer-menu" data-viewer-menu role="menu" hidden>
     <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-download><?= icon('download') ?>Download</button>
+    <a class="ui-viewer-menu-item" role="menuitem" data-viewer-drive href="#" target="_blank" rel="noopener noreferrer" hidden><?= icon('drive') ?>Open series in Google Drive</a>
     <?php if ($viewerAdmin): // admin-only: never rendered for clients ?>
       <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-replace data-tire-only><?= icon('photo') ?>Replace image…</button>
       <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-set-reference data-tire-only><?= icon('checkmark') ?>Set as reference</button>
