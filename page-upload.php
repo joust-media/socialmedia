@@ -8,6 +8,8 @@
  *   action        upload (default) | delete_file | set_entry | probe | chunk_init | chunk_put | chunk_status | chunk_finish | chunk_abort
  *                 | repair_media (admin: rewrite media/pages/.htaccess when old / missing, drop an old media/.htaccess
  *                   of ours, chmod media/pages/<client>/ to 0644 / 0755; + 'check' of the entry file when page_id is posted)
+ *                 | extract_inline (page_id [+ name]: run the embedded-asset extraction below over every .html / .htm
+ *                   already on the page — the "Extract embedded images" button; replies {ok, files:[…], totals, summary, check, page})
  *   file          the upload (action=upload): html htm css js json png jpg jpeg gif webp svg ico
  *                 woff woff2 ttf mp4 webm, ≤ 10 MB; images must decode and match their extension
  *   subfolder     optional relative folder inside the page folder ('img', 'assets/fonts'):
@@ -20,7 +22,8 @@
  * chunk_init {client, page_id, name, size, type, subfolder, batch} → {upload_id, chunk_size, received: 0};
  * chunk_put {upload_id, index, offset, file}; chunk_status; chunk_finish (same checks + reply as
  * action=upload); chunk_abort. Spool: media/pages/.spool/ (deny-all .htaccess, cleaned after 24 h).
- * Chunked caps: video 4 GB, other assets 100 MB, HTML / CSS / JS / JSON stay at 10 MB (their body is scanned).
+ * Chunked caps: video 4 GB, other assets 100 MB, HTML 64 MB (embedded assets are extracted, see below),
+ * CSS / JS / JSON stay at 10 MB (their body is scanned).
  *
  * Stores media/pages/<client-slug>/<page-slug>/[subfolder/]<safe-name> (an existing file with
  * the same name is REPLACED — that is how a page gets updated), upserts page_files, logs
@@ -30,7 +33,16 @@
  * guarded) is (re)written on every upload when missing or older than ours; stored files are chmod 0644 and
  * created folders 0755 whatever the umask (Apache reads them as another user on shared hosting).
  *
- * Replies JSON {ok, file:{name, size, url, entry}, page:{id, entry, file_count}, batch}
+ * Embedded assets (single + chunked path, .html / .htm only — pages-lib.php pageExtractInlineAssetsFile):
+ * every base64 data: URI (images, SVG, fonts, CSS, MP4 / WebM — in src / srcset / poster / href, CSS
+ * url() in <style> and style="") is decoded, validated and written to <its folder>/assets/<sha1-12>.<ext>
+ * (identical blobs share one file), the reference rewritten to the relative path, the files registered
+ * in page_files. Invalid blobs stay inline and are counted as skipped. Why: hosts with ModSecurity
+ * response-body inspection answer 500 for a text/html file over ~512 KB; images are not inspected.
+ * The reply carries 'extract' => {extracted, skipped, failed, bytes_saved, html_bytes_before,
+ * html_bytes_after, files:[{name, size, url}], summary} and the activity detail names it.
+ *
+ * Replies JSON {ok, file:{name, size, url, entry}, page:{id, entry, file_count}, batch, extract}
  *   delete_file → {ok, name, deleted, page:{…}}   set_entry → {ok, page:{…}}
  * Errors: 400 bad request · 403 seat / tenant / cross-site · 404 unknown page, file or upload ·
  *         409 not an upload page / not migrated / chunk out of order · 413 too large · 415 unsupported type · 422 not a valid image · 500.
@@ -57,7 +69,7 @@ function pageUploadSummary(PDO $pdo, array $page): array {
 }
 
 $action = (string)($_POST['action'] ?? $_GET['action'] ?? 'upload');
-if (!in_array($action, ['upload', 'delete_file', 'set_entry', 'probe', 'chunk_init', 'chunk_put', 'chunk_status', 'chunk_finish', 'chunk_abort', 'repair_media'], true)) { pageUploadFail(400, 'Unknown action'); }
+if (!in_array($action, ['upload', 'delete_file', 'set_entry', 'probe', 'chunk_init', 'chunk_put', 'chunk_status', 'chunk_finish', 'chunk_abort', 'repair_media', 'extract_inline'], true)) { pageUploadFail(400, 'Unknown action'); }
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' && !($action === 'probe' && $_SERVER['REQUEST_METHOD'] === 'GET')) { pageUploadFail(405, 'Method not allowed'); }
 requireSameSiteFetch();   // cross-site requests get a JSON 403 (helpers.php)
 if (!currentAdmin()) { pageUploadFail(403, 'Admin sign-in required'); }
@@ -126,10 +138,11 @@ function pageUploadCheckName(string $origName): array {
     return [$name, $ext];
 }
 
-/** The chunked size cap for an extension (video 4 GB · text 10 MB · other assets 100 MB). */
+/** The chunked size cap for an extension (video 4 GB · HTML 64 MB (assets are extracted) · CSS / JS / JSON 10 MB · other assets 100 MB). */
 function pageUploadChunkedLimit(string $ext): int {
     global $maxChunkedVideo, $maxChunkedAsset, $maxBytes, $textExts;
     if (in_array($ext, ['mp4', 'webm'], true)) return $maxChunkedVideo;
+    if (in_array($ext, ['html', 'htm'], true)) return pageInlineAssetMaxHtmlBytes();
     if (in_array($ext, $textExts, true)) return $maxBytes;
     return $maxChunkedAsset;
 }
@@ -156,7 +169,8 @@ function pageUploadCheckContent(string $path, string $ext): void {
         if (function_exists('videoFileLooksValid') && !videoFileLooksValid($path, $ext)) { pageUploadFail(422, 'Not a valid video file'); }
     } elseif (in_array($ext, ['html', 'htm', 'css', 'js', 'json'], true)) {
         // Text-ish files (html/css/js/json): refuse anything that carries a PHP open tag — the WHOLE
-        // file (≤ 10 MB), not just the head, so a tag after a large preamble cannot slip through.
+        // file (≤ 10 MB; HTML ≤ 64 MB), not just the head, so a tag after a large preamble cannot slip through.
+        pageBumpMemoryLimit();
         $body = (string)@file_get_contents($path);
         if (preg_match('/<\?php|<\?=/i', $body)) {
             pageUploadFail(415, 'PHP code is not allowed in page files.');
@@ -223,9 +237,18 @@ function pageUploadStore(PDO $pdo, array $company, array $page, string $srcPath,
     if (!$moved) { pageUploadFail(500, 'Failed to save the file (check folder permissions)'); }
     mediaChmodPath($dest);   // 0644: the upload tmp / chunk spool file was 0600 (unreadable by Apache)
 
+    // HTML: pull every embedded base64 asset out into <folder>/assets/ and rewrite the reference
+    // (pages-lib.php). The stored size is the rewritten file's; the extracted files join page_files.
+    $extract = null;
+    if (in_array($ext, ['html', 'htm'], true)) {
+        $extract = pageExtractInlineAssetsFile($dest, $rel);
+        if ($extract !== null && $extract['extracted'] > 0) { clearstatcache(true, $dest); $size = (int)filesize($dest); }
+    }
+
     try {
         $pdo->beginTransaction();
         pageFileUpsert($pdo, $pageId, $rel, $size);
+        foreach (($extract['files'] ?? []) as $assetRel => $assetBytes) { pageFileUpsert($pdo, $pageId, (string)$assetRel, (int)$assetBytes); }
         // First HTML file on a page whose entry is missing becomes the entry automatically.
         $entry = (string)$page['entry'];
         if (in_array($ext, ['html', 'htm'], true)) {
@@ -236,7 +259,8 @@ function pageUploadStore(PDO $pdo, array $company, array $page, string $srcPath,
                 $page['entry'] = $rel;
             }
         }
-        logPageActivity($pdo, actorFromPost(), 'uploaded', $pageId, ($replaced ? 'Replaced ' : 'Uploaded ') . $rel . ' on ' . pageDisplayLabel($page), $rel, $batchId, (int)$page['company_id']);
+        $detail = $rel . ($extract !== null && ($extract['extracted'] > 0 || $extract['skipped'] > 0 || $extract['failed'] > 0) ? ' · ' . pageExtractSummaryText($extract) : '');
+        logPageActivity($pdo, actorFromPost(), 'uploaded', $pageId, ($replaced ? 'Replaced ' : 'Uploaded ') . $rel . ' on ' . pageDisplayLabel($page), $detail, $batchId, (int)$page['company_id']);
         $pdo->commit();
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) { $pdo->rollBack(); }
@@ -253,7 +277,28 @@ function pageUploadStore(PDO $pdo, array $company, array $page, string $srcPath,
         'page' => pageUploadSummary($pdo, $page),
         'view' => pageViewUrl($page, $company),
         'batch' => $batchId,
+        'extract' => $extract !== null ? pageUploadExtractReply($extract, $folderRel) : null,
     ] + $extraReply);
+}
+
+/** The JSON shape of one extraction result: counts + the asset files as {name, size, url} + the one-line summary. */
+function pageUploadExtractReply(array $r, string $folderRel): array {
+    $files = [];
+    foreach (($r['files'] ?? []) as $name => $bytes) {
+        $files[] = ['name' => (string)$name, 'size' => (int)$bytes,
+                    'url' => '/' . implode('/', array_map('rawurlencode', array_merge(explode('/', $folderRel), explode('/', (string)$name))))];
+    }
+    return [
+        'name'              => (string)($r['name'] ?? ''),
+        'extracted'         => (int)($r['extracted'] ?? 0),
+        'skipped'           => (int)($r['skipped'] ?? 0),
+        'failed'            => (int)($r['failed'] ?? 0),
+        'bytes_saved'       => (int)($r['bytes_saved'] ?? 0),
+        'html_bytes_before' => (int)($r['html_bytes_before'] ?? 0),
+        'html_bytes_after'  => (int)($r['html_bytes_after'] ?? 0),
+        'files'             => $files,
+        'summary'           => pageExtractSummaryText($r),
+    ];
 }
 
 // =====================================================================
@@ -265,7 +310,7 @@ if ($action === 'probe') {
     echo json_encode([
         'ok'             => true,
         'chunk_size'     => chunkUploadChunkSize(),
-        'max_file_bytes' => ['video' => $maxChunkedVideo, 'asset' => $maxChunkedAsset, 'text' => $maxBytes],
+        'max_file_bytes' => ['video' => $maxChunkedVideo, 'asset' => $maxChunkedAsset, 'text' => $maxBytes, 'html' => pageInlineAssetMaxHtmlBytes()],
         'single_max_bytes' => min($maxBytes, chunkUploadIniBytes() ?: $maxBytes),
         'text_exts'      => $textExts,
         'video_exts'     => ['mp4', 'webm'],
@@ -332,9 +377,62 @@ if (in_array($action, ['chunk_put', 'chunk_status', 'chunk_finish', 'chunk_abort
     exit;
 }
 
-// ---- the page + tenant scope (upload / delete_file / set_entry / chunk_init) ----
+// ---- the page + tenant scope (upload / delete_file / set_entry / chunk_init / extract_inline) ----
 [$page, $company] = pageUploadResolvePage($pdo, (int)($_POST['page_id'] ?? 0), postedClientSlug());
 $pageId = (int)$page['id'];
+
+// =====================================================================
+// extract_inline — the "Extract embedded images" button (sheet Server check line, Studio → Pages row):
+// run the upload-time extraction over every .html / .htm already registered on the page (or just
+// `name`), register the assets, refresh the HTML sizes, log page/extracted_assets once. Replies
+// {ok, files:[{name, extracted, skipped, failed, bytes_saved, html_bytes_before, html_bytes_after,
+// files:[…], summary} | {name, error}], totals:{…}, summary, check (of the entry), page:{…}}.
+// =====================================================================
+if ($action === 'extract_inline') {
+    $only = trim((string)($_POST['name'] ?? ''));
+    if ($only !== '' && !pageFileRelValid($only)) { pageUploadFail(400, 'Invalid file name'); }
+    $folderRel = pageFolderRel($company, $page);
+    $results = []; $totals = ['files' => 0, 'extracted' => 0, 'skipped' => 0, 'failed' => 0, 'bytes_saved' => 0, 'assets' => 0];
+    $bits = [];
+    foreach (pageFilesFor($pdo, $pageId) as $f) {
+        $name = (string)$f['filename'];
+        if (!in_array(strtolower((string)pathinfo($name, PATHINFO_EXTENSION)), ['html', 'htm'], true)) continue;
+        if ($only !== '' && $name !== $only) continue;
+        $path = pageFilePath($company, $page, $name, true);
+        if ($path === null) { $results[] = ['name' => $name, 'error' => 'missing on the server']; continue; }
+        $r = pageExtractInlineAssetsFile($path, $name);
+        if ($r === null) { $results[] = ['name' => $name, 'error' => 'over ' . (int)round(pageInlineAssetMaxHtmlBytes() / (1024 * 1024)) . ' MB or unreadable']; continue; }
+        try {
+            $pdo->beginTransaction();
+            foreach ($r['files'] as $assetRel => $assetBytes) { pageFileUpsert($pdo, $pageId, (string)$assetRel, (int)$assetBytes); }
+            clearstatcache(true, $path);
+            pageFileUpsert($pdo, $pageId, $name, (int)filesize($path));
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) { $pdo->rollBack(); }
+            error_log('page-upload extract_inline: ' . $e->getMessage());
+            pageUploadFail(500, 'Database error');
+        }
+        $totals['files']++;
+        $totals['extracted'] += (int)$r['extracted']; $totals['skipped'] += (int)$r['skipped']; $totals['failed'] += (int)$r['failed'];
+        $totals['bytes_saved'] += (int)$r['bytes_saved']; $totals['assets'] += count($r['files']);
+        $results[] = pageUploadExtractReply($r, $folderRel);
+        if ((int)$r['extracted'] > 0 || (int)$r['skipped'] > 0 || (int)$r['failed'] > 0) { $bits[] = $name . ': ' . lcfirst(pageExtractSummaryText($r)); }
+    }
+    if ($only !== '' && !$results) { pageUploadFail(404, 'File not found on this page'); }
+    $summary = $bits ? implode(' · ', $bits) : ($totals['files'] ? 'Nothing to extract — no embedded images in ' . $totals['files'] . ' HTML file' . ($totals['files'] === 1 ? '' : 's') : 'No HTML files on this page yet');
+    if ($totals['extracted'] > 0) {
+        try {
+            logPageActivity($pdo, actorFromPost(), 'extracted_assets', $pageId, 'Extracted embedded images on ' . pageDisplayLabel($page), $summary, null, (int)$page['company_id']);
+        } catch (Throwable $e) { error_log('page-upload extract_inline log: ' . $e->getMessage()); }
+    }
+    $reply = ['ok' => true, 'files' => $results, 'totals' => $totals, 'summary' => $summary, 'page' => pageUploadSummary($pdo, $page)];
+    $entry = trim((string)($page['entry'] ?? 'index.html'));
+    $entryPath = pageFileRelValid($entry) ? pageFilePath($company, $page, $entry, false) : null;
+    if ($entryPath !== null) { $reply['check'] = mediaServerCheck($entryPath, mediaRootPath(), pagesMediaRootPath()); }
+    echo json_encode($reply);
+    exit;
+}
 
 // =====================================================================
 // chunk_init — validate name + size + subfolder, allocate the spool

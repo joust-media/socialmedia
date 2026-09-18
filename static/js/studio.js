@@ -1505,4 +1505,22 @@
       window.setTimeout(function () { window.location.reload(); }, 900);
     });
   });
+
+  /* Studio → Pages: "Extract embedded images" under a page whose HTML is over ~400 KB → page-upload.php
+     action=extract_inline (base64 data: URIs → assets/ files, references rewritten), then a reload. */
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-pages-extract]');
+    if (!btn || btn.disabled) return;
+    e.preventDefault();
+    var endpoint = btn.getAttribute('data-endpoint') || 'page-upload.php';
+    btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = 'Extracting…';
+    App.post(endpoint, { action: 'extract_inline', page_id: btn.getAttribute('data-pages-extract'), actor: App.actor }).then(function (res) {
+      btn.disabled = false; btn.removeAttribute('aria-busy'); btn.textContent = 'Extract embedded images';
+      var d = res.data || {};
+      if (!res.ok) { toast(res.error || 'Extraction failed', { kind: 'error' }); return; }
+      var t = d.totals || {};
+      toast(d.summary || 'Done', { kind: t.extracted > 0 || !(t.skipped || t.failed) ? 'success' : 'error' });
+      if (t.extracted > 0) window.setTimeout(function () { window.location.reload(); }, 900);
+    });
+  });
 })(window, document);

@@ -1116,6 +1116,7 @@ function actionLabel($action) {
         'edited_code'          => 'changed ID',
         // pages (entity_type = 'page'; 'uploaded' is shared with tire series below)
         'deleted_file'         => 'removed a file from',
+        'extracted_assets'     => 'extracted embedded images from',
         'edited_slug'          => 'changed the address of',
         'edited_entry'         => 'changed the entry file of',
         'edited_source'        => 'changed the source of',

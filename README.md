@@ -138,6 +138,25 @@ filter is in SQL and re-checked on deep links, partials and the endpoint.
   HTML file becomes the entry when none is set; "Set as entry" picks another `.html`.
   Renaming a page's slug moves its folder; deleting a page removes the folder (contained —
   a symlinked folder is refused and left alone).
+- **Embedded images are extracted** (`.html` / `.htm`, single and chunked uploads, up to 64 MB
+  of HTML): every base64 `data:` URI — images, SVG, fonts, CSS, MP4 / WebM, in `src` / `srcset` /
+  `poster` / `href`, CSS `url()` in `<style>` and `style=""` — is decoded, validated (images must
+  decode and match their type, SVG must be `<svg>` without `<script>` / `on*=`, fonts by magic
+  bytes, videos sniffed) and written to `assets/<sha1-12>.<ext>` next to the HTML (identical
+  blobs share one file); the reference becomes the relative path and the files join
+  `page_files`. Invalid blobs stay inline and are counted as skipped; nothing else in the
+  markup changes and the original single-file upload is not kept (you have the source). The
+  uploader row says "Extracted 14 images · 5.4 MB → 180 KB". Why: cPanel's ModSecurity
+  inspects `text/html` responses and rejects bodies over `SecResponseBodyLimit` (512 KB by
+  default) with a **500** — images and video are not inspected. For pages already uploaded,
+  **Extract embedded images** sits on the sheet's Server check line and under the Studio →
+  Pages row whenever an HTML file is over ~400 KB (`page-upload.php` `action=extract_inline`);
+  the sheet's preview is switched off (Open in new tab stays) while the entry is that large.
+- **Troubleshooting a 500 on an uploaded page**: cPanel → **Metrics → Errors** shows Apache's
+  reason. `ModSecurity: Output filter: Response body too large` → the HTML is over the host's
+  limit: click *Extract embedded images*, reduce the file, or turn ModSecurity off for the
+  domain (cPanel → **Security → ModSecurity**, per domain). `.htaccess` / permission lines →
+  *Repair server rules*; more in `media-hardening/README.md`.
 - **`media/` hardening** (`media-lib.php`, shared with Renders): every upload writes
   `media/pages/.htaccess` when missing and rewrites it when it carries an older marker of ours
   (`# joust-portal-media vN`): `Options -Indexes` first and alone, then — every line inside an
@@ -161,7 +180,7 @@ filter is in SQL and re-checked on deep links, partials and the endpoint.
 |-----|--------------|
 | `pages.php?client=<slug>[&status=pending\|approved\|live\|denied\|draft\|all][&q=…][&page=<id>]` | List + detail sheet. Default segment is To Review; `page=<id>` deep-links one page. `denied` / `draft` are admin only. |
 | `page-status.php` (POST) | Approve / deny (note required) / comment / `action=submit` / `toggle_live&to=0\|1` / `delete_page`. Mirrors `email-status.php`. |
-| `page-upload.php` (POST, admin) | `page_id`, `client`, `action=upload` (`file`, optional `subfolder`, `batch`) / `delete_file` / `set_entry` (`name`). |
+| `page-upload.php` (POST, admin) | `page_id`, `client`, `action=upload` (`file`, optional `subfolder`, `batch`) / `delete_file` / `set_entry` (`name`) / `extract_inline` (embedded `data:` assets of every HTML file → `assets/`) / `repair_media`. |
 | `add-page.php?client=<slug>[&edit=<id>]` | Admin create / edit form (title, slug, source, URL, entry file, description, status, live, notes) + the file uploader and delete on edit. |
 | `studio.php?client=<slug>&tab=pages` | Counts strip, New page, the list with Edit, the Pages-tab toggle. |
 
@@ -251,8 +270,9 @@ in the browser); files at or below one piece still go in a single request exactl
   `.htaccess` under the `media/tires/.htaccess` hardening (Pages: `media/pages/.spool/`).
   Pieces are appended under an exclusive lock; the part file's real size is the truth.
   Spool files older than 24 h are removed on the next `probe` / `chunk_init`.
-- **Caps**: tire renders — images 10 MB, videos 4 GB; page files — HTML / CSS / JS / JSON
-  10 MB (their body is scanned for PHP tags), other assets 100 MB, MP4 / WebM 4 GB.
+- **Caps**: tire renders — images 10 MB, videos 4 GB; page files — HTML 64 MB (its embedded
+  `data:` assets are extracted on arrival), CSS / JS / JSON 10 MB (their body is scanned for
+  PHP tags), other assets 100 MB, MP4 / WebM 4 GB.
 - **Client**: one probe per page, then per file: single request when `size ≤ chunk_size`,
   otherwise init → sequential pieces (progress bar with bytes, %, speed and ETA, "piece n of
   m") → finish. A failed piece is retried up to 3 times (1 s / 2 s / 4 s back-off, asking the
