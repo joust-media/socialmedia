@@ -280,6 +280,7 @@ $filesConfig = $isEdit ? [
 ] : null;
 $footExtra   = '<script>window.StudioConfig = ' . json_encode(['base' => basePath(), 'client' => $client['slug']], JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';'
              . ($filesConfig ? ' window.PageFilesConfig = ' . json_encode($filesConfig, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';' : '') . '</script>' . "\n"
+             . '<script src="' . h(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n"   // App.chunkUpload: large videos / assets in pieces, resumable
              . '<script src="' . h(staticUrl('js/studio.js')) . '" defer></script>' . "\n"
              . '<script src="' . h(staticUrl('js/pages.js')) . '" defer></script>';
 
@@ -376,8 +377,14 @@ include __DIR__ . '/partials/layout-top.php';
         <input type="file" multiple data-page-files-input accept=".html,.htm,.css,.js,.json,.png,.jpg,.jpeg,.gif,.webp,.svg,.ico,.woff,.woff2,.ttf,.mp4,.webm">
         <span class="studio-dropzone-icon"><?= icon('plus') ?></span>
         <span class="studio-dropzone-label">Drop files here or tap to choose</span>
-        <span class="studio-dropzone-hint">html · css · js · json · png · jpg · gif · webp · svg · ico · woff · woff2 · ttf · mp4 · webm — up to 10 MB each</span>
+        <span class="studio-dropzone-hint">html · css · js · json · png · jpg · gif · webp · svg · ico · woff · woff2 · ttf · mp4 · webm — HTML / CSS / JS / JSON up to 10 MB, other assets up to 100 MB, video up to 4 GB</span>
       </label>
+      <p class="studio-help studio-renders-note">Large files are sent in pieces and can resume after a dropped connection or a page reload.</p>
+      <div class="studio-resume" data-page-resume hidden role="status">
+        <span class="studio-resume-text" data-page-resume-text>Resume unfinished uploads</span>
+        <label class="ui-btn ui-btn--filled ui-btn--sm studio-resume-pick">Pick the files<input type="file" multiple data-page-resume-input accept=".html,.htm,.css,.js,.json,.png,.jpg,.jpeg,.gif,.webp,.svg,.ico,.woff,.woff2,.ttf,.mp4,.webm" hidden></label>
+        <button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-page-resume-discard>Discard</button>
+      </div>
       <div class="studio-field pg-subfolder">
         <label class="studio-label" for="page-subfolder">Into subfolder <span class="text-tertiary">— optional, e.g. img or assets/fonts</span></label>
         <input class="ui-input" type="text" id="page-subfolder" maxlength="120" placeholder="(page root)" pattern="[a-z0-9_\-/]*" data-page-subfolder>

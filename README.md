@@ -126,7 +126,8 @@ filter is in SQL and re-checked on deep links, partials and the endpoint.
   `/media/pages/<client>/<slug>/<entry>`; *URL* — an external `http(s)://` address framed
   like an email's rendered link (hosts that refuse framing still get "Open in new tab").
 - **Uploading** (Studio → Pages → Edit, or right after "Create page"; `page-upload.php`,
-  admin + same-site only, one file per request, ≤ 10 MB): `html htm css js json png jpg
+  admin + same-site only, one file per request, ≤ 10 MB in one request — bigger assets and
+  videos go in pieces, see *Large uploads*): `html htm css js json png jpg
   jpeg gif webp svg ico woff woff2 ttf mp4 webm` only. Anything server-side is refused
   anywhere in the dotted name (`.php .phtml .phar .cgi .pl .py .sh .shtml .shtm .stm .inc
   .asp .jsp .cfm .hta .htaccess` — so `x.php.html` and `x.shtml.html` are refused too),
@@ -177,12 +178,13 @@ join the Approved Pool and the composer like any tire image.
      falls back to `assets.php?…&rescan=1`, also admin-only). Existing rows are never touched; a
      removed file only stops showing up (its decisions stay).
   2. **Upload in the portal**: Studio → **Renders** → pick the tire → pick a series or "New
-     series…" → drop files. One request per file (`tire-upload.php`, admin, same-site, 10 MB
-     images / 200 MB videos, sequential queue with progress + Retry), stored under the series
-     folder as `<original stem>.<ext>` (de-duplicated `-2`, `-3` …; the folder is created with
-     0755), falling back to `uploads/` when `media/tires` is not writable. Every file is
-     sniffed: images must decode as the format their extension claims, videos must carry the
-     container magic; anything else is 422.
+     series…" → drop files. One file at a time (`tire-upload.php`, admin, same-site; 10 MB
+     images, videos up to 4 GB — large files go in pieces, see *Large uploads* below; sequential
+     queue with progress, Retry and Cancel), stored under the series folder as
+     `<original stem>.<ext>` (de-duplicated `-2`, `-3` …; the folder is created with 0755),
+     falling back to `uploads/` when `media/tires` is not writable. Every file is sniffed:
+     images must decode as the format their extension claims, videos must carry the container
+     magic; anything else is 422.
 - **Review**: Assets → Collections → the tire shows a series switcher (Reference · Series 1 ·
   …, default = the first series with something to review) over a paged grid (60 tiles + "Load
   more"; the viewer keeps fetching as it walks). **Approve all remaining** (client or admin)
@@ -213,6 +215,50 @@ join the Approved Pool and the composer like any tire image.
   `media/.htaccess` when the parent has none) — `Options -Indexes`, PHP engine off, script
   extensions refused — so nothing dropped by FTP or upload can ever execute. Existing files
   are never overwritten; the text and the by-hand steps are in `media-hardening/`.
+
+## Large uploads (chunked, resumable)
+
+Shared hosting caps one request at `upload_max_filesize` / `post_max_size` (often 64 MB or
+less) and at `max_execution_time`, so multi-GB renders cannot arrive in one POST. Both
+uploaders (Studio → Renders → `tire-upload.php`, Studio → Pages → `page-upload.php`) therefore
+speak a small chunk protocol (`chunk-upload-lib.php` on the server, `static/js/chunk-upload.js`
+in the browser); files at or below one piece still go in a single request exactly as before.
+
+- **Protocol** (`action=`, every call admin + same-site, `upload_id` is 32 hex):
+  `probe` (GET or POST) → `{chunk_size, max_file_bytes, ini_max, exts}` — `chunk_size` is
+  min(8 MB, 80 % of the PHP request cap); `chunk_init {client, tire_id, series_id | new_series,
+  name, size, type, batch}` (Pages: `page_id, subfolder` instead) → `{upload_id, chunk_size,
+  received: 0}`; `chunk_put {upload_id, index, offset, file}` → `{received}` (409 with the
+  server's `received` when `offset` is not where the server is — the client re-syncs; an
+  already-received range is a 200 no-op); `chunk_status` → `{received, size}`; `chunk_finish`
+  runs the same extension / content checks as a single-request upload, moves the file into the
+  series (or page) folder and inserts the row — same reply shape as the single path;
+  `chunk_abort` deletes the pieces.
+- **Spool**: `media/tires/.spool/<upload_id>.part` + `.json` sidecar (owner client, target,
+  name, size, received), 0600, in a dot-folder the series scan skips, with its own deny-all
+  `.htaccess` under the `media/tires/.htaccess` hardening (Pages: `media/pages/.spool/`).
+  Pieces are appended under an exclusive lock; the part file's real size is the truth.
+  Spool files older than 24 h are removed on the next `probe` / `chunk_init`.
+- **Caps**: tire renders — images 10 MB, videos 4 GB; page files — HTML / CSS / JS / JSON
+  10 MB (their body is scanned for PHP tags), other assets 100 MB, MP4 / WebM 4 GB.
+- **Client**: one probe per page, then per file: single request when `size ≤ chunk_size`,
+  otherwise init → sequential pieces (progress bar with bytes, %, speed and ETA, "piece n of
+  m") → finish. A failed piece is retried up to 3 times (1 s / 2 s / 4 s back-off, asking the
+  server where it is first). Cancel aborts and deletes the spool. Every in-flight upload is
+  noted in `localStorage`, so after a reload the tab offers **Resume N unfinished uploads**:
+  pick the same files again (name + size must match), the client asks `chunk_status` and
+  continues from `received`; Discard aborts them on the server.
+- **Playback**: Apache serves `media/` statically with `Accept-Ranges: bytes`, so the viewer's
+  `<video preload="metadata">` and seeking only fetch the ranges the browser needs. Grid tiles
+  never load a video: they show the cached poster or a play glyph, and the poster probe is
+  skipped entirely for files over 256 MB (`data-video-bytes`). For instant playback of big MP4s
+  export them with the `moov` atom at the front ("fast start" / "web optimized").
+- **Bigger single requests (optional)**: there is deliberately no `.user.ini` in the repo
+  (deploys are file-synced; a bad value could take the host down). If you want single-request
+  uploads above the host default, set these in cPanel → *MultiPHP INI Editor* (or a hand-made
+  `.user.ini` in the app folder): `upload_max_filesize = 256M`, `post_max_size = 260M`,
+  `max_execution_time = 300`, `max_input_time = 300`, `memory_limit = 256M`. The probe picks
+  the bigger piece size up automatically; nothing else needs changing.
 
 ## Clients and logos
 

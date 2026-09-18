@@ -46,6 +46,7 @@
   var POSTER_PREFIX = 'poster:', DURATION_PREFIX = 'duration:', NOPOSTER_PREFIX = 'nopos:';
   var POSTER_MAX_W = 480, PROBE_MAX = 3, PROBE_PAGE_MAX = 12, PROBE_TIMEOUT = 15000, FALLBACK_CHECK_MS = 1500;
   var NOPOSTER_TTL = 7 * 24 * 60 * 60 * 1000;   // a tile that yielded no poster is not re-probed for a week
+  var PROBE_MAX_BYTES = 256 * 1024 * 1024;       // tiles of files above this (data-video-bytes) are never probed — play glyph only
   var NETWORK_NO_SOURCE = 3;
   // Only a JPEG/PNG/WebP data URL may come back out of localStorage into img.src / video.poster.
   var POSTER_RE = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
@@ -334,7 +335,11 @@
       var badge = $('[data-video-duration]', tile) || (tile.parentNode && $('[data-video-duration]', tile.parentNode));
       if (dur != null) V.applyDuration(url, dur);
       else if (badge) { var t = $('[data-video-duration-text]', badge); if (t) t.textContent = ''; }   // icon-only until known (never "--:--")
-      // Probe once for a missing duration/poster — but not again for a URL that already yielded no poster.
+      // Probe once for a missing duration/poster — but not again for a URL that already yielded no poster,
+      // and never for a file the server says is very large (data-video-bytes): a tile is preload="none" in
+      // spirit — the play glyph stands in, the viewer's preload="metadata" fetches what it needs on open.
+      var bytes = parseInt(tile.getAttribute('data-video-bytes') || '0', 10) || 0;
+      if (bytes > PROBE_MAX_BYTES) return;
       if (((dur == null && badge) || !poster) && !V.hasNoPoster(url)) V.probe(url);
     },
 

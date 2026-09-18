@@ -12,9 +12,13 @@
    App.studio.uploads(zone)  Drag-drop zone with per-file XHR progress; .MOV
                              shows the Safari-only warning before upload.
    App.studio.renders(root)  Renders tab (tire series): tire + series pickers,
-                             sequential XHR per file to tire-upload.php (one
+                             sequential queue to tire-upload.php — one request
+                             per small file, files above the server's chunk_size
+                             in pieces through App.chunkUpload (chunk-upload.js:
+                             progress / speed / ETA, per-piece retry, Cancel,
+                             "Resume N unfinished uploads" after a reload); one
                              batch id per drop, "New series…" created by the
-                             first file), retry, rescan, and the series list
+                             first file; retry, rescan, and the series list
                              (rename / reorder / delete → tire-status.php).
    App.studio.batch(root)    Batch builder rows → batch-process.php.
    App.studio.linkTags(text) escape + wrap #tags in .ig-tag (same regex as posts.js).
@@ -662,26 +666,32 @@
     this.endpoint = root.dataset.endpoint || rc.endpoint || 'tire-upload.php';
     this.statusEndpoint = root.dataset.statusEndpoint || rc.status || 'tire-status.php';
     this.maxMb = parseInt(root.dataset.maxMb, 10) || rc.maxMb || 10;                    // images
-    this.maxVideoMb = parseInt(root.dataset.maxVideoMb, 10) || rc.maxVideoMb || 200;   // videos
+    this.maxVideoMb = parseInt(root.dataset.maxVideoMb, 10) || rc.maxVideoMb || 4096;  // videos (chunked: 4 GB; the server's probe is the authority)
     this.tires = rc.tires || [];
+    this.chunk = App.chunkUpload || null; this.info = null; this.infoP = null;          // chunk-upload.js: probe once, then chunk files above chunk_size
     this.tireSel = $('[data-renders-tire]', root); this.seriesSel = $('[data-renders-series]', root); this.newName = $('[data-renders-new-name]', root);
     this.input = $('[data-renders-input]', root); this.list = $('[data-renders-list]', root); this.tpl = $('[data-renders-item-template]', root);
     this.seriesList = $('[data-renders-series-list]', root); this.seriesEmpty = $('[data-renders-series-empty]', root);
     this.summary = $('[data-renders-summary]', root); this.summaryText = $('[data-renders-summary-text]', root);
-    this.queue = []; this.busy = false; this.jobs = []; this.createdSeries = {};
+    this.resumeBox = $('[data-renders-resume]', root); this.resumeInput = $('[data-renders-resume-input]', root);
+    this.queue = []; this.busy = false; this.jobs = []; this.createdSeries = {}; this.pending = [];
     if (!this.tireSel || !this.seriesSel) return;
     this.tireSel.addEventListener('change', function () { rc.series = 0; self.syncSeries(); });
     this.seriesSel.addEventListener('change', function () { self.syncNewName(); });
     if (this.newName) this.newName.addEventListener('input', function () { self.syncTarget(); });
     var drop = $('[data-file-drop]', root);
     if (drop && this.input) bindDrop(drop, this.input, function (files) { self.addAll(files); if (self.input) self.input.value = ''; });
+    if (this.resumeInput) this.resumeInput.addEventListener('change', function () { self.resumeFiles(Array.prototype.slice.call(self.resumeInput.files || [])); self.resumeInput.value = ''; });
     root.addEventListener('click', function (e) {
       if (e.target.closest('[data-renders-copy]')) { self.copyFolder(); return; }
       if (e.target.closest('[data-renders-rescan]')) { self.rescan(e.target.closest('[data-renders-rescan]')); return; }
       if (e.target.closest('[data-renders-clear]')) { self.clearList(); return; }
       if (e.target.closest('[data-renders-retry-all]')) { self.retryFailed(); return; }
+      if (e.target.closest('[data-renders-resume-discard]')) { self.discardResume(); return; }
       var retry = e.target.closest('[data-renders-retry]');
       if (retry) { var item = retry.closest('[data-renders-item]'); if (item && item._job) self.retry(item._job); return; }
+      var cancel = e.target.closest('[data-renders-cancel]');
+      if (cancel) { var ci = cancel.closest('[data-renders-item]'); if (ci && ci._job) self.cancel(ci._job); return; }
       var row = e.target.closest('[data-series-row]');
       if (!row) return;
       if (e.target.closest('[data-series-up]'))     { self.moveSeries(row, -1); }
@@ -693,6 +703,7 @@
       if (e.key === 'Enter' && e.target.matches('[data-series-name]')) { e.preventDefault(); self.renameSeries(e.target.closest('[data-series-row]')); }
     });
     this.syncSeries();
+    this.offerResume();
   }
   Renders.prototype.tire = function () {
     var id = parseInt(this.tireSel.value, 10);
@@ -776,33 +787,40 @@
     if (this.summary) this.summary.hidden = false;
     this.syncSummary();
   };
-  Renders.prototype.add = function (file, target, batch) {
+  Renders.prototype.add = function (file, target, batch, opts) {
     var item = this.tpl.content.firstElementChild.cloneNode(true);
-    var job = { file: file, item: item, target: target, batch: batch, state: 'queued', tries: 0 };
+    var job = { file: file, item: item, target: target, batch: batch, state: 'queued', tries: 0, uploadId: (opts && opts.uploadId) || null, ctl: null };
     item._job = job;
     $('[data-upload-name]', item).textContent = file.name;
-    $('[data-upload-meta]', item).textContent = mb(file.size) + ' · ' + target.tireName + ' · ' + target.label;
+    $('[data-upload-meta]', item).textContent = mb(file.size) + ' · ' + target.tireName + ' · ' + target.label + (job.uploadId ? ' · resuming' : '');
     var thumb = $('[data-upload-thumb]', item);
     if (isVideoFile(file)) { thumb.innerHTML = ICON.play; }
     else if (/^image\//.test(file.type)) { var img = document.createElement('img'); img.alt = ''; img.src = URL.createObjectURL(file); thumb.appendChild(img); }
     this.list.appendChild(item);
     this.jobs.push(job);
     var status = $('[data-upload-status]', item);
-    var cap = isVideoFile(file) ? this.maxVideoMb : this.maxMb;   // tire-upload.php: images 10 MB, videos 200 MB
-    if (file.size > cap * 1024 * 1024) { this.fail(job, 'Over ' + cap + ' MB — not uploaded.', false); return; }
+    var cap = isVideoFile(file) ? this.maxVideoMb : this.maxMb;   // tire-upload.php: images 10 MB, videos 4 GB (chunked)
+    if (file.size > cap * 1024 * 1024) { this.fail(job, 'Over ' + (cap >= 1024 ? (cap / 1024) + ' GB' : cap + ' MB') + ' — not uploaded.', false); return job; }
     if (!/^image\/(jpeg|png|gif|webp)$/.test(file.type) && !/^video\/(mp4|webm|quicktime)$/.test(file.type) && ['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov'].indexOf(fileExt(file.name)) === -1) {
-      this.fail(job, 'Unsupported type — use JPG, PNG, GIF, WebP, MP4, WebM or MOV.', false); return;
+      this.fail(job, 'Unsupported type — use JPG, PNG, GIF, WebP, MP4, WebM or MOV.', false); return job;
     }
     status.textContent = 'Waiting…';
     this.queue.push(job);
     this.next();
+    return job;
+  };
+  /** Cancel a queued or in-flight (chunked) job; the server drops its spool. */
+  Renders.prototype.cancel = function (job) {
+    if (job.state === 'queued') { this.queue = this.queue.filter(function (j) { return j !== job; }); this.fail(job, 'Cancelled', false); return; }
+    if (job.state === 'uploading' && job.ctl) job.ctl.abort();
   };
   Renders.prototype.fail = function (job, msg, retryable) {
     job.state = 'failed';
-    var status = $('[data-upload-status]', job.item), prog = $('[data-upload-progress]', job.item), retry = $('[data-renders-retry]', job.item);
-    status.textContent = msg; status.classList.remove('is-ok'); status.classList.add('is-error');
+    var status = $('[data-upload-status]', job.item), prog = $('[data-upload-progress]', job.item), retry = $('[data-renders-retry]', job.item), cancel = $('[data-renders-cancel]', job.item);
+    status.textContent = msg + (job.uploadId && retryable !== false ? ' — Retry continues where it stopped.' : ''); status.classList.remove('is-ok'); status.classList.add('is-error');
     if (prog) prog.hidden = true;
     if (retry) retry.hidden = retryable === false;
+    if (cancel) cancel.hidden = true;
     job.retryable = retryable !== false;
     this.syncSummary();
   };
@@ -816,6 +834,51 @@
     this.queue.push(job);
     this.syncSummary();
     this.next();
+  };
+  /** Probe the endpoint once (chunk size + caps). Resolves null when chunking is unavailable → single requests. */
+  Renders.prototype.probe = function () {
+    if (this.infoP) return this.infoP;
+    var self = this;
+    this.infoP = (this.chunk ? this.chunk.probe(this.endpoint) : Promise.resolve(null)).then(function (info) { self.info = info; return info; }, function () { return null; });
+    return this.infoP;
+  };
+  /* ---- resume after a reload: the ledger in localStorage names the unfinished uploads; the user re-picks the same files ---- */
+  Renders.prototype.offerResume = function () {
+    if (!this.chunk || !this.resumeBox) return;
+    var client = cfg.client || (document.body.dataset.client || '');
+    var live = {}; this.jobs.forEach(function (j) { if (j.uploadId) live[j.uploadId] = true; });
+    this.pending = this.chunk.list({ kind: 'tire', client: client }).filter(function (e) { return !live[e.id]; });
+    var n = this.pending.length;
+    this.resumeBox.hidden = n === 0;
+    var t = $('[data-renders-resume-text]', this.resumeBox);
+    if (t && n) {
+      var names = this.pending.map(function (e) { return e.name + ' (' + mb(e.size) + ' → ' + (e.label || 'series') + ')'; });
+      t.textContent = 'Resume ' + n + ' unfinished upload' + (n === 1 ? '' : 's') + ': ' + names.join(', ') + '. Pick the same file' + (n === 1 ? '' : 's') + ' again and the upload continues where it stopped.';
+    }
+  };
+  Renders.prototype.resumeFiles = function (files) {
+    var self = this, matched = [], unmatched = [];
+    files.forEach(function (f) {
+      var e = self.pending.filter(function (p) { return p.name === f.name && Number(p.size) === f.size && matched.indexOf(p) === -1; })[0];
+      if (!e) { unmatched.push(f.name); return; }
+      matched.push(e);
+      var fields = e.fields || {}, tire = null;
+      for (var i = 0; i < self.tires.length; i++) if (self.tires[i].id === +fields.tire_id) tire = self.tires[i];
+      var s = tire ? self.seriesOf(tire, +fields.series_id) : null;
+      var label = (e.label || '').split(' · ');
+      var target = { tireId: +fields.tire_id || 0, tireName: tire ? tire.name : (label[0] || 'tire'), seriesId: +fields.series_id || 0, newSeries: '', label: s ? s.name : (label[1] || 'series') };
+      self.add(f, target, 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), { uploadId: e.id });
+    });
+    if (unmatched.length) toast(unmatched.length + ' file' + (unmatched.length === 1 ? ' does' : 's do') + ' not match an unfinished upload (same name and size needed): ' + unmatched.join(', '), { kind: 'error', duration: 6000 });
+    if (matched.length && this.summary) { this.summary.hidden = false; this.syncSummary(); }
+    this.offerResume();
+  };
+  Renders.prototype.discardResume = function () {
+    var self = this;
+    if (!this.pending.length) return;
+    if (!window.confirm('Discard ' + this.pending.length + ' unfinished upload' + (this.pending.length === 1 ? '' : 's') + '? The pieces already sent are deleted from the server.')) return;
+    this.pending.forEach(function (e) { self.chunk.abortStored(e); });
+    this.offerResume();
   };
   Renders.prototype.retryFailed = function () { var self = this; this.jobs.forEach(function (j) { if (j.state === 'failed' && j.retryable) self.retry(j); }); };
   Renders.prototype.clearList = function () {
@@ -833,10 +896,68 @@
   Renders.prototype.next = function () {
     if (this.busy) return;
     if (!this.queue.length) { this.finishBatch(); return; }
-    var self = this, job = this.queue.shift(), item = job.item, file = job.file, t = job.target;
-    var prog = $('[data-upload-progress]', item), fill = $('[data-upload-fill]', item), status = $('[data-upload-status]', item);
+    var self = this, job = this.queue.shift(), item = job.item;
+    var prog = $('[data-upload-progress]', item), status = $('[data-upload-status]', item);
     this.busy = true; job.state = 'uploading'; job.tries++;
     prog.hidden = false; status.textContent = 'Uploading… 0%';
+    // The server's probe decides: files above chunk_size (and every resumed job) go in pieces, the rest in one request.
+    this.probe().then(function (info) {
+      if (self.chunk && info && (job.uploadId || job.file.size > info.chunk_size)) self.sendChunked(job, info);
+      else self.sendSingle(job);
+    });
+  };
+  /** Shared success handling: the tile turns into an "open in Assets" link, the series picker learns the series. */
+  Renders.prototype.done = function (job, data) {
+    var t = job.target, item = job.item, status = $('[data-upload-status]', item), fill = $('[data-upload-fill]', item), created = this.createdSeries[job.batch];
+    job.state = 'done';
+    if (fill) fill.style.transform = 'translateX(0)';
+    if (data.series && data.series.id) this.noteSeries(job, data.series);
+    var sid = (data.series && data.series.id) || t.seriesId || (created && created.id) || 0;
+    var link = (this.rc.assetsUrl || '').replace('__TIRE__', String(t.tireId)).replace('__SERIES__', String(sid)) + '&image=' + encodeURIComponent(data.image.id);
+    status.innerHTML = 'Uploaded · To Review — <a href="' + esc(link) + '">open in Assets</a>';
+    status.classList.remove('is-error'); status.classList.add('is-ok');
+    if (data.image.thumb) { var th = $('[data-upload-thumb]', item); if (th && !isVideoFile(job.file)) th.innerHTML = '<img src="' + esc(data.image.thumb) + '" alt="">'; }
+  };
+  /** Chunked path (chunk-upload.js): init → pieces with progress / retry → finish; the ledger entry survives a reload. */
+  Renders.prototype.sendChunked = function (job, info) {
+    var self = this, t = job.target, item = job.item, file = job.file;
+    var fill = $('[data-upload-fill]', item), status = $('[data-upload-status]', item), cancel = $('[data-renders-cancel]', item);
+    var client = cfg.client || (document.body.dataset.client || '');
+    var fields = { client: client, tire_id: t.tireId, batch: job.batch, actor: App.actor || 'admin' };
+    var created = this.createdSeries[job.batch];
+    if (t.seriesId) fields.series_id = t.seriesId;
+    else if (created) fields.series_id = created.id;
+    else fields.new_series = t.newSeries;
+    if (cancel) cancel.hidden = false;
+    var ctl = this.chunk.send({
+      endpoint: this.endpoint, file: file, fields: fields, chunkSize: info.chunk_size, uploadId: job.uploadId || null,
+      onInit: function (d) {
+        job.uploadId = d.upload_id;
+        if (d.series && d.series.id) { if (!t.seriesId) self.createdSeries[job.batch] = d.series; fields.series_id = d.series.id; }
+        self.chunk.remember({ id: d.upload_id, kind: 'tire', endpoint: self.endpoint, client: client, name: file.name, size: file.size, type: file.type || '',
+                              fields: { tire_id: t.tireId, series_id: fields.series_id || 0 }, label: t.tireName + ' · ' + t.label });
+      },
+      onProgress: function (p) { if (fill) fill.style.transform = 'translateX(' + (p.pct - 100) + '%)'; status.textContent = 'Uploading… ' + p.text; },
+      onRetry: function (r) { status.textContent = 'Connection hiccup — retrying that piece (' + r.attempt + ' of ' + r.max + ')…'; }
+    });
+    job.ctl = ctl;
+    var settle = function () { job.ctl = null; if (cancel) cancel.hidden = true; self.busy = false; self.syncSummary(); self.next(); };
+    ctl.promise.then(function (data) {
+      self.chunk.forget(job.uploadId); job.uploadId = null;
+      self.done(job, data);
+      settle();
+    }, function (e) {
+      if (e && e.aborted) { self.chunk.forget(job.uploadId); job.uploadId = null; self.fail(job, 'Cancelled', false); settle(); return; }
+      var retryable = !!(e && e.retryable);
+      if (!retryable || (e && e.expired)) { self.chunk.forget(job.uploadId); job.uploadId = null; }
+      self.fail(job, (e && e.error) || 'Upload failed', retryable);
+      settle();
+    });
+  };
+  /** Single-request path (small files): one multipart POST with xhr.upload progress. */
+  Renders.prototype.sendSingle = function (job) {
+    var self = this, item = job.item, file = job.file, t = job.target;
+    var fill = $('[data-upload-fill]', item), status = $('[data-upload-status]', item);
     var fd = new FormData();
     fd.append('client', cfg.client || (document.body.dataset.client || ''));
     fd.append('tire_id', String(t.tireId));
@@ -862,13 +983,7 @@
         var msg = (data && data.error) || ('Upload failed (' + xhr.status + ')');
         self.fail(job, msg, [400, 403, 404, 409, 413, 415, 422].indexOf(xhr.status) === -1);   // bad request / seat / type / size / not migrated: retrying the same file cannot help
       } else {
-        job.state = 'done';
-        if (data.series && data.series.id) self.noteSeries(job, data.series);
-        var sid = (data.series && data.series.id) || t.seriesId || (created && created.id) || 0;
-        var link = (self.rc.assetsUrl || '').replace('__TIRE__', String(t.tireId)).replace('__SERIES__', String(sid)) + '&image=' + encodeURIComponent(data.image.id);
-        status.innerHTML = 'Uploaded · To Review — <a href="' + esc(link) + '">open in Assets</a>';
-        status.classList.add('is-ok');
-        if (data.image.thumb) { var th = $('[data-upload-thumb]', item); if (th && !isVideoFile(file)) th.innerHTML = '<img src="' + esc(data.image.thumb) + '" alt="">'; }
+        self.done(job, data);
       }
       self.busy = false; self.syncSummary(); self.next();
     };
