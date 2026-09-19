@@ -40,7 +40,9 @@
  *   studioPickerHtml(array $pool, array $opts = []): string
  *       Grouped: Library, then one <section data-pool-group="tire:<id>"> per collection with series chips
  *       (data-series-filter="all|ref|<id>") when tire-series-lib.php is present; tiles carry data-series and
- *       use tireImageThumb(); the assets[] values ("tire:<id>") are unchanged.
+ *       use tireImageThumb(); the assets[] values ("tire:<id>") are unchanged. When the pool holds a video:
+ *       Photos / Videos chips (data-media-filter) + "Show N videos" (data-pool-videos-toggle) — video tiles
+ *       start hidden (data-pool-collapsed, data-video-noprobe) so no poster / range request is made for them.
  *   studioPreviewHtml(array $post, array $brand, array $images = [], array $opts = []): string
  *   studioComposerHtml(array $ctx): string
  */
@@ -476,6 +478,12 @@ if (!function_exists('studioPickerHtml')) {
               . '<button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-pick-clear hidden>Clear</button>'
               . '</header>';
 
+        // Photos / Videos (client-side, studio.js Picker): videos are heavy, so they start collapsed behind
+        // "Show N videos" — their tiles are hidden + data-video-noprobe until asked for, and no poster is fetched.
+        $nVideos = 0;
+        foreach ($assets as $a) { if (($a['media'] ?? 'image') === 'video') $nVideos++; }
+        $nPhotos = $total - $nVideos;
+
         if ($total > 0) {
             $out .= '<div class="studio-chips" role="group" aria-label="Filter the pool">';
             $out .= '<button type="button" class="studio-chip is-active" data-pool-filter="all" aria-pressed="true">All <span class="studio-chip-n">' . $total . '</span></button>';
@@ -486,6 +494,13 @@ if (!function_exists('studioPickerHtml')) {
                 $out .= '<button type="button" class="studio-chip" data-pool-filter="tire:' . (int)$c['id'] . '" aria-pressed="false">' . $esc($c['name']) . ' <span class="studio-chip-n">' . (int)$c['count'] . '</span></button>';
             }
             $out .= '</div>';
+            if ($nVideos > 0) {   // media chips + the collapse toggle only when the pool actually holds a video
+                $out .= '<div class="studio-chips studio-chips--media" role="group" aria-label="Media type" data-pool-media>'
+                      . '<button type="button" class="studio-chip studio-chip--sm" data-media-filter="image" aria-pressed="false">Photos <span class="studio-chip-n">' . $nPhotos . '</span></button>'
+                      . '<button type="button" class="studio-chip studio-chip--sm" data-media-filter="video" aria-pressed="false">Videos <span class="studio-chip-n">' . $nVideos . '</span></button>'
+                      . '<button type="button" class="ui-btn ui-btn--plain ui-btn--sm studio-pool-videos-toggle" data-pool-videos-toggle aria-pressed="false" data-count="' . $nVideos . '">Show ' . $nVideos . ($nVideos === 1 ? ' video' : ' videos') . '</button>'
+                      . '</div>';
+            }
 
             // Grouped: Library first, then one section per collection (tire) with its series chips.
             // Tiles keep data-asset-* (studio.js Picker) and add data-series ('ref' | '<id>') for the per-group chips.
@@ -520,9 +535,10 @@ if (!function_exists('studioPickerHtml')) {
                           . ' data-asset-src="' . $esc($a['src']) . '" data-asset-label="' . $esc($a['label']) . '" data-asset-group="' . $esc($a['group']) . '"'
                           . ' data-asset-group-label="' . $esc($a['group_label']) . '" data-asset-media="' . $esc($a['media']) . '"'
                           . ($a['kind'] === 'tire' ? ' data-series="' . $esc($a['series'] ?? 'ref') . '"' : '')
-                          . ' aria-selected="' . ($on ? 'true' : 'false') . '" title="' . $esc($a['label'] . ' — ' . $a['group_label'] . ($pill !== '' ? ' · ' . $pill : '')) . '">';
+                          . ' aria-selected="' . ($on ? 'true' : 'false') . '" title="' . $esc($a['label'] . ' — ' . $a['group_label'] . ($pill !== '' ? ' · ' . $pill : '')) . '"'
+                          . ($a['media'] === 'video' && !$on ? ' hidden data-pool-collapsed' : '') . '>';   // collapsed until "Show N videos" (a selected one stays visible)
                     if ($a['media'] === 'video') {
-                        $out .= videoTile($a['src'], ['badgeClass' => 'studio-asset-duration', 'poster' => $thumb !== $a['src'] ? $thumb : '']);
+                        $out .= videoTile($a['src'], ['badgeClass' => 'studio-asset-duration', 'poster' => $thumb !== $a['src'] ? $thumb : '', 'probe' => $on]);
                     } else {
                         $out .= '<img src="' . $esc($thumb) . '" alt="' . $esc($a['label']) . '" loading="lazy" decoding="async">';
                     }

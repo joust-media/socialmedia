@@ -29,7 +29,9 @@
  *   videoTile(string $url, array $opts = []): string          — grid/list thumbnail for a video: poster
  *                                                               when known, else a dark tile + play glyph;
  *                                                               $opts: 'poster', 'badge' (default true),
- *                                                               'badgeClass', 'class'.
+ *                                                               'badgeClass', 'class', 'bytes' (file size →
+ *                                                               data-video-bytes), 'probe' (default true; false →
+ *                                                               data-video-noprobe: never fetched from the grid).
  */
 
 if (!function_exists('videoEsc')) {
@@ -248,7 +250,8 @@ if (!function_exists('videoTile')) {
         $poster = trim((string)($opts['poster'] ?? ''));
         $badge  = !array_key_exists('badge', $opts) || $opts['badge'];
         $bytes  = (int)($opts['bytes'] ?? 0);   // file size when known: App.video skips the poster probe on very large files (tiles never preload them)
-        $out  = '<span class="ui-video-tile' . (!empty($opts['class']) ? ' ' . videoEsc($opts['class']) : '') . ($poster !== '' ? ' has-poster' : '') . '"' . videoThumbAttrs($url) . ($bytes > 0 ? ' data-video-bytes="' . $bytes . '"' : '') . '>';
+        $probe  = !array_key_exists('probe', $opts) || $opts['probe'];   // false → data-video-noprobe: App.video never opens the file from this tile (cached poster / duration only)
+        $out  = '<span class="ui-video-tile' . (!empty($opts['class']) ? ' ' . videoEsc($opts['class']) : '') . ($poster !== '' ? ' has-poster' : '') . '"' . videoThumbAttrs($url) . ($bytes > 0 ? ' data-video-bytes="' . $bytes . '"' : '') . ($probe ? '' : ' data-video-noprobe') . '>';
         $out .= '<img class="ui-video-poster" data-video-poster alt="" decoding="async"' . ($poster !== '' ? ' src="' . videoEsc($poster) . '"' : ' hidden') . '>';
         $out .= '<span class="ui-video-glyph" aria-hidden="true">' . (function_exists('icon') ? icon('play') : '') . '</span>';
         if ($badge) {

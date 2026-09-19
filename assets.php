@@ -32,7 +32,13 @@
  *                      (ref = the reference images, i.e. rows without a series);
  *                      default = the first series with pending images, else Reference
  *   &image=<id>        deep link alias of asset=<id>&kind=tire (the image's own
- *                      series wins over an inconsistent &series=)
+ *                      series — and media type — win over an inconsistent &series= / &type=)
+ *   &type=photos|videos|all
+ *                      media type of the series grid (tire-series-lib.php tireMediaTypeSql(),
+ *                      applied in SQL so paging respects it). Default: photos when the
+ *                      series holds at least one video (the Photos · Videos control is
+ *                      rendered only then), else all; the Reference view defaults to all.
+ *                      Videos are heavy, so a series never puts them on the page unasked.
  *   &offset=<n>        paging: the grid renders ASSETS_PAGE tiles from that offset
  *   &partial=1         answer with the tile markup only (the "Load more" fetch)
  *   &partial=comments&kind=tire|library&id=<image id>
@@ -94,6 +100,9 @@ if (($_GET['series'] ?? '') === 'ref') { $seriesReq = 'ref'; }
 elseif (ctype_digit((string)($_GET['series'] ?? '')) && (int)$_GET['series'] > 0) { $seriesReq = (int)$_GET['series']; }
 $partial = (($_GET['partial'] ?? '') === '1');
 $offset  = max(0, (int)($_GET['offset'] ?? 0));
+// Media type (validated: photos | videos | all; anything else = "not given" → the view's default below)
+$typeReq = null;
+if (function_exists('tireMediaTypeKey') && tireMediaTypeKey($_GET['type'] ?? '', '') !== '') { $typeReq = tireMediaTypeKey($_GET['type'] ?? ''); }
 
 $libReady       = hasLibraryImagesTable($pdo);
 $clientOnly     = $isAdmin ? '' : " AND status <> 'denied'";        // spec §2 / §7: filtered in SQL, never CSS
@@ -154,7 +163,7 @@ if ($deepId > 0 && $deepKind !== '') {
         if ($hit) { $view = 'library'; $itemId = 0; }
     } elseif ($deepKind === 'tire') {
         $s = $pdo->prepare("
-            SELECT ti.id, ti.status, ti.tire_id{$seriesSel}
+            SELECT ti.id, ti.status, ti.tire_id, ti.image_url{$seriesSel}
               FROM tire_images ti
               INNER JOIN tires t ON t.id = ti.tire_id
              WHERE ti.id = ? AND t.company_id = ?{$clientOnlyTi}
@@ -163,7 +172,13 @@ if ($deepId > 0 && $deepKind !== '') {
         $hit = $s->fetch();
         if ($hit) {
             $view = 'collections'; $itemId = (int)$hit['tire_id'];
-            if ($seriesOn) { $seriesReq = !empty($hit['series_id']) ? (int)$hit['series_id'] : 'ref'; }   // the image's own series wins
+            if ($seriesOn) {
+                $seriesReq = !empty($hit['series_id']) ? (int)$hit['series_id'] : 'ref';   // the image's own series wins
+                // …and so does its media type: a video deep link opens the Videos view (the default Photos view would hide it),
+                // a photo linked with &type=videos opens Photos. An explicit &type=all is left alone (the image is in that list).
+                $isVideo = isVideoExt(strtolower(pathinfo((string)$hit['image_url'], PATHINFO_EXTENSION)));
+                if ($typeReq !== 'all') { $typeReq = $isVideo ? 'videos' : ($typeReq === 'videos' ? 'photos' : $typeReq); }
+            }
         }
     }
     if ($hit && in_array($hit['status'], $filters, true)) {
@@ -195,10 +210,21 @@ $filterLabels = ['pending' => 'To Review', 'approved' => 'Approved', 'denied' =>
 /** URL for this page with the current scope merged with $extra (null drops a key). */
 if (!function_exists('assetsUrl')) {
     function assetsUrl(array $extra = []): string {
-        global $view, $itemId, $filter, $seriesKey;
+        global $view, $itemId, $filter, $seriesKey, $typeKey;
         $base = ['view' => $view, 'item' => $itemId > 0 ? $itemId : null, 'filter' => $filter,
-                 'series' => (isset($seriesKey) && $seriesKey !== '' && $itemId > 0) ? $seriesKey : null];
+                 'series' => (isset($seriesKey) && $seriesKey !== '' && $itemId > 0) ? $seriesKey : null,
+                 'type'   => (isset($typeKey) && $typeKey !== '' && $itemId > 0) ? $typeKey : null];
         return clientUrl('assets.php', array_merge($base, $extra));
+    }
+}
+
+/** "1.2 GB" / "340 MB" / "12 KB" for a video tile's size caption ('' at 0). */
+if (!function_exists('assetsHumanBytes')) {
+    function assetsHumanBytes(int $bytes): string {
+        if ($bytes <= 0) return '';
+        if ($bytes >= 1073741824) return rtrim(rtrim(number_format($bytes / 1073741824, 1, '.', ''), '0'), '.') . ' GB';
+        if ($bytes >= 1048576)    return (string)(int)round($bytes / 1048576) . ' MB';
+        return (string)max(1, (int)round($bytes / 1024)) . ' KB';
     }
 }
 
@@ -233,12 +259,17 @@ if (!function_exists('assetsTileHtml')) {
               . ' aria-label="' . esc('Open ' . $it['label'] . ', ' . $index . ' of ' . $total . (!empty($it['comments']) ? ', ' . (int)$it['comments'] . ($it['comments'] === 1 ? ' comment' : ' comments') : '')) . '">';
         $nc = (int)($it['comments'] ?? 0);
         if ($it['type'] === 'video') {
-            $out .= videoTile($it['src'], ['badge' => false, 'poster' => ($it['thumb'] ?? '') !== '' && $it['thumb'] !== $it['src'] ? $it['thumb'] : '', 'bytes' => (int)($it['bytes'] ?? 0)]);   // poster when the lib made one, else dark tile + play glyph (no probe on huge files)
+            // Poster when the lib made one, else the dark tile + play glyph. Series renders are never probed from the grid
+            // ('probe' => false → data-video-noprobe): no <video> element, no range request per tile — the viewer fetches
+            // metadata for the ONE video it shows. Library tiles keep the (capped) probe: those files are the client's own.
+            $out .= videoTile($it['src'], ['badge' => false, 'poster' => ($it['thumb'] ?? '') !== '' && $it['thumb'] !== $it['src'] ? $it['thumb'] : '',
+                                           'bytes' => (int)($it['bytes'] ?? 0), 'probe' => $it['kind'] !== 'tire']);
         } else {
             $out .= '<img src="' . esc($thumb) . '" alt="" loading="lazy" decoding="async">';   // .ui-thumb is a fixed 1:1 box, so lazy tiles never reflow
         }
+        $size = $it['type'] === 'video' ? assetsHumanBytes((int)($it['bytes'] ?? 0)) : '';   // file size from the one stat the page already did
         $out .= '<span class="ui-pill ui-pill--glass ui-pill--nodot ui-thumb-badge as-badge"><i class="ui-dot ui-dot--' . esc($it['status']) . '" data-status-dot></i>'
-              . ($it['type'] === 'video' ? videoDurationBadge('as-badge-video') : '') . '</span>'
+              . ($it['type'] === 'video' ? videoDurationBadge('as-badge-video') . ($size !== '' ? '<span class="as-badge-size" data-video-size>' . esc($size) . '</span>' : '') : '') . '</span>'
               . '<span class="as-thumb-check" aria-hidden="true">' . icon('checkmark') . '</span>'
               . '<span class="as-thumb-select" aria-hidden="true">' . icon('checkmark') . '</span>'
               // Comment-count bubble (top-left; hidden at 0 so assets.js can reveal it after the first comment)
@@ -306,6 +337,11 @@ $seriesActive = null;   // the series the grid shows (null = Reference)
 $seriesKey   = '';      // 'ref' | '<id>' — the &series= value of the current view ('' when the feature is off)
 $seriesSummary = [];    // collections list: tire id → ['series' => n, 'pending' => n]
 $gridTotal   = 0;       // rows in the current filter/series (paging)
+$typeKey     = '';      // '' | photos | videos | all — the &type= of the current view (only set when it matters, see below)
+$typeEff     = 'all';   // the type the grid query applies (photos | videos | all)
+$typeCounts  = null;    // tireSeriesTypeCounts() of the open series: {photos: {…}, videos: {…}}
+$videoCounts = [];      // tireSeriesVideoCounts(): {reference: {…}, series: {id: {…}}} — switcher glyphs + "has videos?"
+$showType    = false;   // render the Photos · Videos control (the open series holds at least one video the seat may see)
 
 if ($view === 'collections' && $seriesOn) {
     // Register files dropped by FTP into media/tires/<tire>/<series>/: the throttled hook (folder mtimes + 60 s,
@@ -386,10 +422,25 @@ if ($view === 'library') {
             $scopeCounts = $seriesActive
                 ? ['pending' => (int)($seriesActive['counts']['pending'] ?? 0), 'approved' => (int)($seriesActive['counts']['approved'] ?? 0), 'denied' => (int)($seriesActive['counts']['denied'] ?? 0)]
                 : ['pending' => $refCounts['pending'], 'approved' => $refCounts['approved'], 'denied' => $refCounts['denied']];
+
+            // ---- Media type: Photos · Videos ------------------------------------------------------
+            // One grouped query for the whole tire (video counts per series → switcher glyphs) and one for the open
+            // set (both types per status → the control's counts and the grid total). A series with at least one video
+            // the seat may see gets the control and defaults to Photos; otherwise the grid is the plain (all) list.
+            $videoCounts = tireSeriesVideoCounts($pdo, $itemId);
+            $typeCounts  = tireSeriesTypeCounts($pdo, $itemId, $seriesActive ? (int)$seriesActive['id'] : null);
+            $seenVideos  = (int)$typeCounts['videos']['total'] - ($isAdmin ? 0 : (int)$typeCounts['videos']['denied']);
+            $showType    = $seriesActive !== null && $seenVideos > 0;
+            $typeEff     = $typeReq ?? ($showType ? 'photos' : 'all');
+            $typeKey     = $showType ? $typeEff : ($typeReq !== null ? $typeReq : '');
+            if ($typeEff !== 'all') {   // the filter chips + paging count the type the grid shows
+                $scopeCounts = ['pending' => (int)$typeCounts[$typeEff]['pending'], 'approved' => (int)$typeCounts[$typeEff]['approved'], 'denied' => (int)$typeCounts[$typeEff]['denied']];
+            }
             $gridTotal = (int)$scopeCounts[$filter];
 
             $rows = tireImagesForSeries($pdo, $itemId, $seriesActive ? (int)$seriesActive['id'] : null,
-                                        ['status' => $filter, 'client' => !$isAdmin, 'company_id' => $cid, 'limit' => ASSETS_PAGE, 'offset' => $offset]);
+                                        ['status' => $filter, 'client' => !$isAdmin, 'company_id' => $cid, 'limit' => ASSETS_PAGE, 'offset' => $offset]
+                                        + ($typeEff !== 'all' ? ['type' => $typeEff] : []));
         } else {
             $gridTotal = (int)$scopeCounts[$filter];
             $sql = "SELECT ti.id, ti.tire_id, ti.image_url, ti.caption, ti.status, ti.sort_order{$nameSel}, t.name AS tire_name
@@ -623,12 +674,14 @@ include __DIR__ . '/partials/layout-top.php';
     <?php if ($seriesOn && $seriesList): // ---- series switcher (Reference · Series 1 · Series 2 …) + header row ---- ?>
       <nav class="as-filters as-series" aria-label="Series" data-series-switcher>
         <?php
-          $chips = [['key' => 'ref', 'label' => 'Reference', 'pending' => (int)$refCounts['pending'], 'drive' => false]];
-          foreach ($seriesList as $sr) { $chips[] = ['key' => (string)(int)$sr['id'], 'label' => (string)$sr['name'], 'pending' => (int)($sr['counts']['pending'] ?? 0), 'drive' => !empty($sr['drive_url'])]; }
+          // videos = the videos this seat may see in the series (admin: all, client: minus denied) → the small "3▶" glyph
+          $vidsOf = static function (array $c) use ($isAdmin): int { return max(0, (int)($c['total'] ?? 0) - ($isAdmin ? 0 : (int)($c['denied'] ?? 0))); };
+          $chips = [['key' => 'ref', 'label' => 'Reference', 'pending' => (int)$refCounts['pending'], 'drive' => false, 'videos' => $vidsOf($videoCounts['reference'] ?? [])]];
+          foreach ($seriesList as $sr) { $chips[] = ['key' => (string)(int)$sr['id'], 'label' => (string)$sr['name'], 'pending' => (int)($sr['counts']['pending'] ?? 0), 'drive' => !empty($sr['drive_url']), 'videos' => $vidsOf($videoCounts['series'][(int)$sr['id']] ?? [])]; }
           foreach ($chips as $ch): $on = $ch['key'] === $seriesKey; ?>
-          <a class="as-chip as-series-chip<?= $on ? ' is-active' : '' ?>" href="<?= esc(assetsUrl(['series' => $ch['key'], 'offset' => null])) ?>"
+          <a class="as-chip as-series-chip<?= $on ? ' is-active' : '' ?>" href="<?= esc(assetsUrl(['series' => $ch['key'], 'offset' => null, 'type' => null])) ?>"
              data-series-chip="<?= esc($ch['key']) ?>"<?= $on ? ' aria-current="page"' : '' ?>>
-            <?= esc($ch['label']) ?><span class="as-chip-count as-chip-count--pending" data-series-pending="<?= esc($ch['key']) ?>"<?= $ch['pending'] > 0 ? '' : ' hidden' ?>><?= $ch['pending'] ?></span><?= $ch['drive'] ? '<span class="as-chip-drive" data-series-drive-chip="' . esc($ch['key']) . '" title="Also in Google Drive" aria-label="Also in Google Drive">' . icon('drive') . '</span>' : '' ?>
+            <?= esc($ch['label']) ?><span class="as-chip-count as-chip-count--pending" data-series-pending="<?= esc($ch['key']) ?>"<?= $ch['pending'] > 0 ? '' : ' hidden' ?>><?= $ch['pending'] ?></span><?= $ch['drive'] ? '<span class="as-chip-drive" data-series-drive-chip="' . esc($ch['key']) . '" title="Also in Google Drive" aria-label="Also in Google Drive">' . icon('drive') . '</span>' : '' ?><?= $ch['videos'] > 0 ? '<span class="as-chip-videos" data-series-videos="' . esc($ch['key']) . '" title="' . esc($ch['videos'] . ($ch['videos'] === 1 ? ' video' : ' videos')) . '" aria-label="' . esc($ch['videos'] . ($ch['videos'] === 1 ? ' video' : ' videos')) . '">' . $ch['videos'] . icon('play') . '</span>' : '' ?>
           </a>
         <?php endforeach; ?>
       </nav>
@@ -638,23 +691,33 @@ include __DIR__ . '/partials/layout-top.php';
         $headPending = (int)($headCounts['pending'] ?? 0);
         $studioUploadUrl = clientUrl('studio.php', ['tab' => 'renders', 'tire' => $itemId, 'series' => $seriesActive ? (int)$seriesActive['id'] : null]);
         $headDrive = $seriesActive ? (string)($seriesActive['drive_url'] ?? '') : '';   // the series' Google Drive share link ('' = none)
+        // Photos · Videos: "Approve all remaining" follows the view (photos | videos → posts type=; the plain series when all)
+        $typeNoun    = $typeEff === 'videos' ? 'video' : ($typeEff === 'photos' ? 'photo' : 'render');
+        $typePending = $typeEff !== 'all' && $typeCounts ? (int)$typeCounts[$typeEff]['pending'] : $headPending;
       ?>
-      <section class="as-series-head" data-series-head data-series-id="<?= esc($seriesKey) ?>" aria-label="<?= esc($seriesActive ? $seriesActive['name'] : 'Reference images') ?>">
+      <section class="as-series-head" data-series-head data-series-id="<?= esc($seriesKey) ?>"<?= $showType ? ' data-series-type="' . esc($typeEff) . '"' : '' ?> aria-label="<?= esc($seriesActive ? $seriesActive['name'] : 'Reference images') ?>">
         <div class="as-series-body">
           <h2 class="as-series-title" data-series-title><?= esc($seriesActive ? $seriesActive['name'] : 'Reference images') ?></h2>
           <p class="as-series-meta" data-series-meta><?= esc(assetsCountsLine($headCounts, $isAdmin, true)) ?></p>
+          <?php if ($showType): // Photos N · Videos N — the same markup as segmented(); counts follow the status filter like the chips above ?>
+            <div class="ui-segmented ui-segmented--auto as-type" role="tablist" aria-label="Media type" data-type-switch>
+              <?php foreach (['photos' => 'Photos', 'videos' => 'Videos'] as $tk => $tl): $on = $typeEff === $tk; ?>
+                <a class="ui-segmented-item<?= $on ? ' is-active' : '' ?>" role="tab" href="<?= esc(assetsUrl(['type' => $tk, 'offset' => null])) ?>"<?= $on ? ' aria-selected="true" aria-current="page"' : ' aria-selected="false"' ?> data-type-chip="<?= $tk ?>"><?= $tl ?> <span class="ui-segmented-count" data-type-count="<?= $tk ?>"><?= (int)$typeCounts[$tk][$filter] ?></span></a>
+              <?php endforeach; ?>
+            </div>
+          <?php endif; ?>
         </div>
         <div class="as-series-actions" data-series-actions>
           <?php if ($headDrive !== ''): // client + admin: the same renders in the client's Google Drive (new tab) ?>
             <a class="ui-btn ui-btn--sm ui-btn--tinted as-series-drive" href="<?= esc($headDrive) ?>" target="_blank" rel="noopener noreferrer"
                data-series-drive title="<?= esc('Open ' . $seriesActive['name'] . ' in Google Drive (new tab)') ?>"><?= icon('drive') ?><span>Open in Google Drive</span></a>
           <?php endif; ?>
-          <?php if ($seriesActive && $headPending > 0): // client + admin: approve every remaining pending render of this series ?>
+          <?php if ($seriesActive && $typePending > 0): // client + admin: approve every remaining pending render of this series (of the type shown) ?>
             <button type="button" class="ui-btn ui-btn--sm ui-btn--approve ui-btn--tinted as-series-approve"
                     data-action="approve_series" data-endpoint="<?= esc(basePath() . '/tire-status.php') ?>"
-                    data-param-action="approve_series" data-series-id="<?= (int)$seriesActive['id'] ?>"
-                    data-confirm="<?= esc('Approve all ' . $headPending . ' remaining ' . ($headPending === 1 ? 'render' : 'renders') . ' in ' . $seriesActive['name'] . '?') ?>"
-                    data-toast="<?= esc($seriesActive['name'] . ' approved') ?>" data-reload><?= icon('checkmark') ?><span>Approve all remaining</span></button>
+                    data-param-action="approve_series" data-series-id="<?= (int)$seriesActive['id'] ?>"<?= $typeEff !== 'all' ? ' data-param-type="' . esc($typeEff) . '"' : '' ?>
+                    data-confirm="<?= esc('Approve all ' . $typePending . ' remaining ' . $typeNoun . ($typePending === 1 ? '' : 's') . ' in ' . $seriesActive['name'] . '?') ?>"
+                    data-toast="<?= esc($seriesActive['name'] . ($typeEff !== 'all' ? ' ' . $typeNoun . 's' : '') . ' approved') ?>" data-reload><?= icon('checkmark') ?><span>Approve all remaining</span></button>
           <?php endif; ?>
           <?php if ($isAdmin): // admin-only: never rendered for clients ?>
             <div class="as-menu" data-series-menu-root>
@@ -676,19 +739,19 @@ include __DIR__ . '/partials/layout-top.php';
     <?php endif; ?>
   <?php endif; ?>
 
-  <?php if (!$items): ?>
+  <?php if (!$items): $emptyNoun = $typeKey === 'videos' ? 'videos' : ($typeKey === 'photos' ? 'photos' : 'images'); ?>
     <div class="ui-empty as-empty">
       <?php if ($filter === 'pending'): ?>
-        <?= icon('checkmark', 'as-empty-icon') ?><p class="as-empty-title">All caught up</p><p>Nothing to review here right now.</p>
+        <?= icon('checkmark', 'as-empty-icon') ?><p class="as-empty-title">All caught up</p><p><?= $typeKey === 'videos' || $typeKey === 'photos' ? 'No ' . $emptyNoun . ' to review here right now.' : 'Nothing to review here right now.' ?></p>
       <?php elseif ($filter === 'approved'): ?>
-        <p>No approved images yet.</p>
+        <p>No approved <?= esc($emptyNoun) ?> yet.</p>
       <?php else: ?>
         <p>Nothing needs changes.</p>
       <?php endif; ?>
     </div>
   <?php else: ?>
     <div class="ui-grid as-grid" id="assetsGrid" role="list"
-         data-filter="<?= esc($filter) ?>" data-scope="<?= $collection ? 'tire' : 'library' ?>"<?= $seriesKey !== '' ? ' data-series="' . esc($seriesKey) . '"' : '' ?>
+         data-filter="<?= esc($filter) ?>" data-scope="<?= $collection ? 'tire' : 'library' ?>"<?= $seriesKey !== '' ? ' data-series="' . esc($seriesKey) . '"' : '' ?><?= $typeKey !== '' ? ' data-type="' . esc($typeKey) . '"' : '' ?>
          data-offset="<?= (int)$offset ?>" data-total="<?= (int)max($gridTotal, $offset + count($items)) ?>">
       <?php $total = max($gridTotal, $offset + count($items)); foreach ($items as $i => $it): ?>
         <?= assetsTileHtml($it, $offset + $i + 1, $total) ?>
@@ -759,7 +822,13 @@ if ($seriesOn && $collection) {
         'tireId'  => $itemId,
         'tireUrl' => clientUrl('assets.php', ['view' => 'collections', 'item' => $itemId]),
         'driveUrl' => $seriesActive && !empty($seriesActive['drive_url']) ? (string)$seriesActive['drive_url'] : null,   // the "Open in Google Drive" link (header button + viewer menu)
-        'list'    => array_map(static function ($sr) { return ['id' => (int)$sr['id'], 'name' => (string)$sr['name'], 'counts' => $sr['counts'] ?? [], 'drive_url' => !empty($sr['drive_url']) ? (string)$sr['drive_url'] : null]; }, $seriesList),
+        // Photos · Videos: the type the grid shows ('' = the plain list), its counts, and per-series video counts (switcher glyphs)
+        'type'       => $typeKey,
+        'typeCounts' => $showType ? $typeCounts : null,
+        'list'    => array_map(static function ($sr) use ($videoCounts) {
+            return ['id' => (int)$sr['id'], 'name' => (string)$sr['name'], 'counts' => $sr['counts'] ?? [], 'drive_url' => !empty($sr['drive_url']) ? (string)$sr['drive_url'] : null,
+                    'videos' => $videoCounts['series'][(int)$sr['id']] ?? ['pending' => 0, 'approved' => 0, 'denied' => 0, 'total' => 0]];
+        }, $seriesList),
     ];
 }
 $assetsConfig = [

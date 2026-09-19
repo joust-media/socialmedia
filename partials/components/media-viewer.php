@@ -13,7 +13,8 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
  *   ok, rolledBack, error}, 'viewer:navigate' {item, index}, 'viewer:close'.
  *
  * Toolbar = exactly three controls: Deny (red, secondary) · Approve (green,
- * primary, ~60% width) · More (Download for everyone; Replace, "Set as
+ * primary, ~60% width) · More (Download for everyone — a blob save for images,
+ * a direct `download` link for videos; Replace, "Set as
  * reference", "Manage in Studio" and "Delete image…" for admin — rendered here
  * only when the server says so; the two tire-only actions post set_reference /
  * delete_image to tire-status.php, which gates them again).
@@ -116,6 +117,8 @@ $viewerCommentsEndpoint = isset($viewerCommentsEndpoint) ? (string)$viewerCommen
 
   <div class="ui-viewer-menu" data-viewer-menu role="menu" hidden>
     <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-download><?= icon('download') ?>Download</button>
+    <?php // videos: a direct link (the browser streams it to disk — no blob copy of a multi-GB file in memory) ?>
+    <a class="ui-viewer-menu-item" role="menuitem" data-viewer-download-link href="#" download hidden><?= icon('download') ?>Download video</a>
     <a class="ui-viewer-menu-item" role="menuitem" data-viewer-drive href="#" target="_blank" rel="noopener noreferrer" hidden><?= icon('drive') ?>Open series in Google Drive</a>
     <?php if ($viewerAdmin): // admin-only: never rendered for clients ?>
       <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-replace data-tire-only><?= icon('photo') ?>Replace image…</button>

@@ -32,7 +32,8 @@
      App.video.clearCache()             remove every poster:* / nopos:* / duration:* key (sign-out)
      App.video.getDuration(url) / format(seconds)
      App.video.probe(url, cb)           duration (+ opportunistic poster) via a hidden probe; ≤ 12 per page,
-                                        never for .mov when canPlayType('video/quicktime') is empty
+                                        never for .mov when canPlayType('video/quicktime') is empty, never for a
+                                        [data-video-noprobe] tile (App.video.wake(tile) lifts that mark)
      App.video.insertStamp(form)        insert the current time into the composer
    Events (bubble from the container): 'video:fallback', 'video:poster' {url, poster},
      'video:duration' {url, seconds}, 'video:mute' {muted}.
@@ -234,6 +235,7 @@
       if (sources.length) sources[sources.length - 1].addEventListener('error', fail);
       var check = function () {
         if (box.classList.contains('is-fallback')) return;
+        if (!video.hasAttribute('src') && !$('source', video)) return;   // unloaded on purpose (the viewer released it) — not a decode failure
         if (video.error) { fail(); return; }
         // After the resource-selection algorithm, a video with no playable <source> sits at NETWORK_NO_SOURCE
         // with nothing loaded (Chrome/Firefox skip a type="video/quicktime" source without any event we may still catch).
@@ -336,11 +338,20 @@
       if (dur != null) V.applyDuration(url, dur);
       else if (badge) { var t = $('[data-video-duration-text]', badge); if (t) t.textContent = ''; }   // icon-only until known (never "--:--")
       // Probe once for a missing duration/poster — but not again for a URL that already yielded no poster,
-      // and never for a file the server says is very large (data-video-bytes): a tile is preload="none" in
-      // spirit — the play glyph stands in, the viewer's preload="metadata" fetches what it needs on open.
+      // never for a file the server says is very large (data-video-bytes), and never for a tile marked
+      // data-video-noprobe (series renders, collapsed pool videos): a tile is preload="none" in spirit —
+      // the play glyph stands in, the viewer's preload="metadata" fetches what it needs on open.
+      if (tile.hasAttribute('data-video-noprobe')) return;
       var bytes = parseInt(tile.getAttribute('data-video-bytes') || '0', 10) || 0;
       if (bytes > PROBE_MAX_BYTES) return;
       if (((dur == null && badge) || !poster) && !V.hasNoPoster(url)) V.probe(url);
+    },
+    /* Lift data-video-noprobe from a tile that just became visible (e.g. the pool's "Show N videos") and enhance it normally. */
+    wake: function (tile) {
+      if (!tile || !tile.hasAttribute('data-video-noprobe')) return;
+      tile.removeAttribute('data-video-noprobe');
+      tile.__videoThumb = false;
+      V.attachThumb(tile);
     },
 
     /* Hidden preload="metadata" probe, ≤ PROBE_MAX at a time and ≤ PROBE_PAGE_MAX per page. cb(seconds|null).

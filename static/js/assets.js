@@ -35,7 +35,11 @@
      Series (tire-series-lib.php): switcher pending badges follow decisions,
      admin "…" menu → Rename / Delete sheets posting series_rename /
      series_delete to tire-status.php; "Approve all remaining" is a plain
-     App.actions button (approve_series + reload).
+     App.actions button (approve_series [+ type] + reload).
+     Photos · Videos (AssetsPage.series.type): the grid holds ONE media type;
+     the control's counts follow decisions; video tiles are never probed
+     (data-video-noprobe) and the viewer unloads a video the moment you leave
+     it, so one <video> at most streams from the server.
 
    Loads with `defer` before app.js, so nothing here touches App.* until
    'app:ready' (or immediately if App has already initialised).
@@ -83,6 +87,7 @@
         more: $('[data-viewer-more]', root), menu: $('[data-viewer-menu]', root),
         note: $('[data-viewer-note]', root), noteInput: $('[data-viewer-note-input]', root),
         noteHint: $('[data-viewer-note-hint]', root), noteSend: $('[data-viewer-note-send]', root), noteCancel: $('[data-viewer-note-cancel]', root),
+        download: $('[data-viewer-download]', root), downloadLink: $('[data-viewer-download-link]', root),
         replace: $('[data-viewer-replace]', root), replaceInput: $('[data-viewer-replace-input]', root), manage: $('[data-viewer-manage]', root),
         setRef: $('[data-viewer-set-reference]', root), del: $('[data-viewer-delete]', root),
         comments: $('[data-viewer-comments]', root), commentsToggle: $('[data-viewer-comments-toggle]', root),
@@ -124,6 +129,7 @@
 
       // More menu
       $$('[data-viewer-download]', root).forEach(function (b) { b.addEventListener('click', function () { self.closeMenu(); self.download(); }); });
+      if (r.downloadLink) r.downloadLink.addEventListener('click', function () { self.closeMenu(); });   // videos: a plain <a download> — the browser streams the file
       if (r.replace && r.replaceInput) {
         r.replace.addEventListener('click', function () { self.closeMenu(); r.replaceInput.value = ''; r.replaceInput.click(); });
         r.replaceInput.addEventListener('change', function () { if (r.replaceInput.files && r.replaceInput.files[0]) self.replace(r.replaceInput.files[0]); });
@@ -264,9 +270,21 @@
       var im = new Image(); im.decoding = 'async'; im.src = it.src;
     },
 
+    /** Pause AND unload the current slide's video (src dropped, load() → the browser closes its connection):
+     *  at most one <video> holds a stream at any time — the one on screen. */
     _pauseVideo: function () {
       var m = this._slide && this._slide._media;
-      if (m && m.tagName === 'VIDEO') { try { m.pause(); } catch (e) {} }
+      if (m && m.tagName === 'VIDEO') {
+        try { m.pause(); } catch (e) {}
+        if (!this._slide._released) {
+          this._slide._released = true;
+          try {
+            m.removeAttribute('src');
+            $$('source', m).forEach(function (s) { s.removeAttribute('src'); m.removeChild(s); });
+            m.load();
+          } catch (e2) {}
+        }
+      }
     },
 
     /** Append items (e.g. the next page of a series) without touching the current slide. */
@@ -295,6 +313,13 @@
       if (r.prev) r.prev.disabled = !this.hasPrev();
       if (r.next) r.next.disabled = !this.hasNext();
       $$('[data-tire-only]', r.menu).forEach(function (el) { el.hidden = item.kind !== 'tire'; });
+      // Download: images go through the blob save (download()), videos through a direct <a download> link
+      if (r.downloadLink) {
+        var isVideo = item.type === 'video';
+        r.downloadLink.hidden = !isVideo;
+        if (isVideo) { r.downloadLink.href = item.src; r.downloadLink.setAttribute('download', item.download || 'video'); }
+        if (r.download) r.download.hidden = isVideo;
+      }
       if (r.manage) { r.manage.href = item.manage || '#'; if (!item.manage) r.manage.hidden = true; }
       if (r.setRef && item.kind === 'tire') r.setRef.hidden = item.type === 'video' || item.isReference === true;   // the reference header is an <img>
       this._setCommentCount(item, item.comments);
@@ -1143,6 +1168,12 @@
       if (to)   bump('[data-count="' + to + '"]', 1);
       var delta = (to === 'pending' ? 1 : 0) - (from === 'pending' ? 1 : 0);
       if (!delta) return;
+      // Photos · Videos control: its counts follow the status filter, so the active type moves with the filter chip
+      var type = this.grid && this.grid.dataset.type, filter = this.grid && this.grid.dataset.filter;
+      if (type === 'photos' || type === 'videos') {
+        var td = (to === filter ? 1 : 0) - (from === filter ? 1 : 0);
+        if (td) bump('[data-type-count="' + type + '"]', td);
+      }
       // Series switcher: the pending badge of the series the grid shows (hidden at 0)
       var key = this.grid && this.grid.dataset.series;
       if (key) {

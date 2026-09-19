@@ -17,6 +17,12 @@
  * optional Google Drive share link per series — the client's "Open in Google
  * Drive" button on the series header in Assets → Collections.
  *
+ * Media type: a render is a video when its image_url extension is in videoExts()
+ * (tireVideoSqlPredicate() in SQL, tireImageRowMeta() in PHP). tireSeriesTypeCounts()
+ * / tireSeriesVideoCounts() feed the Photos · Videos control in Assets, and
+ * tireImagesForSeries($opts['type']) pages one type at a time so a series full of
+ * multi-GB renders never puts every <video> on one page.
+ *
  * All functions are function_exists-guarded and do no work at load.
  * Contract: scratchpad/tire-series-design.md.
  */
@@ -534,6 +540,113 @@ if (!function_exists('tireSeriesCounts')) {
     }
 }
 
+// ---------------------------------------------------------------------
+// Media type (photos vs videos) — neither table has a media_type column, so
+// video-ness is the file extension (videoExts()), in SQL and in PHP alike.
+// ---------------------------------------------------------------------
+
+if (!function_exists('tireVideoSqlPredicate')) {
+    /**
+     * SQL predicate "<col> names a video": LOWER(SUBSTRING_INDEX(col,'.',-1)) IN ('mp4','webm','mov').
+     * $col is a trusted column reference (e.g. 'ti.image_url'); the list comes from videoExts().
+     */
+    function tireVideoSqlPredicate(string $col = 'ti.image_url'): string {
+        $exts = function_exists('videoExts') ? videoExts() : ['mp4', 'webm', 'mov'];
+        $list = [];
+        foreach ($exts as $e) { $e = preg_replace('/[^a-z0-9]/', '', strtolower((string)$e)); if ($e !== '') $list[] = "'" . $e . "'"; }
+        return "LOWER(SUBSTRING_INDEX(" . $col . ",'.',-1)) IN (" . implode(',', $list) . ")";
+    }
+}
+
+if (!function_exists('tireMediaTypeKey')) {
+    /** 'photos' | 'videos' | 'all' from user input ('' / unknown → $default). */
+    function tireMediaTypeKey($value, string $default = 'all'): string {
+        $v = strtolower(trim((string)$value));
+        return in_array($v, ['photos', 'videos', 'all'], true) ? $v : $default;
+    }
+}
+
+if (!function_exists('tireMediaTypeSql')) {
+    /** " AND <pred>" for videos, " AND NOT (<pred>)" for photos, '' for all — appended to a tire_images WHERE. */
+    function tireMediaTypeSql(string $type, string $col = 'ti.image_url'): string {
+        $type = tireMediaTypeKey($type);
+        if ($type === 'videos') return ' AND ' . tireVideoSqlPredicate($col);
+        if ($type === 'photos') return ' AND NOT (' . tireVideoSqlPredicate($col) . ')';
+        return '';
+    }
+}
+
+if (!function_exists('tireSeriesTypeCounts')) {
+    /**
+     * Status counts of one series (or the reference images when $seriesId is null) split by media type,
+     * from ONE grouped query: {photos: {pending, approved, denied, total}, videos: {…}}.
+     */
+    function tireSeriesTypeCounts(PDO $pdo, int $tireId, ?int $seriesId = null): array {
+        $zero = ['pending' => 0, 'approved' => 0, 'denied' => 0, 'total' => 0];
+        $out = ['photos' => $zero, 'videos' => $zero];
+        if ($tireId <= 0) return $out;
+        $withSeries = hasTireSeries($pdo);
+        if (!$withSeries && $seriesId !== null && $seriesId > 0) return $out;
+        $sql = "SELECT ti.status, SUM(CASE WHEN " . tireVideoSqlPredicate('ti.image_url') . " THEN 1 ELSE 0 END) AS videos, COUNT(*) AS n FROM tire_images ti WHERE ti.tire_id = ?";
+        $params = [$tireId];
+        if ($withSeries) {
+            if ($seriesId === null || $seriesId <= 0) { $sql .= " AND ti.series_id IS NULL"; }
+            else { $sql .= " AND ti.series_id = ?"; $params[] = $seriesId; }
+        }
+        $sql .= " GROUP BY ti.status";
+        try {
+            $s = $pdo->prepare($sql);
+            $s->execute($params);
+            $rows = $s->fetchAll();
+        } catch (Throwable $e) {
+            return $out;
+        }
+        foreach ((array)$rows as $r) {
+            $st = (string)($r['status'] ?? '');
+            $n = (int)($r['n'] ?? 0); $v = (int)($r['videos'] ?? 0); $p = max(0, $n - $v);
+            if (isset($out['photos'][$st])) { $out['photos'][$st] += $p; $out['videos'][$st] += $v; }
+            $out['photos']['total'] += $p; $out['videos']['total'] += $v;
+        }
+        return $out;
+    }
+}
+
+if (!function_exists('tireSeriesVideoCounts')) {
+    /**
+     * Video-only status counts of a whole tire in one GROUP BY (the series switcher's "3▶" glyphs):
+     * {reference: {pending, approved, denied, total}, series: {<id>: {…}}}. Same shape as tireSeriesCounts().
+     */
+    function tireSeriesVideoCounts(PDO $pdo, int $tireId): array {
+        $zero = ['pending' => 0, 'approved' => 0, 'denied' => 0, 'total' => 0];
+        $out = ['reference' => $zero, 'series' => []];
+        if ($tireId <= 0) return $out;
+        $withSeries = hasTireSeries($pdo);
+        $sel = $withSeries ? 'ti.series_id' : 'NULL AS series_id';
+        $grp = $withSeries ? 'ti.series_id, ti.status' : 'ti.status';
+        try {
+            $s = $pdo->prepare("SELECT {$sel}, ti.status, COUNT(*) AS n FROM tire_images ti WHERE ti.tire_id = ? AND " . tireVideoSqlPredicate('ti.image_url') . " GROUP BY {$grp}");
+            $s->execute([$tireId]);
+            $rows = $s->fetchAll();
+        } catch (Throwable $e) {
+            return $out;
+        }
+        foreach ((array)$rows as $r) {
+            $st = (string)($r['status'] ?? '');
+            $n  = (int)($r['n'] ?? 0);
+            $sid = isset($r['series_id']) && $r['series_id'] !== null ? (int)$r['series_id'] : 0;
+            if ($sid > 0) {
+                if (!isset($out['series'][$sid])) $out['series'][$sid] = $zero;
+                if (isset($out['series'][$sid][$st])) $out['series'][$sid][$st] += $n;
+                $out['series'][$sid]['total'] += $n;
+            } else {
+                if (isset($out['reference'][$st])) $out['reference'][$st] += $n;
+                $out['reference']['total'] += $n;
+            }
+        }
+        return $out;
+    }
+}
+
 if (!function_exists('tireSeriesForTire')) {
     /** All series of a tire, sort_order then name, each with counts (tireSeriesNormalizeRow shape). */
     function tireSeriesForTire(PDO $pdo, int $tireId): array {
@@ -783,9 +896,11 @@ if (!function_exists('tireImagesForSeries')) {
      * tire_images rows of one tire: $seriesId null → reference images
      * (series_id IS NULL), else that series. $opts: status, client (bool → AND
      * status <> 'denied'), limit, offset, company_id (tenant check through the
-     * tires JOIN). Each row = ti.* + tire_name + tireImageRowMeta() fields.
-     * Ordered sort_order ASC, id ASC. Without hasTireSeries() the series filter
-     * is dropped (every row is a reference row) and series_id reads null.
+     * tires JOIN), type ('photos' | 'videos' | 'all' — tireMediaTypeSql(), applied
+     * in SQL so limit/offset page the filtered list). Each row = ti.* + tire_name +
+     * tireImageRowMeta() fields. Ordered sort_order ASC, id ASC. Without
+     * hasTireSeries() the series filter is dropped (every row is a reference row)
+     * and series_id reads null.
      */
     function tireImagesForSeries(PDO $pdo, int $tireId, ?int $seriesId = null, array $opts = []): array {
         if ($tireId <= 0) return [];
@@ -803,6 +918,7 @@ if (!function_exists('tireImagesForSeries')) {
             if ($seriesId === null || $seriesId <= 0) { $sql .= " AND ti.series_id IS NULL"; }
             else { $sql .= " AND ti.series_id = ?"; $params[] = $seriesId; }
         }
+        if (isset($opts['type'])) { $sql .= tireMediaTypeSql((string)$opts['type'], 'ti.image_url'); }   // photos | videos (all = no clause)
         $sql .= " ORDER BY ti.sort_order ASC, ti.id ASC";
         $limit  = isset($opts['limit']) ? (int)$opts['limit'] : 0;
         $offset = isset($opts['offset']) ? max(0, (int)$opts['offset']) : 0;
