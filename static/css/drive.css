@@ -1,0 +1,363 @@
+/* =====================================================================
+   Drive — Google Drive storage view (drive.php + partials/components/drive-*.php)
+   Loads after tokens/base/components/motion. Tokens only; the treemap tiles
+   carry their own absolute fill + ink (computed server-side for ≥ 4.5:1 in
+   both themes — see drive-ui.php). Marks are thin, text wears label tokens,
+   only the data is coloured. --warning (tokens.css) = stale / running-out.
+   ===================================================================== */
+
+/* ---------------------------------------------------------------------
+   Toolbar, snapshot line, banner
+   --------------------------------------------------------------------- */
+.drive-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  margin: 4px 0 16px;
+}
+.drive-segmented { min-width: 240px; }
+.drive-snapline {
+  margin: 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote);
+  font-variant-numeric: tabular-nums;
+}
+.drive-banner {
+  margin: 0 0 16px; padding: 12px 16px;
+  border-radius: var(--radius-list);
+  background: var(--bg-elevated);
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead);
+  box-shadow: inset 3px 0 0 var(--warning);
+}
+.drive-banner strong { color: var(--warning); }
+
+/* Setup / empty states */
+.drive-setup { max-width: 640px; margin: 8px auto 0; padding: 20px; }
+.drive-setup .ui-card-title { margin-bottom: 4px; }
+.drive-setup-steps { margin: 12px 0; padding-left: 22px; font-size: var(--text-subhead); line-height: var(--lh-subhead); }
+.drive-setup-steps li + li { margin-top: 6px; }
+.drive-setup code, .drive-empty-client code, .ui-empty code {
+  font-family: var(--font-mono); font-size: var(--text-caption); padding: 1px 5px; border-radius: 5px; background: var(--fill-tertiary);
+}
+.drive-empty-client { padding: 24px 20px; text-align: center; }
+.drive-empty-client .ui-card-title { margin-bottom: 4px; }
+.drive-empty-client .ui-btn { margin-top: 12px; }
+
+/* ---------------------------------------------------------------------
+   Capacity strip — hero percent · segmented bar · legend | countdown
+   --------------------------------------------------------------------- */
+.drive-capacity {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px 28px; align-items: start;
+  margin: 0 0 20px; padding: 18px 20px 16px;
+  background: var(--bg-elevated); border-radius: var(--radius-card); box-shadow: var(--shadow-card);
+}
+@media (min-width: 720px) {
+  .drive-capacity { grid-template-columns: minmax(0, 1fr) minmax(200px, 260px); }
+}
+.drive-capacity-main { min-width: 0; }
+.drive-capacity-pct { margin: 0; display: flex; align-items: baseline; gap: 8px; }
+.drive-capacity-pct strong {
+  font-size: 56px; line-height: 60px; letter-spacing: -1.2px; font-weight: 700;
+}
+.drive-capacity--high .drive-capacity-pct strong, .drive-capacity--critical .drive-capacity-pct strong { color: var(--warning); }
+.drive-capacity-pct--nolimit strong { font-size: 40px; line-height: 46px; letter-spacing: -0.8px; }
+.drive-capacity-pct-sub { font-size: var(--text-headline); font-weight: 500; color: var(--label-secondary); }
+.drive-capacity-of {
+  margin: 2px 0 12px;
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead); color: var(--label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.drive-capacity-bar {
+  position: relative; display: flex; height: 16px; border-radius: 8px; overflow: visible;
+  background: var(--fill-tertiary);
+  margin: 0 0 22px;
+}
+.drive-capacity-seg {
+  display: block; height: 100%; min-width: 0;
+  border-right: 2px solid var(--bg-elevated);        /* the surface gap between segments */
+  background: var(--fill-tertiary);
+}
+.drive-capacity-seg:first-child { border-radius: 8px 0 0 8px; }
+.drive-capacity-seg:last-child  { border-right: 0; border-radius: 0 8px 8px 0; }
+.drive-capacity-seg:first-child:last-child { border-radius: 8px; }
+.drive-capacity-seg--drive { background: var(--accent); }
+.drive-capacity-seg--other { background: var(--scheduled); }
+.drive-capacity-seg--trash { background: var(--warning); }
+.drive-capacity-seg--free  { background: color-mix(in srgb, var(--accent) 10%, var(--fill-tertiary)); }
+.drive-capacity-tick {
+  position: absolute; top: -3px; bottom: -3px; width: 1px; margin-left: -0.5px;
+  background: var(--label-secondary); pointer-events: none;
+}
+.drive-capacity-tick i {
+  position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+  margin-top: 3px; font-style: normal; font-size: 10px; line-height: 12px; color: var(--label-tertiary); white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 479px) { .drive-capacity-tick i { display: none; } }   /* 80/90/95 labels collide on a phone; the ticks stay */
+.drive-legend {
+  display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; padding: 0; list-style: none;
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote); color: var(--label-secondary);
+}
+.drive-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.drive-legend b { font-weight: 600; color: var(--label); font-variant-numeric: tabular-nums; }
+.drive-legend-lead { font-weight: 600; color: var(--label-secondary); }
+.drive-swatch {
+  display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex: 0 0 auto;
+  background: var(--tile-bg, var(--fill-tertiary));
+}
+.drive-swatch--drive { background: var(--accent); }
+.drive-swatch--other { background: var(--scheduled); }
+.drive-swatch--trash { background: var(--warning); }
+.drive-swatch--free  { background: color-mix(in srgb, var(--accent) 10%, var(--fill-tertiary)); box-shadow: inset 0 0 0 0.5px var(--separator); }
+.drive-swatch--dashed { background: transparent; border: 1.5px dashed var(--label-secondary); }
+.drive-capacity-side { display: flex; flex-direction: column; gap: 6px; }
+@media (min-width: 720px) { .drive-capacity-side { padding: 6px 0 0 24px; box-shadow: inset 0.5px 0 0 var(--separator); min-height: 100%; } }
+.drive-countdown { margin: 0; display: flex; flex-direction: column; gap: 2px; }
+.drive-countdown strong {
+  font-size: var(--text-title2); line-height: var(--lh-title2); letter-spacing: var(--ls-title2); font-weight: var(--fw-title2);
+  color: var(--warning);
+}
+.drive-countdown--flat strong { color: var(--approve); }
+.drive-countdown--nohistory strong { color: var(--label-secondary); }
+.drive-quota-note { grid-column: 1 / -1; margin: 0; font-size: var(--text-caption); line-height: var(--lh-caption); }
+.drive-countdown span { font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary); }
+.drive-burn { margin: 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote); }
+.drive-burn b { font-weight: 600; color: var(--label); font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------------
+   Grids + cards
+   --------------------------------------------------------------------- */
+.drive-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; margin: 0 0 16px; }
+@media (min-width: 720px)  { .drive-grid--three { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1024px) {
+  .drive-grid--main  { grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); gap: 20px; }
+  .drive-grid--three { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+}
+.drive-card { min-width: 0; }
+.drive-card .ui-card-header { align-items: flex-start; margin-bottom: 12px; }
+.drive-card .ui-card-footer { justify-content: space-between; }
+.drive-card .ui-card-footer p { margin: 0; }
+
+/* ---------------------------------------------------------------------
+   Treemap (drive-treemap.php) — absolute tiles, % geometry, fixed aspect
+   --------------------------------------------------------------------- */
+.drive-treemap {
+  position: relative; width: 100%; aspect-ratio: var(--drive-aspect, 1.6);
+  border-radius: 10px; overflow: hidden; background: var(--fill-tertiary);
+}
+.drive-tile {
+  position: absolute; display: block; box-sizing: border-box; padding: 1px;   /* 2px surface gap between neighbours */
+  color: var(--tile-ink); text-decoration: none; overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+.drive-tile-in {
+  display: flex; flex-direction: column; gap: 1px; width: 100%; height: 100%;
+  padding: 8px 9px; border-radius: 6px; overflow: hidden;
+  background: var(--tile-bg); color: var(--tile-ink);
+  transition: filter var(--dur-fast) var(--ease-out);
+}
+a.drive-tile:hover .drive-tile-in { filter: brightness(1.06); }
+.drive-tile:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; border-radius: 8px; z-index: 2; }
+.drive-tile-name {
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead); font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.drive-tile-size { font-size: var(--text-footnote); line-height: var(--lh-footnote); opacity: .9; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.drive-tile-meta { margin-top: auto; font-size: var(--text-caption); line-height: var(--lh-caption); opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.drive-tile--lg .drive-tile-name { font-size: var(--text-headline); line-height: var(--lh-headline); letter-spacing: var(--ls-headline); }
+.drive-tile--md .drive-tile-in { padding: 6px 7px; }
+.drive-tile--sm .drive-tile-in { padding: 4px 6px; }
+.drive-tile--sm .drive-tile-name { font-size: var(--text-caption); line-height: var(--lh-caption); }
+.drive-tile--sm .drive-tile-size { font-size: 10px; line-height: 12px; }
+.drive-tile--xs .drive-tile-in { padding: 0; }
+.drive-tile--xs .drive-tile-name { display: none; }
+.drive-tile--dashed .drive-tile-in { border: 2px dashed color-mix(in srgb, var(--tile-ink) 55%, transparent); }
+.drive-tile--group .drive-tile-in { background-image: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--tile-ink) 10%, transparent) 6px 7px); }
+.drive-legend--tiles { margin-top: 10px; }
+.drive-smaller { margin-top: 10px; font-size: var(--text-footnote); line-height: var(--lh-footnote); }
+.drive-smaller summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+.drive-smaller-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.drive-smaller-list li a { display: flex; justify-content: space-between; gap: 12px; color: var(--label); }
+.drive-smaller-list li a:hover .drive-smaller-name { color: var(--accent); }
+.drive-smaller-size { color: var(--label-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Phone: the treemap gives way to plain bars */
+.drive-clientbars { display: none; }
+@media (max-width: 719px) {
+  .drive-treemap-wrap { display: none; }
+  .drive-clientbars { display: block; }
+  .drive-phone-hide { display: none !important; }
+}
+.drive-clientbars-more { margin: 8px 0 0; }
+
+/* ---------------------------------------------------------------------
+   Bars (drive-bars.php)
+   --------------------------------------------------------------------- */
+.drive-bars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.drive-bar { display: grid; grid-template-columns: minmax(84px, 120px) minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.drive-bar-label {
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.drive-bar-label a { color: var(--label); }
+.drive-bar-sub { color: var(--label-tertiary); font-size: var(--text-caption); }
+.drive-bar-track { display: block; height: 8px; border-radius: 4px; background: var(--fill-tertiary); overflow: hidden; }
+.drive-bar-fill { display: block; height: 100%; border-radius: 0 4px 4px 0; background: var(--accent); }
+.drive-bars--warning .drive-bar-fill { background: var(--warning); }
+.drive-bar-value {
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote); font-weight: 600;
+  font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; min-width: 64px;
+}
+
+/* ---------------------------------------------------------------------
+   Offboard top 5 (overview) + "See all"
+   --------------------------------------------------------------------- */
+.drive-top { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.drive-top-row { display: flex; align-items: center; gap: 12px; padding: 9px 0; }
+.drive-top-row + .drive-top-row { box-shadow: 0 -0.5px 0 var(--separator); }
+.drive-top-rank {
+  flex: 0 0 auto; width: 24px; height: 24px; border-radius: 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--fill-tertiary); color: var(--label-secondary);
+  font-size: var(--text-caption); font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.drive-top-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.drive-file-name {
+  display: block; font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead); font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.drive-file-path {
+  display: block; font-size: var(--text-caption); line-height: var(--lh-caption); color: var(--label-secondary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.drive-top-meta { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; font-variant-numeric: tabular-nums; }
+.drive-top-meta b { font-size: var(--text-subhead); font-weight: 600; }
+.drive-top-meta span { font-size: var(--text-caption); line-height: var(--lh-caption); color: var(--label-secondary); white-space: nowrap; }
+.drive-seeall {
+  display: inline-flex; align-items: center; gap: 4px; color: var(--accent); text-decoration: none;
+  font-size: var(--text-subhead); font-weight: 600;
+}
+.drive-seeall-chev { width: 14px; height: 14px; stroke-width: 2.4; }
+
+/* ---------------------------------------------------------------------
+   Trend line (drive-trendline.php) — inline SVG
+   --------------------------------------------------------------------- */
+.drive-trend { display: block; width: 100%; height: auto; overflow: visible; font-family: var(--font-sans); }
+.drive-trend-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.drive-trend-area { fill: var(--accent); fill-opacity: .1; stroke: none; }
+.drive-trend-proj { fill: none; stroke: var(--warning); stroke-width: 2; stroke-dasharray: 5 4; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.drive-trend-ref  { stroke: var(--separator); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.drive-trend-ref--limit { stroke: var(--label-tertiary); }
+.drive-trend-axis { stroke: var(--separator); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.drive-trend-dot  { fill: var(--accent); stroke: var(--bg-elevated); stroke-width: 2; }
+.drive-trend-full { fill: var(--warning); stroke: var(--bg-elevated); stroke-width: 2; }
+.drive-trend-lbl  { fill: var(--label-secondary); font-size: 10px; font-variant-numeric: tabular-nums; }
+.drive-trend-empty { margin: 12px 0; font-size: var(--text-subhead); }
+.drive-legend--trend { margin-top: 8px; }
+.drive-key { display: inline-block; width: 16px; height: 0; border-top: 2px solid var(--accent); border-radius: 2px; }
+.drive-key--proj { border-top-style: dashed; border-top-color: var(--warning); }
+.drive-key--ref  { border-top-width: 1px; border-top-color: var(--label-tertiary); }
+
+/* ---------------------------------------------------------------------
+   Quick wins
+   --------------------------------------------------------------------- */
+.drive-wins { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.drive-win { display: flex; flex-direction: column; gap: 2px; padding: 9px 0; }
+.drive-win + .drive-win { box-shadow: 0 -0.5px 0 var(--separator); }
+.drive-win-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.drive-win-label { font-size: var(--text-subhead); font-weight: 600; }
+.drive-win-size { font-size: var(--text-footnote); color: var(--label-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.drive-win-size b { font-weight: 600; color: var(--label); }
+.drive-win-why { font-size: var(--text-caption); line-height: var(--lh-caption); color: var(--label-secondary); }
+
+/* ---------------------------------------------------------------------
+   Client view — breadcrumb, stats, folder list
+   --------------------------------------------------------------------- */
+.drive-crumbs ol { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin: 0; padding: 0; list-style: none; font-size: var(--text-subhead); line-height: var(--lh-subhead); }
+.drive-crumbs li { display: inline-flex; align-items: center; gap: 2px; color: var(--label-secondary); }
+.drive-crumbs li + li::before { content: "›"; margin: 0 6px 0 4px; color: var(--label-tertiary); }
+.drive-crumbs li[aria-current="page"] span { color: var(--label); font-weight: 600; }
+.drive-crumbs a { color: var(--accent); }
+.drive-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0 0 16px; }
+@media (min-width: 720px) { .drive-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; } }
+.drive-stat {
+  display: flex; flex-direction: column; gap: 2px; padding: 14px 16px;
+  background: var(--bg-elevated); border-radius: var(--radius-list); box-shadow: var(--shadow-card);
+}
+.drive-stat-label { font-size: var(--text-footnote); line-height: var(--lh-footnote); font-weight: 600; color: var(--label-secondary); }
+.drive-stat-value { font-size: var(--text-title2); line-height: var(--lh-title2); letter-spacing: var(--ls-title2); font-weight: var(--fw-title2); }
+.drive-stat--warning .drive-stat-value { color: var(--warning); }
+.drive-stat-sub { font-size: var(--text-caption); line-height: var(--lh-caption); color: var(--label-tertiary); }
+.drive-folderlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.drive-folderlist-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto 14px; align-items: center; gap: 10px;
+  padding: 9px 0; color: var(--label); text-decoration: none;
+}
+.drive-folderlist li + li .drive-folderlist-row { box-shadow: 0 -0.5px 0 var(--separator); }
+.drive-folderlist-row:hover .drive-folderlist-name { color: var(--accent); }
+.drive-folderlist-name { font-size: var(--text-subhead); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drive-folderlist-idle { font-size: var(--text-caption); color: var(--label-secondary); white-space: nowrap; }
+.drive-folderlist-size { font-size: var(--text-subhead); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ---------------------------------------------------------------------
+   Tables (largest files, offboard list)
+   --------------------------------------------------------------------- */
+.drive-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 -4px; padding: 0 4px; }
+.drive-table { width: 100%; border-collapse: collapse; font-size: var(--text-subhead); line-height: var(--lh-subhead); }
+.drive-table th {
+  text-align: left; padding: 6px 8px; white-space: nowrap;
+  font-size: var(--text-footnote); font-weight: 600; text-transform: uppercase; letter-spacing: 0.2px; color: var(--label-secondary);
+  border-bottom: 1px solid var(--separator);
+}
+.drive-table td { padding: 8px; border-bottom: 0.5px solid var(--separator); vertical-align: middle; }
+.drive-table .drive-td-rank { width: 32px; color: var(--label-tertiary); font-variant-numeric: tabular-nums; }
+.drive-table .drive-td-file { min-width: 220px; max-width: 420px; }
+.drive-table .drive-td-file .drive-file-name, .drive-table .drive-td-file .drive-file-path { max-width: 420px; }
+.drive-table .drive-td-size { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.drive-table .drive-td-size .drive-sort { justify-content: flex-end; width: 100%; }
+.drive-table .drive-td-date { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.drive-file-idle { display: block; font-size: var(--text-caption); line-height: var(--lh-caption); color: var(--label-secondary); }
+.drive-table .drive-td-type, .drive-table .drive-td-client { white-space: nowrap; color: var(--label-secondary); }
+.drive-td-score { white-space: nowrap; }
+.drive-score { display: inline-block; vertical-align: middle; width: 56px; height: 6px; border-radius: 3px; background: var(--fill-tertiary); overflow: hidden; margin-right: 8px; }
+.drive-score i { display: block; height: 100%; border-radius: 0 3px 3px 0; background: var(--accent); }
+.drive-score-n { font-variant-numeric: tabular-nums; font-weight: 600; }
+.drive-td-open { text-align: right; white-space: nowrap; }
+.drive-sort {
+  display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; cursor: pointer;
+  font: inherit; text-transform: inherit; letter-spacing: inherit; color: inherit;
+}
+.drive-sort.is-active { color: var(--accent); }
+.drive-sort.is-active::after { content: "↓"; font-size: 11px; }
+.drive-sort.is-active[aria-sort="ascending"]::after { content: "↑"; }
+
+/* ---------------------------------------------------------------------
+   Offboard list — filters, pager, footer
+   --------------------------------------------------------------------- */
+.drive-offboard-intro { margin: 0 0 6px; font-size: var(--text-subhead); line-height: var(--lh-subhead); max-width: 720px; }
+.drive-offboard-summary { margin: 0 0 14px; font-size: var(--text-headline); line-height: var(--lh-headline); }
+.drive-offboard-summary strong { font-weight: 700; }
+.drive-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 18px; margin: 0 0 14px; }
+.drive-filter { display: flex; flex-direction: column; gap: 4px; }
+.drive-filter--client { min-width: 200px; }
+.drive-filter-label {
+  padding: 0 2px; font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: 0.2px;
+  font-weight: 600; text-transform: uppercase; color: var(--label-secondary);
+}
+.drive-filter .ui-select { min-height: 36px; padding: 6px 10px; font-size: var(--text-subhead); }
+.drive-filter-seg .ui-segmented-item { min-height: 32px; }
+.drive-table--offboard { background: var(--bg-elevated); border-radius: var(--radius-list); }
+.drive-table--offboard th:first-child, .drive-table--offboard td:first-child { padding-left: 14px; }
+.drive-table--offboard th:last-child, .drive-table--offboard td:last-child { padding-right: 14px; }
+.drive-table--offboard tr:last-child td { border-bottom: 0; }
+.drive-pager { display: flex; align-items: center; justify-content: center; gap: 14px; margin: 14px 0 0; }
+.drive-pager-status { font-size: var(--text-footnote); color: var(--label-secondary); font-variant-numeric: tabular-nums; }
+.drive-offboard-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 20px 0 0; }
+.drive-offboard-foot p { margin: 0; max-width: 620px; }
+[data-drive-nomatch][hidden] { display: none; }
+
+@media (max-width: 719px) {
+  .drive-table .drive-td-client, .drive-table .drive-td-type, .drive-table--offboard th:nth-child(3), .drive-table--offboard th:nth-child(4) { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .drive-tile-in { transition: none; }
+}
+@media (prefers-contrast: more) {
+  .drive-tile-in { box-shadow: inset 0 0 0 1px var(--label); }
+  .drive-capacity-seg { border-right-width: 2px; }
+}
