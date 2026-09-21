@@ -104,6 +104,56 @@ if (!function_exists('driveConfig')) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Host independence — shared hosting runs PHP as CGI / FastCGI / LSAPI / mod_php on whichever 8.x
+// cPanel selected, and each SAPI has its own idea of which functions exist and where Apache leaves
+// the request headers. Nothing below does work at load.
+// ---------------------------------------------------------------------------------------------
+
+if (!function_exists('array_is_list')) {
+    /** PHP 8.1 polyfill: true for [] and for arrays keyed 0, 1, 2 … in order. */
+    function array_is_list(array $array): bool {
+        $i = 0;
+        foreach ($array as $k => $_) {
+            if ($k !== $i++) return false;
+        }
+        return true;
+    }
+}
+
+if (!function_exists('requestHeader')) {
+    /**
+     * One request header ('Authorization', 'X-Drive-Secret', …) as a string, or null when absent.
+     * Looks where every SAPI puts it: $_SERVER['HTTP_<NAME>'] first; then REDIRECT_HTTP_<NAME>
+     * (Apache re-prefixes the variables it carries across an internal rewrite — the .php-stripping
+     * rule on the live host — and CGI / FastCGI setups only pass Authorization along that way, when
+     * they pass it at all); then getallheaders() / apache_request_headers(), but only where the SAPI
+     * defines them (mod_php, FPM, the CLI server — not plain CGI, where calling them is a fatal).
+     */
+    function requestHeader(string $name): ?string {
+        $key = strtoupper(str_replace('-', '_', trim($name)));
+        if ($key === '') return null;
+        foreach (['HTTP_' . $key, 'REDIRECT_HTTP_' . $key, 'REDIRECT_REDIRECT_HTTP_' . $key] as $k) {
+            if (isset($_SERVER[$k]) && is_string($_SERVER[$k]) && $_SERVER[$k] !== '') return $_SERVER[$k];
+        }
+        if (($key === 'CONTENT_TYPE' || $key === 'CONTENT_LENGTH') && isset($_SERVER[$key]) && (string)$_SERVER[$key] !== '') {
+            return (string)$_SERVER[$key];   // CGI passes these two without the HTTP_ prefix
+        }
+        $want = strtolower(trim($name));
+        foreach (['getallheaders', 'apache_request_headers'] as $fn) {
+            if (!function_exists($fn)) continue;
+            $all = @$fn();
+            if (is_array($all)) {
+                foreach ($all as $k => $v) {
+                    if (strtolower((string)$k) === $want && is_string($v) && $v !== '') return $v;
+                }
+            }
+            break;   // both names are the same function where they exist
+        }
+        return null;
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Pure helpers (no DB) — used by the ingest endpoint and by drive.php
 // ---------------------------------------------------------------------------------------------
 

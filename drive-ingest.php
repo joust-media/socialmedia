@@ -19,10 +19,16 @@
  *   POST ?part=alerted    {snapshot_id, kinds:['pct80', …]}                → {ok, recorded}
  *
  * Auth: `Authorization: Bearer <drive_ingest_secret>` (config.php) — or `X-Drive-Secret: <secret>` for hosts
- * that strip Authorization before PHP sees it — compared in constant time. No session, no same-site check.
+ * that strip Authorization before PHP sees it — compared in constant time. Headers are read through
+ * requestHeader() (drive-lib.php): $_SERVER HTTP_* / REDIRECT_HTTP_* first, getallheaders() only where the
+ * SAPI has it. No session, no same-site check: this file loads db.php + drive-lib.php only, never helpers.php
+ * (which resolves the admin session and the UI chrome at load).
  * JSON bodies only, DRIVE_MAX_BODY (8 MB) cap. Codes: 400 validation · 401 auth · 404 unknown snapshot ·
  * 405 method · 409 state (parts after finish, finish with parts missing) · 413 body · 503 not configured /
- * tables missing. Every part runs in one transaction. Idempotency: the body's sha256 (or the
+ * tables missing · 500 {ok:false, error:'server error'} for anything unexpected (logged via error_log; with
+ * `?debug=1` and a valid secret the reply also carries `detail` = "<class>: <message>" and `at` = file:line).
+ * A fatal anywhere — even inside an include — still answers that JSON: the shutdown handler below is
+ * registered before the first require. Every part runs in one transaction. Idempotency: the body's sha256 (or the
  * X-Drive-Part-Hash header) is recorded per part in drive_snapshots.part_hashes — a repeat answers
  * {ok:true, duplicate:true} and changes nothing; files / folders rows are also INSERT IGNOREd on their
  * (snapshot_id, id) unique key.
@@ -35,11 +41,77 @@
  * complete snapshots. Folder rollups, the client rollup and the tree are the script's (it sees every file).
  */
 
-require __DIR__ . '/db.php';
-require_once __DIR__ . '/helpers.php';
+// =====================================================================
+// 0. Fail-safe bootstrap — JSON no matter what happens below.
+//    Registered before any include, so a fatal inside db.php / drive-lib.php (or a PHP build that
+//    lacks a function we call) still answers {ok:false, error:'server error'} with HTTP 500 and a
+//    line in error_log, instead of the host's blank 500 page that tells the collector nothing.
+// =====================================================================
 
 header('Content-Type: application/json');
 header('Cache-Control: no-store');
+ini_set('display_errors', '0');      // never let a PHP diagnostic (HTML on most hosts) into the reply
+ini_set('html_errors', '0');
+error_reporting(E_ALL);
+ob_start();                           // whatever a notice or fatal managed to print is dropped by driveIngestEmit()
+
+/** The secret as presented (Bearer, else X-Drive-Secret), readable before drive-lib.php is loaded. */
+function driveIngestPresented(): string {
+    $read = static function (string $name): string {
+        if (function_exists('requestHeader')) return (string)(requestHeader($name) ?? '');
+        $k = strtoupper(str_replace('-', '_', $name));
+        return (string)($_SERVER['HTTP_' . $k] ?? $_SERVER['REDIRECT_HTTP_' . $k] ?? '');
+    };
+    if (preg_match('/^\s*Bearer\s+(\S+)\s*$/i', $read('Authorization'), $m)) return $m[1];
+    return trim($read('X-Drive-Secret'));
+}
+/** ?debug=1 together with a presented secret that matches config.php → error replies carry the detail. */
+function driveIngestDebug(): bool {
+    if (($_GET['debug'] ?? '') !== '1') return false;
+    $c = $GLOBALS['config'] ?? null;
+    if (!is_array($c)) {
+        $file = __DIR__ . '/config.php';
+        $c = is_file($file) ? (require $file) : [];
+        if (!is_array($c)) $c = [];
+    }
+    $secret = trim((string)($c['drive_ingest_secret'] ?? ''));
+    $given = driveIngestPresented();
+    return strlen($secret) >= 24 && $given !== '' && hash_equals($secret, $given);
+}
+/** Drop every output buffer and send exactly one JSON document with the given status. */
+function driveIngestEmit(int $code, array $payload): void {
+    while (ob_get_level() > 0) ob_end_clean();
+    if (!headers_sent()) {
+        http_response_code($code);
+        header('Content-Type: application/json');
+        header('Cache-Control: no-store');
+    }
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+}
+/** 500 for anything unexpected: rolled back, logged in full, generic to the caller unless debugging. */
+function driveIngestServerError(string $where, string $class, string $message, string $file, int $line): void {
+    $pdo = $GLOBALS['pdo'] ?? null;
+    if ($pdo instanceof PDO) { try { if ($pdo->inTransaction()) $pdo->rollBack(); } catch (Throwable $e) { /* connection closes anyway */ } }
+    error_log("drive-ingest {$where}: {$class}: {$message} in {$file}:{$line}");
+    $out = ['ok' => false, 'error' => 'server error'];
+    if (driveIngestDebug()) {
+        $out['detail'] = $class . ': ' . $message;
+        $out['at']     = basename($file) . ':' . $line;
+    }
+    driveIngestEmit(500, $out);
+}
+register_shutdown_function(static function (): void {
+    $e = error_get_last();
+    if ($e === null || !in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR, E_RECOVERABLE_ERROR], true)) return;
+    driveIngestServerError('fatal', 'Fatal', (string)$e['message'], (string)$e['file'], (int)$e['line']);
+});
+
+// The endpoint needs $pdo and the drive helpers, nothing else. helpers.php is deliberately not loaded:
+// it resolves the admin session at load (currentAdmin() → session_start when the jsm_admin cookie is
+// present), pulls in auth.php and the UI partials, and none of that belongs in a machine-auth JSON
+// endpoint. drive-lib.php is function definitions only.
+require __DIR__ . '/db.php';
+require_once __DIR__ . '/drive-lib.php';
 
 const DRIVE_INGEST_MAX_FILE_ROWS   = 2000;
 const DRIVE_INGEST_MAX_FOLDER_ROWS = 5000;
@@ -52,103 +124,103 @@ const DRIVE_INGEST_GROUP_MEMBERS   = 100;    // members stored per duplicate / o
 function driveFail(int $code, string $msg, array $extra = []): void {
     $pdo = $GLOBALS['pdo'] ?? null;
     if ($pdo instanceof PDO && $pdo->inTransaction()) { try { $pdo->rollBack(); } catch (Throwable $e) { /* connection closes anyway */ } }
-    http_response_code($code);
-    echo json_encode(['ok' => false, 'error' => $msg] + $extra, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    driveIngestEmit($code, ['ok' => false, 'error' => $msg] + $extra);
     exit;
 }
 function driveReply(array $data): void {
-    echo json_encode(['ok' => true] + $data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    driveIngestEmit(200, ['ok' => true] + $data);
     exit;
 }
 
-$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
-if ($method !== 'GET' && $method !== 'POST') {
-    driveFail(405, 'Method not allowed');
-}
-
-// ---- Auth: bearer secret from config.php, constant-time ----
-$cfg = driveConfig();
-if (!$cfg['configured']) {
-    driveFail(503, 'Drive ingest is not configured: set drive_ingest_secret (24+ characters) in config.php');
-}
-$presented = '';
-$authHeader = (string)($_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '');
-if ($authHeader === '' && function_exists('apache_request_headers')) {
-    foreach ((array)apache_request_headers() as $k => $v) {
-        if (strtolower((string)$k) === 'authorization') { $authHeader = (string)$v; break; }
+try {
+    $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+    if ($method !== 'GET' && $method !== 'POST') {
+        driveFail(405, 'Method not allowed');
     }
-}
-if (preg_match('/^\s*Bearer\s+(\S+)\s*$/i', $authHeader, $m)) {
-    $presented = $m[1];
-} elseif (isset($_SERVER['HTTP_X_DRIVE_SECRET'])) {
-    $presented = trim((string)$_SERVER['HTTP_X_DRIVE_SECRET']);
-}
-if ($presented === '' || !hash_equals($cfg['ingest_secret'], $presented)) {
-    driveFail(401, 'Unauthorized');
-}
 
-$migrated = hasDriveTables($pdo);
+    // ---- Auth: bearer secret from config.php, constant-time ----
+    $cfg = driveConfig();
+    if (!$cfg['configured']) {
+        driveFail(503, 'Drive ingest is not configured: set drive_ingest_secret (24+ characters) in config.php');
+    }
+    $presented = driveIngestPresented();
+    if ($presented === '' || !hash_equals($cfg['ingest_secret'], $presented)) {
+        driveFail(401, 'Unauthorized');
+    }
 
-// ---- Health (GET) ----
-if ($method === 'GET' && isset($_GET['health'])) {
-    // last_snapshot_* = the newest row of any status (so the script sees its own partial run);
-    // last_complete_* = the newest complete one (what drive.php shows); stale = that one is > 48 h old or missing.
-    $out = ['configured' => true, 'migrated' => $migrated, 'last_snapshot_at' => null, 'last_snapshot_id' => null, 'status' => null,
-            'last_complete_id' => null, 'last_complete_at' => null, 'stale' => true, 'partial_snapshot_id' => null];
-    if ($migrated) {
-        $latest = driveLatestSnapshot($pdo, false);
-        if ($latest !== null) {
-            $out['last_snapshot_at'] = $latest['taken_at'];
-            $out['last_snapshot_id'] = $latest['id'];
-            $out['status']           = $latest['status'];
+    // QA hook (never set in production): DRIVE_INGEST_TEST_FAIL=throw | fatal makes the request fail right
+    // here — after auth, so the 401 still wins — to prove the JSON 500 paths end to end. 'fatal' redeclares
+    // a function, an E_COMPILE_ERROR no catch block sees; only the shutdown handler above can answer it.
+    $hook = getenv('DRIVE_INGEST_TEST_FAIL');
+    if ($hook === 'throw') throw new RuntimeException('test hook: thrown after auth');
+    if ($hook === 'fatal') eval('function driveFail() {}');
+
+    $migrated = hasDriveTables($pdo);
+
+    // ---- Health (GET) ----
+    if ($method === 'GET' && isset($_GET['health'])) {
+        // last_snapshot_* = the newest row of any status (so the script sees its own partial run);
+        // last_complete_* = the newest complete one (what drive.php shows); stale = that one is > 48 h old or missing.
+        $out = ['configured' => true, 'migrated' => $migrated, 'last_snapshot_at' => null, 'last_snapshot_id' => null, 'status' => null,
+                'last_complete_id' => null, 'last_complete_at' => null, 'stale' => true, 'partial_snapshot_id' => null];
+        if ($migrated) {
+            $latest = driveLatestSnapshot($pdo, false);
+            if ($latest !== null) {
+                $out['last_snapshot_at'] = $latest['taken_at'];
+                $out['last_snapshot_id'] = $latest['id'];
+                $out['status']           = $latest['status'];
+            }
+            $complete = $latest !== null && $latest['status'] === 'complete' ? $latest : driveLatestSnapshot($pdo, true);
+            if ($complete !== null) {
+                $out['last_complete_id'] = $complete['id'];
+                $out['last_complete_at'] = $complete['taken_at'];
+                $out['stale']            = driveSnapshotIsStale($complete);
+            }
+            $p = $pdo->prepare("SELECT id FROM drive_snapshots WHERE status = 'partial' ORDER BY id DESC LIMIT 1");
+            $p->execute();
+            $pid = $p->fetchColumn();
+            $out['partial_snapshot_id'] = $pid ? (int)$pid : null;
         }
-        $complete = $latest !== null && $latest['status'] === 'complete' ? $latest : driveLatestSnapshot($pdo, true);
-        if ($complete !== null) {
-            $out['last_complete_id'] = $complete['id'];
-            $out['last_complete_at'] = $complete['taken_at'];
-            $out['stale']            = driveSnapshotIsStale($complete);
+        driveReply($out);
+    }
+
+    if (!$migrated) {
+        driveFail(503, 'Drive tables are missing: open migrate.php while signed in as admin');
+    }
+
+    $part = is_string($_GET['part'] ?? null) ? trim($_GET['part']) : '';
+    $parts = ['begin', 'files', 'folders', 'clients', 'tree', 'quickwins', 'state', 'finish', 'alerted'];
+    if (!in_array($part, $parts, true)) {
+        driveFail(400, 'Unknown part');
+    }
+    if ($method === 'GET' && $part !== 'state') {
+        driveFail(405, 'Method not allowed');
+    }
+
+    // ---- Body: a JSON object, bounded ----
+    $in = [];
+    $bodyHash = '';
+    if ($method === 'POST') {
+        $declared = (int)($_SERVER['CONTENT_LENGTH'] ?? requestHeader('Content-Length') ?? 0);
+        if ($declared > DRIVE_MAX_BODY) {
+            driveFail(413, 'Request body is too large (max ' . driveFormatBytes(DRIVE_MAX_BODY) . ')');
         }
-        $p = $pdo->prepare("SELECT id FROM drive_snapshots WHERE status = 'partial' ORDER BY id DESC LIMIT 1");
-        $p->execute();
-        $pid = $p->fetchColumn();
-        $out['partial_snapshot_id'] = $pid ? (int)$pid : null;
+        $raw = (string)file_get_contents('php://input', false, null, 0, DRIVE_MAX_BODY + 1);
+        if (strlen($raw) > DRIVE_MAX_BODY) {
+            driveFail(413, 'Request body is too large (max ' . driveFormatBytes(DRIVE_MAX_BODY) . ')');
+        }
+        $decoded = json_decode($raw, true, 64);
+        if (!is_array($decoded) || array_is_list($decoded)) {
+            driveFail(400, 'Invalid JSON body (expected an object)');
+        }
+        $in = $decoded;
+        $hdr = strtolower(trim((string)(requestHeader('X-Drive-Part-Hash') ?? '')));
+        $bodyHash = preg_match('/^[a-f0-9]{64}$/', $hdr) ? $hdr : hash('sha256', $raw);
+        unset($raw);
     }
-    driveReply($out);
-}
-
-if (!$migrated) {
-    driveFail(503, 'Drive tables are missing: open migrate.php while signed in as admin');
-}
-
-$part = is_string($_GET['part'] ?? null) ? trim($_GET['part']) : '';
-$parts = ['begin', 'files', 'folders', 'clients', 'tree', 'quickwins', 'state', 'finish', 'alerted'];
-if (!in_array($part, $parts, true)) {
-    driveFail(400, 'Unknown part');
-}
-if ($method === 'GET' && $part !== 'state') {
-    driveFail(405, 'Method not allowed');
-}
-
-// ---- Body: a JSON object, bounded ----
-$in = [];
-$bodyHash = '';
-if ($method === 'POST') {
-    $declared = (int)($_SERVER['CONTENT_LENGTH'] ?? $_SERVER['HTTP_CONTENT_LENGTH'] ?? 0);
-    if ($declared > DRIVE_MAX_BODY) {
-        driveFail(413, 'Request body is too large (max ' . driveFormatBytes(DRIVE_MAX_BODY) . ')');
-    }
-    $raw = (string)file_get_contents('php://input', false, null, 0, DRIVE_MAX_BODY + 1);
-    if (strlen($raw) > DRIVE_MAX_BODY) {
-        driveFail(413, 'Request body is too large (max ' . driveFormatBytes(DRIVE_MAX_BODY) . ')');
-    }
-    $decoded = json_decode($raw, true, 64);
-    if (!is_array($decoded) || array_is_list($decoded)) {
-        driveFail(400, 'Invalid JSON body (expected an object)');
-    }
-    $in = $decoded;
-    $hdr = strtolower(trim((string)($_SERVER['HTTP_X_DRIVE_PART_HASH'] ?? '')));
-    $bodyHash = preg_match('/^[a-f0-9]{64}$/', $hdr) ? $hdr : hash('sha256', $raw);
-    unset($raw);
+} catch (Throwable $e) {
+    driveIngestServerError('request', get_class($e), $e->getMessage(), $e->getFile(), $e->getLine());
+    exit;
 }
 
 // =====================================================================
@@ -792,7 +864,6 @@ try {
 
     driveFail(400, 'Unknown part');
 } catch (Throwable $e) {
-    if ($pdo->inTransaction()) $pdo->rollBack();
-    error_log('drive-ingest ' . $part . ': ' . $e->getMessage());
-    driveFail(500, 'Server error');
+    driveIngestServerError('part=' . $part, get_class($e), $e->getMessage(), $e->getFile(), $e->getLine());
+    exit;
 }
