@@ -372,6 +372,12 @@ reads only from the `drive_*` tables (`migrate.php` steps 30–34; helpers in `d
   the extensionless address directly (no `-L` needed then) and set the script's `PORTAL_INGEST_URL`
   to `https://joustmedia.com/portal/drive-ingest` — the script refuses redirects on purpose and
   reports the `Location` it was given.
+  Without a secret the reply is a `401` JSON, with the wrong one too; `503` means `config.php` has no
+  `drive_ingest_secret` yet. Apache strips `Authorization` for CGI / FastCGI PHP on many shared hosts —
+  if the bearer form keeps answering 401, send `-H "X-Drive-Secret: <secret>"` instead (the collector
+  always sends both). Anything unexpected answers `500 {"ok":false,"error":"server error"}` (never the
+  host's blank error page) and writes the cause to the portal's `error_log`; append `&debug=1` to the
+  health URL, with a valid secret, to get `detail` (class + message) and `at` (file:line) in the reply.
 - **Parts protocol** (`drive-ingest.php`, bearer only — no session, no CSRF token; JSON in, JSON out):
   `POST ?part=begin` (quota from `Drive.About`) → `?part=files` (≤ 2,000 rows per request, every owned
   non-trashed file that uses quota) → `?part=folders` (≤ 5,000) → `?part=clients` → `?part=tree` (≤ 4 MB)
