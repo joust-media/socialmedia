@@ -1196,6 +1196,152 @@ try {
             $steps[] = "• tire_series.drive_url already exists — skipped.";
         }
     }
+
+    // 30–34. Google Drive storage view (drive.php + drive-ingest.php; helpers in drive-lib.php).
+    //     A nightly Apps Script (docs/drive-collector/) posts one snapshot of the agency Drive in
+    //     parts; the portal only ever reads these tables. drive_snapshots rows are kept forever
+    //     (the usage history); folder / file / quick-win detail is pruned to the newest 7 complete
+    //     snapshots by the ingest endpoint. hasDriveTables() gates every read until this has run.
+    // 30. drive_snapshots — one row per collector run (quota numbers + the JSON rollups)
+    if (!tableExists($pdo, 'drive_snapshots')) {
+        $pdo->exec("
+            CREATE TABLE drive_snapshots (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                taken_at DATETIME NOT NULL,
+                status ENUM('partial','complete','failed') NOT NULL DEFAULT 'partial',
+                quota_limit BIGINT UNSIGNED NULL DEFAULT NULL,
+                usage_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                drive_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                trash_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                other_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                quota_note VARCHAR(255) NULL DEFAULT NULL,
+                account_email VARCHAR(255) NULL DEFAULT NULL,
+                script_version VARCHAR(40) NULL DEFAULT NULL,
+                file_count INT UNSIGNED NOT NULL DEFAULT 0,
+                folder_count INT UNSIGNED NOT NULL DEFAULT 0,
+                candidate_count INT UNSIGNED NOT NULL DEFAULT 0,
+                listed_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                burn_rate_per_day BIGINT NULL DEFAULT NULL,
+                days_to_full INT UNSIGNED NULL DEFAULT NULL,
+                basis_days SMALLINT UNSIGNED NULL DEFAULT NULL,
+                clients_json MEDIUMTEXT NULL,
+                tree_json MEDIUMTEXT NULL,
+                by_type_json TEXT NULL,
+                quick_wins_json TEXT NULL,
+                state_json MEDIUMTEXT NULL,
+                part_hashes TEXT NULL,
+                duration_ms INT UNSIGNED NULL DEFAULT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                finished_at DATETIME NULL DEFAULT NULL,
+                KEY ix_taken (taken_at),
+                KEY ix_status_taken (status, taken_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `drive_snapshots` table.";
+    } else {
+        $steps[] = "• `drive_snapshots` already exists — skipped.";
+    }
+
+    // 31. drive_folders — every owned folder with the collector's rollups (bytes, stale bytes, …)
+    if (!tableExists($pdo, 'drive_folders')) {
+        $pdo->exec("
+            CREATE TABLE drive_folders (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                snapshot_id INT UNSIGNED NOT NULL,
+                folder_id VARCHAR(64) NOT NULL,
+                parent_id VARCHAR(64) NULL DEFAULT NULL,
+                name VARCHAR(255) NOT NULL DEFAULT '',
+                path VARCHAR(1024) NOT NULL DEFAULT '',
+                depth SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+                client_slug VARCHAR(120) NULL DEFAULT NULL,
+                bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                stale_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                file_count INT UNSIGNED NOT NULL DEFAULT 0,
+                last_activity_at DATETIME NULL DEFAULT NULL,
+                web_link VARCHAR(255) NULL DEFAULT NULL,
+                UNIQUE KEY uq_snapshot_folder (snapshot_id, folder_id),
+                KEY ix_snapshot_client (snapshot_id, client_slug),
+                KEY ix_snapshot_parent (snapshot_id, parent_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `drive_folders` table.";
+    } else {
+        $steps[] = "• `drive_folders` already exists — skipped.";
+    }
+
+    // 32. drive_files — the files worth keeping per snapshot (offboard candidates + the largest)
+    if (!tableExists($pdo, 'drive_files')) {
+        $pdo->exec("
+            CREATE TABLE drive_files (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                snapshot_id INT UNSIGNED NOT NULL,
+                file_id VARCHAR(64) NOT NULL,
+                name VARCHAR(255) NOT NULL DEFAULT '',
+                mime_type VARCHAR(120) NOT NULL DEFAULT '',
+                path VARCHAR(1024) NULL DEFAULT NULL,
+                parent_id VARCHAR(64) NULL DEFAULT NULL,
+                client_slug VARCHAR(120) NULL DEFAULT NULL,
+                type_bucket VARCHAR(16) NOT NULL DEFAULT 'Other',
+                bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                modified_at DATETIME NULL DEFAULT NULL,
+                viewed_at DATETIME NULL DEFAULT NULL,
+                created_at_drive DATETIME NULL DEFAULT NULL,
+                idle_days INT UNSIGNED NOT NULL DEFAULT 0,
+                raw_score BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                score TINYINT UNSIGNED NOT NULL DEFAULT 0,
+                is_candidate TINYINT(1) NOT NULL DEFAULT 0,
+                md5 CHAR(32) NULL DEFAULT NULL,
+                web_link VARCHAR(255) NULL DEFAULT NULL,
+                UNIQUE KEY uq_snapshot_file (snapshot_id, file_id),
+                KEY ix_snapshot_client (snapshot_id, client_slug),
+                KEY ix_snapshot_candidate (snapshot_id, is_candidate, score),
+                KEY ix_snapshot_bytes (snapshot_id, bytes)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `drive_files` table.";
+    } else {
+        $steps[] = "• `drive_files` already exists — skipped.";
+    }
+
+    // 33. drive_quick_wins — duplicate / old-version groups the server found in a snapshot
+    if (!tableExists($pdo, 'drive_quick_wins')) {
+        $pdo->exec("
+            CREATE TABLE drive_quick_wins (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                snapshot_id INT UNSIGNED NOT NULL,
+                kind ENUM('duplicate','old_version') NOT NULL,
+                group_key VARCHAR(80) NOT NULL DEFAULT '',
+                name VARCHAR(255) NOT NULL DEFAULT '',
+                path VARCHAR(1024) NULL DEFAULT NULL,
+                client_slug VARCHAR(120) NULL DEFAULT NULL,
+                file_count INT UNSIGNED NOT NULL DEFAULT 0,
+                bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                reclaimable_bytes BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                files_json TEXT NULL,
+                KEY ix_snapshot_kind (snapshot_id, kind, reclaimable_bytes)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `drive_quick_wins` table.";
+    } else {
+        $steps[] = "• `drive_quick_wins` already exists — skipped.";
+    }
+
+    // 34. drive_alerts — one row per threshold email actually sent (80 / 90 / 95 %, < 14 days to full),
+    //     so a crossing is mailed once even when the collector re-runs finish.
+    if (!tableExists($pdo, 'drive_alerts')) {
+        $pdo->exec("
+            CREATE TABLE drive_alerts (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                snapshot_id INT UNSIGNED NOT NULL,
+                kind ENUM('pct80','pct90','pct95','days14') NOT NULL,
+                sent_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_snapshot_kind (snapshot_id, kind)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `drive_alerts` table.";
+    } else {
+        $steps[] = "• `drive_alerts` already exists — skipped.";
+    }
 } catch (Exception $e) {
     $errors[] = $e->getMessage();
 }

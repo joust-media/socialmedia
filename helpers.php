@@ -1134,6 +1134,8 @@ function actionLabel($action) {
         'set_reference'        => 'made the reference image',
         'drive_linked'         => 'linked a Google Drive folder to',
         'drive_unlinked'       => 'removed the Google Drive link from',
+        // Drive storage view (entity_type = 'drive_snapshot', nightly collector)
+        'snapshot'             => 'took a storage snapshot of',
     ];
     return $map[$action] ?? str_replace('_', ' ', $action);
 }
@@ -1218,6 +1220,10 @@ function activityLink($entry) {
             $params = array_merge($clientPair, ['view' => 'collections']);
             if ($tireId > 0) { $params['item'] = $tireId; $params['series'] = (int)$entry['entity_id']; }
             return pagePath('assets') . '?' . http_build_query($params);
+
+        case 'drive_snapshot':
+            // The Drive storage view (admin-only, unscoped) at that snapshot.
+            return pagePath('drive') . '?' . http_build_query(['snapshot' => (int)$entry['entity_id']]);
 
         default:
             return pagePath('admin') . ($clientPair ? '?' . http_build_query($clientPair) : '');
@@ -1320,6 +1326,13 @@ if (!function_exists('activityParentName')) {
                 // Studio → Clients: the company row itself (created / updated / logo_changed).
                 return ['thing' => 'client', 'name' => $firstLine($entry['company_name'] ?? '', 80),
                         'parent' => '', 'parent_key' => 'company:' . $id];
+            case 'drive_snapshot':
+                // Nightly Drive snapshot: the stats live in our own generated summary ("Drive snapshot: 71% used, 12 candidates").
+                $stats = '';
+                foreach ((array)($entry['summaries'] ?? []) as $sum) {
+                    if (preg_match('/^Drive snapshot: (.{1,120})$/u', trim((string)$sum), $m)) { $stats = $m[1]; break; }
+                }
+                return ['thing' => 'drive', 'name' => $stats, 'parent' => '', 'parent_key' => 'drive:' . $id];
             default:
                 return ['thing' => 'item', 'name' => '', 'parent' => '',
                         'parent_key' => (string)($entry['entity_type'] ?? 'item') . ':' . $id];
@@ -1375,6 +1388,9 @@ if (!function_exists('activityDeepLink')) {
             case 'company':
                 // Studio → Clients with this client's card open (admin only; a client never sees company rows link there).
                 return clientUrl('studio', $qs + ['tab' => 'clients', 'edit' => $id]);
+            case 'drive_snapshot':
+                // The Drive storage view (admin-only, unscoped — never carries a client).
+                return pagePath('drive') . '?' . http_build_query(['snapshot' => $id]);
             default:
                 return clientUrl('index.php', $qs);
         }
@@ -1581,6 +1597,9 @@ if (!function_exists('activityFinalizeRows')) {
                     if (!$many && $r['name'] !== '') { $objT = 'the client ' . $r['name']; $objH = 'the client <em>' . $h($r['name']) . '</em>'; }
                     else                             { $objT = $objH = $many ? $n . ' clients' : 'a client'; }
                     break;
+                case 'drive':
+                    $objT = $objH = 'Google Drive';
+                    break;
                 default:
                     $objT = $objH = $many ? $n . ' items' : 'an item';
             }
@@ -1721,6 +1740,14 @@ if (!function_exists('activityFinalizeRows')) {
                 case 'updated':
                     $verb = 'updated'; $icon = 'ellipsis'; $tone = 'neutral';
                     $t = "$who updated $objT"; $hh = "$whoH updated $objH"; break;
+                // Drive storage view (entity_type = 'drive_snapshot'): an automated nightly row, so no actor in the sentence.
+                case 'snapshot':
+                    $verb = 'took a storage snapshot'; $icon = 'drive'; $tone = 'neutral';
+                    $stats = $r['name'] !== '' ? $r['name'] : '';
+                    if (preg_match('/^(\d+)% used/', $stats, $pm) && (int)$pm[1] >= 90) $tone = 'deny';
+                    $t  = 'Drive snapshot' . ($stats !== '' ? ' — ' . $stats : '');
+                    $hh = 'Drive snapshot' . ($stats !== '' ? ' — <em>' . $h($stats) . '</em>' : '');
+                    break;
                 default:
                     if (strpos($a, 'edited_') === 0 || strpos($a, 'renamed_') === 0 || $a === 'type_changed') {
                         $verb = 'updated'; $icon = 'ellipsis'; $tone = 'neutral';
@@ -2046,3 +2073,7 @@ require_once __DIR__ . '/tire-series-lib.php';
 // Emails module helpers (hasEmailsTable, companyHasEmails, emailsForCompany, …).
 // Function definitions only — no DB work at load; see scratchpad emails-design.md.
 require_once __DIR__ . '/emails-lib.php';
+
+// Google Drive storage view (hasDriveTables, driveLatestSnapshot, driveClients, driveCandidates, …).
+// Function definitions only — no DB work at load; see scratchpad drive-design.md.
+require_once __DIR__ . '/drive-lib.php';
