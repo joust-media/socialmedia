@@ -741,7 +741,7 @@
   /* App.pageForm — add-page.php: slug auto-fill, source chips, Live guard */
   /* ================================================================== */
   function slugify(s) {
-    return String(s || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    return String(s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
       .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120).replace(/-+$/, '');
   }
   App.pageForm = {
