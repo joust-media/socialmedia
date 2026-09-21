@@ -70,6 +70,8 @@ $joustLogo = $brandUrl('joust.png');
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<?php // Appearance boot — a copy of themeBootScript() (helpers.php): the stored Light/Dark choice before first paint. ?>
+<script data-theme-boot>(function(){var d=document.documentElement;if(d.hasAttribute("data-theme")){d.setAttribute("data-theme-pinned","");return;}try{var t=localStorage.getItem("portal.theme");if(t==="light"||t==="dark"){d.setAttribute("data-theme",t);var c=t==="dark"?"#000000":"#F2F2F7",m=document.querySelectorAll('meta[name="theme-color"]');for(var i=0;i<m.length;i++)m[i].setAttribute("content",c);}}catch(e){}})();</script>
 <title>Sign in — Joust Admin</title>
 <?php if ($brandUrl('joust-32.png') !== ''): ?><link rel="icon" type="image/png" sizes="32x32" href="<?= h($brandUrl('joust-32.png')) ?>">
 <?php endif; ?><?php if ($joustLogo !== ''): ?><link rel="icon" type="image/png" sizes="512x512" href="<?= h($joustLogo) ?>">
@@ -143,10 +145,67 @@ $joustLogo = $brandUrl('joust.png');
     box-shadow: inset 0 0.5px 0 var(--separator);
     font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary);
   }
-  @media (prefers-reduced-motion: reduce) { button[type="submit"]:active { transform: none; } }
+  /* Appearance toggle (same button as the portal nav bar; components.css is not loaded here) */
+  .theme-toggle {
+    position: fixed; top: max(14px, env(safe-area-inset-top)); right: max(14px, env(safe-area-inset-right)); z-index: 10;
+    width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--fill-tertiary); color: var(--label); cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .theme-toggle svg { display: none; width: 20px; height: 20px; }
+  html:not([data-theme]) .theme-toggle .ui-icon--sun-moon,
+  html[data-theme="light"] .theme-toggle .ui-icon--sun,
+  html[data-theme="dark"]  .theme-toggle .ui-icon--moon { display: block; }
+  .theme-toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 8px);
+    padding: 10px 16px; border-radius: var(--radius-pill);
+    background: var(--label); color: var(--bg-elevated);
+    font-size: var(--text-subhead); font-weight: 600; letter-spacing: var(--ls-subhead);
+    opacity: 0; pointer-events: none; transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
+  }
+  .theme-toast.is-visible { opacity: 1; transform: translate(-50%, 0); }
+  @media (prefers-reduced-motion: reduce) { button[type="submit"]:active { transform: none; } .theme-toast { transition: none; } }
 </style>
 </head>
 <body>
+<button type="button" class="theme-toggle" data-theme-toggle aria-label="Appearance" title="Appearance: Light, Dark or Auto">
+  <svg class="ui-icon ui-icon--sun" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2.6v2.3M12 19.1v2.3M2.6 12h2.3M19.1 12h2.3M5.35 5.35l1.65 1.65M17 17l1.65 1.65M5.35 18.65 7 17M17 7l1.65-1.65"/></svg>
+  <svg class="ui-icon ui-icon--moon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.3 14.4A8.4 8.4 0 0 1 9.6 3.7a8.4 8.4 0 1 0 10.7 10.7Z"/></svg>
+  <svg class="ui-icon ui-icon--sun-moon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.4"/><path d="M12 3.6a8.4 8.4 0 0 0 0 16.8Z" fill="currentColor" stroke="none"/></svg>
+</button>
+<div class="theme-toast" id="themeToast" role="status" aria-live="polite"></div>
+<script>
+  // Light → Dark → Auto, persisted the same way as App.theme (app.js) so the portal follows.
+  (function () {
+    var KEY = 'portal.theme', order = ['light', 'dark', 'auto'], word = { light: 'Light', dark: 'Dark', auto: 'Auto' };
+    var labels = { light: 'Light mode', dark: 'Dark mode', auto: 'Auto (follows your device)' };
+    var colors = { light: '#F2F2F7', dark: '#000000' };
+    var btn = document.querySelector('[data-theme-toggle]'), toast = document.getElementById('themeToast'), timer = null;
+    function get() { var t = null; try { t = localStorage.getItem(KEY); } catch (e) {} return (t === 'light' || t === 'dark') ? t : 'auto'; }
+    function apply() {
+      var mode = get(), root = document.documentElement, next = order[(order.indexOf(mode) + 1) % order.length];
+      if (mode === 'auto') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', mode);
+      Array.prototype.forEach.call(document.querySelectorAll('meta[name="theme-color"]'), function (m) {
+        if (mode === 'auto') m.setAttribute('content', (m.getAttribute('media') || '').indexOf('dark') >= 0 ? colors.dark : colors.light);
+        else m.setAttribute('content', colors[mode]);
+      });
+      btn.setAttribute('aria-label', 'Appearance: ' + labels[mode] + '. Switch to ' + word[next].toLowerCase());
+      btn.setAttribute('title', 'Appearance: ' + word[mode] + ' — click for ' + word[next]);
+      btn.setAttribute('data-theme-state', mode);
+    }
+    btn.addEventListener('click', function () {
+      var mode = order[(order.indexOf(get()) + 1) % order.length];
+      try { if (mode === 'auto') localStorage.removeItem(KEY); else localStorage.setItem(KEY, mode); } catch (e) {}
+      apply();
+      toast.textContent = labels[mode];
+      toast.classList.remove('is-visible'); void toast.offsetWidth; toast.classList.add('is-visible');
+      clearTimeout(timer); timer = setTimeout(function () { toast.classList.remove('is-visible'); }, 2200);
+    });
+    apply();
+  })();
+</script>
 <div class="wrap">
   <form class="card" method="POST" action="<?= h($base . '/login' . $ext . ($returnRaw ? '?return=' . urlencode($returnUrl) : '')) ?>">
     <div class="brand">

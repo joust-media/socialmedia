@@ -11,7 +11,9 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
  *   $navBack      array|null  ['href' => …, 'label' => …] → leading back button (optional)
  *   $navLeading   string      raw HTML for the leading slot (used when $navBack is not set)
  *   $navTrailing  string|null raw HTML for the top-right slot; null → client avatar; '' → nothing
+ *                             (the Appearance sun/moon button always precedes it — every page has it)
  *   $navLinks     array       [['label' => …, 'href' => …, 'primary' => bool, 'attrs' => []], …] (optional)
+ *   $navLinksExtra string     raw HTML appended at the end of the links row (e.g. appearanceControl())
  *   $navWide      bool        match a wide (1200px) content column
  *   $navWidth     string      exact content column to align with, e.g. '900px' (sets --content-w)
  *   $client       array|null  from helpers.php
@@ -31,6 +33,11 @@ if (!isset($navTrailing)) {
 if ($navTrailing === null) {
     $navTrailing = !empty($client) && function_exists('clientAvatar') ? clientAvatar($client) : '';
 }
+// Appearance toggle (Light → Dark → Auto) on every page, left of the avatar / page buttons.
+if (function_exists('themeToggleButton')) {
+    $navTrailing = themeToggleButton() . $navTrailing;
+}
+$navLinksExtra = isset($navLinksExtra) ? (string)$navLinksExtra : '';
 ?>
 <header class="ui-nav<?= $navWide ? ' ui-nav--wide' : '' ?>" role="banner"<?= $navWidth !== '' ? ' style="--content-w:' . esc($navWidth) . '"' : '' ?>>
   <div class="ui-nav-inner">
@@ -54,7 +61,7 @@ if ($navTrailing === null) {
         <div class="ui-nav-trailing"><?= $navTrailing ?></div>
       <?php endif; ?>
     </div>
-    <?php if ($navLinks): ?>
+    <?php if ($navLinks || $navLinksExtra !== ''): ?>
       <nav class="ui-nav-links" aria-label="Page links">
         <?php foreach ($navLinks as $lnk):
           if (empty($lnk['label']) || empty($lnk['href'])) continue;
@@ -68,7 +75,7 @@ if ($navTrailing === null) {
         ?>
           <a class="<?= esc($lcls) ?>" href="<?= esc($lnk['href']) ?>"<?= $lattr ?>><?= esc($lnk['label']) ?></a>
         <?php endforeach; ?>
-      </nav>
+      <?php if ($navLinksExtra !== ''): ?><div class="ui-nav-links-extra"><?= $navLinksExtra ?></div><?php endif; ?></nav>
     <?php endif; ?>
   </div>
 </header>

@@ -1,7 +1,14 @@
 /* =====================================================================
    Joust client portal — design tokens (spec §5)
    Light by default. Dark follows the system unless <html data-theme="light">;
-   <html data-theme="dark"> forces dark (the legacy pages hard-code this).
+   <html data-theme="dark"> forces dark.
+
+   Appearance toggle: no attribute = Auto (system), data-theme="light"|"dark" =
+   the visitor's choice (localStorage portal.theme, set before first paint by
+   themeBootScript() in helpers.php and switched live by App.theme in app.js).
+   The legacy tool pages pin their own data-theme server-side and are left alone.
+   The dark set is emitted twice on purpose (system-dark unless pinned light,
+   and forced dark) — keep the two blocks identical.
    Reference tokens, never raw values, in every stylesheet that follows.
    ===================================================================== */
 
@@ -95,7 +102,7 @@
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"]  { color-scheme: dark; }
 
-/* Dark — forced by the page */
+/* Dark — forced by the page or chosen by the visitor (same set as the media block above) */
 :root[data-theme="dark"] {
   --bg:            #000000;
   --bg-elevated:   #1C1C1E;

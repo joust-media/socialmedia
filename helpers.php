@@ -2019,15 +2019,62 @@ function appScript(): string {
 }
 
 /**
+ * Appearance (Light / Dark / Auto) — the visitor's choice lives in
+ * localStorage['portal.theme'] ('light' | 'dark'; absent = Auto, follow the device).
+ *
+ * themeBootScript() is an inline <script> that must sit in <head> BEFORE the
+ * stylesheets: it copies the stored choice onto <html data-theme> before first
+ * paint (no flash) and pins the theme-color metas to match. A page that already
+ * pins data-theme server-side (the legacy tool pages) is marked data-theme-pinned
+ * and left alone. App.theme (app.js) switches live and keeps the metas in sync.
+ * login.php does not load helpers.php and carries a copy of the same script.
+ */
+function themeBootScript(): string {
+    return '<script data-theme-boot>(function(){var d=document.documentElement;if(d.hasAttribute("data-theme")){d.setAttribute("data-theme-pinned","");return;}'
+         . 'try{var t=localStorage.getItem("portal.theme");if(t==="light"||t==="dark"){d.setAttribute("data-theme",t);'
+         . 'var c=t==="dark"?"#000000":"#F2F2F7",m=document.querySelectorAll(\'meta[name="theme-color"]\');for(var i=0;i<m.length;i++)m[i].setAttribute("content",c);}}catch(e){}})();</script>' . "\n";
+}
+
+/**
+ * The compact sun / moon / auto button for the nav bar's trailing slot (and the
+ * login page). All three glyphs are in the markup; tokens/components.css shows
+ * the one matching <html data-theme> so the icon is right before app.js runs.
+ * App.theme sets the aria-label / title to the current state and cycles
+ * Light → Dark → Auto on click.
+ */
+function themeToggleButton(string $class = ''): string {
+    $cls = trim('ui-btn ui-btn--gray ui-btn--icon ui-theme-toggle ' . $class);
+    return '<button type="button" class="' . esc($cls) . '" data-theme-toggle aria-label="Appearance" title="Appearance: Light, Dark or Auto">'
+         . icon('sun') . icon('moon') . icon('sun-moon')
+         . '</button>';
+}
+
+/**
+ * The full Appearance segmented control (Light · Dark · Auto). No segment is
+ * active server-side (the choice is client-side); components.css marks the
+ * matching one from <html data-theme> and App.theme keeps aria-selected right.
+ */
+function appearanceControl(array $opts = []): string {
+    $items = [
+        ['label' => 'Light', 'value' => 'light', 'attrs' => ['data-theme-value' => 'light', 'title' => 'Always light']],
+        ['label' => 'Dark',  'value' => 'dark',  'attrs' => ['data-theme-value' => 'dark',  'title' => 'Always dark']],
+        ['label' => 'Auto',  'value' => 'auto',  'attrs' => ['data-theme-value' => 'auto',  'title' => 'Follow your device']],
+    ];
+    $cls = trim('ui-theme-control ' . ($opts['class'] ?? ''));
+    return segmented($items, ['class' => $cls, 'auto' => !empty($opts['auto']), 'label' => 'Appearance']);
+}
+
+/**
  * Everything a legacy page needs in its existing <head> to render inside the
- * new shell: color-scheme/theme-color metas, the stylesheets and app.js.
- * (New pages use partials/layout-top.php instead.)
+ * new shell: the appearance boot script, color-scheme/theme-color metas, the
+ * stylesheets and app.js. (New pages use partials/layout-top.php instead.)
  */
 function renderAppHead(): string {
     global $client;
     return "\n" . '<meta name="color-scheme" content="light dark">' . "\n"
          . '<meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">' . "\n"
          . '<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">' . "\n"
+         . themeBootScript()
          . '<meta name="format-detection" content="telephone=no">' . "\n"
          . appIconTags()
          . appStylesheets()

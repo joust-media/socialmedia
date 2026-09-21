@@ -716,6 +716,15 @@ if ($pendingCollections > 0) {
   <?= activityFeed($activityRows, ['header' => 'Activity', 'limit' => 20, 'id' => 'home-activity']) ?>
 <?php endif; ?>
 
+<?php // --- 3b. Appearance (Light · Dark · Auto; the nav button cycles the same choice) ?>
+<section class="home-section home-appearance" aria-labelledby="home-appearance" id="home-appearance-section">
+  <h2 class="ui-list-header" id="home-appearance">Appearance</h2>
+  <div class="ui-card home-appearance-card">
+    <?= appearanceControl() ?>
+    <p class="t-footnote text-secondary home-appearance-note">Auto follows your device's light or dark setting. Your choice is remembered on this device.</p>
+  </div>
+</section>
+
 <?php // --- 4. Admin variant (server-side gated) ------------------------ ?>
 <?php if ($isAdmin): ?>
 <section class="home-section" aria-labelledby="home-studio">

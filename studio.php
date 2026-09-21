@@ -65,6 +65,7 @@ if (!$client) {
     $navSubtitle = $clientsOnly ? 'Studio' : 'Choose a client';
     $activeTab   = 'studio';
     $navTrailing = joustAvatar();          // the admin surface carries the Joust mark, not a client's
+    $navLinksExtra = $clientsOnly ? '' : appearanceControl(['auto' => true]);   // Appearance (Light · Dark · Auto) at the end of the links row
     $bodyClass   = 'page-studio page-studio-chooser';
     $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">';
     if ($clientsOnly) {
@@ -260,6 +261,7 @@ if ($hasRenders) {
 $pageTitle   = 'Studio';
 $navSubtitle = $client['name'];
 $activeTab   = 'studio';
+$navLinksExtra = appearanceControl(['auto' => true]);   // Appearance (Light · Dark · Auto) at the end of the links row
 $pageWide    = true;
 $navWide     = true;        // header column matches the 1200px body (as assets.php)
 $bodyClass   = 'page-studio page-studio-hub';
