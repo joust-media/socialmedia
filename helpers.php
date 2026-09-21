@@ -1134,6 +1134,8 @@ function actionLabel($action) {
         'set_reference'        => 'made the reference image',
         'drive_linked'         => 'linked a Google Drive folder to',
         'drive_unlinked'       => 'removed the Google Drive link from',
+        // Drive storage view (entity_type = 'drive_snapshot', nightly collector)
+        'snapshot'             => 'took a storage snapshot of',
     ];
     return $map[$action] ?? str_replace('_', ' ', $action);
 }
@@ -1218,6 +1220,10 @@ function activityLink($entry) {
             $params = array_merge($clientPair, ['view' => 'collections']);
             if ($tireId > 0) { $params['item'] = $tireId; $params['series'] = (int)$entry['entity_id']; }
             return pagePath('assets') . '?' . http_build_query($params);
+
+        case 'drive_snapshot':
+            // The Drive storage view (admin-only, unscoped) at that snapshot.
+            return pagePath('drive') . '?' . http_build_query(['snapshot' => (int)$entry['entity_id']]);
 
         default:
             return pagePath('admin') . ($clientPair ? '?' . http_build_query($clientPair) : '');
@@ -1320,6 +1326,13 @@ if (!function_exists('activityParentName')) {
                 // Studio → Clients: the company row itself (created / updated / logo_changed).
                 return ['thing' => 'client', 'name' => $firstLine($entry['company_name'] ?? '', 80),
                         'parent' => '', 'parent_key' => 'company:' . $id];
+            case 'drive_snapshot':
+                // Nightly Drive snapshot: the stats live in our own generated summary ("Drive snapshot: 71% used, 12 candidates").
+                $stats = '';
+                foreach ((array)($entry['summaries'] ?? []) as $sum) {
+                    if (preg_match('/^Drive snapshot: (.{1,120})$/u', trim((string)$sum), $m)) { $stats = $m[1]; break; }
+                }
+                return ['thing' => 'drive', 'name' => $stats, 'parent' => '', 'parent_key' => 'drive:' . $id];
             default:
                 return ['thing' => 'item', 'name' => '', 'parent' => '',
                         'parent_key' => (string)($entry['entity_type'] ?? 'item') . ':' . $id];
@@ -1375,6 +1388,9 @@ if (!function_exists('activityDeepLink')) {
             case 'company':
                 // Studio → Clients with this client's card open (admin only; a client never sees company rows link there).
                 return clientUrl('studio', $qs + ['tab' => 'clients', 'edit' => $id]);
+            case 'drive_snapshot':
+                // The Drive storage view (admin-only, unscoped — never carries a client).
+                return pagePath('drive') . '?' . http_build_query(['snapshot' => $id]);
             default:
                 return clientUrl('index.php', $qs);
         }
@@ -1581,6 +1597,9 @@ if (!function_exists('activityFinalizeRows')) {
                     if (!$many && $r['name'] !== '') { $objT = 'the client ' . $r['name']; $objH = 'the client <em>' . $h($r['name']) . '</em>'; }
                     else                             { $objT = $objH = $many ? $n . ' clients' : 'a client'; }
                     break;
+                case 'drive':
+                    $objT = $objH = 'Google Drive';
+                    break;
                 default:
                     $objT = $objH = $many ? $n . ' items' : 'an item';
             }
@@ -1721,6 +1740,14 @@ if (!function_exists('activityFinalizeRows')) {
                 case 'updated':
                     $verb = 'updated'; $icon = 'ellipsis'; $tone = 'neutral';
                     $t = "$who updated $objT"; $hh = "$whoH updated $objH"; break;
+                // Drive storage view (entity_type = 'drive_snapshot'): an automated nightly row, so no actor in the sentence.
+                case 'snapshot':
+                    $verb = 'took a storage snapshot'; $icon = 'drive'; $tone = 'neutral';
+                    $stats = $r['name'] !== '' ? $r['name'] : '';
+                    if (preg_match('/^(\d+)% used/', $stats, $pm) && (int)$pm[1] >= 90) $tone = 'deny';
+                    $t  = 'Drive snapshot' . ($stats !== '' ? ' — ' . $stats : '');
+                    $hh = 'Drive snapshot' . ($stats !== '' ? ' — <em>' . $h($stats) . '</em>' : '');
+                    break;
                 default:
                     if (strpos($a, 'edited_') === 0 || strpos($a, 'renamed_') === 0 || $a === 'type_changed') {
                         $verb = 'updated'; $icon = 'ellipsis'; $tone = 'neutral';
@@ -1992,15 +2019,62 @@ function appScript(): string {
 }
 
 /**
+ * Appearance (Light / Dark / Auto) — the visitor's choice lives in
+ * localStorage['portal.theme'] ('light' | 'dark'; absent = Auto, follow the device).
+ *
+ * themeBootScript() is an inline <script> that must sit in <head> BEFORE the
+ * stylesheets: it copies the stored choice onto <html data-theme> before first
+ * paint (no flash) and pins the theme-color metas to match. A page that already
+ * pins data-theme server-side (the legacy tool pages) is marked data-theme-pinned
+ * and left alone. App.theme (app.js) switches live and keeps the metas in sync.
+ * login.php does not load helpers.php and carries a copy of the same script.
+ */
+function themeBootScript(): string {
+    return '<script data-theme-boot>(function(){var d=document.documentElement;if(d.hasAttribute("data-theme")){d.setAttribute("data-theme-pinned","");return;}'
+         . 'try{var t=localStorage.getItem("portal.theme");if(t==="light"||t==="dark"){d.setAttribute("data-theme",t);'
+         . 'var c=t==="dark"?"#000000":"#F2F2F7",m=document.querySelectorAll(\'meta[name="theme-color"]\');for(var i=0;i<m.length;i++)m[i].setAttribute("content",c);}}catch(e){}})();</script>' . "\n";
+}
+
+/**
+ * The compact sun / moon / auto button for the nav bar's trailing slot (and the
+ * login page). All three glyphs are in the markup; tokens/components.css shows
+ * the one matching <html data-theme> so the icon is right before app.js runs.
+ * App.theme sets the aria-label / title to the current state and cycles
+ * Light → Dark → Auto on click.
+ */
+function themeToggleButton(string $class = ''): string {
+    $cls = trim('ui-btn ui-btn--gray ui-btn--icon ui-theme-toggle ' . $class);
+    return '<button type="button" class="' . esc($cls) . '" data-theme-toggle aria-label="Appearance" title="Appearance: Light, Dark or Auto">'
+         . icon('sun') . icon('moon') . icon('sun-moon')
+         . '</button>';
+}
+
+/**
+ * The full Appearance segmented control (Light · Dark · Auto). No segment is
+ * active server-side (the choice is client-side); components.css marks the
+ * matching one from <html data-theme> and App.theme keeps aria-selected right.
+ */
+function appearanceControl(array $opts = []): string {
+    $items = [
+        ['label' => 'Light', 'value' => 'light', 'attrs' => ['data-theme-value' => 'light', 'title' => 'Always light']],
+        ['label' => 'Dark',  'value' => 'dark',  'attrs' => ['data-theme-value' => 'dark',  'title' => 'Always dark']],
+        ['label' => 'Auto',  'value' => 'auto',  'attrs' => ['data-theme-value' => 'auto',  'title' => 'Follow your device']],
+    ];
+    $cls = trim('ui-theme-control ' . ($opts['class'] ?? ''));
+    return segmented($items, ['class' => $cls, 'auto' => !empty($opts['auto']), 'label' => 'Appearance']);
+}
+
+/**
  * Everything a legacy page needs in its existing <head> to render inside the
- * new shell: color-scheme/theme-color metas, the stylesheets and app.js.
- * (New pages use partials/layout-top.php instead.)
+ * new shell: the appearance boot script, color-scheme/theme-color metas, the
+ * stylesheets and app.js. (New pages use partials/layout-top.php instead.)
  */
 function renderAppHead(): string {
     global $client;
     return "\n" . '<meta name="color-scheme" content="light dark">' . "\n"
          . '<meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">' . "\n"
          . '<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">' . "\n"
+         . themeBootScript()
          . '<meta name="format-detection" content="telephone=no">' . "\n"
          . appIconTags()
          . appStylesheets()
@@ -2046,3 +2120,7 @@ require_once __DIR__ . '/tire-series-lib.php';
 // Emails module helpers (hasEmailsTable, companyHasEmails, emailsForCompany, …).
 // Function definitions only — no DB work at load; see scratchpad emails-design.md.
 require_once __DIR__ . '/emails-lib.php';
+
+// Google Drive storage view (hasDriveTables, driveLatestSnapshot, driveClients, driveCandidates, …).
+// Function definitions only — no DB work at load; see scratchpad drive-design.md.
+require_once __DIR__ . '/drive-lib.php';

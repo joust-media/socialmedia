@@ -122,3 +122,4 @@ jobs:
             README.md
             redirect-old-folder/**
             media-hardening/**
+            docs/**

@@ -38,6 +38,7 @@ $flash    = trim((string)($_GET['msg'] ?? ''));
 $navLinks = [
     ['label' => 'Prompt Library',  'href' => pagePath('prompts')],
     ['label' => 'Vehicle Library', 'href' => pagePath('vehicles')],
+    ['label' => 'Drive',           'href' => pagePath('drive'), 'attrs' => ['title' => 'Drive storage — capacity, clients, offboard list']],
     ['label' => 'Classic admin',   'href' => basePath() . '/legacy/admin.php' . ($client ? '?client=' . rawurlencode($client['slug']) : '')],
     ['label' => 'Sign out',        'href' => pagePath('logout'), 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
 ];
@@ -64,6 +65,7 @@ if (!$client) {
     $navSubtitle = $clientsOnly ? 'Studio' : 'Choose a client';
     $activeTab   = 'studio';
     $navTrailing = joustAvatar();          // the admin surface carries the Joust mark, not a client's
+    $navLinksExtra = $clientsOnly ? '' : appearanceControl(['auto' => true]);   // Appearance (Light · Dark · Auto) at the end of the links row
     $bodyClass   = 'page-studio page-studio-chooser';
     $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">';
     if ($clientsOnly) {
@@ -101,6 +103,16 @@ if (!$client) {
       <?php endforeach; ?>
       <?= insetListClose('Badges show posts still waiting for the client\'s review.') ?>
     <?php endif; ?>
+
+    <?= insetListOpen('Storage') ?>
+    <?= insetRow([
+        'href'     => pagePath('drive'),
+        'icon'     => 'drive',
+        'title'    => 'Google Drive',
+        'subtitle' => 'Capacity, biggest clients, what to offboard first',
+        'attrs'    => ['data-drive-link' => '1'],
+    ]) ?>
+    <?= insetListClose() ?>
 
     <?php if (hasActivityLog($pdo)): ?>
       <section class="ui-card studio-activity">
@@ -249,6 +261,7 @@ if ($hasRenders) {
 $pageTitle   = 'Studio';
 $navSubtitle = $client['name'];
 $activeTab   = 'studio';
+$navLinksExtra = appearanceControl(['auto' => true]);   // Appearance (Light · Dark · Auto) at the end of the links row
 $pageWide    = true;
 $navWide     = true;        // header column matches the 1200px body (as assets.php)
 $bodyClass   = 'page-studio page-studio-hub';

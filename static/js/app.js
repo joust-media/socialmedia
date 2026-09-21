@@ -8,8 +8,13 @@
                   (optimistic UI via data-optimistic-target, rollback + toast)
    App.status   — client-facing status labels / pill swapping
    App.segmented — keyboard + button enhancement for .ui-segmented
+   App.theme    — Appearance: get() → 'light'|'dark'|'auto', set(mode), cycle(),
+                  effective() → 'light'|'dark'; persists localStorage portal.theme,
+                  drives <html data-theme>, the theme-color metas, every
+                  [data-theme-toggle] button and .ui-theme-control; fires
+                  'theme:change' {theme, effective} on document.
    Events: 'app:action' (bubbles) with {action, endpoint, id, params, ok,
-           status, data, error, el}; 'sheet:open' / 'sheet:close'.
+           status, data, error, el}; 'sheet:open' / 'sheet:close'; 'theme:change'.
 
    Later phases add App.swipe, App.viewer, App.video onto the same object.
    ===================================================================== */
@@ -409,6 +414,97 @@
   });
 
   /* ---------------------------------------------------------------- */
+  /* Appearance — Light / Dark / Auto                                  */
+  /*   <html data-theme="light|dark">, absent = Auto (system). The     */
+  /*   inline boot script (themeBootScript(), helpers.php) applied the */
+  /*   stored choice before first paint; this keeps everything in step */
+  /*   afterwards. Pages that pin their own theme (data-theme-pinned)  */
+  /*   still persist the choice but are never restyled.                */
+  /* ---------------------------------------------------------------- */
+  var THEME_KEY = 'portal.theme';
+  var THEME_COLOR = { light: '#F2F2F7', dark: '#000000' };
+  var darkMQ = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  App.theme = {
+    KEY: THEME_KEY,
+    labels: { light: 'Light mode', dark: 'Dark mode', auto: 'Auto (follows your device)' },
+    order: ['light', 'dark', 'auto'],
+    pinned: function () { return document.documentElement.hasAttribute('data-theme-pinned'); },
+    get: function () {
+      var t = null;
+      try { t = localStorage.getItem(THEME_KEY); } catch (e) {}
+      return (t === 'light' || t === 'dark') ? t : 'auto';
+    },
+    effective: function () {
+      var t = this.get();
+      if (t !== 'auto') return t;
+      return (darkMQ && darkMQ.matches) ? 'dark' : 'light';
+    },
+    set: function (mode, opts) {
+      opts = opts || {};
+      mode = (mode === 'light' || mode === 'dark') ? mode : 'auto';
+      try { if (mode === 'auto') localStorage.removeItem(THEME_KEY); else localStorage.setItem(THEME_KEY, mode); } catch (e) {}
+      this.apply();
+      if (opts.toast !== false) App.toast(this.labels[mode]);
+      document.dispatchEvent(new CustomEvent('theme:change', { detail: { theme: mode, effective: this.effective() } }));
+      return mode;
+    },
+    cycle: function () {
+      var i = this.order.indexOf(this.get());
+      return this.set(this.order[(i + 1) % this.order.length]);
+    },
+    /** Reflect the stored choice on <html>, the theme-color metas and every control. */
+    apply: function () {
+      var mode = this.get();
+      var root = document.documentElement;
+      if (!this.pinned()) {
+        if (mode === 'auto') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', mode);
+        $$('meta[name="theme-color"]').forEach(function (m) {
+          if (mode === 'auto') {
+            var media = m.getAttribute('media') || '';
+            m.setAttribute('content', media.indexOf('dark') >= 0 ? THEME_COLOR.dark : THEME_COLOR.light);
+          } else {
+            m.setAttribute('content', THEME_COLOR[mode]);
+          }
+        });
+      }
+      var self = this;
+      var next = this.order[(this.order.indexOf(mode) + 1) % this.order.length];
+      var word = { light: 'Light', dark: 'Dark', auto: 'Auto' };
+      $$('[data-theme-toggle]').forEach(function (btn) {
+        btn.setAttribute('aria-label', 'Appearance: ' + self.labels[mode] + '. Switch to ' + word[next].toLowerCase());
+        btn.setAttribute('title', 'Appearance: ' + word[mode] + ' — click for ' + word[next]);
+        btn.setAttribute('data-theme-state', mode);
+      });
+      $$('.ui-theme-control').forEach(function (control) {
+        $$('.ui-segmented-item', control).forEach(function (it) {
+          var on = (it.dataset.themeValue || it.dataset.value) === mode;
+          it.classList.toggle('is-active', on);
+          if (it.getAttribute('role') === 'tab') it.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+      });
+    }
+  };
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-theme-toggle]');
+    if (!btn) return;
+    e.preventDefault();
+    App.theme.cycle();
+  });
+  document.addEventListener('segmented:change', function (e) {
+    var control = e.target.closest && e.target.closest('.ui-theme-control');
+    if (!control) return;
+    var item = e.detail && e.detail.item;
+    var value = item ? (item.dataset.themeValue || item.dataset.value) : (e.detail && e.detail.value);
+    if (value && value !== App.theme.get()) App.theme.set(value);
+    else App.theme.apply();
+  });
+  if (darkMQ && darkMQ.addEventListener) {
+    darkMQ.addEventListener('change', function () {
+      if (App.theme.get() === 'auto') document.dispatchEvent(new CustomEvent('theme:change', { detail: { theme: 'auto', effective: App.theme.effective() } }));
+    });
+  }
+
+  /* ---------------------------------------------------------------- */
   /* Nav bar hairline once scrolled                                    */
   /* ---------------------------------------------------------------- */
   function initNav() {
@@ -428,6 +524,7 @@
     App.role  = (document.body && document.body.dataset.role)  || App.role;
     App.actor = (document.body && document.body.dataset.actor) || App.role;
     initNav();
+    App.theme.apply();
     document.dispatchEvent(new CustomEvent('app:ready', { detail: { App: App } }));
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', App.init);

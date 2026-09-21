@@ -53,7 +53,7 @@ $uiTabs = [
                    'scripts' => ['projects', 'add-project']],
     'studio'   => ['label' => 'Studio',   'icon' => 'wand',      'page' => 'studio.php',
                    'scripts' => ['admin', 'studio', 'add-post', 'add-feature', 'add-tire', 'batch', 'build',
-                                 'prompts', 'add-prompt', 'vehicles', 'add-vehicle', 'add-email', 'emails-io', 'add-page'],
+                                 'prompts', 'add-prompt', 'vehicles', 'add-vehicle', 'add-email', 'emails-io', 'add-page', 'drive'],
                    'admin' => true],
 ];
 

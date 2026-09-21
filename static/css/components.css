@@ -318,6 +318,30 @@ a.ui-row:active, button.ui-row:active { background: var(--fill-tertiary); }
 .ui-btn--icon.ui-btn--sm { width: 30px; }
 .ui-btn .ui-icon { width: 18px; height: 18px; }
 .ui-btn--large .ui-icon { width: 22px; height: 22px; }
+
+/* ---------------------------------------------------------------------
+   Appearance (Light / Dark / Auto) — themeToggleButton() + appearanceControl()
+   The current state is read straight off <html data-theme> (absent = Auto) so
+   the right glyph / segment shows before app.js runs; App.theme keeps the
+   aria state in step. Pages that pin their own theme hide the toggle.
+   --------------------------------------------------------------------- */
+.ui-theme-toggle { color: var(--label); }
+.ui-theme-toggle .ui-icon { display: none; width: 20px; height: 20px; }
+html:not([data-theme]) .ui-theme-toggle .ui-icon--sun-moon,
+html[data-theme="light"] .ui-theme-toggle .ui-icon--sun,
+html[data-theme="dark"]  .ui-theme-toggle .ui-icon--moon { display: block; }
+html[data-theme-pinned] .ui-theme-toggle { display: none; }
+.ui-theme-control { max-width: 260px; }
+html:not([data-theme]) .ui-theme-control [data-theme-value="auto"],
+html[data-theme="light"] .ui-theme-control [data-theme-value="light"],
+html[data-theme="dark"]  .ui-theme-control [data-theme-value="dark"] {
+  background: var(--bg-elevated);
+  box-shadow: 0 3px 8px rgba(0,0,0,.12), 0 3px 1px rgba(0,0,0,.04);
+  font-weight: 600;
+}
+.ui-nav-links-extra { display: flex; align-items: center; margin-left: auto; padding-left: 10px; flex: 0 0 auto; }
+.ui-nav-links-extra .ui-theme-control { width: auto; }
+.ui-nav-links-extra .ui-segmented-item { min-height: 26px; padding: 3px 9px; font-size: var(--text-caption); line-height: 16px; }
 .ui-btn-group { display: flex; gap: 8px; }
 .ui-btn-group > .ui-btn { flex: 1 1 0; }
 .ui-btn-group > .ui-btn--primary { flex: 1.6 1 0; }

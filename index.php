@@ -101,6 +101,19 @@ if (!$client) {
       <?php endif; ?>
       <?= insetListClose() ?>
     </section>
+    <?php if ($isAdmin): ?>
+      <section class="home-section">
+        <?= insetListOpen('Storage') ?>
+        <?= insetRow([
+            'href'     => pagePath('drive'),
+            'icon'     => 'drive',
+            'title'    => 'Google Drive',
+            'subtitle' => 'Capacity, biggest clients, what to offboard first',
+            'attrs'    => ['data-drive-link' => '1'],
+        ]) ?>
+        <?= insetListClose() ?>
+      </section>
+    <?php endif; ?>
     <?php if ($isAdmin && $hasLog): ?>
       <?= activityFeed($allRows, ['header' => 'Activity across clients', 'limit' => 20, 'showCompany' => true]) ?>
     <?php endif; ?>
@@ -702,6 +715,15 @@ if ($pendingCollections > 0) {
 <?php if ($hasLog): ?>
   <?= activityFeed($activityRows, ['header' => 'Activity', 'limit' => 20, 'id' => 'home-activity']) ?>
 <?php endif; ?>
+
+<?php // --- 3b. Appearance (Light · Dark · Auto; the nav button cycles the same choice) ?>
+<section class="home-section home-appearance" aria-labelledby="home-appearance" id="home-appearance-section">
+  <h2 class="ui-list-header" id="home-appearance">Appearance</h2>
+  <div class="ui-card home-appearance-card">
+    <?= appearanceControl() ?>
+    <p class="t-footnote text-secondary home-appearance-note">Auto follows your device's light or dark setting. Your choice is remembered on this device.</p>
+  </div>
+</section>
 
 <?php // --- 4. Admin variant (server-side gated) ------------------------ ?>
 <?php if ($isAdmin): ?>

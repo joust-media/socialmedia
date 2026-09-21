@@ -353,8 +353,50 @@ request exactly as before. The surfaces and their endpoints:
   `portal/uploads/<file>` exists on the server (uploads are never deployed), or simply upload
   it again in Studio → Clients.
 
+## Drive storage view
+
+An admin-only page (`drive.php`) that shows how full the agency Google Drive is, which client folder
+holds what, what has gone stale, and which files could be offboarded. The portal never talks to
+Google: a Google Apps Script in the Drive owner's account (`docs/drive-collector/`, metadata-only
+scope) measures the Drive every night and POSTs a snapshot to `drive-ingest.php` in parts; the page
+reads only from the `drive_*` tables (`migrate.php` steps 30–34; helpers in `drive-lib.php`).
+
+- **`config.php` keys**: `'drive_ingest_secret' => '<random, 24+ chars>'` — the bearer the script sends
+  (`Authorization: Bearer …`, or `X-Drive-Secret` when the host strips Authorization); without it
+  `drive-ingest.php` answers 503. Optional `'drive_clients_root_folder_id' => '<folder id>'`
+  documents which folder holds the client folders (the script has its own copy in its properties).
+- **Install**: follow `docs/drive-collector/README.md` (add the secret, run `migrate.php`, paste
+  `Code.gs` + `appsscript.json`, set the script properties, run `verify`, `setupTrigger`, `runNightly`).
+- **Health**: `curl -H "Authorization: Bearer <secret>" https://joustmedia.com/portal/drive-ingest.php?health=1`.
+- **Parts protocol** (`drive-ingest.php`, bearer only — no session, no CSRF token; JSON in, JSON out):
+  `POST ?part=begin` (quota from `Drive.About`) → `?part=files` (≤ 2,000 rows per request, every owned
+  non-trashed file that uses quota) → `?part=folders` (≤ 5,000) → `?part=clients` → `?part=tree` (≤ 4 MB)
+  → `?part=quickwins` → `?part=finish` (the server scores candidates, finds duplicates / old versions,
+  computes the burn rate from history and answers `alerts_due`) → `?part=alerted`. `?part=state` parks
+  a long run's folder map so it can resume past Apps Script's 6-minute limit. Every part is idempotent
+  (body SHA-256, `X-Drive-Part-Hash`); errors are 400 (validation, with the row index) / 401 / 404 /
+  405 / 409 (state) / 413 / 503 (not configured or tables missing).
+- **Request sizes**: the script posts files 1,000 per request (~300 KB), folders 2,000 per request and
+  the tree as one JSON of at most 4 MB; the endpoint caps bodies at 8 MB (413). Keep the host's
+  `post_max_size` at 8M or above (the recommended cPanel values above are far higher).
+- **What the numbers mean**: the capacity bar is Google's own quota (`Drive files` = usage in Drive
+  *minus the trash*, `Trash`, `Gmail & Photos`, `Free`; they sum to the limit). The client tiles plus
+  "(unfiled)" sum to that same "Drive files" figure — it is the total of every owned, non-trashed file
+  the collector listed. Offboard candidates are files ≥ 100 MB nobody has modified or opened in 180 days,
+  ranked by size × idle days (capped at 730). Nothing on the page writes to Drive.
+- **Before trusting the UI**: after the first run open https://one.google.com/storage in the Drive
+  owner's account and compare its "Drive" / "Trash" / total figures with the capacity strip. A gap over
+  1 % between the client tiles and Google's Drive figure shows as a footnote on the page (`quota_note`);
+  the usual cause is files owned by someone else in a client folder (they count against *their* quota).
+- **Retention**: snapshot rows (the usage history) are kept forever; folder / file / quick-win detail
+  for the newest 7 complete snapshots; per snapshot the offboard candidates + the 1,000 largest files
+  + the 50 largest per client. Threshold emails (80 / 90 / 95 % used, under 14 days to full) are sent by
+  the script once per crossing (`drive_alerts`). Each completed snapshot adds one activity-feed row
+  ("Drive snapshot — 71% used, 12 candidates", admin feed only) that never triggers the daily digest.
+
 ## Not deployed
 
 `config.php` (live DB credentials), `uploads/`, `.htaccess` files, `error_log`, this README,
-`redirect-old-folder/` and `media-hardening/` are excluded from both workflows and must be
-managed on the server. `media/` lives outside the app folder, so deploys never touch it.
+`redirect-old-folder/`, `media-hardening/` and `docs/` (the Drive collector source) are excluded from
+both workflows and must be managed on the server. `media/` lives outside the app folder, so deploys
+never touch it.
