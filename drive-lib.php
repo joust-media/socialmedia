@@ -802,11 +802,11 @@ if (!function_exists('driveFileFilterSql')) {
 }
 
 if (!function_exists('driveCandidates')) {
-    /** Offboard candidates (score desc, bytes desc). $filters: type, minIdleDays, client ('unfiled' = no client), limit (200), offset. */
+    /** Offboard candidates (score desc, bytes desc). $filters: type, minIdleDays, client ('unfiled' = no client), limit (200, max 2000 — the offboard view embeds that many), offset. */
     function driveCandidates(PDO $pdo, int $snapshotId, array $filters = []): array {
         if (!hasDriveTables($pdo)) return [];
         [$where, $params] = driveFileFilterSql($filters);
-        $limit  = max(1, min(1000, (int)($filters['limit'] ?? 200)));
+        $limit  = max(1, min(2000, (int)($filters['limit'] ?? 200)));
         $offset = max(0, (int)($filters['offset'] ?? 0));
         $sql = 'SELECT * FROM drive_files WHERE snapshot_id = ? AND is_candidate = 1'
              . ($where ? ' AND ' . implode(' AND ', $where) : '')

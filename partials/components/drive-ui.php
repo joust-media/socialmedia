@@ -2,11 +2,10 @@
 /**
  * Drive storage view — shared UI helpers (drive.php + the drive-* components).
  * Presentation only: numbers in, escaped strings out. The read model lives in
- * drive-lib.php (driveLatestSnapshot, driveClients, driveTree, driveCandidates …).
- * Every function is function_exists-guarded; driveFormatBytes() is drive-lib.php's —
- * the fallback below only exists so the page can render its "not set up" state alone.
+ * drive-lib.php (driveLatestSnapshot, driveClients, driveTree, driveCandidates …), which
+ * helpers.php always loads; driveFormatBytes() is its. Every function is function_exists-guarded.
  *
- *   driveUiBytes($n)                    → "1.71 TB" (delegates to driveFormatBytes)
+ *   driveUiBytes($n)                    → "1.7 TB" (delegates to driveFormatBytes)
  *   driveUiPct($x, $digits = 0)         → "83%"   (null → "—")
  *   driveUiIdle($days)                  → "14 months" / "2.3 years" / "12 days"
  *   driveUiDate($iso)                   → "Sep 21, 2026" ('' when empty)
@@ -18,22 +17,6 @@
  *   driveUiTileFill($pct)               → ['bin', 'bg', 'ink', 'contrast', 'label']
  *   driveUiContrast($hexA, $hexB)       → WCAG contrast ratio (float)
  */
-
-if (!function_exists('driveFormatBytes')) {
-    /** Fallback only (drive-lib.php owns the real one): 1024-based, short units. */
-    function driveFormatBytes($n): string {
-        $n = (float)$n;
-        if ($n < 0) $n = 0;
-        $units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
-        $i = 0;
-        while ($n >= 1024 && $i < count($units) - 1) { $n /= 1024; $i++; }
-        if ($i === 0) return number_format($n) . ' B';
-        $dec = $i >= 4 ? 2 : ($n < 10 ? 1 : 0);
-        $s = number_format($n, $dec, '.', ',');
-        if ($dec > 0) $s = rtrim(rtrim($s, '0'), '.');   // 1.50 → 1.5, never 940 → 94
-        return $s . ' ' . $units[$i];
-    }
-}
 
 if (!function_exists('driveUiBytes')) {
     function driveUiBytes($n): string { return driveFormatBytes((float)$n); }

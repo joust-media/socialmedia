@@ -12,12 +12,13 @@
  *
  * States: no tables or no snapshot yet → setup pointer; stale (> 48 h) or partial snapshot → banner;
  * no limit → usage only; < 30 days of history → "based on N days"; zero candidates; empty client.
- * Chrome like studio.php (Studio tab active, Joust mark, back to Studio). Read model: drive-lib.php.
+ * Chrome like studio.php (Studio tab active, Joust mark, back to Studio). Read model: drive-lib.php
+ * (loaded by helpers.php). "Drive" throughout = active_bytes (Google's usageInDrive minus the trash):
+ * that is what the collector lists, so the client tiles plus (unfiled) sum to it exactly.
  */
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/auth.php';
-if (is_file(__DIR__ . '/drive-lib.php')) { require_once __DIR__ . '/drive-lib.php'; }
 requireAdmin();
 
 require_once __DIR__ . '/partials/components/drive-ui.php';
@@ -49,7 +50,7 @@ function dvDaysSince($iso): ?int {
 function dvRow(array $r, array $clientNames): array {
     $slug = (string)($r['clientSlug'] ?? '');
     if ($slug === '' || $slug === 'unfiled') $slug = 'unfiled';   // files outside every client folder
-    $idle = isset($r['idleDays']) ? (int)$r['idleDays'] : (dvDaysSince($r['viewedAt'] ?? ($r['modifiedAt'] ?? null)) ?? 0);
+    $idle = (int)($r['idleDays'] ?? 0);   // measured at finish from the snapshot's taken_at (drive-lib.php driveIdleDays)
     return [
         'id'         => (string)($r['id'] ?? ''),
         'name'       => (string)($r['name'] ?? ''),
@@ -91,12 +92,11 @@ if (!in_array($view, ['overview', 'client', 'offboard'], true)) $view = 'overvie
 $slug   = preg_replace('/[^a-z0-9\-]/', '', strtolower(trim((string)($_GET['slug'] ?? ''))));
 $folder = preg_replace('/[^A-Za-z0-9_\-]/', '', trim((string)($_GET['folder'] ?? '')));
 
-$snapParam = (int)($_GET['snapshot'] ?? 0);   // activity-feed deep link (drive-design.md §2); falls back to the latest
-$libReady  = function_exists('hasDriveTables') && function_exists('driveLatestSnapshot');
+$snapParam = (int)($_GET['snapshot'] ?? 0);   // activity-feed deep link (drive-design.md §2); falls back to the latest complete
 $hasTables = false; $snap = null;
 try {
-    $hasTables = $libReady && hasDriveTables($pdo);
-    if ($hasTables && $snapParam > 0 && function_exists('driveSnapshot')) $snap = driveSnapshot($pdo, $snapParam);
+    $hasTables = hasDriveTables($pdo);
+    if ($hasTables && $snapParam > 0) $snap = driveSnapshot($pdo, $snapParam);
     if ($hasTables && !$snap) $snap = driveLatestSnapshot($pdo);
 } catch (Throwable $e) {
     error_log('drive.php read model failed: ' . $e->getMessage());
@@ -132,8 +132,8 @@ if ($snap) {
     $snapLine = '<p class="drive-snapline text-secondary" data-drive-snapshot="' . h((string)($snap['taken_at'] ?? '')) . '">'
               . 'Snapshot ' . h(driveUiDateTime($snap['taken_at'] ?? '')) . ' · ' . h(number_format((int)($snap['file_count'] ?? 0))) . ' files'
               . ($histDays > 0 ? ' · ' . $histDays . ' ' . ($histDays === 1 ? 'day' : 'days') . ' of history' : '') . '</p>';
-    $isStale   = function_exists('driveSnapshotIsStale') ? (bool)driveSnapshotIsStale($snap) : false;
-    $isPartial = strtolower((string)($snap['status'] ?? '')) === 'partial';
+    $isStale   = driveSnapshotIsStale($snap);
+    $isPartial = ($snap['status'] ?? '') === 'partial';
     if ($isPartial) {
         $banner = '<div class="drive-banner" role="status" data-drive-banner="partial"><strong>Last run was partial.</strong> Some folders were not scanned, so client sizes may read low until the next full run.</div>';
     } elseif ($isStale) {
@@ -149,10 +149,9 @@ if (!$snap) {
     $pageTitle = 'Drive'; $navSubtitle = 'Google Drive storage';
     $navBack   = ['href' => pagePath('studio'), 'label' => 'Studio'];
     include __DIR__ . '/partials/layout-top.php';
-    $why = !$libReady ? 'The Drive storage module is not installed on this server yet.'
-         : (!$hasTables ? 'The Drive tables have not been created yet — open migrate.php once.' : 'The tables are ready; the Apps Script has not posted a snapshot yet.');
+    $why = !$hasTables ? 'The Drive tables have not been created yet — open migrate.php once.' : 'The tables are ready; the Apps Script has not posted a complete snapshot yet.';
     ?>
-    <section class="ui-card ui-card--quiet drive-setup" data-drive-state="<?= !$libReady ? 'nolib' : (!$hasTables ? 'notables' : 'nosnapshot') ?>">
+    <section class="ui-card ui-card--quiet drive-setup" data-drive-state="<?= !$hasTables ? 'notables' : 'nosnapshot' ?>">
       <h2 class="ui-card-title">The first nightly run hasn't happened yet</h2>
       <p class="text-secondary"><?= h($why) ?></p>
       <ol class="drive-setup-steps">
@@ -171,14 +170,13 @@ if (!$snap) {
 $clients = []; $clientNames = [];
 try { $clients = driveClients($pdo, $sid) ?: []; } catch (Throwable $e) { error_log('driveClients failed: ' . $e->getMessage()); }
 foreach ($clients as $c) { $clientNames[(string)($c['slug'] ?? '')] = (string)($c['name'] ?? $c['slug'] ?? ''); }
-$driveBytes = max(0.0, (float)($snap['drive_bytes'] ?? 0));
+// "Drive" = active bytes (usageInDrive minus the trash): the files the collector listed, so Σ clients (incl. unfiled) == this.
+$driveBytes = max(0.0, (float)($snap['active_bytes'] ?? 0));
 $proj = [];
-try { $proj = function_exists('driveProjection') ? (driveProjection($snap) ?: []) : []; } catch (Throwable $e) { error_log('driveProjection failed: ' . $e->getMessage()); }
-$limitRaw = $snap['quota_limit'] ?? ($snap['limit_bytes'] ?? null);   // design §3: quota_limit (null = no limit)
-$limit = $limitRaw !== null && (float)$limitRaw > 0 ? (float)$limitRaw : null;
-$growing = array_key_exists('growing', $proj) ? $proj['growing'] : (!empty($proj['notGrowing']) ? false : ((float)($proj['burnRatePerDay'] ?? 0) > 0));
-/** unfiled flag: design §3 'unfiled', older sketch 'isUnfiled', or the reserved slug */
-function dvIsUnfiled(array $c): bool { return !empty($c['unfiled']) || !empty($c['isUnfiled']) || (string)($c['slug'] ?? '') === 'unfiled'; }
+try { $proj = driveProjection($snap) ?: []; } catch (Throwable $e) { error_log('driveProjection failed: ' . $e->getMessage()); }
+$limit = $snap['quota_limit'] !== null && (float)$snap['quota_limit'] > 0 ? (float)$snap['quota_limit'] : null;   // null = no limit
+$growing = $proj['growing'] ?? null;   // true | false | null (not enough history)
+function dvIsUnfiled(array $c): bool { return !empty($c['unfiled']); }
 
 $segNav = segmented([
     ['label' => 'Overview', 'href' => dvUrl(), 'active' => $view === 'overview'],
@@ -189,18 +187,15 @@ $segNav = segmented([
 // OVERVIEW
 // =====================================================================
 if ($view === 'overview') {
-    // Top 5 + the totals for the footer. driveCandidates() defaults to 200 rows, so the count comes from
-    // driveCandidateCount() and the bytes from the clients' candidateBytes when the lib provides them.
+    // Top 5 (driveCandidates() already orders score desc, bytes desc) + the totals for the footer: the count from
+    // driveCandidateCount() and the bytes from the clients' candidateBytes (computed at finish over every candidate).
     $cands = [];
-    try { $cands = driveCandidates($pdo, $sid, ['limit' => 2000]) ?: []; } catch (Throwable $e) { error_log('driveCandidates failed: ' . $e->getMessage()); }
-    usort($cands, static fn($a, $b) => (float)($b['score'] ?? 0) <=> (float)($a['score'] ?? 0));
+    try { $cands = driveCandidates($pdo, $sid, ['limit' => 5]) ?: []; } catch (Throwable $e) { error_log('driveCandidates failed: ' . $e->getMessage()); }
     $candCount = count($cands);
-    if (function_exists('driveCandidateCount')) { try { $candCount = max($candCount, (int)driveCandidateCount($pdo, $sid)); } catch (Throwable $e) { error_log('driveCandidateCount failed: ' . $e->getMessage()); } }
-    $candBytes = array_sum(array_map(static fn($r) => (float)($r['bytes'] ?? 0), $cands));
-    $clientCandBytes = 0.0; $haveClientCand = false;
-    foreach ($clients as $c) { if (isset($c['candidateBytes'])) { $haveClientCand = true; $clientCandBytes += (float)$c['candidateBytes']; } }
-    if ($haveClientCand && $clientCandBytes > $candBytes) $candBytes = $clientCandBytes;
-    $top = array_slice($cands, 0, 5);
+    try { $candCount = max($candCount, driveCandidateCount($pdo, $sid)); } catch (Throwable $e) { error_log('driveCandidateCount failed: ' . $e->getMessage()); }
+    $candBytes = 0.0;
+    foreach ($clients as $c) $candBytes += (float)($c['candidateBytes'] ?? 0);
+    $top = $cands;
     $scoreMax = $top ? max(array_map(static fn($r) => (float)($r['score'] ?? 0), $top)) : 0.0;
     $byType = [];
     try { $byType = driveByType($pdo, $sid) ?: []; } catch (Throwable $e) { error_log('driveByType failed: ' . $e->getMessage()); }
@@ -372,9 +367,24 @@ if ($view === 'client') {
     $clientName = $isUnfiled ? '(unfiled)' : (string)($cl['name'] ?? $cl['slug']);
     $pageTitle  = $clientName;
     $htmlTitle  = $clientName . ' — Drive';
-    $rootId     = (string)($cl['folderId'] ?? '');
+    // The client's root in the tree: its folder id, or the collector's synthetic 'unfiled' node (every top-level folder outside a client).
+    $rootId     = (string)($cl['folderId'] ?? '') !== '' ? (string)$cl['folderId'] : ($isUnfiled ? 'unfiled' : '');
     $node = null;
-    try { $node = driveTree($pdo, $sid, $folder !== '' ? $folder : ($rootId !== '' ? $rootId : null), 1); } catch (Throwable $e) { error_log('driveTree failed: ' . $e->getMessage()); }
+    try {
+        $node = driveTree($pdo, $sid, $folder !== '' ? $folder : ($rootId !== '' ? $rootId : null), 1);
+        if ($node === null && $folder !== '') {
+            // Deeper than the trimmed tree (4 levels below a client, 50 children per node): the folder table holds every folder.
+            $row = driveFolder($pdo, $sid, $folder);
+            if ($row !== null) {
+                $node = ['id' => $row['folderId'], 'name' => $row['name'], 'path' => $row['path'], 'bytes' => $row['bytes'], 'staleBytes' => $row['staleBytes'],
+                         'fileCount' => $row['fileCount'], 'lastActivityAt' => $row['lastActivityAt'], 'webLink' => $row['webLink'], 'children' => []];
+                foreach (driveFolderChildren($pdo, $sid, $folder) as $ch) {
+                    $node['children'][] = ['id' => $ch['folderId'], 'name' => $ch['name'], 'path' => $ch['path'], 'bytes' => $ch['bytes'], 'staleBytes' => $ch['staleBytes'],
+                                           'fileCount' => $ch['fileCount'], 'lastActivityAt' => $ch['lastActivityAt'], 'webLink' => $ch['webLink'], 'children' => []];
+                }
+            }
+        }
+    } catch (Throwable $e) { error_log('driveTree failed: ' . $e->getMessage()); }
     $inFolder = $folder !== '' && $folder !== $rootId;
     $children = is_array($node) ? (array)($node['children'] ?? []) : [];
     usort($children, static fn($a, $b) => (float)($b['bytes'] ?? 0) <=> (float)($a['bytes'] ?? 0));
@@ -384,27 +394,22 @@ if ($view === 'client') {
     $nodeBytes   = is_array($node) ? (float)($node['bytes'] ?? 0) : 0.0;
     $emptyClient = $clientBytes <= 0 && !$children && !$files;
 
-    // Breadcrumb: All clients › client › … › folder. Ancestors when the lib gives them, else the path segments as text.
+    // Breadcrumb: All clients › client › … › folder. Ancestors from driveFolder()'s parentId chain (walked up to the
+    // client's root, bounded); for (unfiled) — whose folders hang off My Drive, not off a client folder — the path segments as text.
     $crumbs = [['label' => 'All clients', 'href' => dvUrl()], ['label' => $clientName, 'href' => $inFolder ? dvClientUrl($slug) : '']];
     if ($inFolder && is_array($node)) {
-        $ancestors = null;
-        if (!empty($node['ancestors']) && is_array($node['ancestors'])) {
-            $ancestors = $node['ancestors'];
-        } elseif (function_exists('driveFolder')) {
-            // design §3: driveFolder() rows carry parentId — walk up to the client's root (bounded)
-            $ancestors = [];
-            try {
-                $cur = driveFolder($pdo, $sid, $folder);
-                $pid = is_array($cur) ? (string)($cur['parentId'] ?? '') : '';
-                for ($i = 0; $i < 12 && $pid !== '' && $pid !== $rootId; $i++) {
-                    $row = driveFolder($pdo, $sid, $pid);
-                    if (!is_array($row)) break;
-                    array_unshift($ancestors, ['id' => $pid, 'name' => (string)($row['name'] ?? $pid)]);
-                    $pid = (string)($row['parentId'] ?? '');
-                }
-                if ($pid !== $rootId) $ancestors = null;   // never reached the client root → fall back to the path
-            } catch (Throwable $e) { error_log('driveFolder failed: ' . $e->getMessage()); $ancestors = null; }
-        }
+        $ancestors = [];
+        try {
+            $cur = driveFolder($pdo, $sid, $folder);
+            $pid = is_array($cur) ? (string)($cur['parentId'] ?? '') : '';
+            for ($i = 0; $i < 12 && $pid !== '' && $pid !== $rootId; $i++) {
+                $row = driveFolder($pdo, $sid, $pid);
+                if (!is_array($row)) break;
+                array_unshift($ancestors, ['id' => $pid, 'name' => (string)($row['name'] ?? $pid)]);
+                $pid = (string)($row['parentId'] ?? '');
+            }
+            if ($pid !== $rootId) $ancestors = null;   // never reached the client root → fall back to the path
+        } catch (Throwable $e) { error_log('driveFolder failed: ' . $e->getMessage()); $ancestors = null; }
         if ($ancestors !== null) {
             foreach ($ancestors as $a) {
                 if ((string)($a['id'] ?? '') === $rootId) continue;
@@ -525,12 +530,11 @@ if ($view === 'client') {
 // =====================================================================
 // OFFBOARD
 // =====================================================================
+// Every candidate up to 2,000 (driveCandidates() orders score desc, bytes desc); the true total from driveCandidateCount().
 $cands = [];
 try { $cands = driveCandidates($pdo, $sid, ['limit' => 2000]) ?: []; } catch (Throwable $e) { error_log('driveCandidates failed: ' . $e->getMessage()); }
-usort($cands, static fn($a, $b) => (float)($b['score'] ?? 0) <=> (float)($a['score'] ?? 0));
 $totalCands = count($cands);
-if (function_exists('driveCandidateCount')) { try { $totalCands = max($totalCands, (int)driveCandidateCount($pdo, $sid)); } catch (Throwable $e) { error_log('driveCandidateCount failed: ' . $e->getMessage()); } }
-if (count($cands) > 2000) $cands = array_slice($cands, 0, 2000);
+try { $totalCands = max($totalCands, driveCandidateCount($pdo, $sid)); } catch (Throwable $e) { error_log('driveCandidateCount failed: ' . $e->getMessage()); }
 $capped = $totalCands > count($cands);
 $rows = array_map(static fn($r) => dvRow($r, $clientNames), $cands);
 $sumBytes = array_sum(array_map(static fn($r) => $r['bytes'], $rows));

@@ -6,7 +6,7 @@
  *
  *   driveTrendline(array $history, ?float $limit, array $proj = [], array $opts = []): string
  *       $history: [['date' => 'Y-m-d', 'usageBytes' => int], …] any order (sorted here)
- *       $proj:    driveProjection() shape — burnRatePerDay, daysToFull|null, notGrowing
+ *       $proj:    driveProjection() shape — burnRatePerDay, daysToFull|null, growing (true|false|null)
  *       $opts:    'class', 'ariaLabel', 'id'
  *   Returns '' + a note when there are fewer than 2 points (the caller shows the empty state).
  */
@@ -33,8 +33,7 @@ if (!function_exists('driveTrendline')) {
         // history below half the plot (a 400-day countdown would otherwise flatten 90 days of data).
         $daysToFull = isset($proj['daysToFull']) && $proj['daysToFull'] !== null ? (int)ceil((float)$proj['daysToFull']) : null;
         $burn = (float)($proj['burnRatePerDay'] ?? 0);
-        $growing = array_key_exists('growing', $proj) ? $proj['growing'] === true : (empty($proj['notGrowing']) && $burn > 0);
-        $growing = $growing && $burn > 0;
+        $growing = ($proj['growing'] ?? null) === true && $burn > 0;
         $projDays = 0; $reachesLimit = false;
         if ($limit !== null && $growing && $daysToFull !== null && $daysToFull > 0) {
             $projDays = min($daysToFull, max(30, $span));

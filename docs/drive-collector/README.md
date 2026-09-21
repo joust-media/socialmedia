@@ -43,6 +43,11 @@ OAuth scopes). Portal side: `drive-ingest.php`, `drive-lib.php`, `migrate.php` s
    edits Drive. Check the execution log: portal health, quota, the first five files.
 5. Run `setupTrigger` once (installs the nightly 2–3 AM trigger), then `runNightly` by hand for the
    first snapshot. The log ends with `Snapshot N complete: {...}`; `drive.php` shows it.
+6. **Check the totals** before trusting the page: open https://one.google.com/storage in the same
+   account and compare its Drive / Trash / total with the capacity strip on `drive.php` ("Drive files"
+   there is Google's Drive figure minus the trash). The client tiles plus "(unfiled)" must add up to
+   that "Drive files" figure; if they are more than 1 % apart the page shows the gap as a footnote
+   (`quota_note`) — usually files in a client folder that someone else owns.
 
 Time-zone: the manifest pins `America/New_York` (the trigger's clock). The portal converts every
 timestamp it receives to its own zone.

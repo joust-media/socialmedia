@@ -92,7 +92,8 @@
       filtered.sort(function (a, b) {
         var d = ((+a[key] || 0) - (+b[key] || 0)) * dir;
         if (d !== 0) return d;
-        return ((+b.score || 0) - (+a.score || 0)) || String(a.name).localeCompare(String(b.name));
+        // same tie-break as the server (drive-lib.php driveCandidates: score desc, bytes desc, name asc) — scores are integers 0–100
+        return ((+b.score || 0) - (+a.score || 0)) || ((+b.bytes || 0) - (+a.bytes || 0)) || String(a.name).localeCompare(String(b.name));
       });
       var pages = Math.max(1, Math.ceil(filtered.length / perPage));
       if (state.page > pages) state.page = pages;
@@ -178,7 +179,13 @@
     // CSV from the rendered (filtered + sorted) rows — every page, not just the visible one
     var exportBtn = $('[data-drive-export]', root);
     if (exportBtn) exportBtn.addEventListener('click', function () {
-      var q = function (v) { v = String(v == null ? '' : v); return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+      // File names come from Drive (anyone with write access to a client folder chose them): a cell starting
+      // with = + - @ would run as a formula in Excel / Sheets, so those get a leading apostrophe (CSV injection).
+      var q = function (v) {
+        v = String(v == null ? '' : v);
+        if (/^[=+\-@\t\r]/.test(v)) v = "'" + v;
+        return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+      };
       var lines = ['name,path,client,size,parent_link'];
       for (var i = 0; i < filtered.length; i++) {
         var r = filtered[i];

@@ -6,19 +6,21 @@
  *
  *   driveCapacityStrip(array $snap, array $proj, array $opts = []): string
  *       $snap: driveLatestSnapshot() row; $proj: driveProjection($snap)
- *   Without a limit (unlimited plan): no percent, no countdown, no Free segment — sizes only.
+ *   Segments: Drive files = active_bytes (Google's usageInDrive MINUS the trash — drive_bytes includes it),
+ *   Gmail & Photos = other_bytes, Trash = trash_bytes, Free = free_bytes; the four sum to the limit exactly
+ *   as one.google.com/storage shows them. Without a limit (unlimited plan): no percent, no countdown,
+ *   no Free segment — sizes only.
  */
 if (!function_exists('driveCapacityStrip')) {
     function driveCapacityStrip(array $snap, array $proj, array $opts = []): string
     {
-        $limitRaw = $snap['quota_limit'] ?? ($snap['limit_bytes'] ?? null);   // drive-design.md §3: quota_limit
-        $limit = $limitRaw !== null && (float)$limitRaw > 0 ? (float)$limitRaw : null;
+        $limit = $snap['quota_limit'] !== null && (float)$snap['quota_limit'] > 0 ? (float)$snap['quota_limit'] : null;
         $usage = max(0.0, (float)($snap['usage_bytes'] ?? 0));
-        $drive = max(0.0, (float)($snap['drive_bytes'] ?? 0));
         $trash = max(0.0, (float)($snap['trash_bytes'] ?? 0));
-        $other = max(0.0, (float)($snap['other_bytes'] ?? max(0.0, $usage - $drive - $trash)));
+        $drive = max(0.0, (float)($snap['active_bytes'] ?? ((float)($snap['drive_bytes'] ?? 0) - $trash)));
+        $other = max(0.0, (float)($snap['other_bytes'] ?? 0));
         $free  = $limit !== null ? max(0.0, (float)($snap['free_bytes'] ?? ($limit - $usage))) : null;
-        $pct   = $limit !== null ? (isset($snap['pct_used']) && $snap['pct_used'] !== null ? (float)$snap['pct_used'] : ($limit > 0 ? 100 * $usage / $limit : null)) : null;
+        $pct   = $limit !== null ? (float)($snap['pct_used'] ?? ($limit > 0 ? 100 * $usage / $limit : 0)) : null;
         $denom = $limit !== null ? $limit : max(1.0, $drive + $other + $trash);
 
         $segs = [
@@ -62,12 +64,11 @@ if (!function_exists('driveCapacityStrip')) {
         $out .= '</div>';
 
         // Right: countdown
-        $basis = (int)($proj['basisDays'] ?? ($snap['basis_days'] ?? 0));
-        $basisLabel = (string)($proj['basisLabel'] ?? ($basis > 0 ? 'over the last ' . $basis . ' days' : ''));
-        $burn = (float)($proj['burnRatePerDay'] ?? ($snap['burn_rate_per_day'] ?? ($snap['burn_rate_bytes_per_day'] ?? 0)));
+        // driveProjection(): growing true | false | null (null = fewer than 2 snapshots a day apart), basisLabel verbatim
+        $basisLabel = (string)($proj['basisLabel'] ?? '');
+        $burn = (float)($proj['burnRatePerDay'] ?? 0);
         $days = isset($proj['daysToFull']) && $proj['daysToFull'] !== null ? (int)ceil((float)$proj['daysToFull']) : null;
-        // drive-design.md: 'growing' true | false | null (null = fewer than 2 snapshots a day apart); older sketch: 'notGrowing'
-        $growing = array_key_exists('growing', $proj) ? $proj['growing'] : (!empty($proj['notGrowing']) ? false : ($burn > 0 ? true : false));
+        $growing = $proj['growing'] ?? null;
         $out .= '<div class="drive-capacity-side">';
         if ($growing === null) {
             $out .= '<p class="drive-countdown drive-countdown--nohistory" data-drive-countdown="nohistory"><strong>Not enough history yet</strong><span>' . esc($basisLabel !== '' ? $basisLabel : 'the pace shows after two nightly runs') . '</span></p>';
