@@ -101,6 +101,19 @@ if (!$client) {
       <?php endif; ?>
       <?= insetListClose() ?>
     </section>
+    <?php if ($isAdmin): ?>
+      <section class="home-section">
+        <?= insetListOpen('Storage') ?>
+        <?= insetRow([
+            'href'     => pagePath('drive'),
+            'icon'     => 'drive',
+            'title'    => 'Google Drive',
+            'subtitle' => 'Capacity, biggest clients, what to offboard first',
+            'attrs'    => ['data-drive-link' => '1'],
+        ]) ?>
+        <?= insetListClose() ?>
+      </section>
+    <?php endif; ?>
     <?php if ($isAdmin && $hasLog): ?>
       <?= activityFeed($allRows, ['header' => 'Activity across clients', 'limit' => 20, 'showCompany' => true]) ?>
     <?php endif; ?>

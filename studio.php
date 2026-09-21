@@ -38,6 +38,7 @@ $flash    = trim((string)($_GET['msg'] ?? ''));
 $navLinks = [
     ['label' => 'Prompt Library',  'href' => pagePath('prompts')],
     ['label' => 'Vehicle Library', 'href' => pagePath('vehicles')],
+    ['label' => 'Drive',           'href' => pagePath('drive'), 'attrs' => ['title' => 'Drive storage — capacity, clients, offboard list']],
     ['label' => 'Classic admin',   'href' => basePath() . '/legacy/admin.php' . ($client ? '?client=' . rawurlencode($client['slug']) : '')],
     ['label' => 'Sign out',        'href' => pagePath('logout'), 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
 ];
@@ -101,6 +102,16 @@ if (!$client) {
       <?php endforeach; ?>
       <?= insetListClose('Badges show posts still waiting for the client\'s review.') ?>
     <?php endif; ?>
+
+    <?= insetListOpen('Storage') ?>
+    <?= insetRow([
+        'href'     => pagePath('drive'),
+        'icon'     => 'drive',
+        'title'    => 'Google Drive',
+        'subtitle' => 'Capacity, biggest clients, what to offboard first',
+        'attrs'    => ['data-drive-link' => '1'],
+    ]) ?>
+    <?= insetListClose() ?>
 
     <?php if (hasActivityLog($pdo)): ?>
       <section class="ui-card studio-activity">
