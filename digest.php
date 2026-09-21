@@ -386,7 +386,9 @@ function render_summary(array $rows, int $leftover, array $config) {
                     $textOut .= "      \"" . str_replace("\n", ' ', $excerpt)
                               . (mb_strlen($d['text']) > 240 ? '…' : '') . "\"\n";
                 } elseif (strpos($d['action'], 'edited_') === 0) {
-                    $textOut .= "      " . str_replace("\n", ' ', mb_substr($d['text'], 0, 200)) . "\n";
+                    // Caption / hashtag diffs are stored as "old → new" (each side ≤ 300 chars);
+                    // keep the whole line so a client's rewrite is readable in the digest.
+                    $textOut .= "      " . str_replace("\n", ' ', mb_substr($d['text'], 0, 640)) . "\n";
                 }
             }
 
@@ -407,7 +409,7 @@ function render_summary(array $rows, int $leftover, array $config) {
                               . '"' . $h($excerpt) . ($h(mb_strlen($d['text']) > 240 ? '…' : '')) . '"</div>';
                 } elseif (strpos($d['action'], 'edited_') === 0) {
                     $htmlOut .= '<div style="margin-top:4px;font-size:12px;color:#65676b">'
-                              . $h(mb_substr($d['text'], 0, 200)) . '</div>';
+                              . $h(mb_substr($d['text'], 0, 640)) . '</div>';
                 }
             }
             $htmlOut .= '</div>';

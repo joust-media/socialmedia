@@ -1613,6 +1613,18 @@ if (!function_exists('activityFinalizeRows')) {
                 case 'edited_schedule':
                     $verb = 'rescheduled'; $icon = 'calendar'; $tone = 'scheduled';
                     $t = "$who rescheduled $objT"; $hh = "$whoH rescheduled $objH"; break;
+                // Copy edits (either seat — clients may edit captions until the post is scheduled).
+                // A client's edit is something Joust needs to notice, so it takes the accent tone.
+                case 'edited_caption':
+                    $verb = 'edited the caption'; $icon = 'ellipsis'; $tone = $r['actor'] === 'client' ? 'accent' : 'neutral';
+                    $t = "$who edited the caption on $objT"; $hh = "$whoH edited the caption on $objH";
+                    if ($r['edits'] === ['caption']) $r['edits'] = [];   // the sentence already says it
+                    break;
+                case 'edited_hashtags':
+                    $verb = 'edited the hashtags'; $icon = 'ellipsis'; $tone = $r['actor'] === 'client' ? 'accent' : 'neutral';
+                    $t = "$who edited the hashtags on $objT"; $hh = "$whoH edited the hashtags on $objH";
+                    if ($r['edits'] === ['hashtags']) $r['edits'] = [];
+                    break;
                 case 'created':
                     $icon = 'plus'; $tone = 'accent';
                     if ($r['thing'] === 'post')     { $verb = 'added'; $t = "$who added $objT for review"; $hh = "$whoH added $objH for review"; }

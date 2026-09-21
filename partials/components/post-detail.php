@@ -9,7 +9,11 @@
  *            images  => [['id' => 901, 'url' => 'uploads/x.jpg', 'type' => 'image'|'video'], …]
  *            comments => activity_log 'commented' rows [['actor','detail','created_at'], …]
  *            approved_at (optional datetime for the "Approved Sep 5" row)
- *     $opts: 'admin'     bool  — default isAdmin(). Admin-only markup is NEVER emitted otherwise.
+ *            last_edit (optional ['actor','created_at'] of the newest edited_caption / edited_hashtags
+ *                       row → "Edited by <client> · 5m ago" under the caption when actor = client)
+ *     $opts: 'admin'     bool  — default isAdmin(). Admin-only markup (⋯ menu, date editor, Replace,
+ *                        Mark / Unmark Scheduled, Needs-changes row) is NEVER emitted otherwise. The
+ *                        caption / hashtags editor is shared by both seats (hidden once Scheduled).
  *            'hasPosted' bool  — posts.posted exists (default true) → Mark Scheduled is offered
  *            'endpoint'  string — status endpoint (default 'status.php', resolved against basePath())
  *     Output: <article class="pd" data-post-detail="ID" data-status data-posted>
@@ -97,6 +101,8 @@ if (!function_exists('renderCaptionPreview')) {
         $caption = (string)($post['caption'] ?? '');
         $tags    = trim((string)($post['hashtags'] ?? ''));
         $copy    = !array_key_exists('copy', $opts) || $opts['copy'];
+        $edit    = !empty($opts['edit']);            // "Edit caption" ghost button (posts.php sheet; Studio never passes it)
+        $editOn  = !array_key_exists('editVisible', $opts) || $opts['editVisible'];   // false → rendered hidden (post is Scheduled)
         $full    = trim($caption . ($tags !== '' ? "\n\n" . $tags : ''));
 
         $avatar = function_exists('clientAvatar')
@@ -110,8 +116,15 @@ if (!function_exists('renderCaptionPreview')) {
               . nl2br(pdLinkHashtags($caption)) . '</div>';
         $out .= '<div class="ig-tags" data-hashtags-display data-raw="' . pdEsc($tags) . '"' . ($tags === '' ? ' hidden' : '') . '>'
               . pdLinkHashtags($tags) . '</div>';
-        if ($copy) {
-            $out .= '<button type="button" class="ui-btn ui-btn--plain ui-btn--sm ig-copy" data-copy-caption data-text="' . pdEsc($full) . '">Copy caption</button>';
+        if ($copy || $edit) {
+            $out .= '<div class="ig-actions">';
+            if ($copy) {
+                $out .= '<button type="button" class="ui-btn ui-btn--plain ui-btn--sm ig-copy" data-copy-caption data-text="' . pdEsc($full) . '">Copy caption</button>';
+            }
+            if ($edit) {
+                $out .= '<button type="button" class="ui-btn ui-btn--plain ui-btn--sm ig-edit" data-edit="caption" data-caption-edit' . ($editOn ? '' : ' hidden') . '>Edit caption</button>';
+            }
+            $out .= '</div>';
         }
         return $out . '</section>';
     }
@@ -204,7 +217,7 @@ if (!function_exists('renderPostDetail')) {
             $out .= '<div class="pd-more">'
                   . '<button type="button" class="ui-btn ui-btn--gray ui-btn--icon ui-btn--sm" data-menu-toggle aria-haspopup="menu" aria-expanded="false" aria-label="More actions">' . (function_exists('icon') ? icon('ellipsis') : '&hellip;') . '</button>'
                   . '<div class="pd-menu" role="menu" data-menu hidden>'
-                  . '<button type="button" role="menuitem" data-edit="caption">Edit caption</button>'
+                  . '<button type="button" role="menuitem" data-edit="caption" data-caption-menu' . ($posted ? ' disabled title="Unmark scheduled first"' : '') . '>Edit caption</button>'
                   . '<button type="button" role="menuitem" data-edit="date">Edit date</button>'
                   . '<button type="button" role="menuitem" data-replace-image' . ($images ? '' : ' disabled') . '>Replace image</button>'
                   . '<button type="button" role="menuitem" class="is-destructive" data-delete-post>Delete</button>'
@@ -219,16 +232,33 @@ if (!function_exists('renderPostDetail')) {
         }
 
         // ---- 2. Caption preview ----------------------------------------------
-        $out .= renderCaptionPreview($post, $brand);
-        if ($admin) {
-            $out .= '<form class="pd-editor" data-edit-form="caption" hidden>'
-                  . '<label class="pd-editor-label" for="pd-caption-' . $id . '">Caption</label>'
-                  . '<textarea class="ui-textarea" id="pd-caption-' . $id . '" name="caption" maxlength="10000" required>' . pdEsc((string)($post['caption'] ?? '')) . '</textarea>'
-                  . '<label class="pd-editor-label" for="pd-hashtags-' . $id . '">Hashtags</label>'
-                  . '<textarea class="ui-textarea pd-editor-tags" id="pd-hashtags-' . $id . '" name="hashtags" maxlength="2000">' . pdEsc((string)($post['hashtags'] ?? '')) . '</textarea>'
-                  . '<div class="ui-btn-group"><button type="button" class="ui-btn ui-btn--gray" data-edit-cancel>Cancel</button><button type="submit" class="ui-btn ui-btn--filled ui-btn--primary">Save</button></div>'
-                  . '</form>';
-        }
+        // Caption + hashtags are editable by BOTH seats until the post is Scheduled
+        // (status.php answers 409 once posted = 1). The same editor serves admin
+        // (also reachable from the ⋯ menu) and client: Edit → textareas with
+        // counters → Save / Cancel. The Edit button is rendered hidden when posted;
+        // posts.js follows data-posted after Mark / Unmark Scheduled.
+        $out .= renderCaptionPreview($post, $brand, ['edit' => true, 'editVisible' => !$posted]);
+        // "Edited by Kenda · 5m ago" — only when the latest copy edit came from the client seat.
+        // Always in the DOM (hidden otherwise) so posts.js can fill it after a client save.
+        $lastEdit   = is_array($post['last_edit'] ?? null) ? $post['last_edit'] : null;
+        $clientEdit = $lastEdit && (($lastEdit['actor'] ?? '') === 'client');
+        $editWho    = trim((string)$brand['name']) !== '' ? (string)$brand['name'] : 'the client';
+        $editWhen   = $clientEdit && function_exists('relativeTime') ? relativeTime($lastEdit['created_at'] ?? null) : '';
+        $out .= '<p class="pd-edited-by text-tertiary" data-edited-by' . ($clientEdit ? '' : ' hidden') . '>'
+              . ($clientEdit ? 'Edited by ' . pdEsc($editWho) . ($editWhen !== '' ? ' · ' . pdEsc($editWhen) : '') : '')
+              . '</p>';
+        $capLen = function_exists('mb_strlen') ? mb_strlen((string)($post['caption'] ?? '')) : strlen((string)($post['caption'] ?? ''));
+        $tagLen = function_exists('mb_strlen') ? mb_strlen((string)($post['hashtags'] ?? '')) : strlen((string)($post['hashtags'] ?? ''));
+        $out .= '<form class="pd-editor" data-edit-form="caption" hidden>'
+              . '<label class="pd-editor-label" for="pd-caption-' . $id . '">Caption</label>'
+              . '<textarea class="ui-textarea" id="pd-caption-' . $id . '" name="caption" maxlength="10000" required>' . pdEsc((string)($post['caption'] ?? '')) . '</textarea>'
+              . '<span class="pd-editor-count" data-count-for="pd-caption-' . $id . '" aria-live="polite">' . $capLen . ' / 10000</span>'
+              . '<label class="pd-editor-label" for="pd-hashtags-' . $id . '">Hashtags</label>'
+              . '<textarea class="ui-textarea pd-editor-tags" id="pd-hashtags-' . $id . '" name="hashtags" maxlength="2000">' . pdEsc((string)($post['hashtags'] ?? '')) . '</textarea>'
+              . '<span class="pd-editor-count" data-count-for="pd-hashtags-' . $id . '" aria-live="polite">' . $tagLen . ' / 2000</span>'
+              . ($admin ? '' : '<p class="pd-editor-hint">Joust will see this change in the activity feed.</p>')
+              . '<div class="ui-btn-group"><button type="button" class="ui-btn ui-btn--gray" data-edit-cancel>Cancel</button><button type="submit" class="ui-btn ui-btn--filled ui-btn--primary">Save</button></div>'
+              . '</form>';
 
         // ---- 3. Scheduled date row -------------------------------------------
         $out .= '<div class="pd-when" data-when>';

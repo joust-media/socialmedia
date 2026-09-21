@@ -122,14 +122,14 @@ if (!$admin) {
     $scopeWhere[] = "p.status <> 'denied'";     // clients never see denied work (SQL, not CSS)
 }
 
-/** Load images + comments + approved_at for a set of post rows (3 queries total). */
+/** Load images + comments + approved_at + the latest copy edit for a set of post rows (4 queries total). */
 function postsAttachRelations(PDO $pdo, array &$posts, bool $hasMedia, bool $hasLog): void {
     if (!$posts) return;
     $ids = array_map('intval', array_column($posts, 'id'));
     $ph  = implode(',', array_fill(0, count($ids), '?'));
     $byId = [];
     foreach ($posts as &$p) {
-        $p['images'] = []; $p['comments'] = []; $p['approved_at'] = null;
+        $p['images'] = []; $p['comments'] = []; $p['approved_at'] = null; $p['last_edit'] = null;
         $byId[(int)$p['id']] = &$p;
     }
     unset($p);
@@ -168,6 +168,20 @@ function postsAttachRelations(PDO $pdo, array &$posts, bool $hasMedia, bool $has
         foreach ($st->fetchAll() as $row) {
             $pid = (int)$row['entity_id'];
             if (isset($byId[$pid])) $byId[$pid]['approved_at'] = $row['at'];
+        }
+        // Newest caption / hashtags edit per post → the sheet's "Edited by <client> · 5m ago" line
+        // (rendered only when that edit came from the client seat).
+        $st = $pdo->prepare("
+            SELECT entity_id, actor, created_at FROM activity_log
+            WHERE entity_type = 'post' AND action IN ('edited_caption', 'edited_hashtags') AND entity_id IN ($ph)
+            ORDER BY created_at DESC, id DESC
+        ");
+        $st->execute($ids);
+        foreach ($st->fetchAll() as $row) {
+            $pid = (int)$row['entity_id'];
+            if (isset($byId[$pid]) && $byId[$pid]['last_edit'] === null) {
+                $byId[$pid]['last_edit'] = ['actor' => (string)$row['actor'], 'created_at' => (string)$row['created_at']];
+            }
         }
     }
 }
