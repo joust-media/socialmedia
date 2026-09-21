@@ -637,17 +637,34 @@
       }
     });
   }
+  /* Replace: with chunk-upload.js the file goes to upload-chunk.php purpose=replace (one request when small,
+     pieces when large — videos up to 4 GB, images up to 50 MB); otherwise replace-image.php. Same reply shape. */
   function replaceImage(art, input) {
     var file = input.files && input.files[0]; if (!file) return;
-    if (file.size > 25 * 1024 * 1024) { toast('File exceeds 25 MB', 'error'); return; }
+    var isVid = /^video\//i.test(file.type || '') || /\.(mp4|webm|mov|m4v)$/i.test(file.name || '');
+    var capMb = isVid ? (parseInt(cfg.maxVideoMb, 10) || 4096) : (parseInt(cfg.maxImageMb, 10) || 50);
+    if (file.size > capMb * 1024 * 1024) { toast('File exceeds ' + (capMb >= 1024 ? (capMb / 1024) + ' GB' : capMb + ' MB'), 'error'); input.value = ''; return; }
     var slide = currentSlide(art); if (!slide) return;
     var imageId = slide.getAttribute('data-image-id');
-    var fd = new FormData();
-    fd.append('image_id', imageId); fd.append('image', file); fd.append('type', 'post');
     slide.classList.add('is-busy');
     toast('Uploading…');
-    fetch(input.getAttribute('data-replace-endpoint') || cfg.replace || 'replace-image.php', { method: 'POST', body: fd, credentials: 'same-origin' })
-      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok && d && d.ok, data: d }; }); })
+    var chunk = App.chunkUpload && App.chunkUpload.upload ? App.chunkUpload : null;
+    var uploadEp = input.getAttribute('data-upload-endpoint') || cfg.upload || '';
+    var send;
+    if (chunk && uploadEp) {
+      var lastPct = -1;
+      send = chunk.upload({
+        endpoint: uploadEp, file: file,
+        fields: { purpose: 'replace', replace_kind: 'post', replace_id: imageId, client: (document.body && document.body.dataset.client) || '' },
+        onProgress: function (p) { if (p.pct !== lastPct && (p.count > 1 || p.pct === 100)) { lastPct = p.pct; toast('Uploading… ' + p.text); } }
+      }).promise.then(function (d) { return { ok: true, data: d }; }, function (e) { return { ok: false, data: { error: (e && e.error) || 'Replace failed' } }; });
+    } else {
+      var fd = new FormData();
+      fd.append('image_id', imageId); fd.append('image', file); fd.append('type', 'post');
+      send = fetch(input.getAttribute('data-replace-endpoint') || cfg.replace || 'replace-image.php', { method: 'POST', body: fd, credentials: 'same-origin' })
+        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok && d && d.ok, data: d }; }); });
+    }
+    send
       .then(function (res) {
         slide.classList.remove('is-busy');
         if (!res.ok) { toast((res.data && res.data.error) || 'Replace failed', 'error'); return; }

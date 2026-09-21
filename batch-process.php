@@ -4,10 +4,16 @@
  *
  * POST batch-process.php?client=<slug>   (multipart or urlencoded)
  *
- *   images[]        files — one pending post per file (existing contract).
+ *   images[]        files — one pending post per file (existing contract; the no-JS path).
  *                   Images must pass getimagesize(); MP4/WebM/MOV accepted
  *                   (same rules as add-post.php, spec §6 — .mov is kept as-is);
  *                   .m4v/.avi/.mkv rejected with the "convert to MP4" message.
+ *   claimed[]       tokens of files already sent to upload-chunk.php (purpose=batch —
+ *                   in pieces when large: videos up to 4 GB, images up to 50 MB). Each
+ *                   is validated (format, sidecar purpose + client, file present, < 24 h;
+ *                   a bad one is an entry in `errors`), renamed to its batch_ / batch_vid_
+ *                   name and becomes one pending post exactly like a file in images[].
+ *                   Up to 50 files (images[] + claimed[]) per batch.
  *   rows            JSON array — one post per row, media from the Approved Pool:
  *                   [{ "caption": "…", "hashtags": "…", "scheduled_date": "2026-09-12T10:00",
  *                      "post_type": "post|story|reel", "assets": ["library:12", "tire:34"] }, …]
@@ -24,6 +30,8 @@
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/chunk-upload-lib.php';
+require_once __DIR__ . '/upload-lib.php';
 require_once __DIR__ . '/partials/components/asset-pool.php';
 
 header('Content-Type: application/json');
@@ -60,15 +68,18 @@ if ($rowsRaw !== '') {
     }
 }
 $hasFiles = !empty($_FILES['images']) && is_array($_FILES['images']['name']);
+$claimedRaw = $_POST['claimed'] ?? [];
+$claimedRaw = is_array($claimedRaw) ? array_values(array_filter($claimedRaw, 'is_string')) : [];
 
-if (!$hasFiles && !$rows) {
+if (!$hasFiles && !$rows && !$claimedRaw) {
     echo json_encode(['ok' => false, 'error' => 'No images uploaded']);
     exit;
 }
 
+$maxFiles  = 50;
 $fileCount = $hasFiles ? count($_FILES['images']['name']) : 0;
-if ($fileCount > 20) {
-    echo json_encode(['ok' => false, 'error' => 'Maximum 20 images per batch']);
+if ($fileCount + count($claimedRaw) > $maxFiles) {
+    echo json_encode(['ok' => false, 'error' => "Maximum {$maxFiles} files per batch"]);
     exit;
 }
 if (count($rows) > 20) {
@@ -77,7 +88,6 @@ if (count($rows) > 20) {
 }
 
 $spacingDays = max(1, min(30, (int)($_POST['spacing_days'] ?? 3)));
-$maxFileSize = 10 * 1024 * 1024;
 $allowedExt  = array_merge(imageExts(), videoExts());   // + mov (spec §6)
 $rejectedExt = ['m4v', 'avi', 'mkv'];
 $hasMedia    = hasMediaTypeColumn($pdo);
@@ -130,7 +140,7 @@ $latest   = $dateStmt->fetchColumn();
 $baseDate = $latest ? new DateTime($latest) : new DateTime();
 
 $uploadDir = __DIR__ . '/uploads';
-if (!is_dir($uploadDir)) { @mkdir($uploadDir, 0755, true); }
+if (!is_dir($uploadDir)) { mediaMkdir($uploadDir); }
 
 $created = [];
 $errors  = [];
@@ -145,6 +155,45 @@ function batchInsertPost(PDO $pdo, int $companyId, string $caption, string $hash
         $st->execute([$companyId, $caption, $hashtags, $date, 'pending']);
     }
     return (int)$pdo->lastInsertId();
+}
+
+/**
+ * One pending post for a stored file (uploads/<safeName>, already validated + moved): the post, its
+ * post_images row, filename-matched categories, the activity line. Appends to $created / $errors.
+ */
+function batchCreateFromFile(PDO $pdo, int $companyId, string $name, string $safeName, bool $isVideo, string $scheduledDate, array $matchedCatIds, bool $hasMedia, bool $hasType, string $defaultTags, array &$created, array &$errors): void {
+    $destPath = __DIR__ . '/uploads/' . $safeName;
+    $imageUrl = 'uploads/' . $safeName;
+    try {
+        $pdo->beginTransaction();
+        $postId = batchInsertPost($pdo, $companyId, 'Please insert caption here', $defaultTags, $scheduledDate, 'post', $hasType);
+        if ($hasMedia) {
+            $imgStmt = $pdo->prepare('INSERT INTO post_images (post_id, image_url, media_type, sort_order) VALUES (?, ?, ?, 1)');
+            $imgStmt->execute([$postId, $imageUrl, $isVideo ? 'video' : 'image']);
+        } else {
+            $imgStmt = $pdo->prepare('INSERT INTO post_images (post_id, image_url, sort_order) VALUES (?, ?, 1)');
+            $imgStmt->execute([$postId, $imageUrl]);
+        }
+        if ($matchedCatIds) {
+            $catInsert = $pdo->prepare('INSERT IGNORE INTO post_categories (post_id, category_id) VALUES (?, ?)');
+            foreach ($matchedCatIds as $catId) { $catInsert->execute([$postId, $catId]); }
+        }
+        logActivity($pdo, $companyId, 'post', $postId, 'created', 'admin', "Created post #{$postId} via batch upload");
+        $pdo->commit();
+        $created[] = [
+            'filename'   => $name,
+            'post_id'    => $postId,
+            'date'       => $scheduledDate,
+            'categories' => $matchedCatIds,
+            'image_url'  => $imageUrl,
+            'media_type' => $isVideo ? 'video' : 'image',
+        ];
+    } catch (Exception $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        if (is_file($destPath)) @unlink($destPath);
+        error_log('batch-process file ' . $name . ': ' . $e->getMessage());
+        $errors[] = "$name: database error";
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -212,10 +261,6 @@ for ($i = 0; $i < $fileCount; $i++) {
         $errors[] = "$name: upload error code $error";
         continue;
     }
-    if ($size > $maxFileSize) {
-        $errors[] = "$name: exceeds 10 MB limit";
-        continue;
-    }
     $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
     if (in_array($ext, $rejectedExt, true)) {
         $errors[] = "$name: .$ext isn't web-playable — convert to MP4 first (QuickTime: File → Export As → 1080p). Chrome and Firefox can't play .$ext.";
@@ -226,6 +271,10 @@ for ($i = 0; $i < $fileCount; $i++) {
         continue;
     }
     $isVideo = isVideoExt($ext);
+    if ($size > uploadMaxBytes($isVideo ? 'video' : 'image')) {
+        $errors[] = "$name: exceeds " . uploadCapLabel(uploadMaxBytes($isVideo ? 'video' : 'image')) . ' limit';
+        continue;
+    }
     if ($isVideo) {
         if (!videoFileLooksValid((string)$tmpName, $ext)) { $errors[] = "$name: doesn't look like a valid video file"; continue; }
     } else {
@@ -237,7 +286,7 @@ for ($i = 0; $i < $fileCount; $i++) {
     $destPath = $uploadDir . '/' . $safeName;
     $imageUrl = 'uploads/' . $safeName;
 
-    if (!move_uploaded_file($tmpName, $destPath)) {
+    if (!uploadMoveInto((string)$tmpName, $destPath, true)) {
         $errors[] = "$name: failed to save";
         continue;
     }
@@ -245,37 +294,25 @@ for ($i = 0; $i < $fileCount; $i++) {
     $baseDate->modify('+' . $spacingDays . ' days');
     $scheduledDate = $baseDate->format('Y-m-d H:i:s');
     $matchedCatIds = batchMatchCategories($name, $sortedCats, $catMap, $aliases);
+    batchCreateFromFile($pdo, $companyId, $name, $safeName, $isVideo, $scheduledDate, $matchedCatIds, $hasMedia, $hasType, $defaultTags, $created, $errors);
+}
 
-    try {
-        $pdo->beginTransaction();
-        $postId = batchInsertPost($pdo, $companyId, 'Please insert caption here', $defaultTags, $scheduledDate, 'post', $hasType);
-        if ($hasMedia) {
-            $imgStmt = $pdo->prepare('INSERT INTO post_images (post_id, image_url, media_type, sort_order) VALUES (?, ?, ?, 1)');
-            $imgStmt->execute([$postId, $imageUrl, $isVideo ? 'video' : 'image']);
-        } else {
-            $imgStmt = $pdo->prepare('INSERT INTO post_images (post_id, image_url, sort_order) VALUES (?, ?, 1)');
-            $imgStmt->execute([$postId, $imageUrl]);
-        }
-        if ($matchedCatIds) {
-            $catInsert = $pdo->prepare('INSERT IGNORE INTO post_categories (post_id, category_id) VALUES (?, ?)');
-            foreach ($matchedCatIds as $catId) { $catInsert->execute([$postId, $catId]); }
-        }
-        logActivity($pdo, $companyId, 'post', $postId, 'created', 'admin', "Created post #{$postId} via batch upload");
-        $pdo->commit();
-        $created[] = [
-            'filename'   => $name,
-            'post_id'    => $postId,
-            'date'       => $scheduledDate,
-            'categories' => $matchedCatIds,
-            'image_url'  => $imageUrl,
-            'media_type' => $isVideo ? 'video' : 'image',
-        ];
-    } catch (Exception $e) {
-        if ($pdo->inTransaction()) $pdo->rollBack();
-        if (is_file($destPath)) @unlink($destPath);
-        error_log('batch-process file ' . $name . ': ' . $e->getMessage());
-        $errors[] = "$name: database error";
-    }
+// ---------------------------------------------------------------------
+// 3. Files already uploaded through upload-chunk.php (claimed[] tokens) — one post per file
+// ---------------------------------------------------------------------
+foreach ($claimedRaw as $token) {
+    $label = 'Uploaded file ' . substr($token, 0, 8);
+    $claim = uploadClaimRead($token, 'batch', (string)$client['slug']);
+    if ($claim === null) { $errors[] = "$label: that upload has expired or could not be found — add the file again"; continue; }
+    $name     = (string)$claim['name'];
+    $isVideo  = !empty($claim['video']);
+    $safeName = uploadFreshName($isVideo ? 'batch_vid_' : 'batch_', (string)$claim['ext']);
+    if (!uploadClaimTake($claim, $uploadDir . '/' . $safeName)) { $errors[] = "$name: failed to save"; continue; }
+
+    $baseDate->modify('+' . $spacingDays . ' days');
+    $scheduledDate = $baseDate->format('Y-m-d H:i:s');
+    $matchedCatIds = batchMatchCategories($name, $sortedCats, $catMap, $aliases);
+    batchCreateFromFile($pdo, $companyId, $name, $safeName, $isVideo, $scheduledDate, $matchedCatIds, $hasMedia, $hasType, $defaultTags, $created, $errors);
 }
 
 echo json_encode([

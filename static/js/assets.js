@@ -631,28 +631,43 @@
         .catch(function () { window.open(item.src, '_blank', 'noopener'); });
     },
 
-    /** Admin only (the input exists only when the server rendered it). replace-image.php contract: image_id, image, type=tire. */
+    /** Admin only (the input exists only when the server rendered it). With chunk-upload.js the file goes to
+     *  upload-chunk.php purpose=replace (one request when small, pieces when large — a multi-GB video works);
+     *  otherwise the replace-image.php contract: image_id, image, type=tire. Same reply either way. */
     replace: function (file) {
       var item = this.current(), self = this, root = this.root;
       if (!item || item.kind !== 'tire' || !file) return;
       var endpoint = root.getAttribute('data-replace-endpoint') || 'replace-image.php';
+      var uploadEp = root.getAttribute('data-upload-endpoint') || '';
+      var chunk = App.chunkUpload && App.chunkUpload.upload ? App.chunkUpload : null;
+      var done = function (res) {
+        if (!res.ok) throw new Error((res.data && res.data.error) || ('Replace failed (' + res.status + ')'));
+        var base = item.src.indexOf('/uploads/') > 0 ? item.src.slice(0, item.src.indexOf('/uploads/')) : '';
+        var url = (res.data.src || (base + '/' + res.data.image_url)) + '?t=' + Date.now();   // src: ready-to-use (series renders live under /media/tires/)
+        var meta = /\.(mp4|webm|mov|m4v)(\?|$)/i.test(res.data.image_url);
+        item.src = url; item.type = (res.data.media_type === 'video' || meta) ? 'video' : 'image';
+        item._preloaded = false;
+        if (self.current() === item) self.goTo(self.index);
+        emit(root, 'viewer:replaced', { item: item, src: url });
+        toast(item.type === 'video' ? 'Video replaced' : 'Image replaced', { kind: 'success' });
+      };
+      var fail = function (err) { toast((err && (err.error || err.message)) || 'Replace failed', { kind: 'error' }); };
+      toast('Replacing…');
+      if (chunk && uploadEp) {
+        var lastPct = -1;
+        chunk.upload({
+          endpoint: uploadEp, file: file,
+          fields: { purpose: 'replace', replace_kind: 'tire', replace_id: item.id, client: (document.body && document.body.dataset.client) || '', actor: App.actor || 'admin' },
+          onProgress: function (p) { if (p.pct !== lastPct && (p.count > 1 || p.pct === 100)) { lastPct = p.pct; toast('Replacing… ' + p.text); } }
+        }).promise.then(function (data) { done({ ok: true, data: data, status: 200 }); }).catch(fail);
+        return;
+      }
       var fd = new FormData();
       fd.append('image_id', item.id); fd.append('image', file); fd.append('type', 'tire'); fd.append('actor', App.actor || 'admin');
-      toast('Replacing…');
       fetch(endpoint, { method: 'POST', body: fd, credentials: 'same-origin' })
         .then(function (res) { return res.text().then(function (t) { var d = null; try { d = JSON.parse(t); } catch (e) {} return { ok: res.ok && !!d && d.ok !== false, data: d, status: res.status }; }); })
-        .then(function (res) {
-          if (!res.ok) throw new Error((res.data && res.data.error) || ('Replace failed (' + res.status + ')'));
-          var base = item.src.indexOf('/uploads/') > 0 ? item.src.slice(0, item.src.indexOf('/uploads/')) : '';
-          var url = (res.data.src || (base + '/' + res.data.image_url)) + '?t=' + Date.now();   // src: ready-to-use (series renders live under /media/tires/)
-          var meta = /\.(mp4|webm|mov|m4v)(\?|$)/i.test(res.data.image_url);
-          item.src = url; item.type = (res.data.media_type === 'video' || meta) ? 'video' : 'image';
-          item._preloaded = false;
-          if (self.current() === item) self.goTo(self.index);
-          emit(root, 'viewer:replaced', { item: item, src: url });
-          toast('Image replaced', { kind: 'success' });
-        })
-        .catch(function (err) { toast(err.message || 'Replace failed', { kind: 'error' }); });
+        .then(done)
+        .catch(fail);
     },
 
     /* ---------------- video fallback (§6) — the card lives inside the slide (App.video) ---------------- */

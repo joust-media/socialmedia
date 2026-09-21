@@ -262,36 +262,59 @@ join the Approved Pool and the composer like any tire image.
 ## Large uploads (chunked, resumable)
 
 Shared hosting caps one request at `upload_max_filesize` / `post_max_size` (often 64 MB or
-less) and at `max_execution_time`, so multi-GB renders cannot arrive in one POST. Both
-uploaders (Studio → Renders → `tire-upload.php`, Studio → Pages → `page-upload.php`) therefore
-speak a small chunk protocol (`chunk-upload-lib.php` on the server, `static/js/chunk-upload.js`
-in the browser); files at or below one piece still go in a single request exactly as before.
+less) and at `max_execution_time`, so multi-GB files cannot arrive in one POST. Every upload
+surface therefore speaks a small chunk protocol (`chunk-upload-lib.php` on the server,
+`static/js/chunk-upload.js` in the browser); a file at or below one piece still goes in a single
+request exactly as before. The surfaces and their endpoints:
+
+| Surface | Endpoint | Caps |
+| --- | --- | --- |
+| Studio → Compose (one-offs) | `upload-chunk.php` `purpose=post` → `claimed[]` tokens to `add-post.php` | videos 4 GB, images 50 MB, 10 media per post |
+| Studio → Uploads tab, Batch (direct files) | `upload-chunk.php` `purpose=batch` → `claimed[]` tokens to `batch-process.php` | videos 4 GB, images 50 MB, 50 files per batch |
+| Tire reference images (`add-feature.php`, "Add more images") | `upload-chunk.php` `purpose=feature` (`feature_id`) | images 50 MB, 6 per item, images only |
+| Replace image / video (Posts detail, Assets viewer, `add-feature.php`) | `upload-chunk.php` `purpose=replace` (`replace_kind=post\|tire`, `replace_id`) — `replace-image.php` stays the single-request path | videos 4 GB, images 50 MB |
+| Studio → Renders | `tire-upload.php` | images 10 MB, videos 4 GB |
+| Studio → Pages | `page-upload.php` | HTML 64 MB, CSS / JS / JSON 10 MB, other assets 100 MB, MP4 / WebM 4 GB |
+| Studio → Clients logo | `client-admin.php` (single request) | **Logos unchanged: 2 MB**, resized to 512×512 |
 
 - **Protocol** (`action=`, every call admin + same-site, `upload_id` is 32 hex):
   `probe` (GET or POST) → `{chunk_size, max_file_bytes, ini_max, exts}` — `chunk_size` is
-  min(8 MB, 80 % of the PHP request cap); `chunk_init {client, tire_id, series_id | new_series,
-  name, size, type, batch}` (Pages: `page_id, subfolder` instead) → `{upload_id, chunk_size,
-  received: 0}`; `chunk_put {upload_id, index, offset, file}` → `{received}` (409 with the
-  server's `received` when `offset` is not where the server is — the client re-syncs; an
+  min(8 MB, 80 % of the PHP request cap); `chunk_init {client, …target fields…, name, size,
+  type}` (Renders: `tire_id, series_id | new_series, batch`; Pages: `page_id, subfolder`;
+  `upload-chunk.php`: `purpose` + `feature_id` / `replace_kind` + `replace_id`) → `{upload_id,
+  chunk_size, received: 0}`; `chunk_put {upload_id, index, offset, file}` → `{received}` (409 with
+  the server's `received` when `offset` is not where the server is — the client re-syncs; an
   already-received range is a 200 no-op); `chunk_status` → `{received, size}`; `chunk_finish`
-  runs the same extension / content checks as a single-request upload, moves the file into the
-  series (or page) folder and inserts the row — same reply shape as the single path;
-  `chunk_abort` deletes the pieces.
-- **Spool**: `media/tires/.spool/<upload_id>.part` + `.json` sidecar (owner client, target,
-  name, size, received), 0600, in a dot-folder the series scan skips, with its own deny-all
-  `.htaccess` under the `media/tires/.htaccess` hardening (Pages: `media/pages/.spool/`).
-  Pieces are appended under an exclusive lock; the part file's real size is the truth.
-  Spool files older than 24 h are removed on the next `probe` / `chunk_init`.
-- **Caps**: tire renders — images 10 MB, videos 4 GB; page files — HTML 64 MB (its embedded
-  `data:` assets are extracted on arrival), CSS / JS / JSON 10 MB (their body is scanned for
-  PHP tags), other assets 100 MB, MP4 / WebM 4 GB.
+  runs the same extension / content checks as a single-request upload (images must decode as the
+  format their extension claims, videos must carry the container magic) and finalizes — same
+  reply shape as the single path; `chunk_abort` deletes the pieces. `upload-chunk.php` also takes
+  `action=upload` (one multipart request with the same fields + `file`) for small files, so
+  `App.chunkUpload.upload()` is the one browser call for any size.
+- **Claim tokens** (Compose / Uploads / Batch): the file is validated and parked as
+  `uploads/tmp_<token>.<ext>` with a sidecar `uploads/.spool/<token>.claim` (purpose, client,
+  name, size); the reply is `{token, name, size, type, preview_url}` and the form submits
+  `claimed[]`. `add-post.php` / `batch-process.php` check each token (32 hex, sidecar purpose +
+  client match, file directly inside `uploads/`, younger than 24 h — a bad one is a 400 in the
+  composer and a per-row error in a batch, nothing is saved), rename the file to its final
+  `img_` / `vid_` / `batch_` name and insert the row exactly as for a direct upload. Removing a
+  row before submitting posts `action=claim_discard`; anything unclaimed is swept after 24 h.
+  Publish / Create posts wait until every file is in.
+- **Spool**: `<root>/.spool/<upload_id>.part` + `.json` sidecar (owner client, target, name,
+  size, received), 0600, in a dot-folder the folder scans skip, with its own deny-all
+  `.htaccess` — `media/tires/.spool/` (Renders), `media/pages/.spool/` (Pages), `uploads/.spool/`
+  (`upload-chunk.php`, next to where its files end up). Pieces are appended under an exclusive
+  lock; the part file's real size is the truth. Spool files, claim sidecars and parked `tmp_`
+  files older than 24 h are removed on the next `probe` / `chunk_init`. Stored files come out
+  0644 whatever the umask (`media-lib.php`).
 - **Client**: one probe per page, then per file: single request when `size ≤ chunk_size`,
   otherwise init → sequential pieces (progress bar with bytes, %, speed and ETA, "piece n of
   m") → finish. A failed piece is retried up to 3 times (1 s / 2 s / 4 s back-off, asking the
   server where it is first). Cancel aborts and deletes the spool. Every in-flight upload is
-  noted in `localStorage`, so after a reload the tab offers **Resume N unfinished uploads**:
-  pick the same files again (name + size must match), the client asks `chunk_status` and
-  continues from `received`; Discard aborts them on the server.
+  noted in `localStorage`, so after a reload the Renders tab, the composer, the Uploads tab and
+  Batch offer **Resume N unfinished uploads**: pick the same files again (name + size must
+  match), the client asks `chunk_status` and continues from `received`; Discard aborts them on
+  the server. Local videos are never decoded for a thumbnail or the live preview (a poster-less
+  tile with the name and size instead).
 - **Playback**: Apache serves `media/` statically with `Accept-Ranges: bytes`, so the viewer's
   `<video preload="metadata">` and seeking only fetch the ranges the browser needs. Grid tiles
   never load a video: they show the cached poster or a play glyph, and the poster probe is

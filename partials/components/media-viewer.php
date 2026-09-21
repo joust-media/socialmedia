@@ -45,10 +45,11 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
 $viewerId    = isset($viewerId) && $viewerId !== '' ? preg_replace('/[^a-zA-Z0-9_\-]/', '', (string)$viewerId) : 'uiViewer';
 $viewerAdmin = isset($viewerAdmin) ? (bool)$viewerAdmin : (function_exists('isAdmin') && isAdmin());
 $viewerReplaceEndpoint  = isset($viewerReplaceEndpoint) ? (string)$viewerReplaceEndpoint : basePath() . '/replace-image.php';
+$viewerUploadEndpoint   = isset($viewerUploadEndpoint) ? (string)$viewerUploadEndpoint : basePath() . '/upload-chunk.php';   // purpose=replace: large replacements in pieces (chunk-upload.js)
 $viewerCommentsEndpoint = isset($viewerCommentsEndpoint) ? (string)$viewerCommentsEndpoint : clientUrl('assets.php', ['partial' => 'comments']);
 ?>
 <div class="ui-viewer" id="<?= esc($viewerId) ?>" data-viewer hidden aria-hidden="true" role="dialog" aria-modal="true" aria-label="Review image"
-     data-replace-endpoint="<?= esc($viewerReplaceEndpoint) ?>" data-comments-endpoint="<?= esc($viewerCommentsEndpoint) ?>">
+     data-replace-endpoint="<?= esc($viewerReplaceEndpoint) ?>" data-upload-endpoint="<?= esc($viewerUploadEndpoint) ?>" data-comments-endpoint="<?= esc($viewerCommentsEndpoint) ?>">
   <header class="ui-viewer-top">
     <button type="button" class="ui-viewer-close" data-viewer-close aria-label="Close"><?= icon('xmark') ?></button>
     <div class="ui-viewer-heading">
@@ -128,7 +129,7 @@ $viewerCommentsEndpoint = isset($viewerCommentsEndpoint) ? (string)$viewerCommen
     <?php endif; ?>
   </div>
   <?php if ($viewerAdmin): ?>
-    <input type="file" class="ui-visually-hidden" data-viewer-replace-input accept="image/jpeg,image/png,image/gif,image/webp" tabindex="-1" aria-hidden="true">
+    <input type="file" class="ui-visually-hidden" data-viewer-replace-input accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov" tabindex="-1" aria-hidden="true">
   <?php endif; ?>
 </div>
 <?php unset($viewerId, $viewerAdmin, $viewerReplaceEndpoint, $viewerCommentsEndpoint); ?>

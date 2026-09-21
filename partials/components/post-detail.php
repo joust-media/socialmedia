@@ -215,7 +215,7 @@ if (!function_exists('renderPostDetail')) {
         // ---- 1. Media carousel -------------------------------------------
         $out .= renderPostMedia($images, ['admin' => $admin, 'label' => (string)$brand['name'] . ' post']);
         if ($admin) {
-            $out .= '<input type="file" class="ui-visually-hidden" data-replace-input accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov" tabindex="-1" data-replace-endpoint="' . pdEsc($replaceEp) . '">';
+            $out .= '<input type="file" class="ui-visually-hidden" data-replace-input accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov" tabindex="-1" data-replace-endpoint="' . pdEsc($replaceEp) . '" data-upload-endpoint="' . pdEsc(pdMediaUrl('upload-chunk.php')) . '">';   // upload-chunk.php purpose=replace: large replacements in pieces
         }
 
         // ---- 2. Caption preview ----------------------------------------------
