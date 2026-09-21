@@ -859,6 +859,7 @@ $assetsConfig = [
     ],
 ];
 $footExtra = '<script>window.AssetsPage = ' . json_encode($assetsConfig, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_UNESCAPED_SLASHES) . ';</script>' . "\n"
+           . ($isAdmin ? '<script src="' . esc(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n" : '')   // App.chunkUpload for the viewer's Replace (admin only)
            . '<script src="' . esc(staticUrl('js/assets.js')) . '" defer></script>' . "\n";
 $includeSheet = $isAdmin && $seriesOn && $seriesActive !== null;   // only the admin's Rename / Delete series forms use the generic sheet
 include __DIR__ . '/partials/layout-bottom.php';

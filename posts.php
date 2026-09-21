@@ -403,6 +403,9 @@ $postsConfig = [
     'base'        => basePath(),
     'endpoint'    => basePath() . '/status.php',
     'replace'     => basePath() . '/replace-image.php',
+    'upload'      => basePath() . '/upload-chunk.php',   // Replace image/video: purpose=replace, in pieces when large (chunk-upload.js)
+    'maxImageMb'  => 50,
+    'maxVideoMb'  => 4096,
     'partialUrl'  => postsUrl(['post' => '__ID__', 'partial' => 1]),
     'segment'     => $segment,
     'counts'      => $counts,
@@ -414,6 +417,7 @@ $postsConfig = [
     'segmentUrls' => array_combine(array_keys($segments), array_map($segmentUrl, array_keys($segments))),
 ];
 $footExtra = '<script>window.PostsConfig = ' . json_encode($postsConfig, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n"
+           . ($admin ? '<script src="' . h(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n" : '')   // App.chunkUpload for Replace (admin only)
            . '<script src="' . h(staticUrl('js/posts.js')) . '" defer></script>';
 
 include __DIR__ . '/partials/layout-top.php';

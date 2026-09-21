@@ -611,8 +611,12 @@ if (!function_exists('studioComposerHtml')) {
      * $ctx keys: client (array), pool (studioApprovedPool), action (form URL), isEdit (bool),
      *   post (values: id, name, caption, hashtags, scheduled (Y-m-d\TH:i), status, post_type, categories[]),
      *   editImages ([['id','url','type'], …]), categories ([['id','name'], …]), supportsType (bool),
-     *   maxImages (10), maxFileMb (25), submitText, cancelUrl, assetsUrl, selected (keys), errors ([]),
+     *   maxImages (10), maxImageMb (50), maxVideoGb (4), submitText, cancelUrl, assetsUrl, selected (keys), errors ([]),
      *   defaultHashtags (string), replaceEndpoint.
+     * One-offs: the file input keeps the images[] contract for the no-JS path; with JS (studio.js Composer +
+     * chunk-upload.js) every picked file goes straight to upload-chunk.php (purpose=post — in pieces when large)
+     * and comes back as a claimed[] token the form submits; the rows show progress / Cancel / Remove, and the
+     * "Resume unfinished uploads" banner appears after a reload.
      */
     function studioComposerHtml(array $ctx): string
     {
@@ -625,7 +629,8 @@ if (!function_exists('studioComposerHtml')) {
         $postCats = array_map('intval', (array)($post['categories'] ?? []));
         $editImgs = $ctx['editImages'] ?? [];
         $max      = (int)($ctx['maxImages'] ?? 10);
-        $maxMb    = (int)($ctx['maxFileMb'] ?? 25);
+        $maxImgMb = (int)($ctx['maxImageMb'] ?? 50);
+        $maxVidGb = (int)($ctx['maxVideoGb'] ?? 4);
         $selected = (array)($ctx['selected'] ?? []);
         $supportsType = !empty($ctx['supportsType']);
         $defaults = trim((string)($ctx['defaultHashtags'] ?? ''));
@@ -650,15 +655,35 @@ if (!function_exists('studioComposerHtml')) {
         $out .= '<div class="studio-composer-pool">';
         $out .= studioPickerHtml($pool, ['max' => $slots > 0 ? $slots : 0, 'selected' => $selected, 'assetsUrl' => (string)($ctx['assetsUrl'] ?? ''), 'id' => $formId . 'Picker']);
 
-        // Direct upload for one-offs (existing add-post contract: images[])
-        $out .= '<section class="studio-upload-oneoff">'
+        // Direct upload for one-offs (existing add-post contract: images[]; with JS the files go up right away
+        // through upload-chunk.php and the form submits claimed[] tokens instead — studio.js Composer)
+        $accept = 'image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov';
+        $out .= '<section class="studio-upload-oneoff" data-composer-uploads data-max-image-mb="' . $maxImgMb . '" data-max-video-mb="' . ($maxVidGb * 1024) . '">'
               . '<h3 class="studio-section-title studio-section-title--sm">Or upload a one-off</h3>'
               . '<label class="studio-dropzone studio-dropzone--sm" data-file-drop>'
-              . '<input type="file" name="images[]" data-composer-files accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov" multiple' . ($slots <= 0 ? ' disabled' : '') . '>'
+              . '<input type="file" name="images[]" data-composer-files accept="' . $accept . '" multiple' . ($slots <= 0 ? ' disabled' : '') . '>'
               . '<span class="studio-dropzone-label">Choose files</span>'
-              . '<span class="studio-dropzone-hint">or drop them here · up to ' . $maxMb . ' MB · JPG, PNG, GIF, WebP, MP4, WebM, MOV</span>'
+              . '<span class="studio-dropzone-hint">or drop them here · up to ' . $maxVidGb . ' GB per video, ' . $maxImgMb . ' MB per image · JPG, PNG, GIF, WebP, MP4, WebM, MOV · large files go up in pieces and can resume</span>'
               . '</label>'
-              . '<ul class="studio-filelist" data-composer-filelist role="list"></ul>'
+              . '<div class="studio-resume" data-composer-resume hidden role="status">'
+              . '<span class="studio-resume-text" data-composer-resume-text>Resume unfinished uploads</span>'
+              . '<label class="ui-btn ui-btn--filled ui-btn--sm studio-resume-pick">Pick the files<input type="file" data-composer-resume-input accept="' . $accept . '" multiple hidden></label>'
+              . '<button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-composer-resume-discard>Discard</button>'
+              . '</div>'
+              . '<ul class="studio-uploadlist studio-filelist" data-composer-filelist role="list"></ul>'
+              . '<template data-composer-item-template>'
+              . '<li class="studio-upload-item" data-composer-item data-file-name="">'
+              . '<div class="studio-upload-thumb" data-upload-thumb></div>'
+              . '<div class="studio-upload-body">'
+              . '<div class="studio-upload-name" data-upload-name></div>'
+              . '<div class="studio-upload-meta text-secondary" data-upload-meta></div>'
+              . '<div class="studio-progress" data-upload-progress hidden><div class="studio-progress-bar"><div class="studio-progress-fill" data-upload-fill></div></div></div>'
+              . '<div class="studio-upload-status" data-upload-status></div>'
+              . '</div>'
+              . '<button type="button" class="ui-btn ui-btn--plain ui-btn--sm studio-upload-retry studio-upload-cancel" data-composer-cancel hidden>Cancel</button>'
+              . '<button type="button" class="ui-btn ui-btn--plain ui-btn--sm studio-upload-retry" data-file-remove aria-label="Remove">' . (function_exists('icon') ? icon('xmark') : 'Remove') . '</button>'
+              . '</li>'
+              . '</template>'
               . '</section>';
         $out .= '</div>';
 

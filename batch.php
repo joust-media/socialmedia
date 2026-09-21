@@ -44,10 +44,14 @@ $studioConfig = [
     'base'       => basePath(),
     'endpoint'   => basePath() . '/status.php',
     'batch'      => basePath() . '/batch-process.php?client=' . rawurlencode($client['slug']),
+    'upload'     => basePath() . '/upload-chunk.php?client=' . rawurlencode($client['slug']),   // direct files go up as they are picked (purpose=batch, in pieces when large) → claimed[] tokens
     'client'     => $client['slug'],
     'brand'      => ['name' => $client['name'], 'logo' => brandLogoUrl($client['logo_url'] ?? '')],
     'maxImages'  => 10,
     'maxRows'    => 20,
+    'maxBatchFiles' => 50,
+    'maxImageMb' => 50,
+    'maxVideoMb' => 4096,
     'types'      => $supportsType ? $types : [],
     'latest'     => $latestDate ? date('Y-m-d\TH:i', strtotime($latestDate)) : null,
     'spacing'    => 3,
@@ -67,12 +71,13 @@ $bodyClass   = 'page-studio page-batch';
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">' . "\n"
              . '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">';
 $footExtra   = '<script>window.StudioConfig = ' . json_encode($studioConfig, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n"
+             . '<script src="' . h(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n"   // App.chunkUpload (direct files in pieces, resumable)
              . '<script src="' . h(staticUrl('js/studio.js')) . '" defer></script>';
 
 include __DIR__ . '/partials/layout-top.php';
 ?>
 
-<div class="studio-batch" data-batch data-max-rows="20">
+<div class="studio-batch" data-batch data-max-rows="20" data-max-files="50" data-upload-endpoint="<?= h($studioConfig['upload']) ?>">
 
   <div class="studio-batch-pool">
     <?= studioPickerHtml($pool, ['max' => 10, 'id' => 'batchPicker', 'name' => '', 'title' => 'Approved Pool',
@@ -87,9 +92,27 @@ include __DIR__ . '/partials/layout-top.php';
       <label class="studio-dropzone studio-dropzone--sm" data-file-drop>
         <input type="file" data-batch-files accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov" multiple>
         <span class="studio-dropzone-label">Choose files</span>
-        <span class="studio-dropzone-hint">up to 10 MB each here (Compose takes single files up to 25 MB) · name files with a category keyword to auto-tag</span>
+        <span class="studio-dropzone-hint">up to 4 GB per video, 50 MB per image · up to 50 files · large files go up in pieces as you pick them · name files with a category keyword to auto-tag</span>
       </label>
-      <ul class="studio-filelist" data-batch-filelist role="list"></ul>
+      <div class="studio-resume" data-batch-resume hidden role="status">
+        <span class="studio-resume-text" data-batch-resume-text>Resume unfinished uploads</span>
+        <label class="ui-btn ui-btn--filled ui-btn--sm studio-resume-pick">Pick the files<input type="file" data-batch-resume-input accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov" multiple hidden></label>
+        <button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-batch-resume-discard>Discard</button>
+      </div>
+      <ul class="studio-uploadlist studio-filelist" data-batch-filelist role="list"></ul>
+      <template data-batch-item-template>
+        <li class="studio-upload-item" data-batch-item data-file-name="">
+          <div class="studio-upload-thumb" data-upload-thumb></div>
+          <div class="studio-upload-body">
+            <div class="studio-upload-name" data-upload-name></div>
+            <div class="studio-upload-meta text-secondary" data-upload-meta></div>
+            <div class="studio-progress" data-upload-progress hidden><div class="studio-progress-bar"><div class="studio-progress-fill" data-upload-fill></div></div></div>
+            <div class="studio-upload-status" data-upload-status></div>
+          </div>
+          <button type="button" class="ui-btn ui-btn--plain ui-btn--sm studio-upload-retry studio-upload-cancel" data-batch-cancel hidden>Cancel</button>
+          <button type="button" class="ui-btn ui-btn--plain ui-btn--sm studio-upload-retry" data-file-remove aria-label="Remove"><?= icon('xmark') ?></button>
+        </li>
+      </template>
       <?php if ($categories): ?>
         <details class="studio-legend">
           <summary>Category keywords</summary>

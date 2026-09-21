@@ -384,6 +384,21 @@
 .studio-upload-item .studio-upload-retry { align-self: center; flex: 0 0 auto; }
 .studio-upload-item .studio-upload-retry[hidden] { display: none; }
 .studio-renders-note { margin: 8px 0 0; }
+/* Compose / Batch one-off rows reuse the upload item; the poster-less video thumb is a play glyph */
+.studio-upload-thumb.is-video { color: var(--label-secondary); }
+.studio-upload-item.is-failed .studio-upload-name { color: var(--label-secondary); }
+.studio-upload-item .studio-upload-cancel { align-self: center; flex: 0 0 auto; }
+.studio-upload-item .studio-upload-cancel[hidden] { display: none; }
+.studio-uploadlist.studio-filelist li { padding: 12px; background: var(--bg-elevated); border-radius: var(--radius-list); gap: 12px; }
+.studio-uploadlist.studio-filelist .studio-upload-thumb { width: 44px; height: 44px; }
+/* Live preview: a local (not yet uploaded) video is never decoded — a tile with the name and size instead */
+.pd-video--local {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  width: 100%; aspect-ratio: 4 / 5; background: var(--fill-tertiary); color: var(--label-secondary); text-align: center; padding: 16px;
+}
+.pd-video--local .ui-icon { width: 40px; height: 40px; }
+.pd-video--local .pd-video-local-name { font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--label-primary); }
+.pd-video--local .pd-video-local-size { font-size: var(--text-footnote); }
 /* "Resume N unfinished uploads" banner (chunked uploads found in localStorage after a reload) */
 .studio-resume {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 12px 0 0; padding: 12px 14px;

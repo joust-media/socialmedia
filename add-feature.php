@@ -11,13 +11,15 @@
 require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/upload-lib.php';
 requireAdmin();
 
 $uploadsDir    = __DIR__ . '/uploads';
 $uploadsUrl    = 'uploads';
 $allowedExt    = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-$maxFileSize   = 10 * 1024 * 1024;
-$maxItemImages = 6;
+$maxFileSize   = uploadMaxBytes('image');   // 50 MB (upload-lib.php) — with JS the files go through upload-chunk.php purpose=feature (in pieces when large); this form path is the no-JS fallback
+$maxFileMb     = (int)($maxFileSize / (1024 * 1024));
+$maxItemImages = uploadFeatureMaxImages();  // 6 reference images per item (renders in a series never count)
 
 // Series renders (tire_images.series_id set — tire-series-lib.php) are reviewed in Assets and never
 // count against the reference-image slots; every query here is scoped to series_id IS NULL.
@@ -245,7 +247,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             continue;
                         }
                         if ($_FILES['item_images']['size'][$i] > $maxFileSize) {
-                            $errors[] = "'{$origName}' exceeds 10 MB.";
+                            $errors[] = "'{$origName}' exceeds {$maxFileMb} MB.";
                             continue;
                         }
                         $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
@@ -783,10 +785,10 @@ function selfUrl($extra = []) {
                        accept="image/jpeg,image/png,image/gif,image/webp" multiple>
                 <span class="file-drop-label">Click to choose files</span>
                 <span class="file-drop-hint">
-                  Max <?= $maxItemImages ?> per <?= h($sLower) ?>, 10 MB each. Captions editable after upload.
+                  Max <?= $maxItemImages ?> per <?= h($sLower) ?>, <?= $maxFileMb ?> MB each (large files go up in pieces). Captions editable after upload.
                 </span>
               </label>
-              <div class="file-list" id="itemFileList"></div>
+              <div class="file-list" id="itemFileList" data-feature-id="<?= (int)$editItem['id'] ?>" data-feature-count="<?= count($editImages) ?>" data-feature-max="<?= $maxItemImages ?>"></div>
             </div>
           <?php else: ?>
             <div class="field full">
@@ -838,18 +840,67 @@ function selfUrl($extra = []) {
 
 </div>
 
+<script src="<?= h(staticUrl('js/chunk-upload.js')) ?>"></script>
 <script>
+  // Uploads go through upload-chunk.php (purpose=feature / replace): one request for a small file, pieces
+  // for a large one (chunk-upload.js), so the host's upload_max_filesize no longer caps them. Without JS
+  // the form still posts item_images[] to this page.
+  const UPLOAD_ENDPOINT = 'upload-chunk.php?client=<?= rawurlencode($client['slug']) ?>';
+  const CLIENT_SLUG     = <?= json_encode($client['slug']) ?>;
+  const MAX_IMAGE_MB    = <?= (int)$maxFileMb ?>;
+  const chunkUp = window.App && window.App.chunkUpload;
+  function fmtMb(n) { return (n / 1024 / 1024).toFixed(n > 10 * 1024 * 1024 ? 0 : 2) + ' MB'; }
+  function uploadOne(file, fields, onProgress) {
+    if (!chunkUp || !chunkUp.upload) {
+      return { promise: Promise.reject({ error: 'Uploads need chunk-upload.js' }), abort: function () {} };
+    }
+    return chunkUp.upload({ endpoint: UPLOAD_ENDPOINT, file: file, fields: Object.assign({ client: CLIENT_SLUG, actor: 'admin' }, fields), onProgress: onProgress });
+  }
+
   const itemFileInput = document.getElementById('item_images');
   const itemFileList  = document.getElementById('itemFileList');
   if (itemFileInput && itemFileList) {
-    itemFileInput.addEventListener('change', () => {
-      if (!itemFileInput.files.length) { itemFileList.innerHTML = ''; return; }
-      itemFileList.innerHTML = '<strong>Selected:</strong>';
-      [...itemFileInput.files].forEach(f => {
-        const div = document.createElement('div');
-        div.textContent = '• ' + f.name + ' (' + (f.size / 1024 / 1024).toFixed(2) + ' MB)';
-        itemFileList.appendChild(div);
+    let queue = [], busy = false;
+    const featureId = itemFileList.getAttribute('data-feature-id');
+    let count = parseInt(itemFileList.getAttribute('data-feature-count'), 10) || 0;
+    const max = parseInt(itemFileList.getAttribute('data-feature-max'), 10) || 6;
+    const next = () => {
+      if (busy || !queue.length) return;
+      const job = queue.shift(); busy = true;
+      job.row.textContent = '• ' + job.file.name + ' — uploading… 0%';
+      const ctl = uploadOne(job.file, { purpose: 'feature', feature_id: featureId }, p => { job.row.textContent = '• ' + job.file.name + ' — uploading… ' + p.text; });
+      ctl.promise.then(d => {
+        count++;
+        // No automatic reload: the admin may have unsaved edits in the form. The row is in the DB already and
+        // shows in the list after Save (which comes back here) or a reload.
+        job.row.textContent = '✓ ' + job.file.name + ' — added (' + count + ' of ' + max + '); it appears in the list after you save or reload';
+        busy = false; next();
+      }, e => {
+        job.row.textContent = '✗ ' + job.file.name + ' — ' + ((e && e.error) || 'upload failed');
+        busy = false; next();
       });
+    };
+    itemFileInput.addEventListener('change', () => {
+      const files = [...itemFileInput.files];
+      if (!files.length) return;
+      if (!chunkUp || !chunkUp.upload) {   // no chunk support: leave the files in the form (posted with Save)
+        itemFileList.innerHTML = '<strong>Selected:</strong>';
+        files.forEach(f => { const div = document.createElement('div'); div.textContent = '• ' + f.name + ' (' + fmtMb(f.size) + ')'; itemFileList.appendChild(div); });
+        return;
+      }
+      itemFileInput.value = '';   // the files go up now; the form must not post them again
+      if (!itemFileList.querySelector('strong')) itemFileList.innerHTML = '<strong>Uploading now (large files go in pieces):</strong>';
+      files.forEach(f => {
+        const row = document.createElement('div');
+        itemFileList.appendChild(row);
+        const ext = (f.name.toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
+        if (['jpg', 'jpeg', 'png', 'gif', 'webp'].indexOf(ext) === -1) { row.textContent = '✗ ' + f.name + ' — images only (JPG, PNG, GIF, WebP)'; return; }
+        if (f.size > MAX_IMAGE_MB * 1024 * 1024) { row.textContent = '✗ ' + f.name + ' — over ' + MAX_IMAGE_MB + ' MB'; return; }
+        if (count + queue.length + (busy ? 1 : 0) >= max) { row.textContent = '✗ ' + f.name + ' — max ' + max + ' images per item'; return; }
+        row.textContent = '• ' + f.name + ' (' + fmtMb(f.size) + ') — waiting…';
+        queue.push({ file: f, row: row });
+      });
+      next();
     });
   }
 
@@ -951,8 +1002,8 @@ function selfUrl($extra = []) {
   replaceInput.addEventListener('change', async () => {
     if (!replaceInput.files.length || !pendingReplaceBtn) return;
     const file = replaceInput.files[0];
-    if (file.size > 10 * 1024 * 1024) {
-      alert('Image exceeds 10 MB');
+    if (file.size > MAX_IMAGE_MB * 1024 * 1024) {
+      alert('Image exceeds ' + MAX_IMAGE_MB + ' MB');
       pendingReplaceBtn = null;
       return;
     }
@@ -962,29 +1013,36 @@ function selfUrl($extra = []) {
     const imgEl   = row.querySelector('[data-thumb-img]');
     const imageId = row.getAttribute('data-image-id');
     const original = pendingReplaceBtn.textContent;
+    const btn = pendingReplaceBtn;
 
     frame.classList.add('replacing');
-    pendingReplaceBtn.disabled = true;
-    pendingReplaceBtn.textContent = '⏳ Uploading…';
+    btn.disabled = true;
+    btn.textContent = '⏳ Uploading…';
 
     try {
-      const fd = new FormData();
-      fd.append('image_id', imageId);
-      fd.append('image', file);
-      fd.append('type', 'tire');
-      const res  = await fetch('replace-image.php', { method: 'POST', body: fd });
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || 'Failed');
+      let data;
+      if (chunkUp && chunkUp.upload) {
+        // upload-chunk.php purpose=replace: one request for a small file, pieces for a large one; same reply as replace-image.php
+        data = await uploadOne(file, { purpose: 'replace', replace_kind: 'tire', replace_id: imageId }, p => { btn.textContent = '⏳ ' + p.pct + '%'; }).promise;
+      } else {
+        const fd = new FormData();
+        fd.append('image_id', imageId);
+        fd.append('image', file);
+        fd.append('type', 'tire');
+        const res = await fetch('replace-image.php', { method: 'POST', body: fd });
+        data = await res.json();
+        if (!data.ok) throw new Error(data.error || 'Failed');
+      }
       // Cache-bust in case the same filename gets reused
       const fresh = data.src || data.image_url;   // src: ready-to-use URL (series renders live under /media/tires/)
       const bust = fresh + (fresh.includes('?') ? '&' : '?') + 't=' + Date.now();
       imgEl.src = bust;
     } catch (err) {
-      alert('Replace failed: ' + (err.message || 'unknown'));
+      alert('Replace failed: ' + ((err && (err.error || err.message)) || 'unknown'));
     } finally {
       frame.classList.remove('replacing');
-      pendingReplaceBtn.disabled = false;
-      pendingReplaceBtn.textContent = original;
+      btn.disabled = false;
+      btn.textContent = original;
       pendingReplaceBtn = null;
     }
   });

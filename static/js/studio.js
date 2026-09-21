@@ -9,8 +9,16 @@
                              renderCaptionPreview()/renderPostMedia() emit
                              (partials/components/post-detail.php) so what the
                              admin sees is exactly what the client sees.
-   App.studio.uploads(zone)  Drag-drop zone with per-file XHR progress; .MOV
-                             shows the Safari-only warning before upload.
+   App.studio.uploads(zone)  Uploads tab: every file goes to upload-chunk.php
+                             (purpose=batch — one request when small, pieces
+                             through App.chunkUpload when large) and its token
+                             is posted to batch-process.php as claimed[] → one
+                             draft post per file; .MOV shows the Safari-only
+                             warning before upload. Compose (composer) and Batch
+                             use the same UploadQueue: files go up as they are
+                             picked (progress / Cancel / Remove, "Resume N
+                             unfinished uploads" after a reload) and the form
+                             submits claimed[] tokens; Publish waits for them.
    App.studio.renders(root)  Renders tab (tire series): tire + series pickers,
                              sequential queue to tire-upload.php — one request
                              per small file, files above the server's chunk_size
@@ -401,7 +409,9 @@
   Preview.prototype.setFiles = function (files) {
     this.files.forEach(function (f) { if (f.url) URL.revokeObjectURL(f.url); });
     this.files = files.map(function (file) {
-      return { file: file, url: URL.createObjectURL(file), media: isVideoFile(file) ? 'video' : 'image', type: file.type || '' };
+      var vid = isVideoFile(file);
+      // A local video is never decoded for the preview (it may be gigabytes): a poster-less tile with name + size.
+      return { file: file, url: vid ? '' : URL.createObjectURL(file), media: vid ? 'video' : 'image', type: file.type || '', local: true, name: file.name, size: file.size };
     });
     this.update();
   };
@@ -417,7 +427,7 @@
       out.push({ src: x.src, media: x.media });
     });
     if (this.picker) this.picker.getSelection().forEach(function (a) { out.push({ src: a.src, media: a.media }); });
-    this.files.forEach(function (f) { out.push({ src: f.url, media: f.media, type: f.type }); });
+    this.files.forEach(function (f) { out.push({ src: f.url, media: f.media, type: f.type, local: f.local, name: f.name, size: f.size }); });
     return out.slice(0, 10);
   };
   Preview.prototype.update = function () {
@@ -448,7 +458,10 @@
     items.forEach(function (it, i) {
       var isVid = it.media === 'video';
       html += '<figure class="pd-slide" data-slide="' + i + '" data-media-type="' + (isVid ? 'video' : 'image') + '" data-src="' + esc(it.src) + '">';
-      if (isVid) {
+      if (isVid && it.local) {
+        html += '<div class="pd-video pd-video--local" role="img" aria-label="' + esc(it.name || 'video') + '">' + ICON.play
+              + '<span class="pd-video-local-name">' + esc(it.name || 'video') + '</span><span class="pd-video-local-size">' + esc(mb(it.size || 0)) + ' · uploads in pieces</span></div>';
+      } else if (isVid) {
         // spec §6 markup via App.video (the JS twin of renderVideoElement()); blob: previews keep their File type
         var type = it.type || (fileExt(it.src) === 'webm' ? 'video/webm' : (fileExt(it.src) === 'mov' ? 'video/quicktime' : 'video/mp4'));
         html += App.video
@@ -520,12 +533,167 @@
   }
   // spec §6: .MOV is accepted and kept as-is — Safari plays it inline, other browsers get the download card.
   var MOV_NOTE = '.MOV — plays in Safari; Chrome and Firefox get an Open / Download card';
+  function capLabel(mb) { return mb >= 1024 ? (mb / 1024) + ' GB' : mb + ' MB'; }
+  /* maxMb may be a number (one cap) or {image, video} (per type: images 50 MB, videos 4 GB). */
   function fileNote(file, maxMb) {
-    if (file.size > maxMb * 1024 * 1024) return 'Over ' + maxMb + ' MB';
     var ext = fileExt(file.name);
     if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov'].indexOf(ext) === -1) return 'Unsupported type';
+    var cap = typeof maxMb === 'object' ? (isVideoFile(file) ? maxMb.video : maxMb.image) : maxMb;
+    if (file.size > cap * 1024 * 1024) return 'Over ' + capLabel(cap);
     return '';
   }
+
+  /* ================================================================== */
+  /* UploadQueue — files → upload-chunk.php (purpose=post | batch)      */
+  /*   One row per file (template: thumb / name / meta / progress /     */
+  /*   status / Cancel / Remove), one upload at a time through          */
+  /*   App.chunkUpload.upload (single request when small, pieces when   */
+  /*   large), a claimed[] token per finished file, and the "Resume N   */
+  /*   unfinished uploads" banner after a reload (localStorage ledger). */
+  /*   opts: endpoint, purpose, kind (ledger), list, tpl, resume {box,   */
+  /*   text, input, discard}, maxMb {image, video}, maxFiles, onChange, */
+  /*   onDone(job, data), cancelSel, itemSel                             */
+  /* ================================================================== */
+  function UploadQueue(opts) {
+    var self = this;
+    this.o = opts;
+    this.chunk = App.chunkUpload || null;
+    this.endpoint = opts.endpoint || cfg.upload || 'upload-chunk.php';
+    this.client = opts.client || cfg.client || (document.body.dataset.client || '');
+    this.jobs = []; this.queue = []; this.busy = false; this.pending = [];
+    if (opts.resume && opts.resume.input) opts.resume.input.addEventListener('change', function () { self.resumeFiles(Array.prototype.slice.call(opts.resume.input.files || [])); opts.resume.input.value = ''; });
+    if (opts.resume && opts.resume.discard) opts.resume.discard.addEventListener('click', function () { self.discardResume(); });
+    this.offerResume();
+  }
+  UploadQueue.prototype.available = function () { return !!(this.chunk && this.chunk.upload); };
+  UploadQueue.prototype.active = function () { return this.jobs.filter(function (j) { return j.state !== 'failed' && j.state !== 'removed'; }); };
+  UploadQueue.prototype.done = function () { return this.jobs.filter(function (j) { return j.state === 'done'; }); };
+  UploadQueue.prototype.tokens = function () { return this.done().map(function (j) { return j.token; }).filter(Boolean); };
+  UploadQueue.prototype.inFlight = function () { return this.jobs.some(function (j) { return j.state === 'queued' || j.state === 'uploading' || j.state === 'held'; }); };
+  UploadQueue.prototype.changed = function () { if (this.o.onChange) this.o.onChange(this); };
+  /** A row + job. opts.hold: create the row but do not start (the caller shows a warning first); opts.uploadId: resume. */
+  UploadQueue.prototype.add = function (file, opts) {
+    opts = opts || {};
+    var item = this.o.tpl.content.firstElementChild.cloneNode(true);
+    var job = { file: file, item: item, state: 'held', token: null, data: null, uploadId: opts.uploadId || null, ctl: null, retryable: false };
+    item._job = job;
+    item.setAttribute('data-file-name', file.name);
+    $('[data-upload-name]', item).textContent = file.name;
+    var meta = $('[data-upload-meta]', item);
+    if (meta) meta.textContent = mb(file.size) + (isVideoFile(file) ? ' · video' : (file.type ? ' · ' + file.type.replace(/^image\//, '') : '')) + (job.uploadId ? ' · resuming' : '');
+    var thumb = $('[data-upload-thumb]', item);
+    if (thumb) {
+      if (isVideoFile(file)) { thumb.innerHTML = ICON.play; thumb.classList.add('is-video'); thumb.title = mb(file.size); }   // poster-less: never decode a multi-GB file for a thumbnail
+      else if (/^image\//.test(file.type)) { var img = document.createElement('img'); img.alt = ''; img.src = URL.createObjectURL(file); thumb.appendChild(img); }
+    }
+    this.o.list.appendChild(item);
+    this.jobs.push(job);
+    var status = $('[data-upload-status]', item);
+    var maxFiles = this.o.maxFiles || 0;
+    if (maxFiles && this.active().length > maxFiles) { this.fail(job, 'Up to ' + maxFiles + ' files at a time — not uploaded.'); return job; }
+    var note = fileNote(file, this.o.maxMb || { image: 50, video: 4096 });
+    if (note) { this.fail(job, note + ' — not uploaded.'); return job; }
+    if (!this.available()) { this.fail(job, 'Uploads need chunk-upload.js — reload the page.'); return job; }
+    if (status) status.textContent = 'Waiting…';
+    if (!opts.hold) this.start(job);
+    else this.changed();
+    return job;
+  };
+  UploadQueue.prototype.start = function (job) {
+    if (job.state !== 'held') return;
+    job.state = 'queued';
+    this.queue.push(job);
+    this.changed();
+    this.next();
+  };
+  UploadQueue.prototype.fail = function (job, msg) {
+    job.state = 'failed'; job.token = null;
+    var status = $('[data-upload-status]', job.item), prog = $('[data-upload-progress]', job.item), cancel = $(this.o.cancelSel || '[data-upload-cancel]', job.item);
+    if (status) { status.textContent = msg; status.classList.remove('is-ok'); status.classList.add('is-error'); }
+    if (prog) prog.hidden = true;
+    if (cancel) cancel.hidden = true;
+    job.item.classList.add('is-failed');
+    this.changed();
+  };
+  /** Cancel a queued / running job (the server drops its spool) or remove a finished / failed row (a parked file is discarded). */
+  UploadQueue.prototype.remove = function (job) {
+    var self = this;
+    if (job.state === 'queued') { this.queue = this.queue.filter(function (j) { return j !== job; }); }
+    if (job.state === 'uploading' && job.ctl) { job.ctl.abort(); return; }   // the rejection handler removes the row
+    if (job.state === 'done' && job.token && this.o.purpose !== 'replace') {
+      try { App.post(this.endpoint, { action: 'claim_discard', token: job.token, client: this.client }); } catch (e) {}
+    }
+    job.state = 'removed'; job.token = null;
+    if (job.item.parentNode) job.item.parentNode.removeChild(job.item);
+    this.jobs = this.jobs.filter(function (j) { return j !== job; });
+    this.changed();
+    if (!this.busy) this.next();
+  };
+  UploadQueue.prototype.next = function () {
+    if (this.busy || !this.queue.length) return;
+    var self = this, job = this.queue.shift(), item = job.item, file = job.file;
+    var prog = $('[data-upload-progress]', item), fill = $('[data-upload-fill]', item), status = $('[data-upload-status]', item), cancel = $(this.o.cancelSel || '[data-upload-cancel]', item);
+    this.busy = true; job.state = 'uploading';
+    if (prog) prog.hidden = false;
+    if (status) status.textContent = 'Uploading… 0%';
+    if (cancel) cancel.hidden = false;
+    var fields = Object.assign({ purpose: this.o.purpose, client: this.client, actor: App.actor || 'admin' }, this.o.fields || {});
+    var ctl = this.chunk.upload({
+      endpoint: this.endpoint, file: file, fields: fields, uploadId: job.uploadId || null,
+      onInit: function (d) {
+        job.uploadId = d.upload_id;
+        self.chunk.remember({ id: d.upload_id, kind: self.o.kind || self.o.purpose, endpoint: self.endpoint, client: self.client, name: file.name, size: file.size, type: file.type || '', fields: { purpose: self.o.purpose }, label: self.o.label || '' });
+      },
+      onProgress: function (p) { if (fill) fill.style.transform = 'translateX(' + (p.pct - 100) + '%)'; if (status) status.textContent = 'Uploading… ' + p.text; },
+      onRetry: function (r) { if (status) status.textContent = 'Connection hiccup — retrying that piece (' + r.attempt + ' of ' + r.max + ')…'; }
+    });
+    job.ctl = ctl;
+    var settle = function () { job.ctl = null; if (cancel) cancel.hidden = true; self.busy = false; self.changed(); self.next(); };
+    ctl.promise.then(function (data) {
+      if (job.uploadId) self.chunk.forget(job.uploadId);
+      job.uploadId = null; job.state = 'done'; job.data = data; job.token = data.token || null;
+      if (fill) fill.style.transform = 'translateX(0)';
+      if (status) { status.textContent = 'Uploaded'; status.classList.remove('is-error'); status.classList.add('is-ok'); }
+      if (self.o.onDone) self.o.onDone(job, data);
+      settle();
+    }, function (e) {
+      if (job.uploadId && (!e || e.aborted || !e.retryable || e.expired)) { self.chunk.forget(job.uploadId); job.uploadId = null; }
+      if (e && e.aborted) { job.state = 'removed'; if (job.item.parentNode) job.item.parentNode.removeChild(job.item); self.jobs = self.jobs.filter(function (j) { return j !== job; }); settle(); return; }
+      self.fail(job, (e && e.error) || 'Upload failed');
+      settle();
+    });
+  };
+  /* ---- resume after a reload: the ledger names the unfinished uploads; the user re-picks the same files ---- */
+  UploadQueue.prototype.offerResume = function () {
+    var r = this.o.resume;
+    if (!this.chunk || !r || !r.box) return;
+    var live = {}; this.jobs.forEach(function (j) { if (j.uploadId) live[j.uploadId] = true; });
+    this.pending = this.chunk.list({ kind: this.o.kind || this.o.purpose, client: this.client }).filter(function (e) { return !live[e.id]; });
+    var n = this.pending.length;
+    r.box.hidden = n === 0;
+    if (r.text && n) {
+      var names = this.pending.map(function (e) { return e.name + ' (' + mb(e.size) + ')'; });
+      r.text.textContent = 'Resume ' + n + ' unfinished upload' + (n === 1 ? '' : 's') + ': ' + names.join(', ') + '. Pick the same file' + (n === 1 ? '' : 's') + ' again and the upload continues where it stopped.';
+    }
+  };
+  UploadQueue.prototype.resumeFiles = function (files) {
+    var self = this, matched = [], unmatched = [];
+    files.forEach(function (f) {
+      var e = self.pending.filter(function (p) { return p.name === f.name && Number(p.size) === f.size && matched.indexOf(p) === -1; })[0];
+      if (!e) { unmatched.push(f.name); return; }
+      matched.push(e);
+      self.add(f, { uploadId: e.id });
+    });
+    if (unmatched.length) toast(unmatched.length + ' file' + (unmatched.length === 1 ? ' does' : 's do') + ' not match an unfinished upload (same name and size needed): ' + unmatched.join(', '), { kind: 'error', duration: 6000 });
+    this.offerResume();
+  };
+  UploadQueue.prototype.discardResume = function () {
+    var self = this;
+    if (!this.pending.length) return;
+    if (!window.confirm('Discard ' + this.pending.length + ' unfinished upload' + (this.pending.length === 1 ? '' : 's') + '? The pieces already sent are deleted from the server.')) return;
+    this.pending.forEach(function (e) { self.chunk.abortStored(e); });
+    this.offerResume();
+  };
 
   /* ================================================================== */
   /* Composer                                                           */
@@ -543,20 +711,49 @@
     this.files   = [];
     this.fileInput = $('[data-composer-files]', form);
     this.fileList  = $('[data-composer-filelist]', form);
-    this.maxMb = parseInt(cfg.maxFileMb, 10) || 25;
+    this.submitBtn = $('[data-composer-submit]', form);
+    var upRoot = $('[data-composer-uploads]', form);
+    this.maxMb = { image: parseInt(upRoot && upRoot.dataset.maxImageMb, 10) || parseInt(cfg.maxImageMb, 10) || 50,
+                   video: parseInt(upRoot && upRoot.dataset.maxVideoMb, 10) || parseInt(cfg.maxVideoMb, 10) || 4096 };
+    // With chunk-upload.js the picked files go up right away (upload-chunk.php purpose=post) and the form submits
+    // claimed[] tokens; without it (legacy) they stay in the images[] input and travel with the form.
+    var tpl = $('[data-composer-item-template]', form);
+    this.queue = (App.chunkUpload && App.chunkUpload.upload && tpl && this.fileList) ? new UploadQueue({
+      endpoint: cfg.upload, purpose: 'post', kind: 'post', list: this.fileList, tpl: tpl, maxMb: this.maxMb, maxFiles: this.max, cancelSel: '[data-composer-cancel]',
+      label: 'Compose',
+      resume: { box: $('[data-composer-resume]', form), text: $('[data-composer-resume-text]', form), input: $('[data-composer-resume-input]', form), discard: $('[data-composer-resume-discard]', form) },
+      onDone: function (job, data) {
+        var inp = document.createElement('input');
+        inp.type = 'hidden'; inp.name = 'claimed[]'; inp.value = data.token || '';
+        job.item.appendChild(inp);
+        var status = $('[data-upload-status]', job.item);
+        var label = self.submitBtn ? (self.submitBtn.dataset.label || self.submitBtn.textContent) : 'save';   // the button may read "Uploading…" right now
+        if (status) status.textContent = 'Uploaded — added when you ' + label.trim().toLowerCase().replace(/…$/, '');
+      },
+      onChange: function () { self.syncFiles(); }
+    }) : null;
 
     var drop = $('[data-file-drop]', form);
     if (drop && this.fileInput) {
       bindDrop(drop, this.fileInput, function (files, dropped) {
+        if (self.queue) {
+          self.fileInput.value = '';   // the queue owns them now: nothing may travel with the form as images[]
+          files.forEach(function (f) { if (isQuickTime(f)) toast(f.name + ': .MOV plays inline in Safari; Chrome and Firefox will show an Open / Download card instead.', { duration: 6000 }); self.queue.add(f); });
+          return;
+        }
         if (dropped) { self.files = self.files.concat(files); assignFiles(self.fileInput, self.files); }
         else { self.files = files; }
         self.syncFiles();
       });
     }
     form.addEventListener('click', function (e) {
+      var cancel = e.target.closest('[data-composer-cancel]');
+      if (cancel && self.queue) { var ci = cancel.closest('[data-composer-item]'); if (ci && ci._job) self.queue.remove(ci._job); return; }
       var rm = e.target.closest('[data-file-remove]');
       if (rm) {
-        var name = rm.closest('[data-file-name]').dataset.fileName;
+        var li = rm.closest('[data-file-name]');
+        if (self.queue) { if (li && li._job) self.queue.remove(li._job); return; }
+        var name = li.dataset.fileName;
         self.files = self.files.filter(function (f) { return f.name !== name; });
         if (!assignFiles(self.fileInput, self.files)) self.fileInput.value = '';
         self.syncFiles();
@@ -578,19 +775,34 @@
   Composer.prototype.keptExisting = function () {
     return $$('[data-existing-item]', this.form).filter(function (el) { var cb = $('[data-remove-image]', el); return !(cb && cb.checked); }).length;
   };
-  Composer.prototype.validFiles = function () { var m = this.maxMb; return this.files.filter(function (f) { return !fileNote(f, m); }); };
+  /** The one-off files that count: queue rows not failed / removed (chunk mode), else the accepted picks in the input. */
+  Composer.prototype.validFiles = function () {
+    if (this.queue) return this.queue.active().map(function (j) { return j.file; });
+    var m = this.maxMb; return this.files.filter(function (f) { return !fileNote(f, m); });
+  };
+  Composer.prototype.uploading = function () { return !!(this.queue && this.queue.inFlight()); };
   Composer.prototype.syncSlots = function () {
     var free = Math.max(0, this.max - this.keptExisting() - this.validFiles().length);
     if (this.picker) this.picker.setMax(free);
   };
+  /** Publish waits for the uploads: disabled + "Uploading…" while a file is still going up. */
+  Composer.prototype.syncSubmit = function () {
+    var btn = this.submitBtn; if (!btn) return;
+    if (!btn.dataset.label) btn.dataset.label = btn.textContent;
+    var busy = this.uploading();
+    btn.disabled = busy;
+    btn.setAttribute('aria-busy', busy ? 'true' : 'false');
+    btn.textContent = busy ? 'Uploading…' : btn.dataset.label;
+  };
   Composer.prototype.syncFiles = function () {
     var self = this;
-    if (this.fileList) {
-      this.fileList.innerHTML = this.files.map(function (f) { return fileRowHtml(f, fileNote(f, self.maxMb)); }).join('');
+    if (!this.queue) {
+      if (this.fileList) this.fileList.innerHTML = this.files.map(function (f) { return fileRowHtml(f, fileNote(f, self.maxMb)); }).join('');
+      this.files.forEach(function (f) { if (isQuickTime(f)) toast(f.name + ': .MOV plays inline in Safari; Chrome and Firefox will show an Open / Download card instead.', { duration: 6000 }); });
     }
-    this.files.forEach(function (f) { if (isQuickTime(f)) toast(f.name + ': .MOV plays inline in Safari; Chrome and Firefox will show an Open / Download card instead.', { duration: 6000 }); });
     if (this.preview) this.preview.setFiles(this.validFiles());
     this.syncSlots();
+    this.syncSubmit();
   };
   Composer.prototype.applyDefaults = function (defaults) {
     var ta = $('[data-field="hashtags"]', this.form);
@@ -604,6 +816,11 @@
     ta.focus();
   };
   Composer.prototype.onSubmit = function (e) {
+    if (this.uploading()) {
+      e.preventDefault();
+      toast('Wait for the uploads to finish (or cancel them) before saving.', { kind: 'error' });
+      return;
+    }
     var picks = this.picker ? this.picker.getSelection().length : 0;
     var total = this.keptExisting() + picks + this.validFiles().length;
     if (total > this.max) {
@@ -611,6 +828,7 @@
       toast('Up to ' + this.max + ' media per post — remove ' + (total - this.max) + '.', { kind: 'error' });
       return;
     }
+    if (this.queue && this.fileInput) this.fileInput.value = '';   // belt and braces: only claimed[] tokens travel
     var btn = $('[data-composer-submit]', this.form);
     if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = 'Saving…'; }
   };
@@ -621,80 +839,50 @@
   function Uploads(zone) {
     var self = this;
     this.zone = zone;
-    this.endpoint = zone.dataset.endpoint || cfg.batch || '';
-    this.maxMb = parseInt(zone.dataset.maxMb, 10) || 10;
+    this.endpoint = zone.dataset.endpoint || cfg.batch || '';               // batch-process.php: claimed[] = token → one draft post
+    this.uploadEndpoint = zone.dataset.uploadEndpoint || cfg.upload || '';   // upload-chunk.php purpose=batch
+    this.maxMb = { image: parseInt(zone.dataset.maxImageMb, 10) || parseInt(cfg.maxImageMb, 10) || 50, video: parseInt(zone.dataset.maxVideoMb, 10) || parseInt(cfg.maxVideoMb, 10) || 4096 };
+    this.maxFiles = parseInt(zone.dataset.maxFiles, 10) || parseInt(cfg.maxBatchFiles, 10) || 50;
     this.input = $('[data-upload-input]', zone);
     this.list = $('[data-upload-list]', zone);
     this.tpl = $('[data-upload-item-template]', zone);
-    this.queue = []; this.busy = false;
+    this.queue = new UploadQueue({
+      endpoint: this.uploadEndpoint, purpose: 'batch', kind: 'batch', list: this.list, tpl: this.tpl, maxMb: this.maxMb, maxFiles: this.maxFiles, cancelSel: '[data-upload-cancel]',
+      label: 'Uploads',
+      resume: { box: $('[data-upload-resume]', zone), text: $('[data-upload-resume-text]', zone), input: $('[data-upload-resume-input]', zone), discard: $('[data-upload-resume-discard]', zone) },
+      onDone: function (job, data) { self.createPost(job, data); }
+    });
     var drop = $('[data-file-drop]', zone);
     if (drop) bindDrop(drop, this.input, function (files) { files.forEach(function (f) { self.add(f); }); if (self.input) self.input.value = ''; });
     zone.addEventListener('click', function (e) {
       var item = e.target.closest('[data-upload-item]');
       if (!item) return;
-      if (e.target.closest('[data-upload-anyway]')) { $('[data-upload-warning]', item).hidden = true; self.enqueue(item._file, item); }
-      if (e.target.closest('[data-upload-skip]')) { item.remove(); }
+      if (e.target.closest('[data-upload-anyway]')) { $('[data-upload-warning]', item).hidden = true; if (item._job) self.queue.start(item._job); }
+      if (e.target.closest('[data-upload-skip]')) { if (item._job) self.queue.remove(item._job); else item.remove(); }
+      if (e.target.closest('[data-upload-cancel]')) { if (item._job) self.queue.remove(item._job); }
     });
   }
   Uploads.prototype.add = function (file) {
-    var item = this.tpl.content.firstElementChild.cloneNode(true);
-    item._file = file;
-    $('[data-upload-name]', item).textContent = file.name;
-    $('[data-upload-meta]', item).textContent = mb(file.size) + (file.type ? ' · ' + file.type : '');
-    var thumb = $('[data-upload-thumb]', item);
-    if (isVideoFile(file)) { thumb.innerHTML = ICON.play; }
-    else if (/^image\//.test(file.type)) { var img = document.createElement('img'); img.alt = ''; img.src = URL.createObjectURL(file); thumb.appendChild(img); }
-    this.list.appendChild(item);
-    var status = $('[data-upload-status]', item);
-    if (file.size > this.maxMb * 1024 * 1024) { status.textContent = 'Over ' + this.maxMb + ' MB — not uploaded.'; status.classList.add('is-error'); return; }
-    if (isQuickTime(file)) {
-      // spec §6: warn before upload ("Safari-only playback"); "Upload anyway" enqueues it —
-      // batch-process.php accepts video/quicktime and keeps the original .mov in uploads/.
-      $('[data-upload-warning]', item).hidden = false;
-      return;
-    }
-    if (!/^image\//.test(file.type) && !/^video\/(mp4|webm|quicktime)$/.test(file.type)) {
-      status.textContent = 'Unsupported type — use JPG, PNG, GIF, WebP, MP4, WebM or MOV.'; status.classList.add('is-error'); return;
-    }
-    this.enqueue(file, item);
+    // spec §6: .MOV is warned about before upload ("Safari-only playback"); "Upload anyway" starts it —
+    // batch-process.php accepts video/quicktime and keeps the original .mov in uploads/.
+    var hold = isQuickTime(file);
+    var job = this.queue.add(file, { hold: hold });
+    if (hold && job.state === 'held') $('[data-upload-warning]', job.item).hidden = false;
   };
-  Uploads.prototype.enqueue = function (file, item) {
-    this.queue.push({ file: file, item: item });
-    $('[data-upload-status]', item).textContent = 'Waiting…';
-    this.next();
-  };
-  Uploads.prototype.next = function () {
-    if (this.busy || !this.queue.length) return;
-    var self = this, job = this.queue.shift(), item = job.item, file = job.file;
-    var prog = $('[data-upload-progress]', item), fill = $('[data-upload-fill]', item), status = $('[data-upload-status]', item);
-    this.busy = true; prog.hidden = false; status.textContent = 'Uploading… 0%';
-    var xhr = new XMLHttpRequest();
-    var fd = new FormData(); fd.append('images[]', file, file.name);
-    xhr.upload.addEventListener('progress', function (e) {
-      if (!e.lengthComputable) return;
-      var pct = Math.round(e.loaded / e.total * 100);
-      fill.style.transform = 'translateX(' + (pct - 100) + '%)';
-      status.textContent = 'Uploading… ' + pct + '%';
+  /** The token is in: one pending post for it (batch-process.php keeps its per-row contract: created[0] / errors[0]). */
+  Uploads.prototype.createPost = function (job, data) {
+    var status = $('[data-upload-status]', job.item), prog = $('[data-upload-progress]', job.item);
+    status.textContent = 'Creating the draft post…';
+    App.post(this.endpoint, { 'claimed[]': data.token, client: cfg.client || '' }).then(function (res) {
+      var d = res.data || {}, created = d.created && d.created[0], err = null;
+      if (!res.ok || d.ok === false) err = res.error || d.error || 'Request failed';
+      else if (!created) err = (d.errors && d.errors[0]) || 'Not accepted';
+      if (err) { status.textContent = err; status.classList.remove('is-ok'); status.classList.add('is-error'); if (prog) prog.hidden = true; return; }
+      var when = created.date ? formatWhen(String(created.date).replace(' ', 'T')) : '';
+      status.innerHTML = 'Draft post #' + esc(created.post_id) + (when ? ' · ' + esc(when) : '')
+        + ' — <a href="' + esc(postUrl(cfg, created.post_id)) + '">finish it in Posts</a>';
+      status.classList.add('is-ok');
     });
-    xhr.onload = function () {
-      var data = null; try { data = JSON.parse(xhr.responseText); } catch (e) {}
-      fill.style.transform = 'translateX(0)';
-      var err = null, created = data && data.created && data.created[0];
-      if (!data || data.ok === false || xhr.status >= 400) err = (data && data.error) || ('Upload failed (' + xhr.status + ')');
-      else if (!created) err = (data.errors && data.errors[0]) || 'Not accepted';
-      if (err) { status.textContent = err; status.classList.add('is-error'); prog.hidden = true; }
-      else {
-        var when = created.date ? formatWhen(String(created.date).replace(' ', 'T')) : '';
-        status.innerHTML = 'Draft post #' + esc(created.post_id) + (when ? ' · ' + esc(when) : '')
-          + ' — <a href="' + esc(postUrl(cfg, created.post_id)) + '">finish it in Posts</a>';
-        status.classList.add('is-ok');
-      }
-      self.busy = false; self.next();
-    };
-    xhr.onerror = function () { status.textContent = 'Network error — try again.'; status.classList.add('is-error'); prog.hidden = true; self.busy = false; self.next(); };
-    xhr.open('POST', this.endpoint);
-    xhr.setRequestHeader('Accept', 'application/json');
-    xhr.send(fd);
   };
 
   /* ================================================================== */
@@ -1194,18 +1382,40 @@
     this.fileInput = $('[data-batch-files]', root);
     this.fileList = $('[data-batch-filelist]', root);
     this.rows = []; this.files = [];
+    this.maxFiles = parseInt(root.dataset.maxFiles, 10) || parseInt(cfg.maxBatchFiles, 10) || 50;
+    this.maxMb = { image: parseInt(cfg.maxImageMb, 10) || 50, video: parseInt(cfg.maxVideoMb, 10) || 4096 };
+    // Direct files go up as they are picked (upload-chunk.php purpose=batch — pieces when large) and the
+    // submit posts their claimed[] tokens; without chunk-upload.js they travel with the request as images[].
+    var tpl = $('[data-batch-item-template]', root);
+    this.queue = (App.chunkUpload && App.chunkUpload.upload && tpl && this.fileList) ? new UploadQueue({
+      endpoint: root.dataset.uploadEndpoint || cfg.upload, purpose: 'batch', kind: 'batch', list: this.fileList, tpl: tpl, maxMb: this.maxMb, maxFiles: this.maxFiles, cancelSel: '[data-batch-cancel]',
+      label: 'Batch',
+      resume: { box: $('[data-batch-resume]', root), text: $('[data-batch-resume-text]', root), input: $('[data-batch-resume-input]', root), discard: $('[data-batch-resume-discard]', root) },
+      onDone: function (job) { var s = $('[data-upload-status]', job.item); if (s) s.textContent = 'Uploaded — becomes a post when you create the batch'; },
+      onChange: function () { self.sync(); }
+    }) : null;
 
     if (this.picker) this.picker.onChange(function (sel) { self.syncPickButtons(sel); });
     if (this.addRowBtn) this.addRowBtn.addEventListener('click', function () { self.addRow(self.picker.getSelection()); self.picker.clear(); });
     if (this.addEachBtn) this.addEachBtn.addEventListener('click', function () { self.picker.getSelection().forEach(function (a) { self.addRow([a]); }); self.picker.clear(); });
     if (this.spacingEl) this.spacingEl.addEventListener('change', function () { self.redate(); });
     var drop = $('[data-file-drop]', root);
-    if (drop && this.fileInput) bindDrop(drop, this.fileInput, function (files) { self.files = self.files.concat(files); self.syncFiles(); if (self.fileInput) self.fileInput.value = ''; });
+    if (drop && this.fileInput) bindDrop(drop, this.fileInput, function (files) {
+      if (self.queue) { files.forEach(function (f) { if (isQuickTime(f)) toast(f.name + ': .MOV plays inline in Safari; Chrome and Firefox will show an Open / Download card instead.', { duration: 6000 }); self.queue.add(f); }); }
+      else { self.files = self.files.concat(files); self.syncFiles(); }
+      if (self.fileInput) self.fileInput.value = '';
+    });
     root.addEventListener('click', function (e) {
+      var cancel = e.target.closest('[data-batch-cancel]');
+      if (cancel && self.queue) { var ci = cancel.closest('[data-batch-item]'); if (ci && ci._job) self.queue.remove(ci._job); return; }
       var rm = e.target.closest('[data-file-remove]');
-      if (rm) { var name = rm.closest('[data-file-name]').dataset.fileName; self.files = self.files.filter(function (f) { return f.name !== name; }); self.syncFiles(); return; }
+      if (rm) {
+        var li = rm.closest('[data-file-name]');
+        if (self.queue) { if (li && li._job) self.queue.remove(li._job); return; }
+        var name = li.dataset.fileName; self.files = self.files.filter(function (f) { return f.name !== name; }); self.syncFiles(); return;
+      }
       var rr = e.target.closest('[data-row-remove]');
-      if (rr) { var li = rr.closest('[data-batch-row]'); self.removeRow(li); }
+      if (rr) { var li2 = rr.closest('[data-batch-row]'); self.removeRow(li2); }
     });
     root.addEventListener('change', function (e) {
       if (e.target.matches('[data-row-date]')) e.target.closest('[data-batch-row]')._row.dateTouched = true;
@@ -1261,18 +1471,24 @@
   };
   Batch.prototype.syncFiles = function () {
     var self = this;
-    if (this.fileList) this.fileList.innerHTML = this.files.map(function (f) { return fileRowHtml(f, fileNote(f, 10)); }).join('');
+    if (this.fileList) this.fileList.innerHTML = this.files.map(function (f) { return fileRowHtml(f, fileNote(f, self.maxMb)); }).join('');
     this.files.forEach(function (f) { if (isQuickTime(f)) toast(f.name + ': .MOV plays inline in Safari; Chrome and Firefox will show an Open / Download card instead.', { duration: 6000 }); });
     this.sync();
   };
-  Batch.prototype.validFiles = function () { return this.files.filter(function (f) { return !fileNote(f, 10); }); };
+  /** Files that will make posts: finished uploads (tokens) in chunk mode, else the accepted picks. */
+  Batch.prototype.validFiles = function () {
+    var self = this;
+    if (this.queue) return this.queue.done().map(function (j) { return j.file; });
+    return this.files.filter(function (f) { return !fileNote(f, self.maxMb); });
+  };
+  Batch.prototype.uploading = function () { return !!(this.queue && this.queue.inFlight()); };
   Batch.prototype.sync = function () {
-    var n = this.rows.length, files = this.validFiles().length;
+    var n = this.rows.length, files = this.validFiles().length, busy = this.uploading();
     if (this.countEl) this.countEl.textContent = String(n + files);
     if (this.emptyEl) this.emptyEl.hidden = n > 0;
     if (this.submitBtn) {
-      this.submitBtn.disabled = n + files === 0;
-      this.submitBtn.textContent = n + files > 0 ? 'Create ' + (n + files) + ' post' + (n + files === 1 ? '' : 's') : 'Create posts';
+      this.submitBtn.disabled = busy || n + files === 0;
+      this.submitBtn.textContent = busy ? 'Uploading…' : (n + files > 0 ? 'Create ' + (n + files) + ' post' + (n + files === 1 ? '' : 's') : 'Create posts');
     }
   };
   Batch.prototype.submit = function () {
@@ -1286,11 +1502,15 @@
       };
     });
     var files = this.validFiles();
+    if (this.uploading()) { toast('Wait for the uploads to finish (or cancel them) first.', { kind: 'error' }); return; }
     if (!rows.length && !files.length) return;
     var fd = new FormData();
     if (rows.length) fd.append('rows', JSON.stringify(rows));
     fd.append('spacing_days', (this.spacingEl && this.spacingEl.value) || '3');
-    files.forEach(function (f) { fd.append('images[]', f, f.name); });
+    fd.append('client', cfg.client || '');
+    var doneJobs = this.queue ? this.queue.done() : [];
+    if (this.queue) doneJobs.forEach(function (j) { fd.append('claimed[]', j.token); });
+    else files.forEach(function (f) { fd.append('images[]', f, f.name); });
 
     var prog = $('[data-batch-progress]', this.root), fill = $('[data-batch-progress-fill]', this.root), text = $('[data-batch-progress-text]', this.root);
     var results = $('[data-batch-results]', this.root), list = $('[data-batch-results-list]', this.root);
@@ -1329,7 +1549,8 @@
       if (data.count > 0) {
         self.rows.forEach(function (r) { if (r.el.parentNode) r.el.parentNode.removeChild(r.el); });
         self.rows = []; self.files = [];
-        if (self.fileList) self.fileList.innerHTML = '';
+        if (self.queue) { doneJobs.forEach(function (j) { j.state = 'removed'; j.token = null; if (j.item.parentNode) j.item.parentNode.removeChild(j.item); }); self.queue.jobs = self.queue.jobs.filter(function (j) { return j.state !== 'removed'; }); }
+        else if (self.fileList) self.fileList.innerHTML = '';
         if (cfg.latest !== undefined && data.created && data.created.length) {
           var last = data.created[data.created.length - 1].date;
           if (last) cfg.latest = String(last).replace(' ', 'T').slice(0, 16);

@@ -4,6 +4,11 @@
 
      App.chunkUpload.probe(endpoint)            → Promise({chunk_size, max_file_bytes, …}) — cached per endpoint;
                                                   resolves null when the server has no chunk support.
+     App.chunkUpload.upload(opts)               → { promise, abort(), uploadId() } — the one call for any file:
+                                                  probes once, then ONE multipart request (action=upload + opts.fields
+                                                  + name/size/type + `file`) when the file fits in a piece, else send()
+                                                  (init → pieces → finish). opts as send(); opts.uploadId resumes.
+                                                  abort() works before the probe has answered too.
      App.chunkUpload.send(opts)                 → { promise, abort() }
         opts.endpoint   the upload endpoint (may carry ?client=…)
         opts.file       the File
@@ -80,14 +85,12 @@
     return probes[endpoint];
   }
 
-  function send(opts) {
-    var endpoint = opts.endpoint, file = opts.file, fields = opts.fields || {}, chunkSize = Math.max(65536, opts.chunkSize || 0);
-    var aborted = false, current = null, uploadId = opts.uploadId || null, total = file.size;
-    var startedAt = 0, startedBytes = 0, lastProgressAt = 0;
-    var count = Math.max(1, Math.ceil(total / chunkSize));
-    var progress = function (loaded, index) {
-      if (!opts.onProgress) return;
-      var now = Date.now();
+  /* Progress reporter shared by the chunked and the single-request path: bytes, %, speed, ETA, "piece n of m". */
+  function makeProgress(total, cb, getCount) {
+    var startedAt = 0, startedBytes = 0;
+    return function (loaded, index) {
+      if (!cb) return;
+      var count = getCount ? getCount() : 1, now = Date.now();
       if (!startedAt) { startedAt = now; startedBytes = loaded; }
       var elapsed = (now - startedAt) / 1000, speed = elapsed >= 1 ? (loaded - startedBytes) / elapsed : 0;
       var eta = speed > 0 ? (total - loaded) / speed : 0;
@@ -96,9 +99,15 @@
       if (speed > 0) text += ' · ' + fmtSpeed(speed);
       if (eta > 0 && loaded < total) text += ' · ' + fmtEta(eta);
       if (count > 1) text += ' · piece ' + Math.min(count, index + 1) + ' of ' + count;
-      lastProgressAt = now;
-      opts.onProgress({ loaded: loaded, total: total, pct: pct, speed: speed, eta: eta, index: index, count: count, text: text });
+      cb({ loaded: loaded, total: total, pct: pct, speed: speed, eta: eta, index: index, count: count, text: text });
     };
+  }
+
+  function send(opts) {
+    var endpoint = opts.endpoint, file = opts.file, fields = opts.fields || {}, chunkSize = Math.max(65536, opts.chunkSize || 0);
+    var aborted = false, current = null, uploadId = opts.uploadId || null, total = file.size;
+    var count = Math.max(1, Math.ceil(total / chunkSize));
+    var progress = makeProgress(total, opts.onProgress, function () { return count; });
     var fail = function (e) { return Promise.reject(e); };
     var run = function (fn) { if (aborted) return Promise.reject({ error: 'Cancelled', aborted: true }); current = fn(); return current.promise; };
     var base = { client: clientSlug(fields) };
@@ -181,6 +190,37 @@
     };
   }
 
+  /* One file, the right way: a single request when it fits in one piece (or the server has no chunk support),
+     pieces otherwise (always pieces when resuming an upload_id). Same opts / callbacks / rejection shape as send(). */
+  function upload(opts) {
+    var inner = null, aborted = false, uploadId = opts.uploadId || null, file = opts.file;
+    var promise = probe(opts.endpoint).then(function (info) {
+      if (aborted) return Promise.reject({ error: 'Cancelled', aborted: true });
+      if (info && !opts.single && (uploadId || file.size > info.chunk_size)) {
+        inner = send(Object.assign({}, opts, { chunkSize: info.chunk_size, uploadId: uploadId }));
+        return inner.promise;
+      }
+      var fields = Object.assign({}, opts.fields || {}, { action: 'upload', name: file.name, size: file.size, type: file.type || '' });
+      var progress = makeProgress(file.size, opts.onProgress, null);
+      inner = request(opts.endpoint, fields, file, file.name, function (loaded, sent) { progress(Math.min(file.size, Math.round(loaded / Math.max(1, sent) * file.size)), 0); });
+      return inner.promise.then(function (r) {
+        if (r.status === 200 && r.data && r.data.ok) { progress(file.size, 0); return r.data; }
+        return Promise.reject({ error: (r.data && r.data.error) || ('Upload failed (' + r.status + ')'), status: r.status, data: r.data, retryable: r.status >= 500 || r.status === 0 });
+      });
+    });
+    return {
+      promise: promise,
+      uploadId: function () { return inner && inner.uploadId ? inner.uploadId() : uploadId; },
+      abort: function () {
+        if (aborted) return;
+        aborted = true;
+        if (!inner) return;
+        if (inner.abort) inner.abort();
+        else if (inner.xhr) { try { inner.xhr.abort(); } catch (e) {} }
+      }
+    };
+  }
+
   /* ---- localStorage ledger: what to offer after a reload ---- */
   function readStore() {
     var list = [];
@@ -209,5 +249,5 @@
     forget(entry.id);
   }
 
-  App.chunkUpload = { probe: probe, send: send, remember: remember, forget: forget, list: list, abortStored: abortStored, fmt: { bytes: fmtBytes, speed: fmtSpeed, eta: fmtEta } };
+  App.chunkUpload = { probe: probe, upload: upload, send: send, remember: remember, forget: forget, list: list, abortStored: abortStored, fmt: { bytes: fmtBytes, speed: fmtSpeed, eta: fmtEta } };
 })(window, document);

@@ -8,11 +8,18 @@
  *      file is COPIED (never moved) into uploads/ under a fresh img_/vid_ name,
  *      and a post_images row is written with the next sort_order — exactly like
  *      a direct upload. No schema change. (spec §4.5 "endpoint addition")
- *   2. direct upload for one-offs — images[] (unchanged contract).
+ *   2. direct upload for one-offs — images[] (unchanged contract; the no-JS path).
+ *   3. claimed[] = tokens of files the composer already sent to upload-chunk.php
+ *      (purpose=post — in pieces when large, so videos up to 4 GB / images up to
+ *      50 MB work on shared hosting). Each token is validated (format, sidecar
+ *      purpose + client, file inside uploads/, younger than 24 h — else 400 and
+ *      nothing is saved), the parked uploads/tmp_<token>.<ext> is renamed to its
+ *      final img_ / vid_ name and a post_images row is written exactly as for a
+ *      direct upload. Unclaimed files are swept after 24 h.
  *
  * Form POST actions (unchanged): delete (id) · create / update (name, caption*,
  * hashtags, scheduled_date*, status, post_type, categories[], remove_images[],
- * images[], assets[]) · batch_create (spacing_days, batch_images[]).
+ * images[], claimed[], assets[]) · batch_create (spacing_days, batch_images[]).
  * Add format=json to any action for a JSON reply instead of the redirect.
  * Successful saves redirect to studio?client=…&msg=….
  */
@@ -20,6 +27,8 @@
 require __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/chunk-upload-lib.php';
+require_once __DIR__ . '/upload-lib.php';
 requireAdmin();
 if ($_SERVER['REQUEST_METHOD'] === 'POST') { requireSameSiteFetch(); }   // cross-site POSTs → 403 (helpers.php)
 
@@ -67,8 +76,30 @@ $uploadsDir  = __DIR__ . '/uploads';
 $uploadsUrl  = 'uploads';
 $allowedExt  = array_merge(imageExts(), videoExts()); // jpg/png/gif/webp + mp4/webm/mov (spec §6)
 $rejectedExt = ['m4v', 'avi', 'mkv'];        // common but unsupported by web browsers
-$maxFileSize = 25 * 1024 * 1024; // 25 MB (videos are bigger than images)
+$maxImageMb  = (int)(uploadMaxBytes('image') / (1024 * 1024));          // 50 MB (upload-lib.php)
+$maxVideoGb  = (int)(uploadMaxBytes('video') / (1024 * 1024 * 1024));   // 4 GB — large files arrive through upload-chunk.php in pieces
 $maxImages   = 10;               // applies to combined images + videos + pool picks per post
+
+/** The size cap for a direct (single-request) upload of this type — the same numbers upload-chunk.php enforces. */
+function composerMaxBytes(bool $isVideo): int { return uploadMaxBytes($isVideo ? 'video' : 'image'); }
+
+/**
+ * claimed[] tokens → validated claims (upload-lib.php) in posted order. Any bad token (wrong format,
+ * another purpose / client, file gone, older than 24 h) is a hard 400: nothing is saved, the admin
+ * re-picks the file. Returns [$claims, $error].
+ */
+function composerClaims($raw, string $slug, int $cap): array {
+    $claims = [];
+    if (!is_array($raw)) return [[], ''];
+    foreach ($raw as $token) {
+        if (!is_string($token) || $token === '') continue;
+        if (count($claims) >= $cap) break;
+        $c = uploadClaimRead($token, 'post', $slug);
+        if ($c === null) return [[], 'One of the uploaded files has expired or could not be found — please add it again.'];
+        $claims[] = $c;
+    }
+    return [$claims, ''];
+}
 
 $errors    = [];
 $errorCode = 400;
@@ -123,6 +154,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $status         = $_POST['status'] ?? 'pending';
         $postType       = strtolower(trim($_POST['post_type'] ?? 'post'));
         $picks          = studioParsePicks($_POST['assets'] ?? [], $maxImages);
+        [$claims, $claimErr] = composerClaims($_POST['claimed'] ?? [], (string)$client['slug'], $maxImages);
+        if ($claimErr !== '') { $errors[] = $claimErr; $errorCode = 400; }
 
         if ($caption === '')       { $errors[] = 'Caption is required.'; }
         if ($scheduled_date === ''){ $errors[] = 'Scheduled date is required.'; }
@@ -293,7 +326,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $slots -= count($attached);
                 }
 
-                // ---- Direct uploads (one-offs) -----------------------------------
+                // ---- Files the composer already uploaded (claimed[] tokens → img_/vid_ + rows) ----
+                if ($claims) {
+                    $sortQ = $pdo->prepare("SELECT COALESCE(MAX(sort_order), 0) FROM post_images WHERE post_id = ?");
+                    $sortQ->execute([$postId]);
+                    $sortOrder = (int)$sortQ->fetchColumn();
+                    if (!is_dir($uploadsDir)) { mediaMkdir($uploadsDir); }
+                    $claimedCount = 0;
+                    foreach ($claims as $claim) {
+                        if ($claimedCount >= $slots) {
+                            $errors[] = "Max {$maxImages} media per post — some uploaded files were skipped.";
+                            break;
+                        }
+                        $isVideo = !empty($claim['video']);
+                        $newName = uploadFreshName($isVideo ? 'vid_' : 'img_', (string)$claim['ext']);
+                        $dest    = $uploadsDir . '/' . $newName;
+                        if (!uploadClaimTake($claim, $dest)) {
+                            $errors[] = "Failed to save '" . (string)$claim['name'] . "'. Check uploads/ permissions.";
+                            continue;
+                        }
+                        $sortOrder++;
+                        if (hasMediaTypeColumn($pdo)) {
+                            $ins = $pdo->prepare("INSERT INTO post_images (post_id, image_url, media_type, sort_order) VALUES (?, ?, ?, ?)");
+                            $ins->execute([$postId, $uploadsUrl . '/' . $newName, $isVideo ? 'video' : 'image', $sortOrder]);
+                        } else {
+                            $ins = $pdo->prepare("INSERT INTO post_images (post_id, image_url, sort_order) VALUES (?, ?, ?)");
+                            $ins->execute([$postId, $uploadsUrl . '/' . $newName, $sortOrder]);
+                        }
+                        $claimedCount++;
+                    }
+                    $slots -= $claimedCount;
+                }
+
+                // ---- Direct uploads (one-offs; the no-JS path) ---------------------
                 if (!empty($_FILES['images']) && is_array($_FILES['images']['name'])) {
                     $sortQ = $pdo->prepare("SELECT COALESCE(MAX(sort_order), 0) FROM post_images WHERE post_id = ?");
                     $sortQ->execute([$postId]);
@@ -319,11 +384,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $errors[] = "Upload error on '{$origName}' (code {$err}).";
                             continue;
                         }
-                        if ($_FILES['images']['size'][$i] > $maxFileSize) {
-                            $mb = number_format($maxFileSize / (1024 * 1024), 0);
-                            $errors[] = "'{$origName}' exceeds {$mb} MB.";
-                            continue;
-                        }
                         $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
                         if (in_array($ext, $rejectedExt, true)) {
                             $errors[] = "'{$origName}' is a .{$ext} file — please convert to MP4 first "
@@ -336,6 +396,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             continue;
                         }
                         $isVideo = isVideoExt($ext);
+                        if ($_FILES['images']['size'][$i] > composerMaxBytes($isVideo)) {
+                            $errors[] = "'{$origName}' exceeds " . uploadCapLabel(composerMaxBytes($isVideo)) . '.';
+                            continue;
+                        }
                         if ($isVideo) {
                             // For videos we can't use getimagesize: non-empty + container sniff.
                             if (!videoFileLooksValid((string)$_FILES['images']['tmp_name'][$i], $ext)) {
@@ -449,11 +513,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $errors[] = "Upload error on '{$origName}' (code {$err}).";
                     continue;
                 }
-                if ($_FILES['batch_images']['size'][$i] > $maxFileSize) {
-                    $mb = number_format($maxFileSize / (1024 * 1024), 0);
-                    $errors[] = "'{$origName}' exceeds {$mb} MB.";
-                    continue;
-                }
                 $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
                 if (in_array($ext, $rejectedExt, true)) {
                     $errors[] = "'{$origName}' is a .{$ext} file — please convert to MP4 first.";
@@ -464,6 +523,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     continue;
                 }
                 $isVideo = isVideoExt($ext);
+                if ($_FILES['batch_images']['size'][$i] > composerMaxBytes($isVideo)) {
+                    $errors[] = "'{$origName}' exceeds " . uploadCapLabel(composerMaxBytes($isVideo)) . '.';
+                    continue;
+                }
                 if ($isVideo) {
                     if (!videoFileLooksValid((string)$_FILES['batch_images']['tmp_name'][$i], $ext)) {
                         $errors[] = "'{$origName}' doesn't look like a valid video file.";
@@ -639,7 +702,8 @@ $composerHtml = studioComposerHtml([
     'categories'      => $allCategories,
     'supportsType'    => hasPostTypeColumn($pdo),
     'maxImages'       => $maxImages,
-    'maxFileMb'       => (int)($maxFileSize / (1024 * 1024)),
+    'maxImageMb'      => $maxImageMb,
+    'maxVideoGb'      => $maxVideoGb,
     'submitText'      => $isEdit ? 'Save changes' : 'Create post',
     'cancelUrl'       => clientUrl('studio.php'),
     'assetsUrl'       => clientUrl('assets.php', ['view' => 'library', 'filter' => 'approved']),
@@ -653,10 +717,12 @@ $studioConfig = [
     'base'      => basePath(),
     'endpoint'  => basePath() . '/status.php',
     'batch'     => basePath() . '/batch-process.php',
+    'upload'    => basePath() . '/upload-chunk.php?client=' . rawurlencode($client['slug']),   // purpose=post: files go up as they are picked (in pieces when large) and come back as claimed[] tokens
     'client'    => $client['slug'],
     'brand'     => ['name' => $client['name'], 'logo' => brandLogoUrl($client['logo_url'] ?? '')],
     'maxImages' => $maxImages,
-    'maxFileMb' => (int)($maxFileSize / (1024 * 1024)),
+    'maxImageMb' => $maxImageMb,
+    'maxVideoMb' => $maxVideoGb * 1024,
 ];
 
 // -------------------------------------------------------------
@@ -672,6 +738,7 @@ $bodyClass   = 'page-studio page-composer';
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">' . "\n"
              . '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">';
 $footExtra   = '<script>window.StudioConfig = ' . json_encode($studioConfig, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n"
+             . '<script src="' . h(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n"   // App.chunkUpload (one-offs: large files in pieces, resumable)
              . '<script src="' . h(staticUrl('js/studio.js')) . '" defer></script>';
 
 include __DIR__ . '/partials/layout-top.php';

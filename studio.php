@@ -192,7 +192,8 @@ $composerHtml = studioComposerHtml([
     'categories'      => $categories,
     'supportsType'    => $supportsType,
     'maxImages'       => 10,
-    'maxFileMb'       => 25,
+    'maxImageMb'      => 50,
+    'maxVideoGb'      => 4,
     'submitText'      => 'Create post',
     'cancelUrl'       => '',
     'assetsUrl'       => clientUrl('assets.php', ['view' => 'library', 'filter' => 'approved']),
@@ -217,10 +218,13 @@ $studioConfig = [
     'base'      => basePath(),
     'endpoint'  => basePath() . '/status.php',
     'batch'     => basePath() . '/batch-process.php?client=' . rawurlencode($client['slug']),
+    'upload'    => basePath() . '/upload-chunk.php?client=' . rawurlencode($client['slug']),   // Uploads tab / Compose one-offs: files go up in pieces when large (chunk-upload-lib.php) and come back as claimed[] tokens
     'client'    => $client['slug'],
     'brand'     => ['name' => $client['name'], 'logo' => brandLogoUrl($client['logo_url'] ?? '')],
     'maxImages' => 10,
-    'maxFileMb' => 25,
+    'maxImageMb' => 50,
+    'maxVideoMb' => 4096,
+    'maxBatchFiles' => 50,
     'tab'       => $tab,
     'tabUrl'    => clientUrl('studio.php', ['tab' => '__TAB__']),
     'postUrl'   => clientUrl('posts.php', ['post' => '__ID__']),   // studio.js: "finish it in Posts" links
@@ -285,13 +289,18 @@ include __DIR__ . '/partials/layout-top.php';
 
 <!-- Uploads ------------------------------------------------------------ -->
 <section class="studio-section" data-studio-section="uploads"<?= $tab === 'uploads' ? '' : ' hidden' ?>>
-  <div class="studio-uploads" data-upload-zone data-endpoint="<?= h($studioConfig['batch']) ?>" data-max-mb="10">
+  <div class="studio-uploads" data-upload-zone data-endpoint="<?= h($studioConfig['batch']) ?>" data-upload-endpoint="<?= h($studioConfig['upload']) ?>" data-max-image-mb="50" data-max-video-mb="4096" data-max-files="50">
     <label class="studio-dropzone studio-dropzone--lg" data-file-drop>
       <input type="file" data-upload-input accept="image/*,video/mp4,video/quicktime,.mov" multiple>
       <span class="studio-dropzone-icon"><?= icon('download') ?></span>
       <span class="studio-dropzone-label">Drop images or video here</span>
-      <span class="studio-dropzone-hint">image/*, MP4, QuickTime · up to 10 MB each here (Compose takes single files up to 25 MB) · each file becomes a draft post in <?= h($client['name']) ?>'s queue (placeholder caption, spaced 3 days apart) that you can finish in Compose or Posts.</span>
+      <span class="studio-dropzone-hint">image/*, MP4, QuickTime · up to 4 GB per video, 50 MB per image (large files go up in pieces and can resume) · up to 50 files at a time · each file becomes a draft post in <?= h($client['name']) ?>'s queue (placeholder caption, spaced 3 days apart) that you can finish in Compose or Posts.</span>
     </label>
+    <div class="studio-resume" data-upload-resume hidden role="status">
+      <span class="studio-resume-text" data-upload-resume-text>Resume unfinished uploads</span>
+      <label class="ui-btn ui-btn--filled ui-btn--sm studio-resume-pick">Pick the files<input type="file" data-upload-resume-input accept="image/*,video/mp4,video/quicktime,.mov" multiple hidden></label>
+      <button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-upload-resume-discard>Discard</button>
+    </div>
     <ul class="studio-uploadlist" data-upload-list role="list"></ul>
     <template data-upload-item-template>
       <li class="studio-upload-item" data-upload-item>
@@ -311,6 +320,7 @@ include __DIR__ . '/partials/layout-top.php';
           </div>
           <div class="studio-upload-status" data-upload-status></div>
         </div>
+        <button type="button" class="ui-btn ui-btn--plain ui-btn--sm studio-upload-retry studio-upload-cancel" data-upload-cancel hidden>Cancel</button>
       </li>
     </template>
   </div>
