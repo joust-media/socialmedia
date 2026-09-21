@@ -243,9 +243,13 @@ li + li > .pl-card::before { left: 100px; }
 .ig-tag, .ig-tags { color: var(--accent); }
 .ig-tags { margin-top: 6px; }
 .ig-tags[hidden] { display: none; }
-.ig-copy { margin: 4px 0 0 -8px; }
+.ig-actions { display: flex; flex-wrap: wrap; gap: 2px; margin: 4px 0 0 -8px; }   /* Copy caption · Edit caption */
+.ig-copy, .ig-edit { margin: 0; }
+.ig-edit[hidden] { display: none; }
+.pd-edited-by { margin: 2px 0 0; font-size: var(--text-caption); line-height: var(--lh-caption); }   /* "Edited by Kenda · 5m ago" */
+.pd-edited-by[hidden] { display: none; }
 
-/* Inline editors (admin caption/date, client date request, deny note) */
+/* Inline editors (caption/hashtags for either seat, admin date, client date request, deny note) */
 .pd-editor, .pd-deny {
   display: flex; flex-direction: column; gap: 8px;
   padding: 12px; margin: 8px 0;
@@ -254,6 +258,8 @@ li + li > .pl-card::before { left: 100px; }
 .pd-editor[hidden], .pd-deny[hidden] { display: none; }
 .pd-editor .ui-input, .pd-editor .ui-textarea, .pd-deny .ui-textarea { background: var(--bg-elevated); }
 .pd-editor-tags { min-height: 60px; }
+.pd-editor-count { margin-top: -4px; align-self: flex-end; font-size: var(--text-caption); line-height: var(--lh-caption); color: var(--label-tertiary); font-variant-numeric: tabular-nums; }
+.pd-editor-count.is-limit { color: var(--deny); }
 .pd-editor-label {
   font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: 0.2px;
   font-weight: 600; text-transform: uppercase; color: var(--label-secondary);

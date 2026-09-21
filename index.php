@@ -448,6 +448,45 @@ if ($isAdmin) {
                     $needsNotes = array_slice($needsNotes, 0, 3);
                 }
             }
+
+            // Copy edits by the client from the last 7 days (any status — a client may edit a caption
+            // until the post is scheduled): a note-like row "Edited the caption: '<new text>'" per post,
+            // newest first, so Joust notices copy it did not write. Merged with the notes by time.
+            $editNameSel = $hasName ? 'p.name AS post_name' : "'' AS post_name";
+            $st = $pdo->prepare("
+                SELECT c.entity_id, c.action, c.created_at, p.caption AS post_caption, p.hashtags AS post_hashtags, {$editNameSel}
+                  FROM activity_log c
+                 INNER JOIN posts p ON p.id = c.entity_id
+                 WHERE c.company_id = ? AND c.entity_type = 'post' AND c.actor = 'client'
+                   AND c.action IN ('edited_caption', 'edited_hashtags') AND c.created_at >= ?
+                 ORDER BY c.created_at DESC, c.id DESC
+                 LIMIT 12
+            ");
+            $st->execute([$cid, date('Y-m-d H:i:s', time() - 7 * 86400)]);
+            $seen = []; $editNotes = [];
+            foreach ($st->fetchAll() as $r) {
+                $pid = (int)$r['entity_id'];
+                if (isset($seen[$pid])) continue;                   // one row per post — the newest edit
+                $seen[$pid] = true;
+                $isTags = ($r['action'] ?? '') === 'edited_hashtags';
+                $text   = trim(preg_replace('/\s+/u', ' ', (string)($isTags ? ($r['post_hashtags'] ?? '') : ($r['post_caption'] ?? ''))));
+                $name   = trim((string)($r['post_name'] ?? ''));
+                if ($name === '' || activityLooksLikeFilename($name)) $name = homeFirstLine($r['post_caption'] ?? '', 60);
+                $editNotes[] = [
+                    'lead' => $isTags ? 'Edited the hashtags' : 'Edited the caption',
+                    'text' => $text !== '' ? $text : '(empty)',
+                    'on'   => $name !== '' ? $name : 'Post #' . $pid,
+                    'when' => relativeTime($r['created_at']),
+                    'href' => clientUrl('posts', ['post' => $pid]),
+                    'ts'   => (int)strtotime((string)$r['created_at']),
+                ];
+                if (count($editNotes) >= 3) break;
+            }
+            if ($editNotes) {
+                $needsNotes = array_merge($needsNotes, $editNotes);
+                usort($needsNotes, static function ($a, $b) { return $b['ts'] <=> $a['ts']; });
+                $needsNotes = array_slice($needsNotes, 0, 3);
+            }
         }
     } catch (Throwable $e) {
         error_log('index needs-changes query failed: ' . $e->getMessage());
@@ -590,7 +629,11 @@ if ($pendingCollections > 0) {
         $notesHtml = '<ul class="home-notes" role="list">';
         foreach ($needsNotes as $n) {
             $q = mb_strlen($n['text']) > 160 ? rtrim(mb_substr($n['text'], 0, 159)) . '…' : $n['text'];
-            $notesHtml .= '<li><a class="home-note" href="' . h($n['href']) . '"><q>' . h($q) . '</q>'
+            // Copy edits lead with what changed ("Edited the caption:") before the quoted new text.
+            $body = !empty($n['lead'])
+                ? '<span class="home-note-text"><span class="home-note-lead">' . h($n['lead']) . ':</span> <q>' . h($q) . '</q></span>'
+                : '<q>' . h($q) . '</q>';
+            $notesHtml .= '<li><a class="home-note" href="' . h($n['href']) . '">' . $body
                         . '<span class="home-note-meta">on ' . h($n['on']) . ' · ' . h($n['when']) . '</span></a></li>';
         }
         $notesHtml .= '</ul>';

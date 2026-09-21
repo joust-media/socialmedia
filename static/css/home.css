@@ -210,6 +210,7 @@
 }
 .home-note:active { opacity: .6; }
 .home-note q { quotes: "\201C" "\201D"; }
+.home-note-lead { font-weight: 600; }               /* "Edited the caption:" before the quoted new text */
 .home-note-meta { color: var(--label-secondary); font-size: var(--text-caption); line-height: var(--lh-caption); }
 .home-quick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .home-quick .ui-btn { flex-direction: column; gap: 6px; min-height: 68px; padding: 10px 8px; border-radius: 14px; }

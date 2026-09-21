@@ -9,7 +9,9 @@
  *   - hashtags (string, max 2000 chars)
  *   - post_type (post|story|reel; only when the migration-gated column exists)
  * At least one must be provided.
- * Role: status + comment are open; everything else needs the admin session (403 otherwise).
+ * Role: status + comment are open; caption + hashtags are open to the client seat
+ * for its own company's posts while the post is not yet Scheduled (posted = 1 → 409);
+ * scheduled_date / post_type / toggle_posted / delete_post need the admin session (403).
  * Returns JSON.
  */
 
@@ -28,11 +30,13 @@ requireSameSiteFetch();   // cross-site POSTs get a JSON 403 (helpers.php)
 $action = $_POST['action'] ?? '';
 
 // ---- Role gate (server-side) ----
-// Clients may change `status` and `comment` only. Everything Joust does —
-// toggle_posted, delete_post, and edits to caption / hashtags / scheduled_date /
-// post_type — requires the admin session (auth.php via helpers.php).
+// Clients may change `status`, `comment`, `caption` and `hashtags` (the last two
+// only on their own company's posts and only until the post is Scheduled — see
+// the posted check after the FOR UPDATE read). Everything else Joust does —
+// toggle_posted, delete_post, scheduled_date / post_type edits — requires the
+// admin session (auth.php via helpers.php).
 $isAdminSession = function_exists('currentAdmin') && currentAdmin() !== null;
-$adminOnlyFields = ['scheduled_date', 'caption', 'hashtags', 'post_type'];
+$adminOnlyFields = ['scheduled_date', 'post_type'];
 $needsAdmin = in_array($action, ['toggle_posted', 'delete_post'], true);
 foreach ($adminOnlyFields as $f) {
     if (array_key_exists($f, $_POST)) { $needsAdmin = true; }
@@ -277,6 +281,14 @@ try {
         echo json_encode(['ok' => false, 'error' => 'This post can no longer be changed here — add a comment instead']);
         exit;
     }
+    // Caption / hashtags are frozen once the post is Scheduled (posted = 1) — for both seats.
+    // Joust unmarks first; the client is told the copy is locked.
+    if (($hasCap || $hasTag) && !empty($prev['posted'])) {
+        $pdo->rollBack();
+        http_response_code(409);
+        echo json_encode(['ok' => false, 'error' => $isAdminSession ? 'Unmark scheduled first' : 'This post is already scheduled']);
+        exit;
+    }
     // Friendly label used in activity-log summaries.
     $postLabel = postDisplayLabel([
         'name'    => $prev['name'] ?? '',
@@ -329,16 +341,26 @@ try {
             ($prev['scheduled_date'] ?? '') . ' → ' . ($dateFormatted ?? ''),
             $batchId);
     }
-    if ($hasCap && (string)$prev['caption'] !== (string)$caption) {
+    // Caption / hashtags: "<Kenda|Joust> edited the caption on <post>" with a compact
+    // old → new diff (each side collapsed to one line and capped at 300 chars; the full
+    // new text lives on the post row). The editor's name is returned so the sheet can
+    // show "Edited by Kenda · just now" without a reload.
+    $capChanged = $hasCap && (string)$prev['caption'] !== (string)$caption;
+    $tagChanged = $hasTag && (string)$prev['hashtags'] !== (string)$hashtags;
+    $editorName = null;
+    if ($capChanged || $tagChanged) {
+        $editorName = statusEditorName($pdo, $actor, $companyId);
+    }
+    if ($capChanged) {
         logActivity($pdo, $companyId, 'post', $id, 'edited_caption', $actor,
-            "Edited caption on post #{$id}",
-            mb_substr((string)$prev['caption'], 0, 200) . ' → ' . mb_substr((string)$caption, 0, 200),
+            "{$editorName} edited the caption on {$postLabel}",
+            statusDiffText((string)$prev['caption'], (string)$caption),
             $batchId);
     }
-    if ($hasTag && (string)$prev['hashtags'] !== (string)$hashtags) {
+    if ($tagChanged) {
         logActivity($pdo, $companyId, 'post', $id, 'edited_hashtags', $actor,
-            "Edited hashtags on post #{$id}",
-            mb_substr((string)$prev['hashtags'], 0, 200) . ' → ' . mb_substr((string)$hashtags, 0, 200),
+            "{$editorName} edited the hashtags on {$postLabel}",
+            statusDiffText((string)$prev['hashtags'], (string)$hashtags),
             $batchId);
     }
 
@@ -360,9 +382,37 @@ try {
         'caption'        => $hasCap  ? $caption        : null,
         'hashtags'       => $hasTag  ? $hashtags       : null,
         'post_type'      => $hasType ? $postType       : null,
+        // Who the sheet should credit for the copy change: the company name for the client
+        // seat, null for Joust (the "Edited by …" line only ever names the client).
+        'edited_by'      => ($capChanged || $tagChanged) && $actor === 'client' ? $editorName : null,
     ]);
 } catch (Exception $e) {
     if ($pdo->inTransaction()) { $pdo->rollBack(); }
     http_response_code(500);
     echo json_encode(['ok' => false, 'error' => 'Database error']);
+}
+
+/** Display name of whoever is editing copy: the company for the client seat, "Joust" for admin. */
+function statusEditorName(PDO $pdo, string $actor, int $companyId): string
+{
+    if ($actor !== 'client') return 'Joust';
+    try {
+        $st = $pdo->prepare("SELECT name FROM companies WHERE id = ?");
+        $st->execute([$companyId]);
+        $name = $st->fetchColumn();
+    } catch (Throwable $e) {
+        $name = false;
+    }
+    return is_string($name) && trim($name) !== '' ? trim($name) : 'Client';
+}
+
+/** Compact one-line "old → new" for the activity detail; each side capped at $max chars. */
+function statusDiffText(string $old, string $new, int $max = 300): string
+{
+    $side = static function (string $s) use ($max): string {
+        $s = trim((string)preg_replace('/\s+/u', ' ', $s));
+        if ($s === '') return '(empty)';
+        return mb_strlen($s, 'UTF-8') > $max ? rtrim(mb_substr($s, 0, $max - 1, 'UTF-8')) . '…' : $s;
+    };
+    return $side($old) . ' → ' . $side($new);
 }

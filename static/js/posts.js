@@ -299,6 +299,11 @@
     });
     var label = $('.pd-when-label', root);
     if (label) label.textContent = posted ? 'Scheduled for' : 'Planned for';
+    // Caption / hashtags are frozen once Scheduled (status.php → 409): hide the Edit button,
+    // disable the ⋯ menu item and fold an open editor.
+    var capBtn = $('[data-caption-edit]', root); if (capBtn) capBtn.hidden = posted;
+    var capMenu = $('[data-caption-menu]', root); if (capMenu) { capMenu.disabled = posted; if (posted) capMenu.title = 'Unmark scheduled first'; else capMenu.removeAttribute('title'); }
+    if (posted) { var capForm = $('[data-edit-form="caption"]', root); if (capForm) capForm.hidden = true; }
     // "date has passed" note: only for Scheduled posts whose date is before today (data-past from PHP)
     var pastNote = $('[data-when-past]', root);
     if (pastNote) pastNote.hidden = !(posted && art.getAttribute('data-past') === '1');
@@ -580,7 +585,7 @@
     return ok;
   }
 
-  /* ---- admin edits ---------------------------------------------------- */
+  /* ---- caption / hashtags (either seat until Scheduled) + admin date ---- */
   function saveCaption(art, form) {
     var id = art.getAttribute('data-id');
     var caption = form.caption.value, hashtags = form.hashtags.value;
@@ -597,9 +602,25 @@
       if (copy) copy.setAttribute('data-text', (caption + (hashtags.trim() ? '\n\n' + hashtags.trim() : '')).trim());
       var item = itemEl(id), first = caption.split(/\r?\n/)[0].trim();
       if (item) { var c = $('.pl-caption', item); if (c && item.getAttribute('data-title') !== first) c.textContent = first || hashtags; }
+      // "Edited by Kenda · just now" — status.php names the client when the client seat changed copy;
+      // an admin edit hides the line (it only ever credits the client).
+      var eb = $('[data-edited-by]', root), editedBy = res.data && res.data.edited_by;
+      if (eb) {
+        if (editedBy) { eb.textContent = 'Edited by ' + editedBy + ' · just now'; eb.hidden = false; }
+        else if (App.actor !== 'client') { eb.textContent = ''; eb.hidden = true; }
+      }
       form.hidden = true;
       toast('Caption saved', 'success');
     });
+  }
+  /* Character counter under each editor textarea ("123 / 10000"). */
+  function syncCount(ta) {
+    if (!ta || !ta.id) return;
+    var form = ta.closest('form'); if (!form) return;
+    var out = $('[data-count-for="' + ta.id + '"]', form); if (!out) return;
+    var max = parseInt(ta.getAttribute('maxlength'), 10) || 0, n = ta.value.length;
+    out.textContent = n + (max ? ' / ' + max : '');
+    if (max) out.classList.toggle('is-limit', n >= max);
   }
   function saveDate(art, form) {
     var id = art.getAttribute('data-id');
@@ -757,8 +778,9 @@
       if (edit) {
         var which = edit.getAttribute('data-edit');
         closeMenu(root);
+        if (which === 'caption' && art.getAttribute('data-posted') === '1') { toast(App.actor === 'client' ? 'This post is already scheduled' : 'Unmark scheduled first', 'error'); return; }
         var form = $('[data-edit-form="' + which + '"]', root);
-        if (form) { form.hidden = false; var first = $('textarea, input', form); if (first) first.focus(); }
+        if (form) { form.hidden = false; $$('textarea', form).forEach(syncCount); var first = $('textarea, input', form); if (first) first.focus(); }
         if (which === 'date') { var r = $('[data-when-toggle]', root); if (r) r.setAttribute('aria-expanded', 'true'); }
         return;
       }
@@ -818,6 +840,7 @@
     document.addEventListener('input', function (e) {
       var root = sheetRoot(); if (!root || !root.contains(e.target)) return;
       if (e.target.matches('[data-deny-note]')) { validateDeny(e.target.closest('form')); return; }
+      if (e.target.matches('[data-edit-form="caption"] textarea')) { syncCount(e.target); return; }
       if (e.target.matches('[data-comment-input]')) {
         autosize(e.target);
         var send = $('[data-comment-send]', e.target.closest('form')); if (send) send.disabled = !e.target.value.trim();
