@@ -463,7 +463,7 @@ function sha256_(text) {
 
 /** Folder name → client slug ([a-z0-9-], ≤ 120); mirrors driveSlugify() in the portal so company names match. */
 function slugify_(name) {
-  return String(name || '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120);
+  return String(name || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120);
 }
 
 function iso_(ms) {

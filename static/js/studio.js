@@ -1684,7 +1684,7 @@
   /* Same rule as caSlugify() in client-admin.php (ASCII letters / digits, dashes, ≤ 40). */
   function slugify(name) {
     var s = String(name || '');
-    try { s = s.normalize('NFKD').replace(/[̀-ͯ]/g, ''); } catch (e) {}
+    try { s = s.normalize('NFKD').replace(/[\u0300-\u036f]/g, ''); } catch (e) {}
     s = s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '');
     return s;
   }
