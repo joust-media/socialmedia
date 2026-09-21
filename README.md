@@ -368,6 +368,10 @@ reads only from the `drive_*` tables (`migrate.php` steps 30–34; helpers in `d
 - **Install**: follow `docs/drive-collector/README.md` (add the secret, run `migrate.php`, paste
   `Code.gs` + `appsscript.json`, set the script properties, run `verify`, `setupTrigger`, `runNightly`).
 - **Health**: `curl -H "Authorization: Bearer <secret>" https://joustmedia.com/portal/drive-ingest.php?health=1`.
+  The live host strips `.php` and answers that with a 301 to `…/portal/drive-ingest?health=1`; use
+  the extensionless address directly (no `-L` needed then) and set the script's `PORTAL_INGEST_URL`
+  to `https://joustmedia.com/portal/drive-ingest` — the script refuses redirects on purpose and
+  reports the `Location` it was given.
 - **Parts protocol** (`drive-ingest.php`, bearer only — no session, no CSRF token; JSON in, JSON out):
   `POST ?part=begin` (quota from `Drive.About`) → `?part=files` (≤ 2,000 rows per request, every owned
   non-trashed file that uses quota) → `?part=folders` (≤ 5,000) → `?part=clients` → `?part=tree` (≤ 4 MB)
