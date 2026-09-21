@@ -73,7 +73,8 @@ if ($action === 'delete_tire') {
 }
 
 // ---- Series actions (tire-series-lib.php; design §5) ----
-//   approve_series {series_id}            client or admin — approves every pending render of the series
+//   approve_series {series_id, type?}     client or admin — approves every pending render of the series
+//                                         (type photos | videos limits it to that media type — the Assets view's filter)
 //   delete_image {id}                     admin — row + file + thumb
 //   set_reference {id}                    admin — moves the image to sort_order 0 among the reference images
 //   series_create {tire_id, name, drive_url?}   admin — drive_url: optional Google Drive share link
@@ -135,19 +136,23 @@ if (in_array($action, $seriesActions, true)) {
                 $series = tireSeriesById($pdo, $sid);
                 if (!$series) { $fail(404, 'Series not found'); }
                 $tire = $loadTire((int)$series['tire_id']);
+                // type: photos | videos | all (default) — the Assets page posts the Photos · Videos view it shows, so
+                // "Approve all remaining" never approves the videos the client has not looked at (same predicate as the grid).
+                $type = tireMediaTypeKey($_POST['type'] ?? '', 'all');
                 $pdo->beginTransaction();
-                $upd = $pdo->prepare("UPDATE tire_images SET status = 'approved' WHERE series_id = ? AND status = 'pending'");
+                $upd = $pdo->prepare("UPDATE tire_images SET status = 'approved' WHERE series_id = ? AND status = 'pending'" . tireMediaTypeSql($type, 'image_url'));
                 $upd->execute([$sid]);
                 $n = (int)$upd->rowCount();
                 if ($n > 0) {
+                    $noun = $type === 'videos' ? 'video' : ($type === 'photos' ? 'photo' : 'render');
                     logTireSeriesActivity($pdo, $actor, 'approved', $sid,
-                        "Approved {$n} render" . ($n === 1 ? '' : 's') . " in " . (string)$tire['name'] . " · " . $series['name'],
+                        "Approved {$n} {$noun}" . ($n === 1 ? '' : 's') . " in " . (string)$tire['name'] . " · " . $series['name'],
                         null, $batchId, (int)$tire['company_id']);
                 }
                 $pdo->commit();
                 $counts = tireSeriesCounts($pdo, (int)$tire['id']);
                 $c = $counts['series'][$sid] ?? ['pending' => 0, 'approved' => 0, 'denied' => 0, 'total' => 0];
-                echo json_encode(['ok' => true, 'series_id' => $sid, 'approved' => $n, 'counts' => $c]);
+                echo json_encode(['ok' => true, 'series_id' => $sid, 'approved' => $n, 'type' => $type, 'counts' => $c, 'type_counts' => tireSeriesTypeCounts($pdo, (int)$tire['id'], $sid)]);
                 exit;
             }
             case 'delete_image': {

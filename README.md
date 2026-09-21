@@ -220,6 +220,17 @@ join the Approved Pool and the composer like any tire image.
   reference** (moves the image to the tire's reference set, sort_order 0) and **Delete image…**
   (row + file + thumb). Series renders show in the Approved Pool grouped per collection with
   series chips.
+- **Photos · Videos**: videos are a load on the server, so a series never puts them on the page
+  unasked. A series that holds at least one video gets a small **Photos N · Videos N** control under
+  its counts line and opens on **Photos**; `&type=photos|videos|all` is applied in SQL
+  (`tireMediaTypeSql()`, media type = the file extension) so paging, `partial=1`, the filter chips
+  and **Approve all remaining** (posts `type=`; "Approve all 3 remaining videos in Series 2?") all
+  follow it. A deep link to a video opens the Videos view. The Videos grid renders play-glyph
+  tiles with the file size — no `<video>` element, never a probe of the file; the viewer streams
+  the one video on screen (`preload="metadata"`) and unloads it the moment you navigate away, and
+  its "…" menu offers a direct **Download** link. The switcher chips show a subtle "3▶" for series
+  with videos. In the Approved Pool, **Photos / Videos** chips filter client-side and videos start
+  collapsed behind **Show N videos** so no posters are fetched for them by default.
 - **Comments** (every Assets image — library and tire, any status, both seats): the viewer has a
   "Comments (N)" panel under Approve / Deny with the image's thread (deny notes and replies, client
   vs Joust bubbles) and a composer (Enter sends on desktop). The thread is fetched per image
@@ -234,7 +245,8 @@ join the Approved Pool and the composer like any tire image.
   (one idempotent `ALTER TABLE tire_images ADD COLUMN series_id INT UNSIGNED NULL` — the only
   change to an existing table). Until they exist everything behaves as before ("Render series
   are not set up yet").
-- **Endpoints**: `tire-status.php` gains `approve_series` (client or admin), `delete_image`,
+- **Endpoints**: `tire-status.php` gains `approve_series` (client or admin; optional
+  `type=photos|videos` limits it to that media type), `delete_image`,
   `set_reference`, `series_create` / `series_rename` / `series_delete` / `series_reorder`,
   `rescan` (admin, same-site, scoped to the posted client). Reference images (the ≤6 in Studio)
   are the rows without a series; the 6-image cap counts only those.

@@ -360,6 +360,10 @@
 }
 .studio-chips--series { margin: 0; }
 .studio-chip--sm { min-height: 26px; padding: 2px 10px; font-size: var(--text-caption); line-height: 16px; }
+/* Photos / Videos chips + "Show N videos": videos start collapsed so the pool never fetches their posters unasked */
+.studio-chips--media { margin: -4px 0 10px; align-items: center; }
+.studio-pool-videos-toggle { margin-left: auto; min-height: 26px; padding: 2px 6px; font-size: var(--text-caption); font-weight: 600; white-space: nowrap; }
+.studio-pool-videos-toggle[hidden] { display: none; }
 
 /* ---------------------------------------------------------------------
    Renders (tire series uploads)

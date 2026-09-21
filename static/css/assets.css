@@ -104,6 +104,14 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .as-series-meta { margin: 2px 0 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote); color: var(--label-secondary); font-variant-numeric: tabular-nums; }
+/* Photos · Videos — a small segmented control under the counts line (only rendered when the series holds a video) */
+.as-type { margin-top: 8px; }
+.as-type .ui-segmented-item { min-height: 28px; padding: 3px 12px; gap: 4px; }
+.as-type .ui-segmented-count { font-variant-numeric: tabular-nums; }
+/* Switcher chip glyph: "3▶" when a series holds videos (subtle, label-tertiary) */
+.as-chip-videos { display: inline-flex; align-items: center; gap: 1px; margin-left: -1px; color: var(--label-tertiary); font-size: var(--text-caption); font-weight: 600; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+.as-chip-videos .ui-icon { width: 10px; height: 10px; }
+.as-chip.is-active .as-chip-videos { color: inherit; opacity: .7; }
 .as-series-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .as-series-approve[hidden] { display: none; }
 .as-series-approve .ui-icon { width: 16px; height: 16px; stroke-width: 2.6; }
@@ -191,6 +199,7 @@
 .as-badge .ui-dot { width: 7px; height: 7px; box-shadow: 0 0 0 1px rgba(0,0,0,.25); }
 .as-badge-video { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600; letter-spacing: 0; }
 .as-badge-video .ui-icon { width: 10px; height: 10px; }
+.as-badge-size { font-size: 11px; font-weight: 600; letter-spacing: 0; opacity: .85; font-variant-numeric: tabular-nums; }   /* "340 MB" next to the play glyph / duration */
 
 /* Approved: subtle green ring (.ui-thumb--approved::after in components.css) + a small check */
 .as-thumb-check {

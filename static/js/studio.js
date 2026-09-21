@@ -106,12 +106,16 @@
     this.selected = [];
     this.handlers = [];
     this.filter   = 'all';
+    this.media    = 'all';      // 'all' | 'image' | 'video' (the Photos / Videos chips)
+    this.videosShown = false;   // 'all' starts with the videos collapsed behind "Show N videos" (no posters fetched)
+    this.mediaBar = $('[data-pool-media]', root);
     root._picker  = this;
     this.bind();
     var initial = [];
     try { initial = JSON.parse(root.dataset.selected || '[]'); } catch (e) { initial = []; }
     this.set(initial, true);
     this.render();
+    if (this.mediaBar) this.applyVisibility();
   }
 
   Picker.prototype.assetFromButton = function (btn) {
@@ -234,20 +238,54 @@
     });
     this.applyVisibility();
   };
+  /* Photos / Videos chips: 'image' | 'video' narrows to that type (the active chip again → both);
+     the "Show N videos" toggle reveals the collapsed videos while both types are shown. A video tile that
+     becomes visible for the first time is woken (App.video.wake → its poster / duration may be probed now). */
+  Picker.prototype.applyMediaFilter = function (value) {
+    this.media = value === 'image' || value === 'video' ? value : 'all';
+    var self = this;
+    $$('[data-media-filter]', this.root).forEach(function (chip) {
+      var on = chip.dataset.mediaFilter === self.media;
+      chip.classList.toggle('is-active', on);
+      chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    this.applyVisibility();
+  };
+  Picker.prototype.toggleVideos = function (show) {
+    this.videosShown = typeof show === 'boolean' ? show : !this.videosShown;
+    this.applyVisibility();
+  };
   Picker.prototype.applyVisibility = function () {
-    var self = this, visible = 0;
+    var self = this, visible = 0, hiddenVideos = 0;
+    var showVideos = this.media === 'video' || this.videosShown;
     if (this.grid) {
       $$('[data-asset-key]', this.grid).forEach(function (btn) {
         var group = btn.closest('[data-pool-group]');
         var series = group ? (group.dataset.seriesActive || 'all') : 'all';
+        var media = btn.dataset.assetMedia || 'image';
         var show = (self.filter === 'all' || btn.dataset.assetGroup === self.filter)
-                && (series === 'all' || (btn.dataset.series || 'ref') === series);
+                && (series === 'all' || (btn.dataset.series || 'ref') === series)
+                && (self.media === 'all' || media === self.media);
+        if (show && media === 'video' && !showVideos && self.index(btn.dataset.assetKey) < 0) { show = false; hiddenVideos++; }   // collapsed (a picked one stays)
         btn.hidden = !show;
-        if (show) visible++;
+        if (show) {
+          visible++;
+          if (media === 'video' && btn.hasAttribute('data-pool-collapsed')) {
+            btn.removeAttribute('data-pool-collapsed');
+            if (window.App && App.video && App.video.wake) $$('[data-video-noprobe]', btn).forEach(App.video.wake);
+          }
+        }
       });
       $$('[data-pool-group]', this.grid).forEach(function (group) {
         group.hidden = $$('[data-asset-key]:not([hidden])', group).length === 0;
       });
+    }
+    var toggle = $('[data-pool-videos-toggle]', this.root);
+    if (toggle) {
+      var n = parseInt(toggle.dataset.count, 10) || 0;
+      toggle.hidden = this.media !== 'all' || (!this.videosShown && hiddenVideos === 0);
+      toggle.setAttribute('aria-pressed', this.videosShown ? 'true' : 'false');
+      toggle.textContent = this.videosShown ? 'Hide videos' : 'Show ' + (hiddenVideos || n) + (hiddenVideos === 1 || (!hiddenVideos && n === 1) ? ' video' : ' videos');
     }
     if (this.emptyEl) this.emptyEl.hidden = visible > 0;
   };
@@ -257,6 +295,9 @@
     this.root.addEventListener('click', function (e) {
       var chip = e.target.closest('[data-pool-filter]');
       if (chip) { self.applyFilter(chip.dataset.poolFilter); return; }
+      var mchip = e.target.closest('[data-media-filter]');
+      if (mchip) { self.applyMediaFilter(self.media === mchip.dataset.mediaFilter ? 'all' : mchip.dataset.mediaFilter); return; }
+      if (e.target.closest('[data-pool-videos-toggle]')) { self.toggleVideos(); return; }
       var schip = e.target.closest('[data-series-filter]');
       if (schip) { var g = schip.closest('[data-pool-group]'); if (g) self.applySeriesFilter(g, schip.dataset.seriesFilter); return; }
       var btn = e.target.closest('[data-asset-key]');
