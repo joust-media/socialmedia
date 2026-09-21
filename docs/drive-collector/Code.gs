@@ -24,7 +24,8 @@
  *   portal (?part=state), a one-off trigger continues one minute later and picks them back up.
  *
  * Script Properties (File > Project properties > Script properties, or the gear icon):
- *   PORTAL_INGEST_URL        https://joustmedia.com/portal/drive-ingest.php
+ *   PORTAL_INGEST_URL        https://joustmedia.com/portal/drive-ingest.php — or …/drive-ingest on hosts that 301
+ *                            the .php form to the extensionless one (the script refuses redirects; use the final address)
  *   INGEST_SECRET            the drive_ingest_secret value from the portal's config.php (24+ chars)
  *   CLIENTS_ROOT_FOLDER_ID   optional — the folder whose child folders are the clients (default: My Drive itself)
  *   ALERT_EMAIL              where threshold emails go (80 / 90 / 95 % used, < 14 days to full)
@@ -377,7 +378,8 @@ function alertSubject_(kind, done) {
 
 function alertBody_(kind, done, cfg) {
   var q = done.quota, p = done.projection;
-  var portal = cfg.url.replace(/drive-ingest\.php.*$/, 'drive.php');
+  // keep the same form as the ingest URL: drive-ingest.php → drive.php, drive-ingest → drive
+  var portal = cfg.url.replace(/drive-ingest(\.php)?.*$/, function (m, ext) { return 'drive' + (ext || ''); });
   var lines = [
     'Nightly Drive check for ' + Session.getEffectiveUser().getEmail() + ':',
     '',
@@ -401,7 +403,8 @@ function config_() {
   var p = PropertiesService.getScriptProperties();
   var url = (p.getProperty('PORTAL_INGEST_URL') || '').trim();
   var secret = (p.getProperty('INGEST_SECRET') || '').trim();
-  if (!/^https:\/\/.+drive-ingest\.php$/.test(url)) throw new Error('Script property PORTAL_INGEST_URL must be the https URL of drive-ingest.php');
+  // Extensionless form allowed: some hosts 301 `drive-ingest.php` → `drive-ingest`, and request_() never follows redirects.
+  if (!/^https:\/\/.+drive-ingest(\.php)?$/.test(url)) throw new Error('Script property PORTAL_INGEST_URL must be the https URL of drive-ingest.php (or drive-ingest on hosts that strip the extension)');
   if (secret.length < 24) throw new Error('Script property INGEST_SECRET must be the 24+ character drive_ingest_secret from config.php');
   return {
     url: url, secret: secret,
@@ -431,6 +434,15 @@ function request_(method, url, body, cfg) {
       var json = null;
       try { json = JSON.parse(text); } catch (e) { json = null; }
       if (code >= 200 && code < 300 && json && json.ok) return json;
+      if (code >= 300 && code < 400) {
+        // redirects are refused on purpose (the bearer must never be replayed to another address);
+        // the usual cause is a host that strips `.php` — point the property at the final address
+        var h = res.getAllHeaders() || {};
+        var location = h.Location || h.location || '';
+        if (location && location.indexOf('?') >= 0) location = location.slice(0, location.indexOf('?'));
+        last = 'HTTP ' + code + (location ? ' → Location: ' + location + '; set PORTAL_INGEST_URL to that address' : ' (redirect refused; set PORTAL_INGEST_URL to the final address)');
+        break;
+      }
       last = 'HTTP ' + code + ' ' + (json && json.error ? json.error : text.slice(0, 200));
       if (code >= 500 || code === 429 || code === 0) { Utilities.sleep(2000 * attempt); continue; }
       break;   // 4xx: retrying will not help

@@ -25,13 +25,20 @@ OAuth scopes). Portal side: `drive-ingest.php`, `drive-lib.php`, `migrate.php` s
    client folders. Open `migrate.php` while signed in as admin so steps 30–34 create the tables.
    Check `https://joustmedia.com/portal/drive-ingest.php?health=1` with
    `curl -H "Authorization: Bearer <secret>" …` → `{"ok":true,"configured":true,"migrated":true,…}`.
+   If curl prints a `301` instead, the host strips `.php` — use the `Location` it points to
+   (`https://joustmedia.com/portal/drive-ingest?health=1`) directly; that extensionless address is
+   the one to put in `PORTAL_INGEST_URL` below.
 2. **Script**: signed in as the Google account that owns the Drive, open https://script.google.com →
    New project → name it "Joust Drive collector". Replace the default `Code.gs` with this folder's
    `Code.gs`. Project Settings (gear) → tick **Show "appsscript.json" manifest file in editor**, then
    replace the manifest with this folder's `appsscript.json` (it enables the Drive advanced service
    and pins the scopes).
 3. **Script properties** (Project Settings → Script properties → Add):
-   - `PORTAL_INGEST_URL` = `https://joustmedia.com/portal/drive-ingest.php`
+   - `PORTAL_INGEST_URL` = `https://joustmedia.com/portal/drive-ingest.php`, or
+     `https://joustmedia.com/portal/drive-ingest` on hosts that strip `.php` (the live server
+     301-redirects the `.php` form). The script never follows redirects — the bearer secret must
+     not be replayed to another address — so the property must be the final URL. The alert
+     emails link to `drive.php` / `drive` in the same form.
    - `INGEST_SECRET` = the same secret as `config.php`
    - `ALERT_EMAIL` = where the 80 / 90 / 95 % and "under 14 days" emails go
    - `CLIENTS_ROOT_FOLDER_ID` = *(optional)* the id (from its URL) of the folder whose sub-folders are
@@ -82,6 +89,9 @@ Idempotent by design: every POST carries a SHA-256 of its body; the portal ignor
 
 - `verify` fails with 401 → `INGEST_SECRET` and `config.php` differ. 503 → the secret is missing in
   `config.php` (or shorter than 24 chars) or `migrate.php` has not run.
+- `verify` fails with `HTTP 301 → Location: https://…/drive-ingest; set PORTAL_INGEST_URL to that
+  address` → the host strips `.php`; redirects are refused by design, so set the property to the
+  address in the message and run `verify` again.
 - Authorization screen asks for full Drive access → the manifest was not replaced (the advanced
   service defaults to the full scope); fix the manifest and re-authorize.
 - "Parked state … is missing" → the partial snapshot was pruned; run `resetRun`, then `runNightly`.
