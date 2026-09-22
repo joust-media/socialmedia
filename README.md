@@ -259,6 +259,51 @@ join the Approved Pool and the composer like any tire image.
   (`tire-upload.php` `action=repair_media`) rewrites the rules and fixes permissions under
   `media/tires/`. The text and the by-hand steps are in `media-hardening/`.
 
+## Exporting approved assets
+
+Studio → **Export** (admin, scoped to the chosen client) builds one zip of everything the client
+has approved, categorised by tire, and hands it over as a single download:
+
+```
+<Client Name>/
+  manifest.csv          id, kind, tire, series, filename, media_type, bytes, status, approved_at,
+  manifest.json         comments_count, drive_url, source_path (+ path in the JSON)
+  <Tire Name>/
+    Reference/<file>    the tire's reference images
+    <Series Name>/<file>
+  Library/<file>        approved library images (only for the "All approved" scope)
+```
+
+- **Options**: scope *All approved* · *One tire* · *One series*; include Photos (on), Videos (off —
+  the size they would add is shown next to the box), Reference images (on), Library approved images
+  (on, own folder). Only `approved` rows are ever included. The estimate line ("N files · X GB")
+  is computed server-side (one `filesize()` per file) and refreshes as the options change.
+  Folder and file names are filesystem-safe versions of the tire / series / display name
+  ("Klever R/T" → `Klever R-T`); duplicates within a folder get `-2`, `-3`, …; the original
+  extension is kept. `approved_at` is the latest `approved` activity row for the image, else its
+  `updated_at`. The Assets series "…" menu has **Export approved…**, which opens the tab with that
+  tire preselected.
+- **How it builds** (`export.php`, admin + same-site; helpers in `export-lib.php`): *Build export*
+  posts `action=start`, which lists the files into `uploads/.exports/<job>.json` (job = 32 hex,
+  sidecar carries the company, options and the validated source paths; the folder is dot-prefixed
+  with a deny-all `.htaccess`, so nothing in it is web-reachable), then the page calls `action=step`
+  repeatedly. Each step appends about 64 MB / 15 s worth of bytes to `uploads/.exports/<job>.zip`
+  and records where it got to — a file larger than the budget continues across steps — so no
+  request runs long on shared hosting. The zip is written by the portal itself (entries *stored*,
+  no compression, so no CPU is spent on media; zip64 records when a file or the archive passes
+  4 GB; UTF-8 names), because `ZipArchive` rewrites the whole archive on every `close()`. The last
+  step adds `manifest.csv` / `manifest.json` and the central directory. Every source path is
+  re-validated through `tireImagePath()` / the library containment helper at step time; a file that
+  disappeared mid-build is listed in the manifest as `missing`.
+- **Download**: `action=download&job=…` (GET, only a finished job of the same client) streams the
+  zip in 1 MB pieces with `Accept-Ranges` / a single `Range` honoured, so a dropped multi-GB
+  download resumes. The file is named `<client>[-tire[-series]]-approved-assets-YYYY-MM-DD.zip`.
+  **Recent exports** lists the last 24 hours' jobs (Continue an unfinished one, Download, Delete);
+  jobs and zips older than 24 h are removed on the next `start`. A single export is capped at
+  **20 GB** — split by tire above that. **Manifest CSV only** (`action=manifest`) downloads the
+  file list without building a zip; on a 32-bit PHP build the tab offers only that.
+- Staging shares `media/` with production, so an export built there contains the real files.
+
 ## Large uploads (chunked, resumable)
 
 Shared hosting caps one request at `upload_max_filesize` / `post_max_size` (often 64 MB or

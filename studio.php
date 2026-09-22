@@ -142,6 +142,7 @@ $hasPages = function_exists('hasPagesTable') && hasPagesTable($pdo);   // Pages 
 if ($hasPages) $tabs['pages'] = 'Pages';
 $hasRenders = function_exists('hasTireSeries') && hasTireSeries($pdo);   // tire series (migration-gated)
 if ($hasRenders) $tabs['renders'] = 'Renders';
+$tabs['export'] = 'Export';                   // approved-asset zip (export-lib.php / export.php), one folder per tire
 $tabs['clients'] = 'Clients';                 // company management (partials/studio-clients.php → client-admin.php)
 $tab  = strtolower(trim((string)($_GET['tab'] ?? 'compose')));
 if (!isset($tabs[$tab])) $tab = 'compose';
@@ -168,6 +169,26 @@ if ($hasRenders) {
     $rendersSeries = max(0, (int)($_GET['series'] ?? 0));
 }
 $rendersDriveOn = $hasRenders && function_exists('tireSeriesHasDriveUrl') && tireSeriesHasDriveUrl($pdo);   // tire_series.drive_url present → Drive link fields
+
+// Export: the tires (+ series) the scope pickers offer — the Renders list when it exists, else the plain tire list —
+// and the preselection from the URL (&tab=export&tire=<id>[&series=<id>], the Assets "Export approved…" shortcut).
+require_once __DIR__ . '/export-lib.php';
+$exportTires = [];
+if ($hasRenders) {
+    foreach ($rendersTires as $t) {
+        $exportTires[] = ['id' => $t['id'], 'name' => $t['name'], 'series' => array_map(static function ($s) {
+            return ['id' => $s['id'], 'name' => $s['name'], 'approved' => (int)($s['counts']['approved'] ?? 0)];
+        }, $t['series'])];
+    }
+} else {
+    $st = $pdo->prepare("SELECT id, name FROM tires WHERE company_id = ? ORDER BY name ASC");
+    $st->execute([(int)$client['id']]);
+    foreach ($st->fetchAll() as $t) { $exportTires[] = ['id' => (int)$t['id'], 'name' => (string)$t['name'], 'series' => []]; }
+}
+$exportTire   = $tab === 'export' ? max(0, (int)($_GET['tire'] ?? 0)) : 0;
+if ($exportTire && !in_array($exportTire, array_column($exportTires, 'id'), true)) $exportTire = 0;
+$exportSeries = $exportTire && $tab === 'export' ? max(0, (int)($_GET['series'] ?? 0)) : 0;
+$exportZipOn  = exportZipSupported();
 
 $pool         = studioApprovedPool($pdo, $client);
 $supportsType = hasPostTypeColumn($pdo);
@@ -257,6 +278,14 @@ if ($hasRenders) {
         'maxVideoMb' => 4096,   // videos: sent in pieces (chunk-upload-lib.php), so the host's upload_max_filesize no longer caps them
     ];
 }
+$studioConfig['export'] = [
+    'endpoint' => basePath() . '/export.php?client=' . rawurlencode($client['slug']),   // estimate / start / step / status / cancel / list (POST), download / manifest (GET)
+    'tires'    => $exportTires,
+    'tire'     => $exportTire,
+    'series'   => $exportSeries,
+    'zip'      => $exportZipOn,             // false on a 32-bit PHP build → manifest CSV only
+    'cap'      => EXPORT_MAX_BYTES,
+];
 
 $pageTitle   = 'Studio';
 $navSubtitle = $client['name'];
@@ -447,6 +476,86 @@ include __DIR__ . '/partials/layout-top.php';
   </div>
 </section>
 <?php endif; ?>
+
+<!-- Export (approved assets → one zip, a folder per tire) ---------------- -->
+<section class="studio-section" data-studio-section="export"<?= $tab === 'export' ? '' : ' hidden' ?>>
+  <div class="studio-export" data-export data-endpoint="<?= h($studioConfig['export']['endpoint']) ?>" data-zip="<?= $exportZipOn ? '1' : '0' ?>">
+    <div class="studio-export-grid">
+      <section class="ui-card studio-export-card">
+        <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Export approved assets</h3>
+          <p class="ui-card-subtitle">One zip of everything <?= h($client['name']) ?> has approved, organised by tire: <code><?= h(exportSafeName($client['name'], 'Client')) ?>/&lt;Tire&gt;/Reference/</code>, <code>…/&lt;Tire&gt;/&lt;Series&gt;/</code> and <code>…/Library/</code>, plus <code>manifest.csv</code>. Built on the server in small steps, then downloaded once.</p></div></div>
+        <div class="ui-card-body">
+          <?php if (!$exportZipOn): ?>
+            <div class="studio-alert studio-alert--error" role="status" data-export-nozip>This server runs a 32-bit PHP build, which cannot write zips over 2 GB safely, so the portal offers the <strong>manifest CSV</strong> only (every approved file with its tire, series and path — copy the files from <code>media/</code> by FTP).</div>
+          <?php endif; ?>
+          <?php if (!$exportTires): ?>
+            <p class="text-secondary" data-export-notires>No tires yet for <?= h($client['name']) ?> — the export covers approved Library images only.</p>
+          <?php endif; ?>
+          <form class="studio-export-form" data-export-form>
+            <fieldset class="studio-export-fieldset">
+              <legend class="studio-label">Scope</legend>
+              <div class="studio-export-choices" role="radiogroup">
+                <label class="studio-export-choice"><input type="radio" name="scope" value="all" data-export-scope<?= $exportTire ? '' : ' checked' ?>> <span>All approved</span></label>
+                <label class="studio-export-choice"><input type="radio" name="scope" value="tire" data-export-scope<?= $exportTire && !$exportSeries ? ' checked' : '' ?><?= $exportTires ? '' : ' disabled' ?>> <span>One tire</span></label>
+                <label class="studio-export-choice"><input type="radio" name="scope" value="series" data-export-scope<?= $exportSeries ? ' checked' : '' ?><?= $hasRenders && $exportTires ? '' : ' disabled' ?>> <span>One series</span></label>
+              </div>
+            </fieldset>
+            <div class="studio-field-row">
+              <div class="studio-field"><label class="studio-label" for="exportTire">Tire</label>
+                <select class="ui-select" id="exportTire" data-export-tire<?= $exportTire ? '' : ' disabled' ?>>
+                  <?php foreach ($exportTires as $t): ?>
+                    <option value="<?= (int)$t['id'] ?>"<?= (int)$t['id'] === $exportTire ? ' selected' : '' ?>><?= h($t['name']) ?></option>
+                  <?php endforeach; ?>
+                </select></div>
+              <div class="studio-field"><label class="studio-label" for="exportSeries">Series</label>
+                <select class="ui-select" id="exportSeries" data-export-series<?= $exportSeries ? '' : ' disabled' ?>></select></div>
+            </div>
+            <fieldset class="studio-export-fieldset">
+              <legend class="studio-label">Include</legend>
+              <div class="studio-export-choices">
+                <label class="studio-export-choice"><input type="checkbox" data-export-inc="photos" checked> <span>Photos</span></label>
+                <label class="studio-export-choice"><input type="checkbox" data-export-inc="videos"> <span>Videos <span class="text-tertiary" data-export-video-size></span></span></label>
+                <label class="studio-export-choice"><input type="checkbox" data-export-inc="reference" checked> <span>Reference images</span></label>
+                <label class="studio-export-choice"><input type="checkbox" data-export-inc="library" checked> <span>Library approved images <span class="text-tertiary">(own folder · “All approved” only)</span></span></label>
+              </div>
+            </fieldset>
+            <p class="studio-help">Approved files only — pending and denied never leave the portal. Names use the display name when one is set; duplicates in a folder get “-2”, “-3”. One export is capped at <?= h(exportFormatBytes(EXPORT_MAX_BYTES)) ?> — split by tire above that.</p>
+          </form>
+          <p class="studio-export-estimate" data-export-estimate aria-live="polite">Counting…</p>
+          <div class="studio-export-actions" data-export-actions>
+            <?php if ($exportZipOn): ?>
+              <button type="button" class="ui-btn ui-btn--filled" data-export-build><?= icon('download') ?><span>Build export</span></button>
+            <?php endif; ?>
+            <a class="ui-btn ui-btn--gray" data-export-manifest href="<?= h($studioConfig['export']['endpoint'] . '&action=manifest') ?>" title="The file list as a spreadsheet (id, kind, tire, series, filename, media type, bytes, status, approved at, comments, Drive link, source path)"><?= icon('download') ?><span>Manifest CSV only</span></a>
+          </div>
+          <div class="studio-export-progress" data-export-progress hidden role="status">
+            <div class="studio-progress"><div class="studio-progress-bar"><div class="studio-progress-fill" data-export-fill style="width:0%"></div></div></div>
+            <div class="studio-export-progress-row">
+              <span class="studio-export-progress-text" data-export-progress-text>Starting…</span>
+              <button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-export-cancel>Cancel</button>
+            </div>
+          </div>
+          <div class="studio-export-done" data-export-done hidden role="status">
+            <p class="studio-export-done-text" data-export-done-text></p>
+            <div class="studio-export-actions">
+              <a class="ui-btn ui-btn--filled" data-export-download href="#" download><?= icon('download') ?><span>Download ZIP</span></a>
+              <button type="button" class="ui-btn ui-btn--gray" data-export-another>Build another</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="ui-card studio-export-recent-card" data-export-recent-card>
+        <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Recent exports</h3>
+          <p class="ui-card-subtitle">Zips built in the last 24 hours for <?= h($client['name']) ?>. They are deleted automatically after that.</p></div></div>
+        <div class="ui-card-body">
+          <ul class="studio-export-recent" data-export-recent role="list"></ul>
+          <p class="text-secondary" data-export-recent-empty>No exports yet.</p>
+        </div>
+      </section>
+    </div>
+  </div>
+</section>
 
 <?php if ($hasEmails): ?>
 <!-- Emails ------------------------------------------------------------- -->

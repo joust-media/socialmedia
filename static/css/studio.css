@@ -567,3 +567,42 @@
   .studio-clients .ui-row-trailing .ui-btn { display: none; }
   .studio-client-mod-row { flex-wrap: wrap; }
 }
+
+/* ---------------------------------------------------------------------
+   Export tab (Studio): options card + Recent exports (export.php)
+   --------------------------------------------------------------------- */
+.studio-export-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (min-width: 960px) { .studio-export-grid { grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr); gap: 24px; } }
+.studio-export-card .ui-card-subtitle code, .studio-export-form code, .studio-export .studio-help code { font-family: var(--font-mono); font-size: var(--text-caption); }
+.studio-export-form { display: flex; flex-direction: column; gap: 14px; }
+.studio-export-fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.studio-export-fieldset > legend { padding: 0; margin-bottom: 6px; }
+.studio-export-choices { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.studio-export-choice { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; font-size: var(--text-subhead); cursor: pointer; }
+.studio-export-choice input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); flex: 0 0 auto; }
+.studio-export-choice input:disabled + span { color: var(--label-tertiary); }
+.studio-export-choice:has(input:disabled) { cursor: default; }
+.studio-export-estimate { margin: 14px 0 0; padding: 10px 12px; border-radius: var(--radius-sm, 10px); background: var(--fill-tertiary); font-size: var(--text-subhead); font-variant-numeric: tabular-nums; }
+.studio-export-estimate.is-error { color: var(--deny); }
+.studio-export-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+.studio-export-actions .ui-btn[hidden] { display: none; }
+.studio-export-progress { margin-top: 14px; }
+.studio-export-progress[hidden], .studio-export-done[hidden] { display: none; }
+.studio-export-progress-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px; }
+.studio-export-progress-text { font-size: var(--text-footnote); color: var(--label-secondary); font-variant-numeric: tabular-nums; }
+.studio-export-done { margin-top: 14px; padding: 12px 14px; border-radius: var(--radius-sm, 10px); background: var(--fill-tertiary); box-shadow: inset 3px 0 0 var(--approve); }
+.studio-export-done-text { margin: 0; font-size: var(--text-subhead); }
+.studio-export-done .studio-export-actions { margin-top: 10px; }
+.studio-export-recent { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.studio-export-job { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+.studio-export-job + .studio-export-job { box-shadow: 0 -0.5px 0 var(--separator); }
+.studio-export-job-main { flex: 1 1 auto; min-width: 0; }
+.studio-export-job-title { font-weight: 600; overflow-wrap: anywhere; }
+.studio-export-job-meta { font-size: var(--text-footnote); line-height: var(--lh-footnote); }
+.studio-export-job-actions { display: flex; gap: 4px; flex: 0 0 auto; align-items: center; }
+.studio-export-job-actions .ui-icon { width: 16px; height: 16px; }
+[data-export-recent-empty][hidden] { display: none; }
+@media (max-width: 600px) {
+  .studio-export-job { flex-wrap: wrap; }
+  .studio-export-job-actions { width: 100%; justify-content: flex-end; }
+}
