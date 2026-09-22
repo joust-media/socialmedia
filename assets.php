@@ -724,6 +724,7 @@ include __DIR__ . '/partials/layout-top.php';
               <button type="button" class="ui-btn ui-btn--sm ui-btn--gray as-menu-btn" data-series-menu aria-haspopup="menu" aria-expanded="false" aria-label="Series options"><?= icon('ellipsis') ?></button>
               <div class="as-menu-list" data-series-menu-list role="menu" hidden>
                 <a class="as-menu-item" role="menuitem" href="<?= esc($studioUploadUrl) ?>" data-series-upload><?= icon('plus') ?>Upload more…</a>
+                <a class="as-menu-item" role="menuitem" href="<?= esc(clientUrl('studio.php', ['tab' => 'export', 'tire' => $itemId, 'series' => $seriesActive ? (int)$seriesActive['id'] : null])) ?>" data-series-export title="Studio → Export with this tire preselected"><?= icon('download') ?>Export approved…</a>
                 <?php if ($seriesActive): ?>
                   <button type="button" class="as-menu-item" role="menuitem" data-series-rename><?= icon('wand') ?>Rename series…</button>
                   <button type="button" class="as-menu-item" role="menuitem" data-series-drive-edit><?= icon('drive') ?><?= $headDrive !== '' ? 'Edit Google Drive link…' : 'Add Google Drive link…' ?></button>
