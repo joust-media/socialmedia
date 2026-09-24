@@ -621,6 +621,7 @@ if (!function_exists('previewGenerateImagick')) {
                 case 8: $im->rotateImage('none', -90); break;
             }
             $im->setImageOrientation(Imagick::ORIENTATION_TOPLEFT);
+            if ($im->getImageColorspace() === Imagick::COLORSPACE_CMYK) $im->transformImageColorspace(Imagick::COLORSPACE_SRGB);   // browsers expect sRGB
             $w = $im->getImageWidth(); $h = $im->getImageHeight();
             arsort($want);
             foreach ($want as $size => $max) {

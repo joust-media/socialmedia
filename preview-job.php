@@ -22,6 +22,7 @@ require __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/preview-lib.php';
 require_once __DIR__ . '/export-lib.php';
+if (is_file(__DIR__ . '/pages-lib.php')) require_once __DIR__ . '/pages-lib.php';   // ensurePagesMediaHtaccess() (definitions only)
 if (!function_exists('currentAdmin')) { require_once __DIR__ . '/auth.php'; }
 
 function previewJobFail(int $code, string $msg): void {
@@ -122,6 +123,7 @@ if ($action === 'start') {
     }
     previewEnsureUploadsHtaccess();
     if (function_exists('ensureTireMediaHtaccess')) ensureTireMediaHtaccess();
+    if (function_exists('ensurePagesMediaHtaccess') && is_dir(mediaRootPath() . '/pages')) ensurePagesMediaHtaccess();   // v1/v2 → v3 for the pages folder too
     $job = ['scope' => $scope, 'refs' => previewJobEnumerate($pdo, $companies), 'pos' => 0, 'done' => 0, 'skipped' => 0, 'failed' => 0,
             'missing' => 0, 'bytes_original' => 0, 'bytes_sm' => 0, 'started_at' => time()];
     if (!previewJobSave($key, $job)) previewJobFail(500, 'uploads/ is not writable on the server');
