@@ -6,8 +6,10 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
  * page; static/js/assets.js drives it as App.viewer:
  *
  *   App.viewer.open(items, index, { mode: 'review'|'browse', onDecision, onClose })
- *     items[] = { id, kind: 'library'|'tire', status, src, type: 'image'|'video',
+ *     items[] = { id, kind: 'library'|'tire', status, src, original, thumb, type: 'image'|'video',
  *                 mime, label, download, endpoint, manage }
+ *     src = what the slide shows (the lg preview for images), original = the file itself
+ *     (Download + the "View original" menu row), thumb = the sm preview (tile swaps).
  *   App.viewer.close() / .next() / .prev() / .approve() / .deny(note) / .current()
  *   Events (bubble from the viewer root): 'viewer:decision' {item, status, prev,
  *   ok, rolledBack, error}, 'viewer:navigate' {item, index}, 'viewer:close'.
@@ -120,6 +122,8 @@ $viewerCommentsEndpoint = isset($viewerCommentsEndpoint) ? (string)$viewerCommen
     <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-download><?= icon('download') ?>Download</button>
     <?php // videos: a direct link (the browser streams it to disk — no blob copy of a multi-GB file in memory) ?>
     <a class="ui-viewer-menu-item" role="menuitem" data-viewer-download-link href="#" download hidden><?= icon('download') ?>Download video</a>
+    <?php // images: the viewer shows the lg preview; this opens the untouched file (item.original) in a new tab ?>
+    <a class="ui-viewer-menu-item" role="menuitem" data-viewer-original href="#" target="_blank" rel="noopener" hidden><?= icon('photo') ?>View original</a>
     <a class="ui-viewer-menu-item" role="menuitem" data-viewer-drive href="#" target="_blank" rel="noopener noreferrer" hidden><?= icon('drive') ?>Open series in Google Drive</a>
     <?php if ($viewerAdmin): // admin-only: never rendered for clients ?>
       <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-replace data-tire-only><?= icon('photo') ?>Replace image…</button>

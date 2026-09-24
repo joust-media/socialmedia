@@ -135,6 +135,7 @@
   Picker.prototype.assetFromButton = function (btn) {
     var ds = btn.dataset;
     return { key: ds.assetKey, kind: ds.assetKind, id: parseInt(ds.assetId, 10), src: ds.assetSrc,
+             thumb: ds.assetThumb || ds.assetSrc, large: ds.assetLarge || ds.assetSrc,   // sm / lg previews (asset-pool.php); src = the original
              label: ds.assetLabel || '', media: ds.assetMedia || 'image', group: ds.assetGroup || '',
              groupLabel: ds.assetGroupLabel || '' };
   };
@@ -212,7 +213,7 @@
       this.list.innerHTML = this.selected.map(function (a, i) {
         var media = a.media === 'video'
           ? '<video src="' + esc(a.src) + '" muted playsinline preload="metadata"></video>'
-          : '<img src="' + esc(a.src) + '" alt="" draggable="false">';
+          : '<img src="' + esc(a.thumb || a.src) + '" alt="" draggable="false" loading="lazy" decoding="async">';
         return '<li class="studio-strip-item" data-strip-key="' + esc(a.key) + '" data-index="' + i + '">'
           + '<div class="ui-thumb" data-strip-handle>' + media + '<span class="studio-strip-num">' + (i + 1) + '</span></div>'
           + '<div class="studio-strip-ctl">'
@@ -290,8 +291,15 @@
           }
         }
       });
+      // A page unit (Reference / a series / Library) with nothing visible folds with its heading and "Show more";
+      // one whose series chip is on stays open while it still has tiles to fetch.
+      $$('[data-pool-sub]', this.grid).forEach(function (sub) {
+        var group = sub.closest('[data-pool-group]'), series = group ? (group.dataset.seriesActive || 'all') : 'all';
+        var wanted = (self.filter === 'all' || (group && group.dataset.poolGroup === self.filter)) && (series === 'all' || !sub.dataset.series || sub.dataset.series === series);
+        sub.hidden = !wanted || ($$('[data-asset-key]:not([hidden])', sub).length === 0 && !$('[data-pool-more]', sub));
+      });
       $$('[data-pool-group]', this.grid).forEach(function (group) {
-        group.hidden = $$('[data-asset-key]:not([hidden])', group).length === 0;
+        group.hidden = $$('[data-asset-key]:not([hidden])', group).length === 0 && !$('[data-pool-sub]:not([hidden]) [data-pool-more]', group);
       });
     }
     var toggle = $('[data-pool-videos-toggle]', this.root);
@@ -302,6 +310,42 @@
       toggle.textContent = this.videosShown ? 'Hide videos' : 'Show ' + (hiddenVideos || n) + (hiddenVideos === 1 || (!hiddenVideos && n === 1) ? ' video' : ' videos');
     }
     if (this.emptyEl) this.emptyEl.hidden = visible > 0;
+  };
+
+  /* "Show more" on one page unit: studio.php?partial=pool&page=<key>&offset=N → tile markup, appended (keys the
+     picker already renders — e.g. a selected tile shown early — are skipped); selection + filters re-applied. */
+  Picker.prototype.loadMore = function (btn) {
+    var self = this, url = this.grid && this.grid.dataset.poolPartial, key = btn.getAttribute('data-pool-more');
+    if (!url || btn.disabled) return Promise.resolve([]);
+    var grid = $('[data-pool-page="' + key.replace(/"/g, '') + '"]', this.grid);
+    if (!grid) return Promise.resolve([]);
+    btn.disabled = true; btn.setAttribute('aria-busy', 'true');
+    var offset = parseInt(btn.getAttribute('data-offset'), 10) || 0, total = parseInt(btn.getAttribute('data-total'), 10) || 0;
+    return fetch(url.replace('__PAGE__', encodeURIComponent(key)).replace('__OFFSET__', String(offset)), { credentials: 'same-origin', headers: { 'Accept': 'text/html' } })
+      .then(function (res) {
+        if (!res.ok) throw new Error('Could not load more (' + res.status + ')');
+        var next = res.headers.get('X-Pool-Next');
+        return res.text().then(function (html) { return { html: html, next: next }; });
+      })
+      .then(function (r) {
+        var tpl = document.createElement('template'); tpl.innerHTML = r.html.trim();
+        var added = [];
+        $$('[data-asset-key]', tpl.content).forEach(function (t) {
+          if (self.button(t.dataset.assetKey)) return;
+          t.classList.add('ui-enter'); grid.appendChild(t); added.push(t);
+        });
+        if (window.App && App.video && App.video.enhance) App.video.enhance(grid);
+        var nextOff = r.next ? parseInt(r.next, 10) : total;
+        if (!r.next || nextOff >= total) { var wrap = btn.parentNode; btn.remove(); if (wrap && !wrap.children.length) wrap.remove(); }
+        else {
+          btn.setAttribute('data-offset', String(nextOff));
+          var c = $('[data-pool-more-count]', btn); if (c) c.textContent = String(Math.max(0, total - nextOff));
+          btn.disabled = false; btn.removeAttribute('aria-busy');
+        }
+        self.render(); self.applyVisibility();
+        return added;
+      })
+      .catch(function (err) { btn.disabled = false; btn.removeAttribute('aria-busy'); toast(err.message || 'Could not load more'); return []; });
   };
 
   Picker.prototype.bind = function () {
@@ -317,6 +361,8 @@
       var btn = e.target.closest('[data-asset-key]');
       if (btn && self.grid && self.grid.contains(btn)) { e.preventDefault(); self.toggle(btn.dataset.assetKey); return; }
       if (e.target.closest('[data-pick-clear]')) { self.clear(); return; }
+      var more = e.target.closest('[data-pool-more]');
+      if (more) { self.loadMore(more); return; }
       var item = e.target.closest('[data-strip-key]');
       if (!item) return;
       var idx = self.index(item.dataset.stripKey);
@@ -404,7 +450,7 @@
     this.statusEl  = $('[data-preview-status]', root);
     this.files     = [];      // local one-off files [{file, url, media}]
     this.existing  = $$('[data-existing-item]', form).map(function (el) {
-      return { el: el, src: el.dataset.src, media: el.dataset.media || 'image' };
+      return { el: el, src: el.dataset.large || el.dataset.src, media: el.dataset.media || 'image' };   // the preview shows the lg preview
     });
     var self = this;
     form.addEventListener('input',  function (e) { if (e.target.matches('[data-field]')) self.update(); });
@@ -432,7 +478,7 @@
       if (cb && cb.checked) return;
       out.push({ src: x.src, media: x.media });
     });
-    if (this.picker) this.picker.getSelection().forEach(function (a) { out.push({ src: a.src, media: a.media }); });
+    if (this.picker) this.picker.getSelection().forEach(function (a) { out.push({ src: a.media === 'video' ? a.src : (a.large || a.src), media: a.media }); });
     this.files.forEach(function (f) { out.push({ src: f.url, media: f.media, type: f.type, local: f.local, name: f.name, size: f.size }); });
     return out.slice(0, 10);
   };
@@ -1450,7 +1496,7 @@
     var media = $('[data-row-media]', li), shown = row.assets.slice(0, 4);
     media.innerHTML = shown.map(function (a, i) {
       if (i === 3 && row.assets.length > 4) return '<div class="studio-row-thumb studio-row-more">+' + (row.assets.length - 3) + '</div>';
-      return '<div class="studio-row-thumb">' + (a.media === 'video' ? '<video src="' + esc(a.src) + '" muted playsinline preload="metadata"></video>' : '<img src="' + esc(a.src) + '" alt="">') + '</div>';
+      return '<div class="studio-row-thumb">' + (a.media === 'video' ? '<video src="' + esc(a.src) + '" muted playsinline preload="metadata"></video>' : '<img src="' + esc(a.thumb || a.src) + '" alt="" loading="lazy" decoding="async">') + '</div>';
     }).join('');
     media.title = row.assets.map(function (a) { return a.label; }).join(', ');
     var caption = $('[data-row-caption]', li);

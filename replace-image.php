@@ -64,4 +64,5 @@ if (!uploadReplaceRow($pdo, $type, $imageId)) { riFail(404, 'Image not found'); 
 
 $r = uploadReplaceApply($pdo, $type, $imageId, $tmpName, $ext, $isVideo, true);
 if ((int)$r['code'] !== 200) { http_response_code((int)$r['code']); }
+$r['body'] += function_exists('pvReplyFields') ? pvReplyFields($r['body']) : [];   // thumb / large: the sm + lg previews of the new file
 echo json_encode($r['body']);

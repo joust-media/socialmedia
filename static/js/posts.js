@@ -34,6 +34,8 @@
     return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })
          + ' · ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   }
+  /** Cache-bust a URL that may already carry a query (preview URLs can). */
+  function bust(url) { return url ? url + (url.indexOf('?') < 0 ? '?' : '&') + 't=' + Date.now() : url; }
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; });
   }
@@ -250,6 +252,42 @@
   };
 
   P.close = function () { if (App.sheet.current === sheetRoot()) App.sheet.close(); };
+
+  /* ---- paging ("Load more") ----------------------------------------- */
+  function rowCount() { return $$('[data-posts-items] > [data-post-item]').length; }
+  function syncMore(serverTotal) {
+    var wrap = $('[data-posts-more-wrap]'), btn = $('[data-posts-more]'), count = $('[data-posts-more-count]');
+    if (!wrap) return;
+    var total = serverTotal != null ? serverTotal : (P.counts[P.segment] != null ? P.counts[P.segment] : (parseInt(btn && btn.getAttribute('data-total'), 10) || 0));
+    var left = Math.max(0, total - rowCount());
+    if (count) count.textContent = left + ' remaining';
+    wrap.hidden = left <= 0;
+  }
+  P.loadMore = function () {
+    var btn = $('[data-posts-more]'), list = $('[data-posts-items]');
+    if (!btn || !list || P._loading || !cfg.listUrl) return Promise.resolve([]);
+    P._loading = true; btn.disabled = true; btn.setAttribute('aria-busy', 'true');
+    return fetch(cfg.listUrl.replace('__OFFSET__', String(rowCount())), { credentials: 'same-origin', headers: { 'Accept': 'text/html' } })
+      .then(function (res) {
+        if (!res.ok) throw new Error('Could not load more posts');
+        var total = res.headers.get('X-Posts-Total');
+        return res.text().then(function (html) { return { html: html, total: total !== null && total !== '' ? parseInt(total, 10) : null }; });
+      })
+      .then(function (r) {
+        var tpl = document.createElement('template'); tpl.innerHTML = r.html.trim();
+        var added = [];
+        $$('[data-post-item]', tpl.content).forEach(function (li) {
+          if (itemEl(li.getAttribute('data-post-item'))) return;   // already shown (e.g. restored after a failed decision)
+          li.classList.add('ui-enter'); list.appendChild(li); added.push(li);
+        });
+        if (App.video && App.video.enhance) App.video.enhance(list);
+        if (!added.length) { var w = $('[data-posts-more-wrap]'); if (w) w.hidden = true; }
+        else syncMore(r.total);
+        return added;
+      })
+      .catch(function (err) { toast(err.message || 'Could not load more posts', 'error'); return []; })
+      .then(function (added) { P._loading = false; btn.disabled = false; btn.removeAttribute('aria-busy'); return added; });
+  };
 
   /* history: ?post=ID ⇄ sheet */
   function urlWithPost(id) {
@@ -549,11 +587,12 @@
   };
 
   /* ---- viewer (tap → full screen) ----------------------------------- */
-  function openViewer(src, alt) {
+  function openViewer(src, alt, original) {
     var wrap = document.createElement('div');
     wrap.className = 'pd-viewer';
     wrap.setAttribute('role', 'dialog'); wrap.setAttribute('aria-modal', 'true'); wrap.setAttribute('aria-label', 'Full screen image');
     wrap.innerHTML = '<img src="' + escapeHtml(src) + '" alt="' + escapeHtml(alt || '') + '">'
+                   + (original && original !== src ? '<a class="pd-viewer-original" href="' + escapeHtml(original) + '" target="_blank" rel="noopener">View original</a>' : '')
                    + '<button type="button" class="pd-viewer-close" aria-label="Close"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>';
     document.body.appendChild(wrap);
     requestAnimationFrame(function () { wrap.classList.add('is-visible'); });
@@ -563,7 +602,7 @@
       document.removeEventListener('keydown', onKey);
     };
     var onKey = function (e) { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
-    wrap.addEventListener('click', close);
+    wrap.addEventListener('click', function (e) { if (!e.target.closest('.pd-viewer-original')) close(); });
     document.addEventListener('keydown', onKey, true);
     $('.pd-viewer-close', wrap).focus();
   }
@@ -689,21 +728,24 @@
       .then(function (res) {
         slide.classList.remove('is-busy');
         if (!res.ok) { toast((res.data && res.data.error) || 'Replace failed', 'error'); return; }
-        var url = (cfg.base || '') + '/' + String(res.data.image_url).replace(/^\/+/, '') + '?t=' + Date.now();
+        var url = bust((cfg.base || '') + '/' + String(res.data.image_url).replace(/^\/+/, ''));
         var type = res.data.media_type || 'image';
-        slide.setAttribute('data-media-type', type); slide.setAttribute('data-src', url);
+        // Previews of the new file (reply thumb / large, preview-ui.php pvReplyFields): the slide shows lg, the list row sm
+        var large = type === 'image' && res.data.large ? bust(res.data.large) : url;
+        var thumbUrl = type === 'image' && res.data.thumb ? bust(res.data.thumb) : url;
+        slide.setAttribute('data-media-type', type); slide.setAttribute('data-src', url); slide.setAttribute('data-original', url);
         if (type === 'video') {
           slide.innerHTML = App.video
             ? App.video.markup(url, { autoplay: true, unmute: true, cls: 'pd-video' })
             : '<video playsinline muted controls preload="metadata"><source src="' + escapeHtml(url) + '"></video>';
           P.videoFallback(slide);
         } else {
-          slide.innerHTML = '<button type="button" class="pd-slide-btn" data-viewer-open aria-label="View full screen"><img src="' + escapeHtml(url) + '" alt=""></button>';
+          slide.innerHTML = '<button type="button" class="pd-slide-btn" data-viewer-open data-original="' + escapeHtml(url) + '" aria-label="View full screen"><img src="' + escapeHtml(large) + '" alt="" decoding="async"></button>';
         }
         if (slide.getAttribute('data-slide') === '0') {
           var item = itemEl(art.getAttribute('data-id'));
           var thumb = item && $('.pl-thumb img', item);
-          if (thumb && type === 'image') thumb.src = url;
+          if (thumb && type === 'image') { thumb.removeAttribute('srcset'); thumb.removeAttribute('sizes'); thumb.src = thumbUrl; }   // srcset would keep the old candidates
         }
         toast(type === 'video' ? 'Video replaced' : 'Image replaced', 'success');
       })
@@ -733,6 +775,11 @@
         }
       });
     }
+
+    // "Load more": the next rows of this status / month (posts.php &partial=list&offset=N). The offset is the rows
+    // still in the list — decided rows leave it, so the server's next row is exactly the first one not shown.
+    var moreBtn = $('[data-posts-more]');
+    if (moreBtn && cfg.listUrl) moreBtn.addEventListener('click', function () { P.loadMore(); });
 
     // open detail
     document.addEventListener('click', function (e) {
@@ -804,7 +851,7 @@
         return;
       }
       var view = t.closest('[data-viewer-open]');
-      if (view) { var img = $('img', view); if (img) openViewer(img.currentSrc || img.src, img.alt); return; }
+      if (view) { var img = $('img', view); if (img) openViewer(img.currentSrc || img.src, img.alt, view.getAttribute('data-original') || ''); return; }   // the lg preview on screen, the file behind "View original"
     });
 
     function closeMenu(root) {

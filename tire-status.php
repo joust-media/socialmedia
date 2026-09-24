@@ -186,7 +186,9 @@ if (in_array($action, $seriesActions, true)) {
                 logActivity($pdo, (int)$tire['company_id'], 'tire_image', $imgId, 'set_reference', $actor,
                     imageDisplayLabel($img) . ' is now the reference image of ' . (string)$tire['name'], null, $batchId);
                 $pdo->commit();
-                echo json_encode(['ok' => true, 'id' => $imgId, 'tire_id' => (int)$tire['id']]);
+                $pv = function_exists('pvUrls') ? pvUrls(tireImageSrc($img)) : [];   // sm / lg previews for the reference header + strip swap
+                echo json_encode(['ok' => true, 'id' => $imgId, 'tire_id' => (int)$tire['id']]
+                    + ($pv ? ['thumb' => $pv['thumb'], 'large' => $pv['large'], 'original' => $pv['original']] : []), JSON_UNESCAPED_SLASHES);
                 exit;
             }
             case 'series_create': {

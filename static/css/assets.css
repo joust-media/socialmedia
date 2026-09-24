@@ -82,6 +82,44 @@
   .as-reference-admin { grid-column: auto; padding-top: 0; }
 }
 
+/* Reference card with its strip (tire series on) — the tire's approved reference images, always on top of an
+   open tire (above the series switcher): label + name + hint, admin buttons, then a row of sm tiles; tap → viewer. */
+.as-reference--strip { grid-template-columns: minmax(0, 1fr); row-gap: 10px; }
+.as-reference--strip .as-reference-admin { grid-column: 1 / -1; padding-top: 0; order: 3; }   /* phone: under the strip */
+.as-reference--strip .as-reference-label { font-variant-numeric: tabular-nums; }
+.as-refstrip--pending .as-refstrip-label { color: var(--pending); }
+.as-refstrip-link { color: var(--accent); text-decoration: none; font-weight: 600; white-space: nowrap; }
+.as-refstrip-link:hover { text-decoration: underline; }
+.as-refstrip-row {
+  grid-column: 1 / -1;
+  display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity; padding: 2px; margin: -2px;
+}
+.as-refstrip-row::-webkit-scrollbar { display: none; }
+.as-refstrip-tile {
+  position: relative; flex: 0 0 auto; width: 88px; height: 88px; padding: 0; border: 0;
+  border-radius: var(--radius-thumb); overflow: hidden; background: var(--fill-tertiary);
+  box-shadow: inset 0 0 0 0.5px var(--separator);
+  scroll-snap-align: start; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.as-refstrip-tile:active { transform: scale(0.97); }
+.as-refstrip-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.as-refstrip-tile img, .as-refstrip-tile .ui-video-tile { display: block; width: 100%; height: 100%; object-fit: cover; }
+.as-refstrip--pending .as-refstrip-tile::after {   /* "to review" tiles: a small pending dot */
+  content: ""; position: absolute; left: 6px; bottom: 6px; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--pending); box-shadow: 0 0 0 1.5px rgba(255,255,255,.9);
+}
+.as-refstrip-empty { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
+.as-refstrip-empty p { margin: 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote); color: var(--label-secondary); }
+.as-refstrip-empty .ui-btn { gap: 6px; }
+.as-refstrip-empty .ui-icon { width: 16px; height: 16px; }
+@media (min-width: 560px) {
+  .as-reference--strip { grid-template-columns: minmax(0, 1fr) auto; }
+  .as-reference--strip .as-reference-admin { grid-row: 1; grid-column: 2; align-self: start; order: 0; }
+}
+@media (min-width: 768px) { .as-refstrip-tile { width: 112px; height: 112px; } }
+
 /* ---------------------------------------------------------------------
    Series (tire-series-lib.php): switcher chips, header row, admin menu,
    "Load more" paging, Rename / Delete sheet forms

@@ -362,6 +362,17 @@
 .studio-chip--sm { min-height: 26px; padding: 2px 10px; font-size: var(--text-caption); line-height: 16px; }
 /* Photos / Videos chips + "Show N videos": videos start collapsed so the pool never fetches their posters unasked */
 .studio-chips--media { margin: -4px 0 10px; align-items: center; }
+/* Page units inside a group: the tire's Reference images first ("Reference", accent), then each series;
+   each shows its first 60 tiles + "Show more" (asset-pool.php studioPoolPageHtml / studio.js Picker.loadMore). */
+.studio-pool-sub + .studio-pool-sub { margin-top: 12px; }
+.studio-pool-sub[hidden] { display: none; }
+.studio-pool-sub-title {
+  margin: 0 0 4px; font-size: var(--text-caption); line-height: var(--lh-caption); letter-spacing: 0.4px;
+  font-weight: 700; text-transform: uppercase; color: var(--label-secondary);
+}
+.studio-pool-sub-title--ref { color: var(--accent); }
+.studio-pool-more { display: flex; justify-content: center; margin-top: 8px; }
+.studio-pool-more .ui-btn { gap: 6px; }
 .studio-pool-videos-toggle { margin-left: auto; min-height: 26px; padding: 2px 6px; font-size: var(--text-caption); font-weight: 600; white-space: nowrap; }
 .studio-pool-videos-toggle[hidden] { display: none; }
 

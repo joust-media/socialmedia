@@ -142,7 +142,7 @@ function ucFinalize(PDO $pdo, array $t, string $src, string $origName, string $e
     $r = uploadReplaceApply($pdo, (string)$t['replace_kind'], (int)$t['replace_id'], $src, $ext, $isVideo, $uploaded);
     if ((int)$r['code'] !== 200) { ucFail((int)$r['code'], (string)($r['body']['error'] ?? 'Replace failed')); }
     $ucDiscard = null;
-    $r['body'] = ['purpose' => 'replace'] + $r['body'] + $extra;
+    $r['body'] = ['purpose' => 'replace'] + $r['body'] + (function_exists('pvReplyFields') ? pvReplyFields($r['body']) : []) + $extra;   // + thumb / large previews
     ucReply($r);
 }
 

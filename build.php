@@ -18,6 +18,19 @@ function h($s) {
     return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
+/**
+ * A stored image_url ('uploads/…', 'media/tires/…', root-rooted or absolute) → the URL the browser can load.
+ * The raw value used to go straight into src: 'uploads/…' happened to resolve next to this page, but a series
+ * render ('media/tires/<tire>/<series>/<file>') lives at the document root (/media/…), so it 404'd.
+ * tireImageSrc() (tire-series-lib.php) resolves every one of those shapes.
+ */
+function buildMediaUrl(string $url): string {
+    $url = trim($url);
+    if ($url === '') return '';
+    if (function_exists('tireImageSrc')) return tireImageSrc($url);
+    return preg_match('#^(https?:)?//#i', $url) || $url[0] === '/' ? $url : basePath() . '/' . ltrim($url, '/');
+}
+
 // A client must be in scope.
 if (!$client) {
     header('Location: admin.php?msg=' . urlencode('Pick a client to open the AI Builder.'));
@@ -77,7 +90,7 @@ try {
         $type = $r['media_type'] !== '' ? $r['media_type'] : mediaTypeFromUrl($r['image_url']);
         $refImages[] = [
             'key'    => 'post-' . (int)$r['id'],
-            'url'    => $r['image_url'],
+            'url'    => buildMediaUrl((string)$r['image_url']),
             'type'   => $type,
             'label'  => $label,
             'source' => 'Social',
@@ -103,7 +116,7 @@ try {
         if ($label === '') { $label = 'Item #' . (int)$r['id']; }
         $refImages[] = [
             'key'    => 'tire-' . (int)$r['id'],
-            'url'    => $r['image_url'],
+            'url'    => buildMediaUrl((string)$r['image_url']),
             'type'   => mediaTypeFromUrl($r['image_url']),
             'label'  => $label,
             'source' => 'Product',
@@ -137,7 +150,8 @@ if (hasVehiclesTable($pdo)) {
         foreach ($viStmt->fetchAll() as $r) {
             $vImgs[$r['vehicle_id']][] = [
                 'key'  => 'vehicle-' . (int)$r['id'],
-                'url'  => $r['image_url'],
+                'url'  => buildMediaUrl((string)$r['image_url']),
+                'thumb' => mediaTypeFromUrl($r['image_url']) === 'video' ? '' : pvUrl(buildMediaUrl((string)$r['image_url']), 'sm'),   // the tile shows the sm preview; url stays the file (download)
                 'type' => mediaTypeFromUrl($r['image_url']),
             ];
         }
@@ -424,7 +438,7 @@ $profileIncomplete = ($ctx['product_type'] === '' || $ctx['industry'] === '');
                 <video src="<?= h($img['url']) ?>" muted preload="metadata"></video>
                 <span class="ref-vid-tag">▶</span>
               <?php else: ?>
-                <img src="<?= h($img['url']) ?>" alt="<?= h($img['label']) ?>" loading="lazy">
+                <?= pvImg($img['url'], 'sm', ['sizes' => pvSizes('legacy'), 'alt' => $img['label']]) ?>
               <?php endif; ?>
               <span class="ref-src"><?= h($img['source']) ?></span>
               <span class="ref-check">✓</span>
@@ -762,7 +776,7 @@ $profileIncomplete = ($ctx['product_type'] === '' || $ctx['industry'] === '');
       div.appendChild(tag);
     } else {
       const img = document.createElement('img');
-      img.src = info.url; img.loading = 'lazy'; img.alt = '';
+      img.src = info.thumb || info.url; img.loading = 'lazy'; img.decoding = 'async'; img.alt = '';   // sm preview; info.url = the file (download)
       div.appendChild(img);
     }
     const src = document.createElement('span');

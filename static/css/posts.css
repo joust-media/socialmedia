@@ -387,3 +387,18 @@ li + li > .pl-card::before { left: 100px; }
   .pl-swipe .ui-icon, .pd-dot { transition: none; }
   .pd-viewer { transition-duration: var(--dur-fast); }
 }
+
+/* "Load more" under the list (posts.php pages POSTS_PAGE rows; posts.js P.loadMore appends the next ones) */
+.posts-more { display: flex; justify-content: center; padding: 12px 0 8px; }
+.posts-more[hidden] { display: none; }
+.posts-more-btn { min-width: 200px; gap: 6px; }
+.posts-more-count { color: var(--label-secondary); font-weight: 500; font-variant-numeric: tabular-nums; }
+.posts-more noscript a { margin-left: 8px; }
+/* Full-screen image: "View original" opens the untouched file (the viewer shows the lg preview) */
+.pd-viewer-original {
+  position: absolute; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+  padding: 8px 14px; border-radius: var(--radius-pill); background: rgba(255,255,255,.14); color: #fff;
+  font-size: var(--text-footnote); font-weight: 600; text-decoration: none;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+}
+.pd-viewer-original:hover { background: rgba(255,255,255,.22); }
