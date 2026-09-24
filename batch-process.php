@@ -180,6 +180,7 @@ function batchCreateFromFile(PDO $pdo, int $companyId, string $name, string $saf
         }
         logActivity($pdo, $companyId, 'post', $postId, 'created', 'admin', "Created post #{$postId} via batch upload");
         $pdo->commit();
+        if (!$isVideo && function_exists('previewAfterStore')) previewAfterStore($destPath);   // sm + lg previews (per-request budget; the rest lazily)
         $created[] = [
             'filename'   => $name,
             'post_id'    => $postId,

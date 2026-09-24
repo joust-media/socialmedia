@@ -127,7 +127,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $imgs->execute([$postId]);
                 foreach ($imgs->fetchAll() as $row) {
                     $path = uploadsPathOrNull((string)$row['image_url']);   // realpath-contained in uploads/
-                    if ($path !== null) { @unlink($path); }
+                    if ($path !== null) { if (function_exists('previewDelete')) previewDelete($path); @unlink($path); }
                 }
                 $pdo->prepare("DELETE FROM posts WHERE id = ?")->execute([$postId]);
                 logActivity($pdo, (int)$client['id'], 'post', $postId,
@@ -175,6 +175,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (!$errors) {
             $postId = 0;
+            $previewQueue = [];   // stored image paths → previewAfterStore() after the commit
             try {
                 $pdo->beginTransaction();
                 $supportsName = hasPostsNameColumn($pdo);
@@ -301,7 +302,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $sel->execute(array_merge([$postId], $toRemove));
                             foreach ($sel->fetchAll() as $row) {
                                 $path = uploadsPathOrNull((string)$row['image_url']);   // realpath-contained in uploads/
-                                if ($path !== null) { @unlink($path); }
+                                if ($path !== null) { if (function_exists('previewDelete')) previewDelete($path); @unlink($path); }
                             }
                             $del = $pdo->prepare("
                                 DELETE FROM post_images WHERE post_id = ? AND id IN ($ph)
@@ -323,6 +324,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $errors[] = "Max {$maxImages} media per post — only the first {$slots} picked assets were added.";
                     }
                     $attached = studioAttachAssetsToPost($pdo, $client, $postId, $picks, ['slots' => $slots, 'uploadsDir' => $uploadsDir]);
+                    foreach ($attached as $att) {   // copies whose source had no fresh previews yet
+                        $attPath = uploadsPathOrNull((string)($att['image_url'] ?? ''));
+                        if ($attPath !== null) $previewQueue[] = $attPath;
+                    }
                     $slots -= count($attached);
                 }
 
@@ -353,6 +358,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $ins = $pdo->prepare("INSERT INTO post_images (post_id, image_url, sort_order) VALUES (?, ?, ?)");
                             $ins->execute([$postId, $uploadsUrl . '/' . $newName, $sortOrder]);
                         }
+                        if (!$isVideo) $previewQueue[] = $dest;   // sm + lg previews, made after the commit
                         $claimedCount++;
                     }
                     $slots -= $claimedCount;
@@ -443,6 +449,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     $sortOrder,
                                 ]);
                             }
+                            if (!$isVideo) $previewQueue[] = $dest;   // sm + lg previews, made after the commit
                             $uploadedCount++;
                         } else {
                             $errors[] = "Failed to save '{$origName}'. Check uploads/ permissions.";
@@ -451,6 +458,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 $pdo->commit();
+                // Previews outside the transaction: sm + lg within the request budget (preview-lib.php), the rest lazily.
+                if (function_exists('previewAfterStore')) { foreach ($previewQueue as $pq) previewAfterStore($pq); }
                 $msg = $action === 'create' ? 'Post created.' : 'Post updated.';
                 if ($errors) {
                     $msg .= ' (Some warnings: ' . implode(' ', $errors) . ')';
@@ -610,6 +619,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
 
                     $pdo->commit();
+                    if (!$isVideo && function_exists('previewAfterStore')) previewAfterStore($dest);   // sm + lg previews (per-request budget; the rest lazily)
                     $createdCount++;
                 } catch (Exception $e) {
                     if ($pdo->inTransaction()) $pdo->rollBack();

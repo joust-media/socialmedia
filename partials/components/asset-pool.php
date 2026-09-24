@@ -389,6 +389,8 @@ if (!function_exists('studioCopyAssetToUploads')) {
             if (file_exists($dest)) continue;
             if (@copy($src, $dest)) {
                 @chmod($dest, 0644);
+                // Reuse the source's fresh sm / lg previews (a byte copy) — no decode here; add-post.php makes any missing ones after its commit.
+                if (($asset['media'] ?? 'image') !== 'video' && function_exists('previewCopyDerivatives')) previewCopyDerivatives($src, $dest, false);
                 return 'uploads/' . $newName;
             }
             break;

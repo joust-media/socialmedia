@@ -239,8 +239,10 @@ join the Approved Pool and the composer like any tire image.
   tenant-checked, same-site). Tiles with comments carry a count bubble (one grouped query per
   page); the admin's Home "Latest notes" merges client comments on assets from the last 7 days
   with the post / email notes, each linking to the viewer.
-- **Thumbnails**: `<series>/.thumbs/<stem>.jpg` (max 640 px) are generated with GD, up to 40 per
-  page view, so a 200-image grid stays light; the viewer / downloads / posts use the original.
+- **Thumbnails**: every render gets the portal-wide image previews (see *Image previews* below):
+  `sm` made at upload, and during a folder scan for at most 3 s per page view (the rest on first
+  view through `preview.php`). Older `<series>/.thumbs/<stem>.jpg` (640 px) thumbs keep working
+  until the preview replaces them.
 - **Migration**: `migrate.php` steps 25–26 create `tire_series` and add `tire_images.series_id`
   (one idempotent `ALTER TABLE tire_images ADD COLUMN series_id INT UNSIGNED NULL` — the only
   change to an existing table). Until they exist everything behaves as before ("Render series
@@ -258,6 +260,50 @@ join the Approved Pool and the composer like any tire image.
   thumbs are `chmod 0644` / folders `0755`. Studio → Renders → **Repair server rules**
   (`tire-upload.php` `action=repair_media`) rewrites the rules and fixes permissions under
   `media/tires/`. The text and the by-hand steps are in `media-hardening/`.
+
+## Image previews
+
+Every image the portal shows gets two derived copies next to its original — the original is never
+changed:
+
+| size | long edge | used for |
+|---|---|---|
+| `sm` | 480 px | grid tiles, lists, cards, strips |
+| `lg` | 1600 px | viewer, post detail, carousels |
+
+They live in a `.thumbs/` folder beside the original: `<dir>/.thumbs/<stem>.sm.webp` /
+`<stem>.lg.webp` (`<stem>.sm.jpg` / `<stem>.lg.jpg` when the server's GD cannot encode WebP), plus `<stem>.dims.json`
+(the original's size, for `width` / `height` attributes). WebP quality 78, JPEG 80; aspect ratio
+kept; never upscaled (an original already smaller than the size is used as-is); EXIF rotation
+applied; transparency kept in WebP (flattened onto white in JPEG); animated GIFs use the first
+frame. SVGs and videos get no previews. Code: `preview-lib.php`.
+
+- **When they are made**: right after each upload (renders, reference images, Compose / Uploads /
+  Batch files, Approved Pool picks — copied from the source's previews when it has them, Replace
+  regenerates), within a per-request time budget. Anything not made yet — FTP drops into
+  `media/library/` or `media/tires/`, big batches — is made on first view by **`preview.php`**:
+  the page links `preview.php?f=<signed path>&s=sm|lg&v=<mtime>`, which makes the file once and
+  serves it; the next page view links the static file. If a preview cannot be made (too large for
+  the PHP memory limit even at 512 MB, damaged file, no GD) `preview.php` redirects to the
+  original, so an image never breaks.
+- **Backfill**: Studio → **Export** → *Image previews* → **Build previews** (optionally *All
+  clients*) walks every tire image, library file and post image in ~15-second steps
+  (`preview-job.php`) and reports how many were made, already up to date, failed or missing, and
+  the bytes of the small previews against the originals. Safe to run any time; it only makes what
+  is missing or stale.
+- **Signed URLs**: `preview.php` only accepts paths the portal signed (HMAC-SHA256). Set a
+  `'preview_secret' => '<32+ random characters>'` key in `config.php` to use your own key;
+  without it the key is derived from the database credentials. Changing it only changes the lazy
+  URLs (existing previews are static files).
+- **Caching**: the portal's `.htaccess` text (marker `# joust-portal-media v3`, written to
+  `media/tires/`, `media/pages/` and now `uploads/`) adds guarded `mod_expires` / `mod_headers`
+  rules — 7 days for originals — and every `.thumbs/` folder gets its own `.htaccess` with a
+  1-year `immutable` rule (preview URLs carry `?v=<mtime of the original>`, so a replaced image
+  gets a new URL). Older v1 / v2 files of ours are upgraded on the next upload, scan, backfill or
+  Repair; files without the marker are never touched. `uploads/` holds only media and data files
+  (nothing there needs PHP), so it gets the same "static files only" rules.
+- **Deleting**: removing an image, post, tire, series or page removes its previews too. Deleting a
+  `.thumbs/` folder by hand is harmless — the previews come back on the next view.
 
 ## Exporting approved assets
 

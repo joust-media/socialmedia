@@ -134,7 +134,7 @@ if ($action === 'delete_post') {
         $imgs->execute([$postId]);
         foreach ($imgs->fetchAll() as $row) {
             $path = uploadsPathOrNull((string)$row['image_url']);   // realpath-contained in uploads/
-            if ($path !== null) { @unlink($path); }
+            if ($path !== null) { if (function_exists('previewDelete')) previewDelete($path); @unlink($path); }
         }
         // CASCADE deletes post_images and post_categories
         $pdo->prepare("DELETE FROM posts WHERE id = ?")->execute([$postId]);

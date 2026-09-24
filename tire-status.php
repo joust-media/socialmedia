@@ -53,7 +53,7 @@ if ($action === 'delete_tire') {
         $imgs->execute([$tireId]);
         foreach ($imgs->fetchAll() as $row) {
             $path = uploadsPathOrNull((string)$row['image_url']);   // realpath-contained in uploads/
-            if ($path !== null) { @unlink($path); }
+            if ($path !== null) { if (function_exists('previewDelete')) previewDelete($path); @unlink($path); }
         }
         // CASCADE deletes tire_images and tire_categories
         $pdo->prepare("DELETE FROM tires WHERE id = ?")->execute([$tireId]);
@@ -168,7 +168,7 @@ if (in_array($action, $seriesActions, true)) {
                 logActivity($pdo, (int)$tire['company_id'], 'tire_image', $imgId, 'deleted', $actor,
                     'Deleted ' . imageDisplayLabel($img) . ' from ' . (string)$tire['name'], null, $batchId);
                 $pdo->commit();
-                if ($path !== null) { @unlink($path); }
+                if ($path !== null) { if (function_exists('previewDelete')) previewDelete($path); @unlink($path); }
                 if ($thumb !== null && is_file($thumb)) { @unlink($thumb); }
                 echo json_encode(['ok' => true, 'id' => $imgId, 'series_id' => $img['series_id']]);
                 exit;

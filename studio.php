@@ -298,7 +298,8 @@ $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) .
              . '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">';
 $footExtra   = '<script>window.StudioConfig = ' . json_encode($studioConfig, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n"
              . '<script src="' . h(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n"   // App.chunkUpload (Renders: large videos in pieces, resumable)
-             . '<script src="' . h(staticUrl('js/studio.js')) . '" defer></script>';
+             . '<script src="' . h(staticUrl('js/studio.js')) . '" defer></script>' . "\n"
+             . '<script src="' . h(staticUrl('js/studio-previews.js')) . '" defer></script>';   // Export → Image previews backfill (preview-job.php)
 
 include __DIR__ . '/partials/layout-top.php';
 ?>
@@ -551,6 +552,22 @@ include __DIR__ . '/partials/layout-top.php';
         <div class="ui-card-body">
           <ul class="studio-export-recent" data-export-recent role="list"></ul>
           <p class="text-secondary" data-export-recent-empty>No exports yet.</p>
+        </div>
+      </section>
+
+      <!-- Image previews backfill (preview-lib.php / preview-job.php / static/js/studio-previews.js) -->
+      <section class="ui-card studio-export-card" data-previews data-endpoint="<?= h(basePath() . '/preview-job.php?client=' . rawurlencode($client['slug'])) ?>">
+        <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Image previews</h3>
+          <p class="ui-card-subtitle">Small (480 px) and large (1600 px) <?= h(strtoupper(previewFormat())) ?> copies of every image, used by tiles, lists and the viewer instead of the full originals. New uploads get them automatically; this builds them for everything already on the server (tire images, library, posts). Originals are never changed.</p></div></div>
+        <div class="ui-card-body">
+          <label class="studio-export-choice"><input type="checkbox" data-previews-all> <span>All clients (not just <?= h($client['name']) ?>)</span></label>
+          <p class="studio-export-estimate" data-previews-status aria-live="polite">Checking…</p>
+          <div class="studio-export-progress" data-previews-progress hidden role="status">
+            <div class="studio-progress"><div class="studio-progress-bar"><div class="studio-progress-fill" data-previews-fill style="width:0%"></div></div></div>
+          </div>
+          <div class="studio-export-actions">
+            <button type="button" class="ui-btn ui-btn--filled" data-previews-build><span>Build previews</span></button>
+          </div>
         </div>
       </section>
     </div>

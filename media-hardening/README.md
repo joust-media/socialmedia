@@ -61,7 +61,7 @@ Studio → **Pages** → *Repair server rules* (`page-upload.php` `action=repair
    skipped; capped at 5 000 entries per call — the reply says when to run it again);
 
 and replies `{ok, summary, rules, parent, perms}`. The page sheet on `pages.php` shows admins a
-**Server check** line under the preview (`index.html readable (0644) · folder 0755 · rules v2`,
+**Server check** line under the preview (`index.html readable (0644) · folder 0755 · rules v3`,
 or the exact problem with a *Repair* button); the Studio → Pages list carries the same check as
 a glyph per row. The check is filesystem-only (`is_file`, permission bits, our marker) — the
 portal never makes an HTTP request to itself.
@@ -99,7 +99,7 @@ reason as one line per request, e.g.
 
 ## What the file does
 
-- `# joust-portal-media v2` — the marker the portal looks for before it ever rewrites or
+- `# joust-portal-media v3` — the marker the portal looks for before it ever rewrites or
   deletes a file. Keep it if you edit the file by hand and want the portal to keep managing
   it; remove it to make the file yours (the portal will then never touch it).
 - `Options -Indexes` — no directory listings.
@@ -116,3 +116,9 @@ reason as one line per request, e.g.
   (`tire-upload.php` and `page-upload.php` only accept files whose bytes match the format their
   extension claims, and refuse those names anywhere in the dotted chain.)
 - `Header set X-Content-Type-Options nosniff` — browsers keep the declared type.
+- `<IfModule mod_expires.c>` `ExpiresByType … "access plus 7 days"` and `<IfModule mod_headers.c>`
+  `<FilesMatch images / video>` `Header set Cache-Control "public, max-age=604800"` (v3) — images and
+  video are cached for a week; HTML is never matched.
+- The same text is written to the app's `uploads/` (v3). Every `.thumbs/` folder (image previews)
+  gets its own small text with the same marker: no listing, PHP off, `.json / .lock / .tmp`
+  refused, and a 1-year `public, max-age=31536000, immutable` cache rule (`mediaThumbsHtaccessText()`).

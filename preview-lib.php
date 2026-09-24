@@ -802,10 +802,10 @@ if (!function_exists('previewDelete')) {
 if (!function_exists('previewCopyDerivatives')) {
     /**
      * Pool copy-in: $destAbs is a fresh byte copy of $srcAbs — reuse the source's fresh derivatives (copied, so
-     * they are newer than the copy) instead of decoding again; falls back to previewAfterStore(). Returns true
-     * when every needed size exists afterwards.
+     * they are newer than the copy) instead of decoding again; falls back to previewAfterStore() unless
+     * $fallback is false (caller inside a transaction). Returns true when every needed size exists afterwards.
      */
-    function previewCopyDerivatives(string $srcAbs, string $destAbs): bool {
+    function previewCopyDerivatives(string $srcAbs, string $destAbs, bool $fallback = true): bool {
         if (!previewIsImage($destAbs) || !is_file($destAbs)) return false;
         $need = array_values(array_filter(array_keys(previewSizes()), static function ($s) use ($destAbs) { return previewNeeds($destAbs, $s); }));
         if (!$need) return true;
@@ -826,6 +826,6 @@ if (!function_exists('previewCopyDerivatives')) {
             if ($d) previewWriteDims($destAbs, $d['w'], $d['h']);
             return true;
         }
-        return previewAfterStore($destAbs);
+        return $fallback ? previewAfterStore($destAbs) : false;
     }
 }

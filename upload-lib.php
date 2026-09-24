@@ -352,6 +352,9 @@ if (!function_exists('uploadReplaceApply')) {
         if (!$row) return ['code' => 404, 'body' => ['ok' => false, 'error' => 'Image not found']];
 
         $inPlace = false; $oldPath = null; $oldThumb = null; $dest = ''; $newUrl = '';
+        if ($type !== 'tire') {
+            $oldPath = uploadsPathOrNull((string)$row['image_url']);   // for previewDelete() once the row points elsewhere
+        }
         if ($type === 'tire') {
             $oldPath  = tireImagePath($row);
             $oldThumb = tireThumbPath($row);
@@ -401,8 +404,11 @@ if (!function_exists('uploadReplaceApply')) {
                 if ($oldThumb !== null && is_file($oldThumb)) @unlink($oldThumb);
                 $newThumb = tireThumbPath(['image_url' => $newUrl]);
                 if ($newThumb !== null && is_file($newThumb)) @unlink($newThumb);
-                if (!$isVideo) ensureTireThumb(['image_url' => $newUrl]);
             }
+            // Previews: the old original's derivatives go (same stem in place → must be rebuilt), the new file gets fresh ones.
+            if ($oldPath !== null && function_exists('previewDelete')) previewDelete($oldPath);
+            if (function_exists('previewDelete')) previewDelete($dest);
+            if (!$isVideo && function_exists('previewAfterStore')) previewAfterStore($dest);
             if ($type === 'post') {
                 $pdo->prepare("UPDATE posts SET updated_at = NOW() WHERE id = (SELECT post_id FROM post_images WHERE id = ?)")->execute([$imageId]);
             }
@@ -498,7 +504,7 @@ if (!function_exists('uploadFeatureInsert')) {
         }
         $row = ['id' => $id, 'tire_id' => $tireId, 'image_url' => $url, 'display_name' => $seed, 'sort_order' => $sortOrder, 'status' => 'pending'];
         $thumb = '';
-        if (function_exists('ensureTireThumb')) { try { ensureTireThumb($row); $thumb = tireImageThumb($row); } catch (Throwable $e) { $thumb = ''; } }
+        if (function_exists('previewAfterStore')) { try { previewAfterStore($dest); $thumb = tireImageThumb($row); } catch (Throwable $e) { $thumb = ''; } }
         return ['code' => 200, 'body' => [
             'ok'    => true,
             'image' => $row + ['src' => basePath() . '/' . $url, 'thumb' => $thumb !== '' ? $thumb : basePath() . '/' . $url],

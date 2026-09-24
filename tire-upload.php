@@ -242,7 +242,7 @@ function tireUploadStore(PDO $pdo, array $company, array $tire, array $series, s
 
     $row = ['id' => $imageId, 'tire_id' => $tireId, 'series_id' => (int)$series['id'], 'image_url' => $imageUrl,
             'display_name' => $displayName, 'caption' => '', 'status' => 'pending', 'sort_order' => $sortOrder];
-    if (!$isVideo) { ensureTireThumb($row); }
+    if (!$isVideo) { $stored = tireImagePath($row); if ($stored !== null) previewAfterStore($stored); }   // sm + lg previews (preview-lib.php)
     $meta = tireImageRowMeta($row, ['tire_name' => (string)$tire['name']]);
 
     echo json_encode([

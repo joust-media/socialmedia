@@ -96,7 +96,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 foreach ($imgs->fetchAll() as $row) {
                     if (strpos($row['image_url'], 'uploads/') === 0) {
                         $path = __DIR__ . '/' . $row['image_url'];
-                        if (is_file($path)) { @unlink($path); }
+                        if (is_file($path)) { if (function_exists('previewDelete')) previewDelete($path); @unlink($path); }
                     }
                 }
                 $pdo->prepare("DELETE FROM tires WHERE id = ?")->execute([$itemId]);
@@ -198,7 +198,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             foreach ($sel->fetchAll() as $row) {
                                 if (strpos($row['image_url'], 'uploads/') === 0) {
                                     $path = __DIR__ . '/' . $row['image_url'];
-                                    if (is_file($path)) { @unlink($path); }
+                                    if (is_file($path)) { if (function_exists('previewDelete')) previewDelete($path); @unlink($path); }
                                 }
                             }
                             $del = $pdo->prepare("
@@ -285,6 +285,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 ");
                                 $ins->execute([$itemId, $uploadsUrl . '/' . $newName, $sortOrder]);
                             }
+                            if (function_exists('mediaChmodPath')) mediaChmodPath($dest);
+                            if (function_exists('previewAfterStore')) previewAfterStore($dest);   // sm + lg previews
                             $uploadedCount++;
                         } else {
                             $errors[] = "Failed to save '{$origName}'. Check uploads/ permissions.";
