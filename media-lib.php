@@ -15,7 +15,7 @@
  *      unreadable. mediaChmodPath() / mediaMkdir() make every stored file 0644 and every created
  *      folder 0755, umask-independent; mediaChmodTree() repairs an existing tree.
  *
- * The .htaccess files the portal writes carry a marker line (`# joust-portal-media v2`); an older
+ * The .htaccess files the portal writes carry a marker line (`# joust-portal-media v3`); an older
  * portal version wrote `# Written by the portal (tire-series-lib.php|pages-lib.php)` as its first
  * line (treated as v1). mediaEnsureHtaccess() overwrites OUR older files with the current text and
  * never touches a file without a marker (server-managed). The portal no longer writes
@@ -55,7 +55,7 @@ if (!function_exists('mediaNormPath')) {
 if (!function_exists('mediaHtaccessVersion')) {
     /** The version of the .htaccess text this portal writes (bump when mediaHtaccessText() changes). */
     function mediaHtaccessVersion(): int {
-        return 2;
+        return 3;   // v3: + guarded caching (mod_expires / mod_headers) and the .thumbs/ text (image previews)
     }
 }
 
@@ -100,7 +100,56 @@ if (!function_exists('mediaHtaccessText')) {
              . "<IfModule !mod_authz_core.c>\n"
              . "    <FilesMatch {$match}>\n        Order allow,deny\n        Deny from all\n    </FilesMatch>\n"
              . "</IfModule>\n"
-             . "<IfModule mod_headers.c>\n    Header set X-Content-Type-Options nosniff\n</IfModule>\n";
+             . "<IfModule mod_headers.c>\n    Header set X-Content-Type-Options nosniff\n</IfModule>\n"
+             . mediaHtaccessCacheText(604800, false);
+    }
+}
+
+if (!function_exists('mediaHtaccessCacheText')) {
+    /**
+     * (internal) The caching block of the .htaccess texts: images + video only (HTML under media/pages/ is never
+     * cached), both halves guarded — mod_expires (Expires + max-age) and mod_headers (<FilesMatch> is core, so it
+     * is safe inside the guard). $immutable for .thumbs/ (derivative URLs carry ?v=<mtime of the original>).
+     */
+    function mediaHtaccessCacheText(int $seconds, bool $immutable): string {
+        $types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif', 'image/svg+xml', 'video/mp4', 'video/webm', 'video/quicktime'];
+        $human = $seconds >= 31536000 ? '1 year' : ($seconds % 86400 === 0 ? ($seconds / 86400) . ' days' : $seconds . ' seconds');
+        $t = "<IfModule mod_expires.c>\n    ExpiresActive On\n";
+        foreach ($types as $mime) $t .= "    ExpiresByType {$mime} \"access plus {$human}\"\n";
+        $t .= "</IfModule>\n";
+        $t .= "<IfModule mod_headers.c>\n"
+            . "    <FilesMatch \"\\.(jpe?g|png|gif|webp|avif|svg|mp4|webm|mov)$\">\n"
+            . "        Header set Cache-Control \"public, max-age={$seconds}" . ($immutable ? ', immutable' : '') . "\"\n"
+            . "    </FilesMatch>\n"
+            . "</IfModule>\n";
+        return $t;
+    }
+}
+
+if (!function_exists('mediaThumbsHtaccessText')) {
+    /**
+     * The .htaccess written into every <folder>/.thumbs/ (image previews, preview-lib.php): no listing, 1-year
+     * immutable caching for the derivatives, the bookkeeping files (.json dims, .lock, .tmp) refused. Same marker
+     * as the media text, so the repair / upgrade logic owns it too. Only `Options -Indexes` is unguarded.
+     */
+    function mediaThumbsHtaccessText(string $writer = 'preview-lib.php'): string {
+        $writer = preg_replace('/[^A-Za-z0-9._\-]/', '', $writer) ?: 'preview-lib.php';
+        $deny = '"\\.(json|lock|tmp|php|phtml|phar|htaccess)$"';
+        return mediaHtaccessMarker() . "\n"
+             . "# Written by the portal ({$writer}): image previews (sm / lg), derived from the originals one folder up.\n"
+             . "# Safe to delete: they are regenerated on demand.\n"
+             . "Options -Indexes\n"
+             . "<IfModule mod_php.c>\n    php_flag engine off\n</IfModule>\n"
+             . "<IfModule mod_php7.c>\n    php_flag engine off\n</IfModule>\n"
+             . "<IfModule mod_php8.c>\n    php_flag engine off\n</IfModule>\n"
+             . "<IfModule mod_authz_core.c>\n"
+             . "    <FilesMatch {$deny}>\n        Require all denied\n    </FilesMatch>\n"
+             . "</IfModule>\n"
+             . "<IfModule !mod_authz_core.c>\n"
+             . "    <FilesMatch {$deny}>\n        Order allow,deny\n        Deny from all\n    </FilesMatch>\n"
+             . "</IfModule>\n"
+             . "<IfModule mod_headers.c>\n    Header set X-Content-Type-Options nosniff\n</IfModule>\n"
+             . mediaHtaccessCacheText(31536000, true);
     }
 }
 
@@ -134,10 +183,11 @@ if (!function_exists('mediaEnsureHtaccess')) {
     /**
      * Make sure <dir>/.htaccess is the current text: written when missing, overwritten when it
      * carries an older marker of ours, kept when current, left alone when it is not ours.
+     * $text: another text of ours (mediaThumbsHtaccessText() for .thumbs/); default mediaHtaccessText($writer).
      * Returns ['file' => path, 'action' => written | updated | kept | foreign | failed | no-dir,
      *          'from' => previous version (0 = none), 'version' => current version]. Never fatal.
      */
-    function mediaEnsureHtaccess(string $dir, string $writer = 'media-lib.php'): array {
+    function mediaEnsureHtaccess(string $dir, string $writer = 'media-lib.php', ?string $text = null): array {
         $dir  = rtrim($dir, '/');
         $file = $dir . '/.htaccess';
         $out  = ['file' => $file, 'action' => 'no-dir', 'from' => 0, 'version' => mediaHtaccessVersion()];
@@ -147,7 +197,7 @@ if (!function_exists('mediaEnsureHtaccess')) {
         $out['from'] = $from;
         if (is_file($file) && $from === 0) { $out['action'] = 'foreign'; return $out; }
         if ($from === mediaHtaccessVersion()) { $out['action'] = 'kept'; return $out; }
-        if (@file_put_contents($file, mediaHtaccessText($writer)) === false) { $out['action'] = 'failed'; return $out; }   // no LOCK_EX: stream-wrapped harnesses refuse it; two writers produce the same bytes anyway
+        if (@file_put_contents($file, $text ?? mediaHtaccessText($writer)) === false) { $out['action'] = 'failed'; return $out; }   // no LOCK_EX: stream-wrapped harnesses refuse it; two writers produce the same bytes anyway
         @chmod($file, 0644);
         $out['action'] = $from > 0 ? 'updated' : 'written';
         return $out;
@@ -165,6 +215,25 @@ if (!function_exists('mediaRemoveParentHtaccess')) {
         if (is_link($file) || !is_file($file)) return 'absent';
         if (mediaHtaccessFileVersion($file) === 0) return 'foreign';
         return @unlink($file) ? 'removed' : 'failed';
+    }
+}
+
+/** Absolute path of a stored media URL ('uploads/x.jpg') ONLY when the file
+ *  really lives directly inside this app's uploads/ directory (realpath
+ *  containment — 'uploads/../config.php' and symlink tricks return null).
+ *  Use before every unlink of a DB-supplied path. (Lives here so the session-free
+ *  preview.php can use it; helpers.php loads this file.) */
+if (!function_exists('uploadsPathOrNull')) {
+    function uploadsPathOrNull(string $url): ?string {
+        $url = trim($url);
+        if ($url === '' || strpos($url, 'uploads/') !== 0) return null;
+        $uploadsDir = realpath(__DIR__ . '/uploads');
+        if ($uploadsDir === false) return null;
+        $path = __DIR__ . '/' . $url;
+        if (!is_file($path)) return null;
+        $real = realpath($path);
+        if ($real === false || realpath(dirname($path)) !== $uploadsDir || dirname($real) !== $uploadsDir) return null;
+        return $real;
     }
 }
 

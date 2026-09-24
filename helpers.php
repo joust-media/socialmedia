@@ -676,23 +676,9 @@ if (!function_exists('requireSameSiteFetch')) {
     }
 }
 
-/** Absolute path of a stored media URL ('uploads/x.jpg') ONLY when the file
- *  really lives directly inside this app's uploads/ directory (realpath
- *  containment — 'uploads/../config.php' and symlink tricks return null).
- *  Use before every unlink of a DB-supplied path. */
-if (!function_exists('uploadsPathOrNull')) {
-    function uploadsPathOrNull(string $url): ?string {
-        $url = trim($url);
-        if ($url === '' || strpos($url, 'uploads/') !== 0) return null;
-        $uploadsDir = realpath(__DIR__ . '/uploads');
-        if ($uploadsDir === false) return null;
-        $path = __DIR__ . '/' . $url;
-        if (!is_file($path)) return null;
-        $real = realpath($path);
-        if ($real === false || realpath(dirname($path)) !== $uploadsDir || dirname($real) !== $uploadsDir) return null;
-        return $real;
-    }
-}
+// uploadsPathOrNull() — realpath containment of 'uploads/<file>' — lives in media-lib.php (the
+// session-free preview.php needs it too).
+require_once __DIR__ . '/media-lib.php';
 
 /**
  * Fetch the full comment thread for one entity, oldest → newest.
@@ -2124,3 +2110,7 @@ require_once __DIR__ . '/emails-lib.php';
 // Google Drive storage view (hasDriveTables, driveLatestSnapshot, driveClients, driveCandidates, …).
 // Function definitions only — no DB work at load; see scratchpad drive-design.md.
 require_once __DIR__ . '/drive-lib.php';
+
+// Image previews (previewUrl, previewImgAttrs, previewAfterStore, previewDelete, …): sm 480 / lg 1600 derivatives
+// in <dir>/.thumbs/. Function definitions only — no DB work at load; see scratchpad previews-design.md.
+require_once __DIR__ . '/preview-lib.php';

@@ -28,6 +28,7 @@
  */
 
 require_once __DIR__ . '/media-lib.php';   // media/ hardening + permissions, shared with pages-lib.php
+require_once __DIR__ . '/preview-lib.php'; // image previews (sm / lg derivatives) — tireImageThumb() / ensureTireThumb() delegate there
 
 // ---------------------------------------------------------------------
 // Gate
@@ -343,7 +344,7 @@ if (!function_exists('tireImagePath')) {
 }
 
 if (!function_exists('tireThumbRel')) {
-    /** (internal) The thumb's URL-ish relative path ('uploads/.thumbs/x.jpg' / 'media/tires/a/b/.thumbs/x.jpg'); null when the row can't resolve. */
+    /** (internal, legacy) The OLD 640 px thumb's relative path ('uploads/.thumbs/x.jpg' / 'media/tires/a/b/.thumbs/x.jpg'); null when the row can't resolve. Still read as the `sm` fallback by preview-lib.php. */
     function tireThumbRel($row): ?string {
         $parts = tireImageUrlParts(is_array($row) ? ($row['image_url'] ?? '') : $row);
         if ($parts === null) return null;
@@ -357,7 +358,7 @@ if (!function_exists('tireThumbRel')) {
 }
 
 if (!function_exists('tireThumbPath')) {
-    /** Filesystem path the thumb has / would have (no existence check); null when the row can't resolve. */
+    /** (legacy) Filesystem path the OLD 640 px thumb has / would have (no existence check); null when the row can't resolve. */
     function tireThumbPath($row): ?string {
         $rel = tireThumbRel($row);
         if ($rel === null) return null;
@@ -367,13 +368,16 @@ if (!function_exists('tireThumbPath')) {
 }
 
 if (!function_exists('tireImageThumb')) {
-    /** Thumb URL when <dir>/.thumbs/<stem>.jpg exists, else tireImageSrc(). */
+    /**
+     * The `sm` preview URL of a tire image (preview-lib.php previewUrlFor): the fresh <stem>.sm.<fmt> derivative
+     * (?v=mtime), else a fresh legacy 640 px <stem>.jpg thumb, else the lazy preview.php URL; tireImageSrc() for
+     * videos, small originals and rows whose file does not resolve.
+     */
     function tireImageThumb($row): string {
-        $path = tireThumbPath($row);
-        if ($path !== null && is_file($path)) {
-            return tireImageSrc(tireThumbRel($row));
-        }
-        return tireImageSrc($row);
+        $src  = tireImageSrc($row);
+        $path = tireImagePath($row);
+        if ($path === null || !function_exists('previewUrlFor')) return $src;
+        return previewUrlFor($src, $path, 'sm');
     }
 }
 
@@ -395,61 +399,15 @@ if (!function_exists('tireThumbMemoryOk')) {
 
 if (!function_exists('ensureTireThumb')) {
     /**
-     * Write <dir>/.thumbs/<stem>.jpg (max 640 px on the long edge, q82, EXIF
-     * orientation honoured for JPEGs) for an image row. Idempotent: skipped when
-     * the thumb is newer than the source. Videos, rows without a resolvable file,
-     * missing GD, unreadable / oversized sources → null. Never fatal.
-     * Returns the thumb path (existing or new).
+     * (legacy name) Make the `sm` preview of a tire image row (preview-lib.php previewEnsure). Returns the file to
+     * serve (derivative, or the original when it is already small) or null (video, unresolvable, undecodable,
+     * too big for memory). Never fatal.
      */
     function ensureTireThumb($row): ?string {
         $src = tireImagePath($row);
-        if ($src === null) return null;
-        $ext = strtolower(pathinfo($src, PATHINFO_EXTENSION));
-        if (!in_array($ext, function_exists('imageExts') ? imageExts() : ['jpg', 'jpeg', 'png', 'gif', 'webp'], true)) return null;
-        $thumb = tireThumbPath($row);
-        if ($thumb === null) return null;
-        if (is_file($thumb) && (int)@filemtime($thumb) >= (int)@filemtime($src)) return $thumb;
-        if (!function_exists('imagecreatefromstring') || !function_exists('imagescale') || !function_exists('imagejpeg')) return null;
+        if ($src === null || !function_exists('previewEnsure')) return null;
         try {
-            $info = @getimagesize($src);
-            if (!is_array($info) || (int)$info[0] <= 0 || (int)$info[1] <= 0) return null;
-            if (!tireThumbMemoryOk((int)$info[0], (int)$info[1])) return null;
-            $data = @file_get_contents($src);
-            if ($data === false || $data === '') return null;
-            $im = @imagecreatefromstring($data);
-            unset($data);
-            if (!$im) return null;
-            if (in_array($ext, ['jpg', 'jpeg'], true) && function_exists('exif_read_data')) {
-                $exif = @exif_read_data($src);
-                $o = is_array($exif) ? (int)($exif['Orientation'] ?? 1) : 1;
-                if ($o === 2 && function_exists('imageflip')) { imageflip($im, IMG_FLIP_HORIZONTAL); }
-                elseif ($o === 3) { $r = imagerotate($im, 180, 0); if ($r) { imagedestroy($im); $im = $r; } }
-                elseif ($o === 4 && function_exists('imageflip')) { imageflip($im, IMG_FLIP_VERTICAL); }
-                elseif ($o === 5 && function_exists('imageflip')) { $r = imagerotate($im, -90, 0); if ($r) { imagedestroy($im); $im = $r; } imageflip($im, IMG_FLIP_HORIZONTAL); }
-                elseif ($o === 6) { $r = imagerotate($im, -90, 0); if ($r) { imagedestroy($im); $im = $r; } }
-                elseif ($o === 7 && function_exists('imageflip')) { $r = imagerotate($im, 90, 0); if ($r) { imagedestroy($im); $im = $r; } imageflip($im, IMG_FLIP_HORIZONTAL); }
-                elseif ($o === 8) { $r = imagerotate($im, 90, 0); if ($r) { imagedestroy($im); $im = $r; } }
-            }
-            $w = imagesx($im); $h = imagesy($im); $max = 640;
-            if ($w > $max || $h > $max) {
-                $scaled = $w >= $h ? imagescale($im, $max, -1) : imagescale($im, (int)max(1, round($w * $max / $h)), $max);
-                if ($scaled) { imagedestroy($im); $im = $scaled; }
-            }
-            // Flatten alpha onto white so PNG/WebP/GIF transparency doesn't turn black in the JPEG.
-            $canvas = imagecreatetruecolor(imagesx($im), imagesy($im));
-            if ($canvas) {
-                imagefill($canvas, 0, 0, imagecolorallocate($canvas, 255, 255, 255));
-                imagecopy($canvas, $im, 0, 0, 0, 0, imagesx($im), imagesy($im));
-                imagedestroy($im);
-                $im = $canvas;
-            }
-            $dir = dirname($thumb);
-            if (!is_dir($dir)) { mediaMkdir($dir); }   // .thumbs/ 0755 whatever the umask: Apache must read it
-            if (!is_dir($dir)) { imagedestroy($im); return null; }
-            $ok = @imagejpeg($im, $thumb, 82);
-            imagedestroy($im);
-            if ($ok) { mediaChmodPath($thumb); return $thumb; }
-            return null;
+            return previewEnsure($src, 'sm');
         } catch (Throwable $e) {
             error_log('ensureTireThumb failed: ' . $e->getMessage());
             return null;
@@ -810,6 +768,7 @@ if (!function_exists('deleteTireSeries')) {
             if (!$deleteFiles) continue;
             $path = tireImagePath($r);
             if ($path !== null) {
+                if (function_exists('previewDelete')) previewDelete($path);   // sm / lg / dims / legacy thumb
                 if (@unlink($path)) { $out['files']++; $dirs[dirname($path)] = true; }
             }
             $thumb = tireThumbPath($r);
@@ -825,8 +784,8 @@ if (!function_exists('deleteTireSeries')) {
                 $thumbs = $folder . '/.thumbs';
                 if (is_dir($thumbs)) {
                     foreach ((array)@scandir($thumbs) as $f) {
-                        if ($f === '.' || $f === '..' || !is_file($thumbs . '/' . $f)) continue;
-                        if (preg_match('/\.jpg$/i', $f)) @unlink($thumbs . '/' . $f);
+                        if ($f === '.' || $f === '..') continue;
+                        if (is_link($thumbs . '/' . $f) || is_file($thumbs . '/' . $f)) @unlink($thumbs . '/' . $f);   // every derivative + its .htaccess
                     }
                 }
                 $dirs[$thumbs] = true;
@@ -1054,7 +1013,9 @@ if (!function_exists('syncTireSeries')) {
      * (image + video extensions, dotfiles skipped, .mp4 twin of a .mov dropped,
      * natural sort); rows that already exist for (tire_id, image_url) are left
      * untouched; missing files are counted, never deleted; nothing is created
-     * on disk. $opts: thumbs (bool, default true), thumb_cap (int, 40), actor.
+     * on disk. $opts: thumbs (bool, default true), thumb_budget (seconds, default 3.0 — `sm` previews made
+     * inline until the budget is spent, the rest are made lazily by preview.php / the Studio backfill),
+     * thumb_cap (int, optional extra cap on the number made inline), actor.
      * Returns {scanned_tires, new_series, new_files, thumbs_made, thumbs_pending, missing_files}.
      */
     function syncTireSeries(PDO $pdo, array $company, ?int $tireId = null, array $opts = []): array {
@@ -1073,7 +1034,8 @@ if (!function_exists('syncTireSeries')) {
         if (!$tires) return $out;
 
         $wantThumbs = array_key_exists('thumbs', $opts) ? (bool)$opts['thumbs'] : true;
-        $thumbCap   = isset($opts['thumb_cap']) ? max(0, (int)$opts['thumb_cap']) : 40;
+        $thumbCap   = isset($opts['thumb_cap']) ? max(0, (int)$opts['thumb_cap']) : PHP_INT_MAX;
+        $thumbBudget = isset($opts['thumb_budget']) ? max(0.0, (float)$opts['thumb_budget']) : 3.0;
         $actor      = (string)($opts['actor'] ?? 'admin');
         $batchId    = function_exists('newBatchId') ? newBatchId() : null;
         $hasName    = tireImagesHaveDisplayName($pdo);
@@ -1137,16 +1099,18 @@ if (!function_exists('syncTireSeries')) {
             }
         }
 
-        if ($wantThumbs) {
-            $imgExts = function_exists('imageExts') ? imageExts() : ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+        if ($wantThumbs && function_exists('previewEnsure')) {
+            // `sm` previews only, inline for at most $thumbBudget seconds; whatever is left is made lazily
+            // (preview.php on first view) or by Studio → Export → Image previews.
+            $imgExts = previewImageExts();
+            $deadline = microtime(true) + $thumbBudget;
             foreach ($thumbQueue as $row) {
                 $ext = strtolower(pathinfo($row['image_url'], PATHINFO_EXTENSION));
                 if (!in_array($ext, $imgExts, true)) continue;
-                $thumb = tireThumbPath($row);
-                if ($thumb === null) continue;
-                if (is_file($thumb)) continue;                       // up to date enough for the grid; ensureTireThumb refreshes stale ones lazily
-                if ($out['thumbs_made'] >= $thumbCap) { $out['thumbs_pending']++; continue; }
-                if (ensureTireThumb($row) !== null) $out['thumbs_made']++;
+                $abs = tireImagePath($row);
+                if ($abs === null || previewIsFresh($abs, 'sm')) continue;
+                if ($out['thumbs_made'] >= $thumbCap || microtime(true) >= $deadline) { $out['thumbs_pending']++; continue; }
+                if (previewEnsure($abs, 'sm') !== null) $out['thumbs_made']++;
                 else $out['thumbs_pending']++;
             }
         }
