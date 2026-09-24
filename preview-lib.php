@@ -185,7 +185,10 @@ if (!function_exists('previewRefPath')) {
     function previewRefPath(string $ref): ?string {
         $segs = explode('/', $ref);
         if ($segs[0] === 'uploads' && count($segs) === 2) {
-            return function_exists('uploadsPathOrNull') ? uploadsPathOrNull($ref) : null;
+            // uploadsPathOrNull() (realpath containment); tireImagePath() applies the same textual + realpath rules
+            // but also answers where realpath() cannot resolve (stream-wrapped hosts / harnesses) — as the render side does.
+            $p = function_exists('uploadsPathOrNull') ? uploadsPathOrNull($ref) : null;
+            return $p ?? (function_exists('tireImagePath') ? tireImagePath($ref) : null);
         }
         if (($segs[0] ?? '') !== 'media' || count($segs) < 4) return null;
         if ($segs[1] === 'tires') return function_exists('tireImagePath') ? tireImagePath($ref) : null;
