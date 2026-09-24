@@ -426,7 +426,7 @@ $formSubmitText = $isEdit ? 'Save changes' : 'Create vehicle';
             <div class="existing-images">
               <?php foreach ($editImages as $img): ?>
                 <div class="existing-img" data-img-wrap>
-                  <img src="<?= h($img['image_url']) ?>" alt="">
+                  <?= pvImg(tireImageSrc((string)$img['image_url']), 'sm', ['sizes' => pvSizes('legacy')]) ?>
                   <input type="checkbox" name="remove_images[]" value="<?= (int)$img['id'] ?>"
                          data-remove-checkbox title="Remove this image">
                 </div>

@@ -41,6 +41,12 @@
      (data-video-noprobe) and the viewer unloads a video the moment you leave
      it, so one <video> at most streams from the server.
 
+     Previews: tiles carry data-src = the lg preview (what the viewer shows),
+     data-original = the file (Download, the viewer's "View original" row) and
+     data-thumb = the sm preview; Replace swaps to the reply's large / thumb.
+     Reference strip (open tire, [data-ref-strip]): tap a tile → the viewer over
+     the strip's own tiles (opts.source 'strip': no grid paging / counts).
+
    Loads with `defer` before app.js, so nothing here touches App.* until
    'app:ready' (or immediately if App has already initialised).
    ===================================================================== */
@@ -61,6 +67,10 @@
   function afterMs(ms, fn) { return setTimeout(fn, reduced() ? Math.min(ms, 160) : ms); }
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function finePointer() { return !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches); }
+  /** Cache-bust a URL that may already carry a query (preview URLs can). */
+  function bust(url) { return url ? url + (url.indexOf('?') < 0 ? '?' : '&') + 't=' + Date.now() : url; }
+  /** Point an <img> at one URL: drop srcset/sizes first, or the browser keeps picking from the old candidates. */
+  function swapImg(img, url) { if (!img || !url) return; img.removeAttribute('srcset'); img.removeAttribute('sizes'); img.src = url; }
 
   /* ================================================================ */
   /* Viewer                                                            */
@@ -87,7 +97,7 @@
         more: $('[data-viewer-more]', root), menu: $('[data-viewer-menu]', root),
         note: $('[data-viewer-note]', root), noteInput: $('[data-viewer-note-input]', root),
         noteHint: $('[data-viewer-note-hint]', root), noteSend: $('[data-viewer-note-send]', root), noteCancel: $('[data-viewer-note-cancel]', root),
-        download: $('[data-viewer-download]', root), downloadLink: $('[data-viewer-download-link]', root),
+        download: $('[data-viewer-download]', root), downloadLink: $('[data-viewer-download-link]', root), original: $('[data-viewer-original]', root),
         replace: $('[data-viewer-replace]', root), replaceInput: $('[data-viewer-replace-input]', root), manage: $('[data-viewer-manage]', root),
         setRef: $('[data-viewer-set-reference]', root), del: $('[data-viewer-delete]', root),
         comments: $('[data-viewer-comments]', root), commentsToggle: $('[data-viewer-comments-toggle]', root),
@@ -130,6 +140,7 @@
       // More menu
       $$('[data-viewer-download]', root).forEach(function (b) { b.addEventListener('click', function () { self.closeMenu(); self.download(); }); });
       if (r.downloadLink) r.downloadLink.addEventListener('click', function () { self.closeMenu(); });   // videos: a plain <a download> — the browser streams the file
+      if (r.original) r.original.addEventListener('click', function () { self.closeMenu(); });           // images: the untouched file in a new tab (the slide shows the lg preview)
       if (r.replace && r.replaceInput) {
         r.replace.addEventListener('click', function () { self.closeMenu(); r.replaceInput.value = ''; r.replaceInput.click(); });
         r.replaceInput.addEventListener('change', function () { if (r.replaceInput.files && r.replaceInput.files[0]) self.replace(r.replaceInput.files[0]); });
@@ -320,6 +331,11 @@
         if (isVideo) { r.downloadLink.href = item.src; r.downloadLink.setAttribute('download', item.download || 'video'); }
         if (r.download) r.download.hidden = isVideo;
       }
+      if (r.original) {
+        var orig = item.original || item.src;
+        r.original.hidden = item.type === 'video' || !orig;
+        if (!r.original.hidden) r.original.href = orig;
+      }
       if (r.manage) { r.manage.href = item.manage || '#'; if (!item.manage) r.manage.hidden = true; }
       if (r.setRef && item.kind === 'tire') r.setRef.hidden = item.type === 'video' || item.isReference === true;   // the reference header is an <img>
       this._setCommentCount(item, item.comments);
@@ -490,10 +506,11 @@
         item._busy = false;
         if (!res.ok) { toast(res.error || 'Could not set the reference', { kind: 'error' }); return; }
         var ref = $('.as-reference-media img');
-        if (ref) ref.src = item.src;
+        if (ref) swapImg(ref, (res.data && res.data.thumb) || item.thumb || item.src);   // the 96 px header shows the sm preview
+        assets.promoteRef(item, res.data || {});                                         // …and the Reference strip leads with it
         toast('Set as reference image', { kind: 'success' });
         var grid = $('#assetsGrid'), key = grid ? grid.dataset.series : '';
-        if (key && key !== 'ref') self.removeCurrent('moved');   // it left this series for the Reference set
+        if (!item.strip && key && key !== 'ref') self.removeCurrent('moved');   // it left this series for the Reference set
         else { item.isReference = true; self.updateChrome(); }
       });
     },
@@ -618,8 +635,8 @@
     download: function () {
       var item = this.current();
       if (!item) return;
-      var name = item.download || 'image';
-      fetch(item.src, { credentials: 'same-origin' })
+      var name = item.download || 'image', url0 = item.original || item.src;   // always the original file, never the preview on screen
+      fetch(url0, { credentials: 'same-origin' })
         .then(function (res) { if (!res.ok) throw new Error('fetch'); return res.blob(); })
         .then(function (blob) {
           var url = URL.createObjectURL(blob), a = document.createElement('a');
@@ -628,7 +645,7 @@
           setTimeout(function () { URL.revokeObjectURL(url); }, 3000);
           toast('Saved to downloads', { kind: 'success' });
         })
-        .catch(function () { window.open(item.src, '_blank', 'noopener'); });
+        .catch(function () { window.open(url0, '_blank', 'noopener'); });
     },
 
     /** Admin only (the input exists only when the server rendered it). With chunk-upload.js the file goes to
@@ -642,13 +659,18 @@
       var chunk = App.chunkUpload && App.chunkUpload.upload ? App.chunkUpload : null;
       var done = function (res) {
         if (!res.ok) throw new Error((res.data && res.data.error) || ('Replace failed (' + res.status + ')'));
-        var base = item.src.indexOf('/uploads/') > 0 ? item.src.slice(0, item.src.indexOf('/uploads/')) : '';
-        var url = (res.data.src || (base + '/' + res.data.image_url)) + '?t=' + Date.now();   // src: ready-to-use (series renders live under /media/tires/)
+        var o = item.original || item.src;
+        var base = o.indexOf('/uploads/') > 0 ? o.slice(0, o.indexOf('/uploads/')) : '';
+        var url = bust(res.data.src || (base + '/' + res.data.image_url));   // src: ready-to-use (series renders live under /media/tires/)
         var meta = /\.(mp4|webm|mov|m4v)(\?|$)/i.test(res.data.image_url);
-        item.src = url; item.type = (res.data.media_type === 'video' || meta) ? 'video' : 'image';
+        item.type = (res.data.media_type === 'video' || meta) ? 'video' : 'image';
+        // Previews of the new file (reply thumb / large, preview-ui.php pvReplyFields); a video has only its one URL
+        item.original = url;
+        item.src = item.type === 'image' && res.data.large ? bust(res.data.large) : url;
+        item.thumb = item.type === 'image' && res.data.thumb ? bust(res.data.thumb) : url;
         item._preloaded = false;
         if (self.current() === item) self.goTo(self.index);
-        emit(root, 'viewer:replaced', { item: item, src: url });
+        emit(root, 'viewer:replaced', { item: item, src: item.src, thumb: item.thumb, original: url });
         toast(item.type === 'video' ? 'Video replaced' : 'Image replaced', { kind: 'success' });
       };
       var fail = function (err) { toast((err && (err.error || err.message)) || 'Replace failed', { kind: 'error' }); };
@@ -857,6 +879,7 @@
       this.grid = $('#assetsGrid');
       var self = this, cfg = this.cfg;
       if (cfg.notice) toast(cfg.notice);
+      this.initRefStrip();   // the Reference strip works with or without a grid under it
       if (!this.grid) return;
 
       // Tap → viewer (or toggle selection in select mode)
@@ -870,8 +893,12 @@
       // Viewer decisions → tiles, counts, removal
       document.addEventListener('viewer:decision', function (e) { self.onDecision(e.detail); });
       document.addEventListener('viewer:replaced', function (e) {
-        var tile = e.detail.item.tile || self.findTile(e.detail.item.kind, e.detail.item.id);
-        var img = tile && tile.querySelector('img'); if (img) img.src = e.detail.src;
+        var d = e.detail, tiles = [d.item.tile || self.findTile(d.item.kind, d.item.id)].concat(self.stripTiles(d.item.id));
+        tiles.forEach(function (tile) {
+          if (!tile) return;
+          tile.dataset.src = d.src; tile.dataset.original = d.original || d.src; tile.dataset.thumb = d.thumb || d.src;
+          var img = tile.querySelector('img:not([data-video-poster])'); if (img) swapImg(img, d.thumb || d.src);   // the tile keeps showing the sm preview
+        });
       });
       // Comment count (thread loaded / comment sent / deny note / rollback) → the tile's bubble
       document.addEventListener('viewer:comments', function (e) {
@@ -880,7 +907,9 @@
       });
       // Admin deleted the image (or moved it to the Reference set): the tile leaves and the counts drop by one.
       document.addEventListener('viewer:removed', function (e) {
-        var it = e.detail.item, tile = it.tile || self.findTile(it.kind, it.id);
+        var it = e.detail.item;
+        if (it.strip) return;   // opened from the Reference strip: initRefStrip() drops its tile; the grid counts are another list
+        var tile = it.tile || self.findTile(it.kind, it.id);
         self.adjustCounts(it.status, null);
         if (self.cfg.page && self.cfg.page.total > 0) self.cfg.page.total--;
         if (tile) self.leaveTile(tile);
@@ -901,6 +930,7 @@
       if (moreBtn) moreBtn.addEventListener('click', function () { self.loadMore(); });
       // The viewer walks past the loaded page → fetch the next one so "next" never runs dry mid-series.
       document.addEventListener('viewer:navigate', function (e) {
+        if (viewer.opts.source === 'strip') return;   // the Reference strip is its own list
         if (self.hasMore() && e.detail.index >= viewer.items.length - 3) self.loadMore();
       });
       this.initSeries();
@@ -922,7 +952,7 @@
     findTile: function (kind, id) { return this.grid ? $('[data-asset][data-kind="' + kind + '"][data-id="' + id + '"]', this.grid) : null; },
     tileToItem: function (tile) {
       var d = tile.dataset;
-      return { id: parseInt(d.id, 10), kind: d.kind, status: d.status, src: d.src, type: d.type || 'image', mime: d.mime || '',
+      return { id: parseInt(d.id, 10), kind: d.kind, status: d.status, src: d.src, original: d.original || d.src, thumb: d.thumb || '', type: d.type || 'image', mime: d.mime || '',
                label: d.label || '', download: d.download || '', endpoint: d.endpoint, manage: d.manage || '', twin: d.twin || '',
                comments: parseInt(d.comments, 10) || 0, tile: tile };
     },
@@ -930,7 +960,50 @@
       var self = this, items = this.tiles().map(function (t) { return self.tileToItem(t); });
       var idx = items.findIndex(function (it) { return it.tile === tile; });
       var page = this.cfg.page || {};
-      viewer.open(items, idx < 0 ? 0 : idx, { mode: this.cfg.mode || 'review', context: this.cfg.context || '', total: page.total || items.length });
+      viewer.open(items, idx < 0 ? 0 : idx, { mode: this.cfg.mode || 'review', context: this.cfg.context || '', total: page.total || items.length, source: 'grid' });
+    },
+
+    /* ---------------- Reference strip (open tire): tap → the viewer over the strip's own tiles ---------------- */
+    /** After "Set as reference": the image leads the strip (moved when it is there, added when it is approved and the strip shows approved ones). */
+    promoteRef: function (item, data) {
+      var row = $('[data-ref-row]'), strip = $('[data-ref-strip]');
+      if (!row || !strip || item.type === 'video') return;
+      var tile = this.stripTiles(item.id)[0];
+      if (!tile && item.status === (strip.getAttribute('data-ref-strip') || '')) {
+        tile = document.createElement('button');
+        tile.type = 'button'; tile.className = 'as-refstrip-tile' + (item.status === 'approved' ? ' is-approved' : '');
+        tile.setAttribute('role', 'listitem'); tile.setAttribute('data-ref-tile', '');
+        var d = { id: item.id, kind: 'tire', status: item.status, src: item.src, original: item.original || item.src, thumb: data.thumb || item.thumb || item.src,
+                  type: 'image', label: item.label || '', download: item.download || '', endpoint: item.endpoint || '', series: 'ref' };
+        Object.keys(d).forEach(function (k) { tile.dataset[k] = String(d[k]); });
+        if (item.manage) tile.dataset.manage = item.manage;
+        tile.setAttribute('aria-label', 'Open reference image: ' + (item.label || ''));
+        var img = document.createElement('img'); img.alt = ''; img.decoding = 'async'; img.src = d.thumb; tile.appendChild(img);
+        var n = $('[data-ref-count]', strip); if (n && item.status === 'approved') n.textContent = String((parseInt(n.textContent, 10) || 0) + 1);
+      }
+      if (tile) { row.insertBefore(tile, row.firstChild); row.scrollLeft = 0; }
+    },
+    stripTiles: function (id) { return $$('[data-ref-tile]' + (id != null ? '[data-id="' + id + '"]' : '')); },
+    initRefStrip: function () {
+      var self = this, strip = $('[data-ref-strip]');
+      if (!strip) return;
+      strip.addEventListener('click', function (e) {
+        var tile = e.target.closest('[data-ref-tile]');
+        if (!tile || !strip.contains(tile)) return;
+        e.preventDefault();
+        var tiles = self.stripTiles(), items = tiles.map(function (t) { var it = self.tileToItem(t); it.tile = null; it.strip = t; return it; });
+        var s = self.cfg.series || {};
+        viewer.open(items, Math.max(0, tiles.indexOf(tile)), { mode: 'browse', context: (s.tire ? s.tire + ' · ' : '') + 'Reference', total: items.length, source: 'strip' });
+      });
+      // Decisions / comments / deletes made from either list keep the strip tiles honest
+      document.addEventListener('viewer:decision', function (e) {
+        self.stripTiles(e.detail.item.id).forEach(function (t) { t.dataset.status = e.detail.status; t.classList.toggle('is-approved', e.detail.status === 'approved'); });
+      });
+      document.addEventListener('viewer:removed', function (e) {
+        if (e.detail.reason !== 'deleted') return;
+        self.stripTiles(e.detail.item.id).forEach(function (t) { t.remove(); });
+        var n = $('[data-ref-count]', strip); if (n) n.textContent = String(self.stripTiles().filter(function (t) { return t.dataset.status === 'approved'; }).length);
+      });
     },
 
     /* ---------------- paging: "Load more" appends the next ASSETS_PAGE tiles (and extends an open viewer) ---------------- */
@@ -956,7 +1029,7 @@
           self.grid.appendChild(frag);
           if (App.video && App.video.enhance) App.video.enhance(self.grid);   // posters / durations for new video tiles
           if (!added.length) page.total = self.tiles().length + (page.offset || 0);   // the server ran dry: stop asking
-          viewer.append(added.map(function (t) { return self.tileToItem(t); }));
+          if (viewer.opts.source !== 'strip') viewer.append(added.map(function (t) { return self.tileToItem(t); }));
           self.syncMore();
           return added;
         })
@@ -972,7 +1045,7 @@
       var remaining = Math.max(0, (page.total || 0) - (page.offset || 0) - this.tiles().length);
       if (count) count.textContent = remaining + ' remaining';
       if (wrap) wrap.hidden = remaining <= 0;
-      if (viewer.isOpen) { viewer.opts.total = page.total || viewer.items.length; viewer.updateChrome(); }
+      if (viewer.isOpen && viewer.opts.source !== 'strip') { viewer.opts.total = page.total || viewer.items.length; viewer.updateChrome(); }
     },
 
     /* ---------------- series: admin menu, rename / delete sheets ---------------- */

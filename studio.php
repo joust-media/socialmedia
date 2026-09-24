@@ -18,6 +18,8 @@
  *              series (or a new one), drop files → one XHR per file to tire-upload.php, rescan the
  *              FTP folders, and manage the series list (rename / reorder / delete via tire-status.php).
  *              &tab=renders&tire=<id>[&series=<id>] preselects (the Assets "Upload more…" deep link).
+ *   studio.php?client=<slug>&partial=pool&page=<library|tire:<id>|<ref|series id>>&offset=N
+ *              the Approved Pool's "Show more": that page unit's next tiles (asset-pool.php studioPoolPartial()).
  */
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
@@ -27,6 +29,13 @@ requireAdmin();
 
 require_once __DIR__ . '/partials/components/post-detail.php';
 require_once __DIR__ . '/partials/components/asset-pool.php';
+
+// Approved Pool "Show more" (Compose / Batch / Studio pickers): one page unit's next tiles as markup.
+if (($_GET['partial'] ?? '') === 'pool') {
+    if (!$client) { http_response_code(404); exit; }
+    studioPoolPartial($pdo, $client, (string)($_GET['page'] ?? ''), (int)($_GET['offset'] ?? 0));
+    exit;
+}
 
 function h($s) {
     return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');

@@ -7,6 +7,11 @@
  *   &month=YYYY-MM|all            default: current month if it has posts, else all (feed.php semantics)
  *   &post=<id>                    open that post's detail on load (segment/month follow the post)
  *   &post=<id>&partial=1          return ONLY the detail partial HTML (for lists > 40 items)
+ *   &partial=list&offset=<n>      the next POSTS_PAGE rows of the list (same status/month) as markup — "Load more";
+ *                                 headers X-Posts-Total / X-Posts-Next ('' when done). The page renders the first
+ *                                 POSTS_PAGE rows; a deep link past them still opens its sheet (standalone template).
+ *
+ * Images: list rows show the sm preview (pvImg(), preview-ui.php), the detail carousel the lg one.
  *
  * Segments (DB strings never change):
  *   To Review = status pending  AND posted = 0
@@ -35,7 +40,10 @@ function h($s) {
 // hasPostedColumn() (posts.posted is migration-gated) lives in helpers.php.
 
 $admin     = isAdmin();
-$isPartial = !empty($_GET['partial']);
+$isListPartial = (($_GET['partial'] ?? '') === 'list');                 // "Load more" rows
+$isPartial = !empty($_GET['partial']) && !$isListPartial;              // one post's detail
+if (!defined('POSTS_PAGE')) { define('POSTS_PAGE', 30); }             // list rows per page
+$listOffset = max(0, (int)($_GET['offset'] ?? 0));
 $postParam = (int)($_GET['post'] ?? 0);
 
 // Posts only makes sense for one client. A client seat without a scope gets the
@@ -279,7 +287,12 @@ foreach ($st->fetchAll() as $row) {
 // ---------------------------------------------------------------------
 $listWhere  = $viewWhere;
 $listWhere[] = $segmentWhere[$segment];
-$st = $pdo->prepare($selectSql . ' WHERE ' . implode(' AND ', $listWhere) . ' ORDER BY p.scheduled_date ASC, p.id ASC');
+$isQueue = $admin && $segment === 'denied';
+// Paging: POSTS_PAGE rows from $listOffset. The Needs changes queue is sorted in PHP (latest client activity),
+// so it loads the (short, admin-only) segment whole and slices after sorting; every other segment pages in SQL.
+$listTotal = (int)$counts[$segment];
+$st = $pdo->prepare($selectSql . ' WHERE ' . implode(' AND ', $listWhere) . ' ORDER BY p.scheduled_date ASC, p.id ASC'
+    . ($isQueue ? '' : ' LIMIT ' . (int)POSTS_PAGE . ' OFFSET ' . (int)$listOffset));
 $st->execute($viewParams);
 $posts = $st->fetchAll();
 postsAttachRelations($pdo, $posts, $hasMedia, $hasLog);
@@ -290,7 +303,6 @@ postsAttachRelations($pdo, $posts, $hasMedia, $hasLog);
 // the comments already loaded above cover it), the client-comment count
 // and the time of the last client activity; newest activity first.
 // ---------------------------------------------------------------------
-$isQueue = $admin && $segment === 'denied';
 if ($isQueue && $posts) {
     $deniedAt = [];
     if ($hasLog) {
@@ -316,6 +328,11 @@ if ($isQueue && $posts) {
         return ($b['queue']['activity_ts'] <=> $a['queue']['activity_ts']) ?: ((int)$b['id'] <=> (int)$a['id']);
     });
 }
+if ($isQueue) {
+    $listTotal = count($posts);
+    $posts = array_slice($posts, $listOffset, POSTS_PAGE);
+}
+$listNext = ($listOffset + count($posts)) < $listTotal ? $listOffset + count($posts) : 0;   // 0 = nothing after this page
 
 /**
  * Queue facts for one denied post: latest client note (else the latest note of
@@ -421,6 +438,8 @@ $postsConfig = [
     'maxImageMb'  => 50,
     'maxVideoMb'  => 4096,
     'partialUrl'  => postsUrl(['post' => '__ID__', 'partial' => 1]),
+    'listUrl'     => postsUrl(['status' => $segment, 'month' => $monthUrlParam, 'partial' => 'list', 'offset' => '__OFFSET__']),   // "Load more" rows
+    'listTotal'   => $listTotal,
     'segment'     => $segment,
     'counts'      => $counts,
     'inline'      => $inlineDetails,
@@ -434,28 +453,9 @@ $footExtra = '<script>window.PostsConfig = ' . json_encode($postsConfig, JSON_UN
            . ($admin ? '<script src="' . h(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n" : '')   // App.chunkUpload for Replace (admin only)
            . '<script src="' . h(staticUrl('js/posts.js')) . '" defer></script>';
 
-include __DIR__ . '/partials/layout-top.php';
-?>
-
-<div class="posts-toolbar">
-  <?= segmented($segItems, ['label' => 'Post status']) ?>
-</div>
-
-<?php if (!$posts): ?>
-  <div class="ui-empty posts-empty" data-posts-empty>
-    <?= h($emptyCopy[$segment]) ?>
-    <?php if ($segment === 'pending' && $counts['approved'] + $counts['scheduled'] > 0): ?>
-      <div class="posts-empty-sub">You're caught up.</div>
-    <?php endif; ?>
-  </div>
-<?php endif; ?>
-
-<section class="ui-list-group posts-group" data-posts-list data-segment="<?= h($segment) ?>"<?= !$posts ? ' hidden' : '' ?>>
-  <h2 class="ui-list-header">
-    <?= h($monthLabel) ?> · <span data-segment-count><?= (int)$counts[$segment] ?></span> <?= h(strtolower($segments[$segment])) ?>
-  </h2>
-  <ul class="ui-list posts-list" role="list" data-posts-items>
-    <?php foreach ($posts as $post):
+/** One list row (the page and the "Load more" partial render the same markup). $rowIndex: position in the list (first rows load their thumb eagerly). */
+$renderRow = function (array $post, int $rowIndex = 0) use ($client, $segment, $monthUrlParam, $isQueue, $inlineDetails, $admin, $hasPosted): string {
+    ob_start();
         $pid      = (int)$post['id'];
         $posted   = !empty($post['posted']);
         $first    = $post['images'][0] ?? null;
@@ -489,7 +489,7 @@ include __DIR__ . '/partials/layout-top.php';
         <a class="ui-row ui-row--leading pl-card" href="<?= h($href) ?>" data-post-open="<?= $pid ?>">
           <div class="ui-row-leading pl-thumb<?= $isVid ? ' pl-thumb--video' : '' ?>">
             <?php if ($first && !$isVid): ?>
-              <img src="<?= h(pdMediaUrl($first['url'])) ?>" alt="" loading="lazy" decoding="async">
+              <?= pvImg(pdMediaUrl($first['url']), 'sm', ['sizes' => pvSizes('row'), 'eager' => $rowIndex < 8]) ?>
             <?php elseif ($first): ?>
               <?= videoTile(pdMediaUrl($first['url']), ['class' => 'pl-thumb-video', 'badgeClass' => 'pl-thumb-badge']) ?>
             <?php else: ?>
@@ -539,8 +539,51 @@ include __DIR__ . '/partials/layout-top.php';
           <template data-post-template="<?= $pid ?>"><?= renderPostDetail($post, ['admin' => $admin, 'hasPosted' => $hasPosted]) ?></template>
         <?php endif; ?>
       </li>
-    <?php endforeach; ?>
+<?php
+    return (string)ob_get_clean();
+};
+
+// "Load more" (&partial=list&offset=N): the next rows only.
+if ($isListPartial) {
+    header('Content-Type: text/html; charset=UTF-8');
+    header('Cache-Control: no-store');
+    header('X-Posts-Total: ' . $listTotal);
+    header('X-Posts-Next: ' . ($listNext > 0 ? (string)$listNext : ''));
+    foreach ($posts as $i => $post) { echo $renderRow($post, $listOffset + $i); }
+    exit;
+}
+
+include __DIR__ . '/partials/layout-top.php';
+?>
+
+<div class="posts-toolbar">
+  <?= segmented($segItems, ['label' => 'Post status']) ?>
+</div>
+
+<?php if (!$posts): ?>
+  <div class="ui-empty posts-empty" data-posts-empty>
+    <?= h($emptyCopy[$segment]) ?>
+    <?php if ($segment === 'pending' && $counts['approved'] + $counts['scheduled'] > 0): ?>
+      <div class="posts-empty-sub">You're caught up.</div>
+    <?php endif; ?>
+  </div>
+<?php endif; ?>
+
+<section class="ui-list-group posts-group" data-posts-list data-segment="<?= h($segment) ?>"<?= !$posts ? ' hidden' : '' ?>>
+  <h2 class="ui-list-header">
+    <?= h($monthLabel) ?> · <span data-segment-count><?= (int)$counts[$segment] ?></span> <?= h(strtolower($segments[$segment])) ?>
+  </h2>
+  <ul class="ui-list posts-list" role="list" data-posts-items>
+    <?php foreach ($posts as $i => $post) { echo $renderRow($post, $i); } ?>
   </ul>
+  <?php if ($listNext > 0): $remaining = $listTotal - $listNext; ?>
+    <div class="posts-more" data-posts-more-wrap>
+      <button type="button" class="ui-btn ui-btn--gray posts-more-btn" data-posts-more data-offset="<?= (int)$listNext ?>" data-total="<?= (int)$listTotal ?>">
+        Load more <span class="posts-more-count" data-posts-more-count><?= (int)$remaining ?> remaining</span>
+      </button>
+      <noscript><a class="ui-btn ui-btn--gray" href="<?= h(postsUrl(['status' => $segment, 'month' => $monthUrlParam, 'offset' => $listNext])) ?>">Next <?= (int)min(POSTS_PAGE, $remaining) ?></a></noscript>
+    </div>
+  <?php endif; ?>
   <?php if ($segment === 'pending'): ?>
     <p class="ui-list-footer posts-hint">Swipe right to approve, left to deny. Tap a post for the full preview.</p>
   <?php elseif ($isQueue): ?>

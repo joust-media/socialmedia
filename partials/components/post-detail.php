@@ -158,9 +158,11 @@ if (!function_exists('renderPostMedia')) {
                     'class'    => 'pd-video',
                 ]);
             } else {
-                $out .= '<button type="button" class="pd-slide-btn" data-viewer-open aria-label="View full screen">'
-                      . '<img src="' . pdEsc($src) . '" alt="' . pdEsc($label . ' ' . ($i + 1)) . '" loading="' . ($i === 0 ? 'eager' : 'lazy') . '" decoding="async">'
-                      . '</button>';
+                // The lg preview (srcset / sizes / width / height, preview-ui.php); the full-screen view keeps "View original" → the file
+                $img = function_exists('pvImg')
+                    ? pvImg($src, 'lg', ['sizes' => pvSizes('slide'), 'eager' => $i === 0, 'alt' => $label . ' ' . ($i + 1)])
+                    : '<img src="' . pdEsc($src) . '" alt="' . pdEsc($label . ' ' . ($i + 1)) . '" loading="' . ($i === 0 ? 'eager' : 'lazy') . '" decoding="async">';
+                $out .= '<button type="button" class="pd-slide-btn" data-viewer-open data-original="' . pdEsc($src) . '" aria-label="View full screen">' . $img . '</button>';
             }
             $out .= '</figure>';
         }

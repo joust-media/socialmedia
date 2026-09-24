@@ -690,7 +690,7 @@ function selfUrl($extra = []) {
                   <div class="tire-edit-row" data-tire-row data-image-id="<?= (int)$img['id'] ?>" data-status="<?= h($imgStatus) ?>">
                     <div class="tire-edit-thumb">
                       <div class="tire-edit-thumb-frame">
-                        <img src="<?= h(tireImageThumb($img)) ?>" alt="" data-thumb-img>
+                        <?= pvImg(tireImageSrc($img), 'sm', ['sizes' => '100px', 'attrs' => ['data-thumb-img' => '']]) ?>
                         <button type="button" class="tire-edit-replace-btn"
                                 data-replace-tire-img
                                 title="Replace this image">
@@ -1036,8 +1036,9 @@ function selfUrl($extra = []) {
         if (!data.ok) throw new Error(data.error || 'Failed');
       }
       // Cache-bust in case the same filename gets reused
-      const fresh = data.src || data.image_url;   // src: ready-to-use URL (series renders live under /media/tires/)
+      const fresh = data.thumb || data.src || data.image_url;   // thumb: the sm preview of the new file; src: ready-to-use URL (series renders live under /media/tires/)
       const bust = fresh + (fresh.includes('?') ? '&' : '?') + 't=' + Date.now();
+      imgEl.removeAttribute('srcset'); imgEl.removeAttribute('sizes');   // else the browser keeps the old candidates
       imgEl.src = bust;
     } catch (err) {
       alert('Replace failed: ' + ((err && (err.error || err.message)) || 'unknown'));

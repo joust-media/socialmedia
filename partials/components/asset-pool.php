@@ -38,6 +38,10 @@
  *
  * Rendering (markup only; wired by static/js/studio.js)
  *   studioPickerHtml(array $pool, array $opts = []): string
+ *       Paging: every page unit — Library, a tire's Reference images (first, sub-headed "Reference"), each series —
+ *       renders its first STUDIO_POOL_PAGE tiles (plus any selected tile further down) and "Show more"
+ *       (data-pool-more="<page key>") which fetches studio.php?partial=pool&page=&offset= (studioPoolPartial()).
+ *       Tiles show the sm preview (pvImg); data-asset-thumb / -large carry the sm / lg URLs for the strip / preview.
  *       Grouped: Library, then one <section data-pool-group="tire:<id>"> per collection with series chips
  *       (data-series-filter="all|ref|<id>") when tire-series-lib.php is present; tiles carry data-series and
  *       use tireImageThumb(); the assets[] values ("tire:<id>") are unchanged. When the pool holds a video:
@@ -455,6 +459,130 @@ if (!function_exists('studioAttachAssetsToPost')) {
 // Markup
 // ---------------------------------------------------------------------
 
+if (!defined('STUDIO_POOL_PAGE')) { define('STUDIO_POOL_PAGE', 60); }   // tiles per page unit (Library / a tire's Reference / one series)
+
+if (!function_exists('studioPoolGroups')) {
+    /**
+     * The pool as rendered: Library, then one group per collection whose page units are its Reference images
+     * first, then each series (chip order). [['key','kind','label','count','series' (chips),'pages' => [
+     * ['key' => 'library' | 'tire:<id>|<ref|series id>', 'label', 'series', 'assets' => [...]], …]], …]
+     */
+    function studioPoolGroups(array $pool): array
+    {
+        $groups = [];
+        foreach (($pool['assets'] ?? []) as $a) {
+            $gk = (string)$a['group'];
+            if (!isset($groups[$gk])) {
+                $groups[$gk] = ['key' => $gk, 'kind' => $a['kind'], 'label' => (string)$a['group_label'], 'count' => 0, 'series' => [], 'pages' => []];
+            }
+            $groups[$gk]['count']++;
+            $sk = $a['kind'] === 'tire' ? (string)($a['series'] ?? 'ref') : '';
+            $pk = $a['kind'] === 'tire' ? $gk . '|' . $sk : 'library';
+            if (!isset($groups[$gk]['pages'][$pk])) {
+                $label = $a['kind'] === 'tire' ? ($sk === 'ref' ? 'Reference' : ((string)($a['series_label'] ?? '') !== '' ? (string)$a['series_label'] : 'Series ' . $sk)) : '';
+                $groups[$gk]['pages'][$pk] = ['key' => $pk, 'label' => $label, 'series' => $sk, 'assets' => []];
+            }
+            $groups[$gk]['pages'][$pk]['assets'][] = $a;
+        }
+        foreach (($pool['collections'] ?? []) as $c) {
+            $gk = 'tire:' . (int)$c['id'];
+            if (!isset($groups[$gk])) continue;
+            $groups[$gk]['series'] = $c['series'] ?? [];
+            // Page order = Reference first, then the series in chip order (studioApprovedPool orders the chips), then anything else.
+            $ordered = [];
+            foreach ($groups[$gk]['series'] as $chip) { $pk = $gk . '|' . $chip['key']; if (isset($groups[$gk]['pages'][$pk])) $ordered[$pk] = $groups[$gk]['pages'][$pk]; }
+            if (isset($groups[$gk]['pages'][$gk . '|ref'])) $ordered = [$gk . '|ref' => $groups[$gk]['pages'][$gk . '|ref']] + $ordered;
+            $groups[$gk]['pages'] = $ordered + $groups[$gk]['pages'];
+        }
+        foreach ($groups as &$g) { $g['pages'] = array_values($g['pages']); }
+        unset($g);
+        // Library first, then the collections in pool order (tire name)
+        uasort($groups, static function ($x, $y) { return ($x['kind'] === 'library' ? 0 : 1) <=> ($y['kind'] === 'library' ? 0 : 1); });
+        return array_values($groups);
+    }
+}
+
+if (!function_exists('studioPoolTileHtml')) {
+    /** One pool tile: the sm preview on screen; data-asset-src = the original (what gets copied), -thumb = sm (Selected strip, batch rows), -large = lg (composer preview). */
+    function studioPoolTileHtml(array $a, bool $on): string
+    {
+        $esc  = 'studioEsc';
+        $pill = (string)($a['series_label'] ?? '');
+        $isV  = $a['media'] === 'video';
+        $pv   = !$isV && function_exists('pvUrls') ? pvUrls((string)$a['src']) : ['thumb' => (string)($a['thumb'] ?? $a['src']), 'large' => (string)$a['src']];
+        $out  = '<button type="button" class="ui-thumb studio-asset' . ($on ? ' is-selected ui-thumb--selected' : '') . '" role="option"'
+              . ' data-asset-key="' . $esc($a['key']) . '" data-asset-kind="' . $esc($a['kind']) . '" data-asset-id="' . (int)$a['id'] . '"'
+              . ' data-asset-src="' . $esc($a['src']) . '" data-asset-thumb="' . $esc($pv['thumb']) . '" data-asset-large="' . $esc($pv['large']) . '"'
+              . ' data-asset-label="' . $esc($a['label']) . '" data-asset-group="' . $esc($a['group']) . '"'
+              . ' data-asset-group-label="' . $esc($a['group_label']) . '" data-asset-media="' . $esc($a['media']) . '"'
+              . ($a['kind'] === 'tire' ? ' data-series="' . $esc($a['series'] ?? 'ref') . '"' : '')
+              . ' aria-selected="' . ($on ? 'true' : 'false') . '" title="' . $esc($a['label'] . ' — ' . $a['group_label'] . ($pill !== '' ? ' · ' . $pill : '')) . '"'
+              . ($isV && !$on ? ' hidden data-pool-collapsed' : '') . '>';   // collapsed until "Show N videos" (a selected one stays visible)
+        if ($isV) {
+            $thumb = (string)($a['thumb'] ?? $a['src']);
+            $out .= videoTile($a['src'], ['badgeClass' => 'studio-asset-duration', 'poster' => $thumb !== $a['src'] ? $thumb : '', 'probe' => $on]);
+        } elseif (function_exists('pvImg')) {
+            $out .= pvImg((string)$a['src'], 'sm', ['sizes' => pvSizes('pool'), 'alt' => (string)$a['label']]);
+        } else {
+            $out .= '<img src="' . $esc($a['thumb'] ?? $a['src']) . '" alt="' . $esc($a['label']) . '" loading="lazy" decoding="async">';
+        }
+        return $out . '<span class="studio-asset-order" data-asset-order aria-hidden="true"></span>'
+             . ($pill !== '' ? '<span class="ui-pill ui-pill--glass ui-pill--nodot ui-thumb-badge studio-asset-group">' . $esc($pill) . '</span>' : '')
+             . '</button>';
+    }
+}
+
+if (!function_exists('studioPoolPageHtml')) {
+    /**
+     * One page unit (Library / a tire's Reference / one series): optional sub-heading, the first STUDIO_POOL_PAGE
+     * tiles plus every selected tile further down (so a pick is never lost), and "Show N more" when more remain.
+     */
+    function studioPoolPageHtml(array $pg, array $selected, bool $withHead): string
+    {
+        $esc   = 'studioEsc';
+        $all   = $pg['assets'];
+        $total = count($all);
+        $first = array_slice($all, 0, STUDIO_POOL_PAGE);
+        foreach (array_slice($all, STUDIO_POOL_PAGE) as $a) { if (in_array($a['key'], $selected, true)) $first[] = $a; }
+        $out  = '<div class="studio-pool-sub" data-pool-sub="' . $esc($pg['key']) . '"' . ($pg['series'] !== '' ? ' data-series="' . $esc($pg['series']) . '"' : '') . '>';
+        if ($withHead) {
+            $out .= '<h4 class="studio-pool-sub-title' . ($pg['series'] === 'ref' ? ' studio-pool-sub-title--ref' : '') . '">' . $esc($pg['label']) . ' <span class="studio-chip-n">' . $total . '</span></h4>';
+        }
+        $out .= '<div class="ui-grid studio-pool" data-pool-page="' . $esc($pg['key']) . '">';
+        foreach ($first as $a) { $out .= studioPoolTileHtml($a, in_array($a['key'], $selected, true)); }
+        $out .= '</div>';
+        if ($total > STUDIO_POOL_PAGE) {
+            $left = $total - STUDIO_POOL_PAGE;
+            $out .= '<div class="studio-pool-more"><button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-pool-more="' . $esc($pg['key']) . '"'
+                  . ' data-offset="' . STUDIO_POOL_PAGE . '" data-total="' . $total . '">Show more <span class="studio-chip-n" data-pool-more-count>' . $left . '</span></button></div>';
+        }
+        return $out . '</div>';
+    }
+}
+
+if (!function_exists('studioPoolPartial')) {
+    /**
+     * studio.php?partial=pool&page=<page key>&offset=N — the tiles of one page unit from N (STUDIO_POOL_PAGE of
+     * them) as markup, headers X-Pool-Total / X-Pool-Next ('' when done). The Picker de-duplicates keys it holds.
+     */
+    function studioPoolPartial(PDO $pdo, array $client, string $pageKey, int $offset): void
+    {
+        header('Content-Type: text/html; charset=utf-8');
+        header('Cache-Control: no-store');
+        $pool = studioApprovedPool($pdo, $client);
+        $page = null;
+        foreach (studioPoolGroups($pool) as $g) { foreach ($g['pages'] as $pg) { if ($pg['key'] === $pageKey) { $page = $pg; break 2; } } }
+        if ($page === null) { http_response_code(404); header('X-Pool-Total: 0'); header('X-Pool-Next: '); return; }
+        $total = count($page['assets']);
+        $offset = max(0, $offset);
+        $slice = array_slice($page['assets'], $offset, STUDIO_POOL_PAGE);
+        $next  = $offset + count($slice) < $total ? (string)($offset + count($slice)) : '';
+        header('X-Pool-Total: ' . $total);
+        header('X-Pool-Next: ' . $next);
+        foreach ($slice as $a) { echo studioPoolTileHtml($a, false), "\n"; }
+    }
+}
+
 if (!function_exists('studioPickerHtml')) {
     /**
      * Approved Pool picker. $opts: 'max' (10), 'id', 'selected' (array of keys),
@@ -504,21 +632,18 @@ if (!function_exists('studioPickerHtml')) {
                       . '</div>';
             }
 
-            // Grouped: Library first, then one section per collection (tire) with its series chips.
+            // Grouped: Library first, then one section per collection (tire): its Reference images first
+            // (labelled "Reference"), then each series. Every page unit (Library / a tire's Reference / one
+            // series) renders its first STUDIO_POOL_PAGE tiles + "Show N more" (studio.php?partial=pool).
             // Tiles keep data-asset-* (studio.js Picker) and add data-series ('ref' | '<id>') for the per-group chips.
-            $groups = [];
-            foreach ($assets as $a) {
-                $gk = $a['group'];
-                if (!isset($groups[$gk])) $groups[$gk] = ['key' => $gk, 'label' => $a['group_label'], 'assets' => [], 'series' => []];
-                $groups[$gk]['assets'][] = $a;
-            }
-            foreach ($cols as $c) { if (isset($groups['tire:' . (int)$c['id']])) $groups['tire:' . (int)$c['id']]['series'] = $c['series'] ?? []; }
-
-            $out .= '<div class="studio-pool-groups" data-pool-grid role="listbox" aria-multiselectable="true" aria-label="Approved assets">';
+            $groups = studioPoolGroups($pool);
+            $partialUrl = (string)($opts['partialUrl'] ?? (function_exists('clientUrl') ? clientUrl('studio.php', ['partial' => 'pool', 'page' => '__PAGE__', 'offset' => '__OFFSET__']) : ''));
+            $out .= '<div class="studio-pool-groups" data-pool-grid role="listbox" aria-multiselectable="true" aria-label="Approved assets"'
+                  . ($partialUrl !== '' ? ' data-pool-partial="' . $esc($partialUrl) . '"' : '') . '>';
             foreach ($groups as $g) {
                 $hasSeries = count($g['series']) > 1 || (count($g['series']) === 1 && ($g['series'][0]['key'] ?? 'ref') !== 'ref');
                 $out .= '<section class="studio-pool-group" data-pool-group="' . $esc($g['key']) . '" data-series-active="all">'
-                      . '<header class="studio-pool-group-head"><h3 class="studio-pool-group-title">' . $esc($g['label']) . ' <span class="studio-chip-n">' . count($g['assets']) . '</span></h3>';
+                      . '<header class="studio-pool-group-head"><h3 class="studio-pool-group-title">' . $esc($g['label']) . ' <span class="studio-chip-n">' . (int)$g['count'] . '</span></h3>';
                 if ($hasSeries) {
                     $out .= '<div class="studio-chips studio-chips--series" role="group" aria-label="' . $esc('Series in ' . $g['label']) . '">'
                           . '<button type="button" class="studio-chip studio-chip--sm is-active" data-series-filter="all" aria-pressed="true">All</button>';
@@ -527,28 +652,11 @@ if (!function_exists('studioPickerHtml')) {
                     }
                     $out .= '</div>';
                 }
-                $out .= '</header><div class="ui-grid studio-pool">';
-                foreach ($g['assets'] as $a) {
-                    $on    = in_array($a['key'], $selected, true);
-                    $thumb = (string)($a['thumb'] ?? $a['src']);
-                    $pill  = (string)($a['series_label'] ?? '');
-                    $out .= '<button type="button" class="ui-thumb studio-asset' . ($on ? ' is-selected ui-thumb--selected' : '') . '" role="option"'
-                          . ' data-asset-key="' . $esc($a['key']) . '" data-asset-kind="' . $esc($a['kind']) . '" data-asset-id="' . (int)$a['id'] . '"'
-                          . ' data-asset-src="' . $esc($a['src']) . '" data-asset-label="' . $esc($a['label']) . '" data-asset-group="' . $esc($a['group']) . '"'
-                          . ' data-asset-group-label="' . $esc($a['group_label']) . '" data-asset-media="' . $esc($a['media']) . '"'
-                          . ($a['kind'] === 'tire' ? ' data-series="' . $esc($a['series'] ?? 'ref') . '"' : '')
-                          . ' aria-selected="' . ($on ? 'true' : 'false') . '" title="' . $esc($a['label'] . ' — ' . $a['group_label'] . ($pill !== '' ? ' · ' . $pill : '')) . '"'
-                          . ($a['media'] === 'video' && !$on ? ' hidden data-pool-collapsed' : '') . '>';   // collapsed until "Show N videos" (a selected one stays visible)
-                    if ($a['media'] === 'video') {
-                        $out .= videoTile($a['src'], ['badgeClass' => 'studio-asset-duration', 'poster' => $thumb !== $a['src'] ? $thumb : '', 'probe' => $on]);
-                    } else {
-                        $out .= '<img src="' . $esc($thumb) . '" alt="' . $esc($a['label']) . '" loading="lazy" decoding="async">';
-                    }
-                    $out .= '<span class="studio-asset-order" data-asset-order aria-hidden="true"></span>'
-                          . ($pill !== '' ? '<span class="ui-pill ui-pill--glass ui-pill--nodot ui-thumb-badge studio-asset-group">' . $esc($pill) . '</span>' : '')
-                          . '</button>';
+                $out .= '</header>';
+                foreach ($g['pages'] as $pg) {
+                    $out .= studioPoolPageHtml($pg, $selected, $g['kind'] === 'tire');
                 }
-                $out .= '</div></section>';
+                $out .= '</section>';
             }
             $out .= '</div>';
             $out .= '<p class="ui-empty studio-pool-empty" data-pool-empty hidden>Nothing approved in this collection yet.</p>';
@@ -704,8 +812,9 @@ if (!function_exists('studioComposerHtml')) {
             foreach ($editImgs as $img) {
                 $isVid = ($img['type'] ?? '') === 'video';
                 $src   = studioRootUrl((string)$img['url']);
-                $out  .= '<label class="ui-thumb studio-existing-item" data-existing-item data-src="' . $esc($src) . '" data-media="' . ($isVid ? 'video' : 'image') . '">'
-                       . ($isVid ? videoTile($src, ['badge' => false]) : '<img src="' . $esc($src) . '" alt="">')
+                $large = !$isVid && function_exists('pvUrl') ? pvUrl($src, 'lg') : $src;   // the composer preview shows the lg preview
+                $out  .= '<label class="ui-thumb studio-existing-item" data-existing-item data-src="' . $esc($src) . '" data-large="' . $esc($large) . '" data-media="' . ($isVid ? 'video' : 'image') . '">'
+                       . ($isVid ? videoTile($src, ['badge' => false]) : (function_exists('pvImg') ? pvImg($src, 'sm', ['sizes' => pvSizes('mini')]) : '<img src="' . $esc($src) . '" alt="" loading="lazy" decoding="async">'))
                        . '<input type="checkbox" name="remove_images[]" value="' . (int)$img['id'] . '" data-remove-image data-image-id="' . (int)$img['id'] . '" aria-label="Remove this media">'
                        . '<span class="studio-existing-x" aria-hidden="true">Remove</span>'
                        . '</label>';

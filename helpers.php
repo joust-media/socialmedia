@@ -2114,3 +2114,6 @@ require_once __DIR__ . '/drive-lib.php';
 // Image previews (previewUrl, previewImgAttrs, previewAfterStore, previewDelete, …): sm 480 / lg 1600 derivatives
 // in <dir>/.thumbs/. Function definitions only — no DB work at load; see scratchpad previews-design.md.
 require_once __DIR__ . '/preview-lib.php';
+
+// Render-side wrappers over preview-lib.php: pvImg() / pvUrls() / pvSizes() (sm tiles, lg viewer). Definitions only.
+require_once __DIR__ . '/preview-ui.php';

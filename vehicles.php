@@ -262,7 +262,7 @@ function vehicleLabel($v) {
           <div class="veh-row">
             <div>
               <?php if ($first): ?>
-                <img class="veh-thumb" src="<?= h($first) ?>" alt="" loading="lazy">
+                <?= pvImg(tireImageSrc((string)$first), 'sm', ['sizes' => pvSizes('legacy'), 'class' => 'veh-thumb']) ?>
               <?php else: ?>
                 <div class="veh-thumb-empty">🚗</div>
               <?php endif; ?>

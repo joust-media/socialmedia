@@ -693,7 +693,7 @@ if ($pendingCollections > 0) {
       <a class="home-upcoming" role="listitem" href="<?= h(clientUrl('posts', ['post' => (int)$p['id']])) ?>">
         <span class="home-upcoming-thumb">
           <?php if ($thumbSrc !== '' && !$isVideo): ?>
-            <img src="<?= h($thumbSrc) ?>" alt="" loading="lazy">
+            <?= pvImg($thumbSrc, 'sm', ['sizes' => pvSizes('card')]) ?>
           <?php elseif ($isVideo && $thumbSrc !== ''): ?>
             <?= videoTile($thumbSrc, ['badge' => false, 'class' => 'home-upcoming-video']) ?>
           <?php else: ?>
