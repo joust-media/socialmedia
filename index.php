@@ -5,14 +5,18 @@
  *   ?client=kenda   → the client's Today screen:
  *                     1. Needs your attention — up to four stacked action cards
  *                        (pending posts / emails to review / Library images /
- *                        collections with new renders), or one quiet "all caught up" card.
+ *                        tires with new images), or one quiet "all caught up" card.
  *                     2. Coming up — the next three approved or scheduled posts, merged
  *                        with Live emails that have a future send date.
  *                     3. Activity — humanized, run-collapsed, never a filename.
- *                     Admin additionally sees "Needs changes" (denied posts / emails /
- *                     assets waiting on Joust, with the latest client notes, linking to
- *                     the posts.php / emails.php work queues) and a Joust quick-action
- *                     row. Role is enforced with isAdmin().
+ *                     4. Appearance (Light · Dark · Auto).
+ *                     Admin (role enforced with isAdmin()) reads the same data from Joust's side:
+ *                     1. "Needs your changes" first (denied posts / emails / assets waiting on
+ *                        Joust, with the latest client notes, linking to the work queues),
+ *                     2. "Waiting on <client>" (the client's To Review items, in admin words),
+ *                     3. Coming up, 4. the Joust links (Manage, Projects, Tools), 5. Activity.
+ *                     No Appearance card (the nav bar's button) and no New post / Upload tiles
+ *                     (the nav bar's "+ New" is the one place to create).
  *   (no client)     → a client chooser; admin also sees cross-client activity.
  *
  * No database changes. Counts use the same queries as the tab-bar badges
@@ -531,12 +535,18 @@ $activeTab   = 'home';
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/home.css')) . '">' . "\n";
 include __DIR__ . '/partials/layout-top.php';
 
-// --- 1. Needs your attention -------------------------------------------
+// --- 1. To review ---------------------------------------------------------
+// Client seat: "Needs your attention" — what is ready for THEIR review.
+// Admin seat: the same items are waiting on the client ("Waiting on Kenda Tires"); Joust's own queue
+// ("Needs your changes", 1b) comes first.
+$tiresWord = tiresLabel($client);
+$waitOne   = $isAdmin ? 'is waiting for their review' : 'is ready for your review';
+$waitMany  = $isAdmin ? 'waiting for their review' : 'ready for your review';
 $cards = [];
 if ($pendingPosts > 0) {
     $cards[] = actionCard([
         'count' => $pendingPosts, 'noun' => 'post',
-        'one'   => 'is ready for your review', 'many' => 'ready for your review',
+        'one'   => $waitOne, 'many' => $waitMany,
         'href'  => clientUrl('posts', ['status' => 'pending']),
         'icon'  => 'grid', 'subtitle' => 'Posts · To Review', 'tone' => 'accent',
         'index' => count($cards),
@@ -545,7 +555,7 @@ if ($pendingPosts > 0) {
 if ($pendingEmails > 0) {
     $cards[] = actionCard([
         'count' => $pendingEmails, 'noun' => 'email',
-        'one'   => 'is ready for your review', 'many' => 'ready for your review',
+        'one'   => $waitOne, 'many' => $waitMany,
         'href'  => emailsUrl(['status' => 'pending']),
         'icon'  => 'mail', 'subtitle' => 'Emails · To Review', 'tone' => 'accent',
         'index' => count($cards),
@@ -554,7 +564,7 @@ if ($pendingEmails > 0) {
 if ($pendingPages > 0) {
     $cards[] = actionCard([
         'count' => $pendingPages, 'noun' => 'page',
-        'one'   => 'is ready for your review', 'many' => 'ready for your review',
+        'one'   => $waitOne, 'many' => $waitMany,
         'href'  => pagesUrl(['status' => 'pending']),
         'icon'  => 'page', 'subtitle' => 'Pages · To Review', 'tone' => 'accent',
         'index' => count($cards),
@@ -563,7 +573,7 @@ if ($pendingPages > 0) {
 if ($pendingLibrary > 0) {
     $cards[] = actionCard([
         'count' => $pendingLibrary, 'noun' => 'image',
-        'one'   => 'to approve in Library', 'many' => 'to approve in Library',
+        'one'   => $isAdmin ? 'is waiting for their review' : 'to approve in Library', 'many' => $isAdmin ? 'waiting for their review' : 'to approve in Library',
         'href'  => clientUrl('assets', ['view' => 'library', 'filter' => 'pending']),
         'icon'  => 'photo', 'subtitle' => 'Assets · Library', 'tone' => 'accent',
         'index' => count($cards),
@@ -571,22 +581,33 @@ if ($pendingLibrary > 0) {
 }
 if ($pendingCollections > 0) {
     $cards[] = actionCard([
-        'count' => $pendingCollections, 'noun' => 'collection',
-        'one'   => 'has new renders', 'many' => 'have new renders',
+        'count' => $pendingCollections, 'noun' => 'tire',
+        'one'   => $isAdmin ? 'has new images waiting for their review' : 'has new images', 'many' => $isAdmin ? 'have new images waiting for their review' : 'have new images',
         'href'  => clientUrl('assets', ['view' => 'collections']),
-        'icon'  => 'photo',
-        'subtitle' => 'Assets · Collections · ' . $pendingTireImages . ' ' . ($pendingTireImages === 1 ? 'image' : 'images') . ' to review',
+        'icon'  => 'tire',
+        'subtitle' => $tiresWord . ' · ' . $pendingTireImages . ' ' . ($pendingTireImages === 1 ? 'image' : 'images') . ' to review',
         'tone'  => 'accent',
         'index' => count($cards),
     ]);
 }
+ob_start();
 ?>
-<section class="home-section" aria-labelledby="home-attention">
-  <h2 class="ui-list-header" id="home-attention">Needs your attention</h2>
-  <?= $cards ? actionCardStack(array_slice($cards, 0, 4)) : actionCardCaughtUp() ?>
+<section class="home-section" aria-labelledby="home-attention" data-home-review="<?= $isAdmin ? 'waiting' : 'yours' ?>">
+  <h2 class="ui-list-header" id="home-attention"><?= $isAdmin ? 'Waiting on ' . h($client['name']) : 'Needs your attention' ?></h2>
+  <?php if ($cards): ?>
+    <?= actionCardStack(array_slice($cards, 0, 4)) ?>
+  <?php elseif ($isAdmin): ?>
+    <?= actionCardCaughtUp('Nothing waiting on ' . $client['name'], 'Everything sent for review has been answered.') ?>
+  <?php else: ?>
+    <?= actionCardCaughtUp() ?>
+  <?php endif; ?>
 </section>
+<?php
+$reviewSectionHtml = (string)ob_get_clean();
+if (!$isAdmin) echo $reviewSectionHtml;   // the client's Home opens with it; the admin's comes after "Needs your changes"
+?>
 
-<?php // --- 1b. Admin: Needs changes (what is waiting on Joust) ---------- ?>
+<?php // --- 1b. Admin: Needs your changes (Joust's own queue — first on the admin's Home) ---------- ?>
 <?php if ($isAdmin): ?>
 <?php
   $queueUrl      = clientUrl('posts', ['status' => 'denied', 'month' => 'all']);
@@ -597,7 +618,7 @@ if ($pendingCollections > 0) {
 ?>
 <section class="home-section" aria-labelledby="home-changes" data-needs-changes="<?= (int)$needsPosts ?>"<?= $needsEmails > 0 ? ' data-needs-changes-emails="' . (int)$needsEmails . '"' : '' ?><?= $needsPages > 0 ? ' data-needs-changes-pages="' . (int)$needsPages . '"' : '' ?>>
   <div class="home-section-head">
-    <h2 class="ui-list-header" id="home-changes">Needs changes</h2>
+    <h2 class="ui-list-header" id="home-changes">Needs your changes</h2>
     <?php if ($needsPosts > 0): ?><a href="<?= h($queueUrl) ?>">Open queue</a><?php elseif ($needsEmails > 0): ?><a href="<?= h($emailQueueUrl) ?>">Open queue</a><?php elseif ($needsPages > 0): ?><a href="<?= h($pageQueueUrl) ?>">Open queue</a><?php endif; ?>
   </div>
   <?php
@@ -634,20 +655,20 @@ if ($pendingCollections > 0) {
         }
         if ($assetsTotal > 0) {
             $assetParts = [];
-            if ($needsAssets['library'] > 0) $assetParts[] = $needsAssets['library'] . ' in Library';
-            if ($needsAssets['tire'] > 0)    $assetParts[] = $needsAssets['tire'] . ' in Collections';
+            if ($needsAssets['library'] > 0) $assetParts[] = $needsAssets['library'] . ' in Assets';
+            if ($needsAssets['tire'] > 0)    $assetParts[] = $needsAssets['tire'] . ' in ' . $tiresWord;
             $changeCards[] = actionCard([
-                'count' => $assetsTotal, 'noun' => 'asset',
+                'count' => $assetsTotal, 'noun' => 'image',
                 'one'   => 'needs changes', 'many' => 'need changes',
                 'href'  => $assetsUrl,
-                'icon'  => 'photo', 'subtitle' => 'Assets · ' . implode(' · ', $assetParts), 'tone' => 'deny',
+                'icon'  => 'photo', 'subtitle' => implode(' · ', $assetParts), 'tone' => 'deny',
                 'index' => count($changeCards),
             ]);
         }
         echo actionCardStack($changeCards);
     }
     // Latest client notes: deny notes on posts / emails in the queues + comments on assets (any status),
-    // so a comment on an approved render still reaches Joust even when nothing is denied.
+    // so a comment on an approved image still reaches Joust even when nothing is denied.
     if ($needsNotes) {
         $notesHtml = '<ul class="home-notes" role="list">';
         foreach ($needsNotes as $n) {
@@ -664,6 +685,7 @@ if ($pendingCollections > 0) {
     }
   ?>
 </section>
+<?= $reviewSectionHtml // admin: "Waiting on <client>" after Joust's own queue ?>
 <?php endif; ?>
 
 <?php // --- 2. Coming up ----------------------------------------------- ?>
@@ -721,35 +743,33 @@ if ($pendingCollections > 0) {
 </section>
 <?php endif; ?>
 
-<?php // --- 3. Activity ------------------------------------------------ ?>
+<?php // --- 3. Admin: Joust links (server-side gated) — above Activity; "+ New" in the nav bar is the one
+      //     place to create (New post / Upload / New tire …), so no duplicate New post / Upload tiles here ---- ?>
+<?php if ($isAdmin): ?>
+<section class="home-section" aria-labelledby="home-manage" data-home-admin>
+  <h2 class="ui-list-header" id="home-manage">Joust</h2>
+  <?= insetListOpen('', ['class' => 'home-manage', 'attrs' => ['data-home-manage' => '1']]) ?>
+    <?= insetRow(['href' => manageUrl('clients'), 'icon' => 'sliders', 'title' => 'Client settings', 'subtitle' => 'Logo, default hashtags, which tabs ' . $client['name'] . ' sees', 'attrs' => ['data-home-link' => 'clients']]) ?>
+    <?= insetRow(['href' => manageUrl('export'), 'icon' => 'download', 'title' => 'Export approved assets', 'subtitle' => 'One zip, a folder per tire', 'attrs' => ['data-home-link' => 'export']]) ?>
+    <?= insetRow(['href' => clientUrl('projects.php'), 'icon' => 'checklist', 'title' => 'Projects', 'subtitle' => 'Tasks shared with ' . $client['name'], 'attrs' => ['data-home-link' => 'projects']]) ?>
+    <?= insetRow(['href' => manageUrl('tools'), 'icon' => 'wand', 'title' => 'Tools', 'subtitle' => 'AI Builder, prompts, vehicles, email import', 'attrs' => ['data-home-link' => 'tools']]) ?>
+  <?= insetListClose() ?>
+</section>
+<?php endif; ?>
+
+<?php // --- 4. Activity ------------------------------------------------ ?>
 <?php if ($hasLog): ?>
   <?= activityFeed($activityRows, ['header' => 'Activity', 'limit' => 20, 'id' => 'home-activity']) ?>
 <?php endif; ?>
 
-<?php // --- 3b. Appearance (Light · Dark · Auto; the nav button cycles the same choice) ?>
+<?php // --- 5. Appearance (client seat; the admin uses the nav bar's sun / moon button, which cycles the same choice) ?>
+<?php if (!$isAdmin): ?>
 <section class="home-section home-appearance" aria-labelledby="home-appearance" id="home-appearance-section">
   <h2 class="ui-list-header" id="home-appearance">Appearance</h2>
   <div class="ui-card home-appearance-card">
     <?= appearanceControl() ?>
     <p class="t-footnote text-secondary home-appearance-note">Auto follows your device's light or dark setting. Your choice is remembered on this device.</p>
   </div>
-</section>
-
-<?php // --- 4. Admin variant (server-side gated) ------------------------ ?>
-<?php if ($isAdmin): ?>
-<section class="home-section" aria-labelledby="home-manage" data-home-admin>
-  <h2 class="ui-list-header" id="home-manage">Joust</h2>
-  <div class="home-quick">
-    <?php // New post = the pop-up (newpost.js), Upload = the Upload sheet (upload-sheet.js); the hrefs are the no-JS deep links ?>
-    <a class="ui-btn ui-btn--filled" href="<?= h(clientUrl('posts.php', ['newpost' => 1])) ?>" data-newpost><?= icon('plus') ?><span>New post</span></a>
-    <a class="ui-btn ui-btn--gray" href="<?= h(uploadSheetUrl('posts.php')) ?>"<?= uploadSheetAttrs([]) ?>><?= icon('upload') ?><span>Upload</span></a>
-  </div>
-  <?= insetListOpen('', ['class' => 'home-manage', 'attrs' => ['data-home-manage' => '1']]) ?>
-    <?= insetRow(['href' => manageUrl('clients'), 'icon' => 'sliders', 'title' => 'Client settings', 'subtitle' => 'Logo, default hashtags, which tabs ' . $client['name'] . ' sees', 'attrs' => ['data-home-link' => 'clients']]) ?>
-    <?= insetRow(['href' => manageUrl('export'), 'icon' => 'download', 'title' => 'Export approved assets', 'subtitle' => 'One zip, a folder per tire', 'attrs' => ['data-home-link' => 'export']]) ?>
-    <?= insetRow(['href' => clientUrl('projects.php'), 'icon' => 'checklist', 'title' => 'Projects', 'subtitle' => 'Tasks shared with ' . $client['name'], 'attrs' => ['data-home-link' => 'projects']]) ?>
-    <?= insetRow(['href' => manageUrl('tools'), 'icon' => 'wand', 'title' => 'Tools', 'subtitle' => 'New tire, AI Builder, prompts, vehicles, email import', 'attrs' => ['data-home-link' => 'tools']]) ?>
-  <?= insetListClose() ?>
 </section>
 <?php endif; ?>
 

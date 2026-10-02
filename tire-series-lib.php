@@ -1089,7 +1089,7 @@ if (!function_exists('syncTireSeries')) {
                 }
                 if ($newHere > 0) {
                     logTireSeriesActivity($pdo, $actor, 'scanned', $sid,
-                        "Scanned {$newHere} new render" . ($newHere === 1 ? '' : 's') . " into " . (string)$tire['name'] . " · " . $series['name'],
+                        "Scanned {$newHere} new image" . ($newHere === 1 ? '' : 's') . " into " . (string)$tire['name'] . " · " . $series['name'],
                         null, $batchId, $companyId);
                 }
             }

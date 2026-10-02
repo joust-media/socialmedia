@@ -151,252 +151,16 @@ $val_models    = $postedBack
 
 $formTitle      = $isEdit ? 'Edit prompt' : 'New prompt';
 $formSubmitText = $isEdit ? 'Save changes' : 'Create prompt';
-?>
-<!DOCTYPE html>
-<html lang="en" data-theme="light">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title><?= $isEdit ? 'Edit prompt' : 'Add a prompt' ?> — Joust Admin</title>
-<?= renderAppHead() ?>
-<style>
-  :root {
-    --bg: #f0f2f5; --surface: #ffffff; --surface-2: #f7f8fa;
-    --border: #dadde1; --text: #050505; --text-muted: #65676b;
-    --accent: #1877f2; --accent-hover: #166fe5;
-    --danger: #dc2626; --success: #16a34a;
-    --shadow: 0 1px 2px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04);
-  }
-  [data-theme="dark"] {
-    --bg: #18191a; --surface: #242526; --surface-2: #3a3b3c;
-    --border: #3e4042; --text: #e4e6eb; --text-muted: #b0b3b8;
-    --accent: #2d88ff; --accent-hover: #4599ff;
-    --danger: #ef4444; --success: #16a34a;
-    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.3);
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body {
-    background: var(--bg); color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    font-size: 15px; line-height: 1.4; min-height: 100vh;
-  }
-  .topbar { position: sticky; top: 0; z-index: 100;
-            background: var(--surface); border-bottom: 1px solid var(--border);
-            box-shadow: var(--shadow); }
-  .topbar-inner { max-width: 860px; margin: 0 auto; padding: 12px 20px;
-                  display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .brand { display: flex; align-items: center; gap: 10px;
-           font-weight: 700; font-size: 20px; color: var(--accent); letter-spacing: -0.5px; }
-  .brand-mark { width: 32px; height: 32px; border-radius: 8px;
-                background: var(--accent); color: #fff;
-                display: flex; align-items: center; justify-content: center; font-weight: 800; }
-  .brand-sub { font-size: 12px; font-weight: 600; color: var(--text-muted);
-               text-transform: uppercase; letter-spacing: 1px;
-               padding: 3px 8px; border-radius: 4px;
-               background: var(--surface-2); border: 1px solid var(--border); }
-  .top-actions { display: flex; gap: 8px; align-items: center; }
-  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-         padding: 8px 14px; border-radius: 8px; font-size: 14px; font-weight: 600;
-         cursor: pointer; border: 1px solid var(--border);
-         background: var(--surface-2); color: var(--text);
-         text-decoration: none; transition: background 0.15s, transform 0.1s; }
-  .btn:hover { background: var(--border); }
-  .btn:active { transform: scale(0.98); }
-  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .btn.primary:hover { background: var(--accent-hover); }
-  .btn.primary:disabled { opacity: 0.5; cursor: not-allowed; }
-  .btn.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
-  .btn.sm { padding: 6px 10px; font-size: 13px; }
 
-  .wrap { max-width: 860px; margin: 0 auto; padding: 24px 20px 80px; }
-  .flash, .errors { padding: 12px 16px; border-radius: 8px; margin-bottom: 20px;
-                    font-size: 14px; font-weight: 500; }
-  .flash  { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
-  .errors { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
-  [data-theme="dark"] .flash  { background: #14532d; color: #bbf7d0; border-color: #166534; }
-  [data-theme="dark"] .errors { background: #7f1d1d; color: #fecaca; border-color: #991b1b; }
-
-  .card { background: var(--surface); border: 1px solid var(--border);
-          border-radius: 12px; box-shadow: var(--shadow);
-          margin-bottom: 24px; overflow: hidden; }
-  .card-header { padding: 16px 20px; border-bottom: 1px solid var(--border);
-                 display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .card-title { font-size: 17px; font-weight: 700; margin: 0; }
-  .card-body { padding: 20px; }
-
-  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
-  .field label { font-size: 13px; font-weight: 600; color: var(--text-muted);
-                 text-transform: uppercase; letter-spacing: 0.5px; }
-  .field input[type="text"], .field select, .field textarea {
-    background: var(--surface-2); border: 1px solid var(--border);
-    color: var(--text); padding: 10px 12px; border-radius: 8px;
-    font: inherit; width: 100%; font-size: 15px;
-  }
-  .field textarea { resize: vertical; min-height: 90px; font-family: inherit; }
-  .field textarea.prompt-text { min-height: 130px; }
-  .field input:focus, .field select:focus, .field textarea:focus {
-    outline: none; border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(24,119,242,0.15);
-  }
-  .field .help { font-size: 12px; color: var(--text-muted); }
-  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  @media (max-width: 640px) { .field-row { grid-template-columns: 1fr; } }
-
-  /* Variable picker */
-  .var-picker { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-  .var-chip { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-              font-size: 12px; padding: 5px 9px; border-radius: 6px;
-              background: var(--surface-2); border: 1px solid var(--border);
-              color: var(--accent); cursor: pointer; font-weight: 600; }
-  .var-chip:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .var-detected { margin-top: 8px; font-size: 12px; }
-  .var-detected .ok   { color: var(--success); }
-  .var-detected .bad  { color: var(--danger); font-weight: 700; }
-
-  /* Model checkboxes */
-  .model-group { display: flex; flex-wrap: wrap; gap: 8px; }
-  .model-chip { display: inline-flex; align-items: center; gap: 6px;
-                padding: 7px 12px; background: var(--surface-2);
-                border: 1px solid var(--border); border-radius: 20px;
-                font-size: 13px; font-weight: 600; cursor: pointer; user-select: none;
-                transition: background 0.15s, border-color 0.15s, color 0.15s; }
-  .model-chip input { display: none; }
-  .model-chip:hover { background: var(--border); }
-  .model-chip.checked { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .model-chip.checked::before { content: '✓ '; font-weight: 700; }
-  .model-type-tag { font-size: 10px; opacity: 0.7; text-transform: uppercase; }
-
-  .form-actions { display: flex; gap: 10px; justify-content: flex-end;
-                  margin-top: 6px; padding-top: 20px; border-top: 1px solid var(--border); }
-</style>
-</head>
-<body>
-
-<?= renderAppChrome($isEdit ? 'Edit prompt' : 'New prompt', [
-      'subtitle' => 'Prompt Library',
-      'active'   => 'manage',
-      'width'    => '860px',
-      'trailing' => '',
-      'back'     => ['href' => 'prompts.php', 'label' => 'Prompts'],
-      'links'    => [
-        ['label' => 'Sign out', 'href' => 'logout.php', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
-      ],
-    ]) ?>
-
-<div class="wrap">
-
-  <?php if ($flash): ?>
-    <div class="flash">✓ <?= h($flash) ?></div>
-  <?php endif; ?>
-  <?php if ($errors): ?>
-    <div class="errors">
-      <?php foreach ($errors as $err): ?><div>⚠ <?= h($err) ?></div><?php endforeach; ?>
-    </div>
-  <?php endif; ?>
-
-  <div class="card">
-    <div class="card-header">
-      <h2 class="card-title"><?= h($formTitle) ?></h2>
-      <?php if ($isEdit): ?>
-        <a class="btn sm" href="add-prompt.php">+ New instead</a>
-      <?php endif; ?>
-    </div>
-    <div class="card-body">
-      <form method="POST" action="add-prompt.php<?= $isEdit ? '?edit=' . (int)$editPrompt['id'] : '' ?>" id="promptForm">
-        <input type="hidden" name="action" value="<?= h($formAction) ?>">
-        <?php if ($isEdit): ?>
-          <input type="hidden" name="id" value="<?= (int)$editPrompt['id'] ?>">
-        <?php endif; ?>
-
-        <div class="field-row">
-          <div class="field">
-            <label for="category">Category</label>
-            <select name="category" id="category" required>
-              <option value="">— Pick a category —</option>
-              <?php foreach (promptCategories() as $slug => $meta): ?>
-                <option value="<?= h($slug) ?>" <?= $val_category === $slug ? 'selected' : '' ?>>
-                  <?= h($meta['icon'] . ' ' . $meta['label']) ?><?= $meta['required'] ? '' : ' (optional)' ?>
-                </option>
-              <?php endforeach; ?>
-            </select>
-          </div>
-          <div class="field">
-            <label for="name">Name</label>
-            <input type="text" name="name" id="name" maxlength="150" required
-                   value="<?= h($val_name) ?>"
-                   placeholder="e.g. Low-angle hero shot">
-            <span class="help">Short admin label — shown in the library and Builder dropdowns.</span>
-          </div>
-        </div>
-
-        <div class="field">
-          <label for="prompt_text">Prompt text</label>
-          <textarea name="prompt_text" id="prompt_text" class="prompt-text" required
-                    placeholder="The literal prompt text. Use {{variables}} where client data should be injected."><?= h($val_text) ?></textarea>
-          <span class="help">Insert a dynamic variable:</span>
-          <div class="var-picker">
-            <?php foreach (promptVariables() as $vName => $vMeta): ?>
-              <button type="button" class="var-chip" data-var="<?= h($vName) ?>"
-                      title="<?= h($vMeta['source']) ?>">{{<?= h($vName) ?>}}</button>
-            <?php endforeach; ?>
-          </div>
-          <div class="var-detected" id="varDetected"></div>
-        </div>
-
-        <div class="field">
-          <label for="tags">Tags</label>
-          <input type="text" name="tags" id="tags"
-                 value="<?= h($val_tags) ?>"
-                 placeholder="lifestyle, studio, outdoor">
-          <span class="help">Comma-separated. Used to filter the library.</span>
-        </div>
-
-        <div class="field">
-          <label>Compatible models</label>
-          <div class="model-group">
-            <?php foreach ($models as $slug => $meta):
-              $checked = in_array($slug, (array)$val_models, true);
-            ?>
-              <label class="model-chip <?= $checked ? 'checked' : '' ?>" data-model-chip>
-                <input type="checkbox" name="compatible_models[]" value="<?= h($slug) ?>"
-                       <?= $checked ? 'checked' : '' ?>>
-                <?= h($meta['label']) ?>
-                <span class="model-type-tag"><?= h($meta['type']) ?></span>
-              </label>
-            <?php endforeach; ?>
-          </div>
-          <span class="help">Leave all unchecked = works with every model.</span>
-        </div>
-
-        <div class="form-actions">
-          <a class="btn" href="prompts.php">Cancel</a>
-          <button type="submit" class="btn primary" id="submitBtn"><?= h($formSubmitText) ?></button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <?php if ($isEdit): ?>
-    <form method="POST" action="add-prompt.php"
-          onsubmit="return confirm('Delete this prompt permanently?');"
-          style="text-align:right;">
-      <input type="hidden" name="action" value="delete">
-      <input type="hidden" name="id" value="<?= (int)$editPrompt['id'] ?>">
-      <button type="submit" class="btn danger sm">🗑 Delete this prompt</button>
-    </form>
-  <?php endif; ?>
-
-</div>
-
+$script = <<<'JS'
 <script>
-  const KNOWN_VARS = <?= json_encode(promptVariableNames()) ?>;
+  const KNOWN_VARS = __KNOWN_VARS__;
   const ta = document.getElementById('prompt_text');
   const detected = document.getElementById('varDetected');
   const submitBtn = document.getElementById('submitBtn');
 
   // Insert {{var}} at the cursor position in the prompt textarea.
-  document.querySelectorAll('.var-chip').forEach(chip => {
+  document.querySelectorAll('[data-var]').forEach(chip => {
     chip.addEventListener('click', () => {
       const token = '{{' + chip.getAttribute('data-var') + '}}';
       const start = ta.selectionStart ?? ta.value.length;
@@ -427,7 +191,7 @@ $formSubmitText = $isEdit ? 'Save changes' : 'Create prompt';
     const parts = found.map(v =>
       KNOWN_VARS.includes(v)
         ? '<span class="ok">{{' + v + '}}</span>'
-        : '<span class="bad">{{' + v + '}} ✗ unknown</span>'
+        : '<span class="bad">{{' + v + '}} — unknown</span>'
     );
     detected.innerHTML = 'Variables used: ' + parts.join(', ')
       + (bad.length ? ' — fix unknown variables before saving.' : '');
@@ -439,9 +203,113 @@ $formSubmitText = $isEdit ? 'Save changes' : 'Create prompt';
   // Model chip toggle visual state.
   document.querySelectorAll('[data-model-chip]').forEach(chip => {
     const cb = chip.querySelector('input[type="checkbox"]');
-    cb.addEventListener('change', () => chip.classList.toggle('checked', cb.checked));
+    cb.addEventListener('change', () => chip.classList.toggle('is-active', cb.checked));
   });
 </script>
+JS;
+$script = str_replace('__KNOWN_VARS__', json_encode(promptVariableNames()), $script);
 
-</body>
-</html>
+// ---- Chrome: the shared shell (back to the Prompt Library) ----
+$pageTitle   = $isEdit ? 'Edit prompt' : 'New prompt';
+$htmlTitle   = $pageTitle . ' — Prompt Library';
+$navSubtitle = 'Prompt Library';
+$navBack     = ['href' => pagePath('prompts'), 'label' => 'Prompts'];
+$navTrailing = '';
+$activeTab   = 'manage';
+$bodyClass   = 'page-studio page-tool page-prompt-form';
+$headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">' . "\n"
+             . '<link rel="stylesheet" href="' . h(staticUrl('css/tools.css')) . '">' . "\n"
+             . '<style>.tl-vars { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; } .tl-vars .studio-chip { font-family: var(--font-mono); color: var(--accent); }'
+             . ' .tl-detected { margin-top: 8px; font-size: var(--text-footnote); color: var(--label-secondary); } .tl-detected .ok { color: var(--approve); } .tl-detected .bad { color: var(--deny); font-weight: 600; }</style>';
+$footExtra   = $script;
+include __DIR__ . '/partials/layout-top.php';
+?>
+
+<?php if ($flash): ?>
+  <div class="studio-alert studio-alert--ok" role="status"><?= h($flash) ?></div>
+<?php endif; ?>
+<?php if ($errors): ?>
+  <div class="studio-alert studio-alert--error" role="alert">
+    <?php foreach ($errors as $err): ?><div><?= h($err) ?></div><?php endforeach; ?>
+  </div>
+<?php endif; ?>
+
+<form method="POST" action="<?= h(pagePath('add-prompt') . ($isEdit ? '?edit=' . (int)$editPrompt['id'] : '')) ?>" id="promptForm" class="ui-card tl-card">
+  <input type="hidden" name="action" value="<?= h($formAction) ?>">
+  <?php if ($isEdit): ?>
+    <input type="hidden" name="id" value="<?= (int)$editPrompt['id'] ?>">
+  <?php endif; ?>
+  <div class="ui-card-header"><div class="ui-card-heading">
+    <h3 class="ui-card-title"><?= h($formTitle) ?></h3>
+    <p class="ui-card-subtitle">One building block for the AI Builder. Every client's Builder uses the same library.</p>
+  </div>
+  <?php if ($isEdit): ?><div class="tl-card-actions"><a class="ui-btn ui-btn--gray ui-btn--sm" href="<?= h(pagePath('add-prompt')) ?>">New prompt instead</a></div><?php endif; ?>
+  </div>
+  <div class="ui-card-body tl-fields">
+    <div class="tl-grid">
+      <div class="studio-field">
+        <label class="studio-label" for="category">Category</label>
+        <select class="ui-select" name="category" id="category" required>
+          <option value="">Pick a category</option>
+          <?php foreach (promptCategories() as $slug => $meta): ?>
+            <option value="<?= h($slug) ?>" <?= $val_category === $slug ? 'selected' : '' ?>><?= h($meta['label']) ?><?= $meta['required'] ? '' : ' (optional)' ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="studio-field">
+        <label class="studio-label" for="name">Name</label>
+        <input class="ui-input" type="text" name="name" id="name" maxlength="150" required value="<?= h($val_name) ?>" placeholder="e.g. Low-angle hero shot">
+        <p class="studio-help">Short label — shown in the library and the Builder's menus.</p>
+      </div>
+    </div>
+
+    <div class="studio-field">
+      <label class="studio-label" for="prompt_text">Prompt text</label>
+      <textarea class="ui-textarea" name="prompt_text" id="prompt_text" rows="6" required
+                placeholder="The literal prompt text. Use {{variables}} where client data should go."><?= h($val_text) ?></textarea>
+      <p class="studio-help">Insert a variable at the cursor:</p>
+      <div class="tl-vars">
+        <?php foreach (promptVariables() as $vName => $vMeta): ?>
+          <button type="button" class="studio-chip" data-var="<?= h($vName) ?>" title="<?= h($vMeta['source']) ?>">{{<?= h($vName) ?>}}</button>
+        <?php endforeach; ?>
+      </div>
+      <div class="tl-detected" id="varDetected" aria-live="polite"></div>
+    </div>
+
+    <div class="studio-field">
+      <label class="studio-label" for="tags">Tags</label>
+      <input class="ui-input" type="text" name="tags" id="tags" value="<?= h($val_tags) ?>" placeholder="lifestyle, studio, outdoor">
+      <p class="studio-help">Comma-separated. Used to filter the library.</p>
+    </div>
+
+    <div class="studio-field">
+      <span class="studio-label">Compatible models</span>
+      <div class="studio-chips studio-chips--wrap">
+        <?php foreach ($models as $slug => $meta): $checked = in_array($slug, (array)$val_models, true); ?>
+          <label class="studio-chip<?= $checked ? ' is-active' : '' ?>" data-model-chip>
+            <input type="checkbox" name="compatible_models[]" value="<?= h($slug) ?>"<?= $checked ? ' checked' : '' ?>>
+            <?= h($meta['label']) ?> <span class="studio-chip-n"><?= h($meta['type']) ?></span>
+          </label>
+        <?php endforeach; ?>
+      </div>
+      <p class="studio-help">Leave all off = works with every model.</p>
+    </div>
+
+    <div class="tl-actions">
+      <a class="ui-btn ui-btn--gray" href="<?= h(pagePath('prompts')) ?>">Cancel</a>
+      <button type="submit" class="ui-btn ui-btn--filled" id="submitBtn"><?= h($formSubmitText) ?></button>
+    </div>
+  </div>
+</form>
+
+<?php if ($isEdit): ?>
+  <div class="tl-danger-zone">
+    <form method="POST" action="<?= h(pagePath('add-prompt')) ?>" onsubmit="return confirm('Delete this prompt permanently?');">
+      <input type="hidden" name="action" value="delete">
+      <input type="hidden" name="id" value="<?= (int)$editPrompt['id'] ?>">
+      <button type="submit" class="ui-btn ui-btn--plain studio-danger-btn">Delete this prompt</button>
+    </form>
+  </div>
+<?php endif; ?>
+
+<?php include __DIR__ . '/partials/layout-bottom.php'; ?>

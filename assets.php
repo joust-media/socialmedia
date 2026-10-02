@@ -1,15 +1,18 @@
 <?php
 /**
- * Assets — Stage 1 review (spec §4.2). Replaces library.php and the tires
- * module of features.php under one tab.
+ * Assets + Tires — Stage 1 review (spec §4.2). Replaces library.php and the tires
+ * module of features.php. Two tabs, one home each (no Library · Tires switch any more):
  *
  *   assets.php?client=<slug>[&view=library|collections][&item=<tire id>]
  *              [&filter=pending|approved|denied][&asset=<id>&kind=library|tire]
  *
- *   view=library      the client's disk-synced library_images as a square grid
- *   view=collections  grouped list of the client's tires ("collections", labelled
- *                     with the company's own term when companies.feature_label is
- *                     set); item=<tire id> opens one collection as the same grid
+ *   view=library      the Assets tab: the client's disk-synced library_images as a square grid
+ *   view=collections  the Tires tab: the client's tires (titled with tiresLabel(), "Tires" unless
+ *                     companies.feature_label says otherwise; admin: a "New tire" button);
+ *                     item=<tire id> opens one tire as the same grid. A client without the Tires
+ *                     tab (companyHasTires()) is sent to the Library (302) — old links never dead-end.
+ *   (no client)       admin: a client chooser in place (view=collections: the clients with Tires);
+ *                     client seat: the "missing client" page (400)
  *   filter            pending (default) | approved | denied (admin only — the
  *                     client's SQL always adds AND status <> 'denied')
  *   asset + kind      deep link: open the full-screen viewer on that item
@@ -79,7 +82,45 @@ if (!defined('ASSETS_PAGE')) { define('ASSETS_PAGE', 60); }              // tile
 // ---------------------------------------------------------------------
 if (!$client) {
     if ($isAdmin) {
-        header('Location: ' . pagePath('index'), true, 302);   // pick a client first (Home: "Choose a client")
+        // Unscoped admin (the sidebar Assets tab with no client): choose a client right here instead of bouncing to Home.
+        // view=collections (an old unscoped Tires link) lists only the clients that have Tires.
+        $wantTires = (($_GET['view'] ?? '') === 'collections');
+        $choose = []; $pend = [];
+        try {
+            $choose = $pdo->query("SELECT id, name, slug, logo_url, feature_label FROM companies ORDER BY name ASC")->fetchAll();
+            foreach ($pdo->query("SELECT t.company_id AS cid, COUNT(*) AS n FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id
+                                   WHERE ti.status = 'pending' GROUP BY t.company_id")->fetchAll() as $r) { $pend[(int)$r['cid']]['tire'] = (int)$r['n']; }
+            if (hasLibraryImagesTable($pdo)) {
+                foreach ($pdo->query("SELECT company_id AS cid, COUNT(*) AS n FROM library_images WHERE status = 'pending' GROUP BY company_id")->fetchAll() as $r) {
+                    $pend[(int)$r['cid']]['library'] = (int)$r['n'];
+                }
+            }
+        } catch (Throwable $e) { error_log('assets chooser query failed: ' . $e->getMessage()); }
+        $pageTitle   = $wantTires ? 'Tires' : 'Assets';
+        $htmlTitle   = $pageTitle . ' — Joust Media';
+        $navSubtitle = 'All clients';
+        $navTrailing = joustAvatar();
+        $activeTab   = 'assets';
+        include __DIR__ . '/partials/layout-top.php';
+        echo insetListOpen('Choose a client', ['attrs' => ['data-assets-clients' => $wantTires ? 'tires' : 'library']]);
+        $shown = 0;
+        foreach ($choose as $co) {
+            if ($wantTires && !companyHasTires($co, $pdo)) continue;
+            $n = (int)($pend[(int)$co['id']][$wantTires ? 'tire' : 'library'] ?? 0);
+            echo insetRow([
+                'href'     => clientUrl('assets.php', ['client' => $co['slug'], 'view' => $wantTires ? 'collections' : null]),
+                'leading'  => clientAvatar($co, 'ui-avatar--lg'),
+                'title'    => $co['name'],
+                'subtitle' => $wantTires ? tiresLabel($co) . ($n > 0 ? ' · ' . $n . ' to review' : '') : 'Library' . ($n > 0 ? ' · ' . $n . ' to review' : ''),
+                'trailing' => $n > 0 ? '<span class="ui-badge">' . ($n > 99 ? '99+' : $n) . '</span>' : '',
+                'chevron'  => true,
+                'attrs'    => ['data-client-row' => $co['slug']],
+            ]);
+            $shown++;
+        }
+        if (!$shown) echo '<li><div class="ui-row"><div class="ui-row-body"><div class="ui-row-subtitle">' . ($wantTires ? 'No client has Tires yet.' : 'No clients yet.') . '</div></div></div></li>';
+        echo insetListClose($wantTires ? 'Each client\'s tires, their series and reference images.' : 'Each client\'s Library: their own photos and videos to review.');
+        include __DIR__ . '/partials/layout-bottom.php';
         exit;
     }
     http_response_code(400);
@@ -206,20 +247,21 @@ if ($deepId > 0 && $deepKind !== '') {
 }
 
 // ---------------------------------------------------------------------
+// Tires tab only exists for companies with tires (module on or any rows — tabbar.php). Without it the
+// Tires view has no home in the nav, so an old view=collections link lands on the Library instead.
+// ---------------------------------------------------------------------
+$hasTiresTab = companyHasTires($client, $pdo);
+if ($view === 'collections' && !$hasTiresTab && !$partial) {
+    header('Location: ' . clientUrl('assets.php', ['filter' => $filter !== 'pending' ? $filter : null]), true, 302);
+    exit;
+}
+
+// ---------------------------------------------------------------------
 // Labels
 // ---------------------------------------------------------------------
-// "Collections" in the client's own words: companies.feature_label when set
-// (the only per-company term in the schema), else the tires module's plural
-// label, else the generic word.
-$collectionsLabel = trim((string)($client['feature_label'] ?? ''));
-if ($collectionsLabel === '') {
-    try {
-        $s = $pdo->prepare("SELECT plural_label FROM modules WHERE slug = 'tires'");
-        $s->execute();
-        $collectionsLabel = trim((string)($s->fetchColumn() ?: ''));
-    } catch (Throwable $e) { $collectionsLabel = ''; }
-}
-if ($collectionsLabel === '') { $collectionsLabel = 'Collections'; }
+// The tire content in the client's own words: companies.feature_label when set (the only per-company
+// term in the schema), else "Tires" — the same word as the tab (tiresLabel(), helpers.php).
+$collectionsLabel = tiresLabel($client);
 
 $filterLabels = ['pending' => 'To Review', 'approved' => 'Approved', 'denied' => 'Needs changes'];
 
@@ -332,7 +374,7 @@ if (!function_exists('assetsRefStripHtml')) {
         } elseif ($mode === 'pending') {
             $link = '<a class="as-refstrip-link" href="' . esc($ctx['reviewUrl']) . '" data-ref-review>Review ' . $nP . '</a>';
         }
-        $hint = $mode === 'approved' ? 'Compare each render to ' . ($nA === 1 ? 'this image.' : 'these images.')
+        $hint = $mode === 'approved' ? 'Compare each series image to ' . ($nA === 1 ? 'this photo.' : 'these photos.')
               : ($mode === 'pending' ? 'Reference images waiting for review.' : 'No reference images yet.');
         $out  = '<section class="as-reference as-reference--strip as-refstrip--' . $mode . '" data-ref-strip="' . $mode . '" aria-label="Reference images">'
               . '<div class="as-reference-body">'
@@ -343,7 +385,7 @@ if (!function_exists('assetsRefStripHtml')) {
               . (string)($ctx['adminHtml'] ?? '');
         if ($mode === 'empty') {
             if ($admin) {
-                $out .= '<div class="as-refstrip-empty" data-ref-empty><p>Add photos of the real tire so every render can be compared to them.</p>'
+                $out .= '<div class="as-refstrip-empty" data-ref-empty><p>Add photos of the real tire so every series image can be compared to them.</p>'
                       . '<a class="ui-btn ui-btn--sm ui-btn--tinted" href="' . esc($ctx['addUrl']) . '"' . (string)($ctx['addAttrs'] ?? '') . ' data-ref-add>' . icon('plus') . '<span>Add reference images</span></a></div>';
             }
             return $out . '</section>';
@@ -488,7 +530,7 @@ if ($view === 'library') {
         $collection = $s->fetch() ?: null;
         if (!$collection) {
             $itemId = 0;
-            $notice = $notice ?: 'That collection is no longer available.';
+            $notice = $notice ?: 'That tire is no longer available.';
         }
     }
 
@@ -684,20 +726,26 @@ if ($partial) {
 // ---------------------------------------------------------------------
 // Chrome
 // ---------------------------------------------------------------------
-$pageTitle  = 'Assets';
-$htmlTitle  = 'Assets — ' . $client['name'];
-$pageWide   = true;
-$navWide    = true;
-$activeTab  = $view === 'collections' ? 'tires' : 'assets';   // Tires tab (tabbar falls back to Assets when the company has none)
-$bodyClass  = 'as-body';
+// Same frame as every top-level page (the default 720px column — no wide variant): Assets = the Library,
+// Tires = the tire list (its own large title), a tire = a pushed detail screen with a back button.
+$pageTitle  = $view === 'collections' ? $collectionsLabel : 'Assets';
+$htmlTitle  = $pageTitle . ' — ' . $client['name'];
+$activeTab  = $view === 'collections' ? 'tires' : 'assets';   // Tires tab (only reachable when the company has one — see the redirect above)
+$bodyClass  = 'as-body as-body--' . ($view === 'collections' ? 'tires' : 'library');
 $headExtra  = '<link rel="stylesheet" href="' . esc(staticUrl('css/assets.css')) . '">';
 if ($collection) {
     $pageTitle   = (string)$collection['name'];
-    $htmlTitle   = $collection['name'] . ' — Assets — ' . $client['name'];
+    $htmlTitle   = $collection['name'] . ' — ' . $collectionsLabel . ' — ' . $client['name'];
     $navSubtitle = $collectionsLabel;
     $navBack     = ['href' => clientUrl('assets.php', ['view' => 'collections']), 'label' => $collectionsLabel];
 }
+// Admin "New tire" (add-feature.php — needs the tires module switched on) on the Tires list; also in "+ New".
+$newTireUrl  = ($isAdmin && $view === 'collections' && !$collection && companyTiresModuleOn($client, $pdo))
+    ? clientUrl('add-feature.php', ['module' => 'tires']) : '';
 $navTrailing = '';
+if ($newTireUrl !== '') {   // a page button under the large title (the nav row keeps room for the title at 320px)
+    $navLinks = [['label' => 'New tire', 'href' => $newTireUrl, 'tinted' => true, 'attrs' => ['data-new-tire' => '1']]];
+}
 if ($isGrid && $items) {
     $navTrailing .= '<button type="button" class="ui-btn ui-btn--sm ui-btn--gray" data-assets-select aria-pressed="false">Select</button>';
 }
@@ -711,14 +759,8 @@ if ($collection) {
 include __DIR__ . '/partials/layout-top.php';
 ?>
 
+<?php if (($isAdmin && $view === 'library') || $isGrid): ?>
 <div class="as-controls">
-  <?= segmented([
-      ['label' => 'Library', 'href' => clientUrl('assets.php', ['view' => 'library']),
-       'active' => $view === 'library', 'count' => $libCounts['pending'] > 0 ? $libCounts['pending'] : null],
-      ['label' => $collectionsLabel, 'href' => clientUrl('assets.php', ['view' => 'collections']),
-       'active' => $view === 'collections', 'count' => $tireCounts['pending'] > 0 ? $tireCounts['pending'] : null],
-  ], ['label' => 'Assets view']) ?>
-
   <?php if ($isAdmin && $view === 'library'): // admin: the Upload sheet with the Library preselected ?>
     <a class="ui-btn ui-btn--sm ui-btn--tinted as-library-upload" href="<?= esc(uploadSheetUrl('assets.php', ['dest' => 'library'], ['view' => 'library'])) ?>"<?= uploadSheetAttrs(['dest' => 'library']) ?> data-library-upload><?= icon('upload') ?><span>Upload</span></a>
   <?php endif; ?>
@@ -733,11 +775,17 @@ include __DIR__ . '/partials/layout-top.php';
     </nav>
   <?php endif; ?>
 </div>
+<?php endif; ?>
 
 <?php if ($view === 'collections' && !$collection): ?>
 
   <?php if (!$collections): ?>
-    <div class="ui-empty">No <?= esc(strtolower($collectionsLabel)) ?> yet.</div>
+    <div class="ui-empty as-empty" data-tires-empty>
+      <p>No <?= esc(strtolower($collectionsLabel)) ?> yet.</p>
+      <?php if ($newTireUrl !== ''): ?>
+        <a class="ui-btn ui-btn--tinted" href="<?= esc($newTireUrl) ?>"><?= icon('plus') ?><span>New tire</span></a>
+      <?php endif; ?>
+    </div>
   <?php else: ?>
     <?= insetListOpen('', ['class' => 'as-collections', 'listClass' => 'as-collection-list']) ?>
     <?php foreach ($collections as $c):
@@ -815,7 +863,7 @@ include __DIR__ . '/partials/layout-top.php';
       <div class="as-reference-body">
         <p class="as-reference-label">Reference</p>
         <h2 class="as-reference-title"><?= esc($collection['name']) ?></h2>
-        <p class="as-reference-hint"><?= $reference ? 'Compare each render to this image.' : 'No reference image yet.' ?></p>
+        <p class="as-reference-hint"><?= $reference ? 'Compare each series image to this photo.' : 'No reference image yet.' ?></p>
       </div>
       <?= $refAdminHtml // admin-only: '' for clients ?>
     </section>
@@ -843,7 +891,7 @@ include __DIR__ . '/partials/layout-top.php';
         $headUpload = $seriesActive ? ['dest' => 'series', 'tire' => $itemId, 'series' => (int)$seriesActive['id']] : ['dest' => 'reference', 'tire' => $itemId];
         $headDrive = $seriesActive ? (string)($seriesActive['drive_url'] ?? '') : '';   // the series' Google Drive share link ('' = none)
         // Photos · Videos: "Approve all remaining" follows the view (photos | videos → posts type=; the plain series when all)
-        $typeNoun    = $typeEff === 'videos' ? 'video' : ($typeEff === 'photos' ? 'photo' : 'render');
+        $typeNoun    = $typeEff === 'videos' ? 'video' : ($typeEff === 'photos' ? 'photo' : 'image');
         $typePending = $typeEff !== 'all' && $typeCounts ? (int)$typeCounts[$typeEff]['pending'] : $headPending;
       ?>
       <section class="as-series-head" data-series-head data-series-id="<?= esc($seriesKey) ?>"<?= $showType ? ' data-series-type="' . esc($typeEff) . '"' : '' ?> aria-label="<?= esc($seriesActive ? $seriesActive['name'] : 'Reference images') ?>">
@@ -889,7 +937,7 @@ include __DIR__ . '/partials/layout-top.php';
       </section>
     <?php elseif ($seriesOn && $isAdmin): ?>
       <?php $hintUpload = ['dest' => 'series', 'tire' => $itemId, 'series' => 'new']; ?>
-      <p class="as-series-hint text-secondary" data-series-hint>No series yet — <a href="<?= esc(uploadSheetUrl('assets.php', $hintUpload, ['view' => 'collections', 'item' => $itemId])) ?>"<?= uploadSheetAttrs($hintUpload) ?>>upload renders</a> or drop a folder into <code><?= esc(function_exists('tireFolderRel') ? tireFolderRel($client, $collection) . '/' : 'media/tires/<tire>/') ?></code>.
+      <p class="as-series-hint text-secondary" data-series-hint>No series yet — <a href="<?= esc(uploadSheetUrl('assets.php', $hintUpload, ['view' => 'collections', 'item' => $itemId])) ?>"<?= uploadSheetAttrs($hintUpload) ?>>upload images</a> or drop a folder into <code><?= esc(function_exists('tireFolderRel') ? tireFolderRel($client, $collection) . '/' : 'media/tires/<tire>/') ?></code>.
         <button type="button" class="ui-btn ui-btn--sm ui-btn--gray" data-series-manage>Manage series</button></p>
     <?php endif; ?>
   <?php endif; ?>
@@ -958,7 +1006,7 @@ if ($isAdmin && $seriesOn && $seriesActive):
         <label class="studio-label as-series-label" for="seriesRenameDrive">Google Drive link <span class="text-tertiary">(optional)</span></label>
         <input class="ui-input" type="url" id="seriesRenameDrive" name="drive_url" maxlength="512" inputmode="url" autocomplete="off" spellcheck="false"
                placeholder="https://drive.google.com/drive/folders/…" value="<?= esc((string)($seriesActive['drive_url'] ?? '')) ?>" data-series-drive-input>
-        <p class="as-series-help text-secondary" data-series-drive-help>Paste the share link of the folder that holds these renders — the client gets an “Open in Google Drive” button on this series. Leave blank to remove it.</p>
+        <p class="as-series-help text-secondary" data-series-drive-help>Paste the share link of the folder that holds these images — the client gets an “Open in Google Drive” button on this series. Leave blank to remove it.</p>
       <?php endif; ?>
       <div class="as-series-form-actions"><button type="button" class="ui-btn ui-btn--gray" data-sheet-close>Cancel</button><button type="submit" class="ui-btn ui-btn--filled" data-series-form-submit>Save</button></div>
     </form>
@@ -1049,7 +1097,7 @@ if ($isAdmin && $seriesOn && $collection) {
       <p class="sm-intro text-secondary">What <?= esc($client['name']) ?> sees under <?= esc($collection['name']) ?>: rename, reorder or remove a series<?= $smDriveOn ? ', and paste a Google Drive share link to give the client an “Open in Google Drive” button on it' : '' ?>.</p>
       <h3 class="as-series-label">Series · <span data-sm-count><?= count($seriesList) ?> series</span></h3>
       <ul class="sm-list" data-sm-list role="list"></ul>
-      <p class="text-secondary sm-empty" data-sm-empty<?= $seriesList ? ' hidden' : '' ?>>No series yet — add one below, upload renders, or drop a folder by FTP and rescan.</p>
+      <p class="text-secondary sm-empty" data-sm-empty<?= $seriesList ? ' hidden' : '' ?>>No series yet — add one below, upload images, or drop a folder by FTP and rescan.</p>
       <form class="sm-add" data-sm-add novalidate>
         <h3 class="as-series-label">Add a series</h3>
         <label class="ui-visually-hidden" for="smNewName">New series name</label>
@@ -1066,7 +1114,7 @@ if ($isAdmin && $seriesOn && $collection) {
         <p class="text-secondary sm-help">Drop a sub-folder per series (<code>…/Series 3/</code>), then rescan: new folders become series, new files land as “To Review”.</p>
         <div class="sm-actions">
           <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-sm-rescan>Rescan folders</button>
-          <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-sm-repair title="Rewrite the media/tires/ server rules (.htaccess) and make every render readable by the web server (0644 / 0755)">Repair server rules</button>
+          <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-sm-repair title="Rewrite the media/tires/ server rules (.htaccess) and make every image readable by the web server (0644 / 0755)">Repair server rules</button>
         </div>
       </div>
     </div>

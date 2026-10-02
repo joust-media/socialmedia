@@ -358,6 +358,39 @@ function companyHasTires(array $company, ?PDO $pdo = null): bool {
 }
 
 /**
+ * True when the tires MODULE is switched on for the company (company_modules) — the condition add-feature.php
+ * ("New tire") requires. companyHasTires() is wider (module on OR any tire rows) and decides the Tires tab;
+ * this one decides where "New tire" is offered (+ New menu, the Tires list).
+ */
+if (!function_exists('companyTiresModuleOn')) {
+    function companyTiresModuleOn(array $company, ?PDO $pdo = null): bool {
+        static $cache = [];
+        $cid = (int)($company['id'] ?? 0);
+        if ($cid <= 0) return false;
+        if (array_key_exists($cid, $cache)) return $cache[$cid];
+        if ($pdo === null) { $pdo = $GLOBALS['pdo'] ?? null; }
+        if (!$pdo instanceof PDO) return false;
+        try {
+            $s = $pdo->prepare("SELECT 1 FROM company_modules cm INNER JOIN modules m ON m.id = cm.module_id
+                                 WHERE cm.company_id = ? AND m.slug = 'tires' LIMIT 1");
+            $s->execute([$cid]);
+            return $cache[$cid] = (bool)$s->fetchColumn();
+        } catch (Throwable $e) {
+            error_log('companyTiresModuleOn failed: ' . $e->getMessage());
+            return $cache[$cid] = false;
+        }
+    }
+}
+
+/** The client's word for its tire content ("Tires" unless companies.feature_label says otherwise) — tab, titles, copy. */
+if (!function_exists('tiresLabel')) {
+    function tiresLabel(?array $company): string {
+        $l = trim((string)($company['feature_label'] ?? ''));
+        return $l !== '' ? $l : 'Tires';
+    }
+}
+
+/**
  * Render the page chrome for a client page: the large-title nav bar plus the
  * role-aware tab bar (partials/navbar.php + partials/tabbar.php).
  *
@@ -1659,8 +1692,9 @@ if (!function_exists('activityFinalizeRows')) {
                     else                     { $objT = $objH = $lead; }
                     break;
                 case 'collection':
-                    if (!$many && $r['name'] !== '') { $objT = 'the ' . $r['name'] . ' collection'; $objH = 'the <em>' . $h($r['name']) . '</em> collection'; }
-                    else                             { $objT = $objH = $many ? $n . ' collections' : 'a collection'; }
+                    // (internal 'collection' = a tire; the UI only ever says "tire")
+                    if (!$many && $r['name'] !== '') { $objT = $r['name']; $objH = '<em>' . $h($r['name']) . '</em>'; }
+                    else                             { $objT = $objH = $many ? $n . ' tires' : 'a tire'; }
                     break;
                 case 'task':
                     if (!$many && $r['name'] !== '') { $objT = $r['name']; $objH = '<em>' . $h($r['name']) . '</em>'; }
@@ -1743,21 +1777,21 @@ if (!function_exists('activityFinalizeRows')) {
                     $verb = 'removed'; $icon = 'xmark'; $tone = 'neutral';
                     // The entity is gone, so no name resolves; say what kind of thing it was.
                     $kind = $r['thing'] === 'image' ? ($many ? $n . ' images' : 'an image')
-                          : ($r['thing'] === 'collection' ? ($many ? $n . ' collections' : 'a collection')
+                          : ($r['thing'] === 'collection' ? ($many ? $n . ' tires' : 'a tire')
                           : ($r['thing'] === 'post' ? ($many ? $n . ' posts' : 'a post')
                           : ($r['thing'] === 'email' ? ($many ? $n . ' emails' : 'an email')
                           : ($r['thing'] === 'flow' ? ($many ? $n . ' flows' : 'a flow')
                           : ($r['thing'] === 'page' ? ($many ? $n . ' pages' : 'a page')
                           : ($r['thing'] === 'series' ? ($many ? $n . ' series' : 'a series') : $objT))))));
                     $t = "$who removed $kind"; $hh = "$whoH removed " . $h($kind); break;
-                // tire series (entity_type = 'tire_series') + renders
+                // tire series (entity_type = 'tire_series') + their images
                 case 'scanned':
-                    $verb = 'added renders'; $icon = 'photo'; $tone = 'accent';
-                    $t = "$who added new renders to $objT"; $hh = "$whoH added new renders to $objH"; break;
+                    $verb = 'added images'; $icon = 'photo'; $tone = 'accent';
+                    $t = "$who added new images to $objT"; $hh = "$whoH added new images to $objH"; break;
                 case 'uploaded':
                     $verb = 'uploaded'; $icon = 'photo'; $tone = 'accent';
-                    // pages (entity_type = 'page'): files, not renders
-                    $what = $r['entity_type'] === 'page' ? 'files' : 'renders';
+                    // pages (entity_type = 'page'): files; tire series: images
+                    $what = $r['entity_type'] === 'page' ? 'files' : 'images';
                     $t = "$who uploaded $what to $objT"; $hh = "$whoH uploaded $what to $objH"; break;
                 case 'deleted_file':
                     $verb = 'removed a file'; $icon = 'xmark'; $tone = 'neutral';

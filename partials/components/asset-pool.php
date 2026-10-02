@@ -173,7 +173,7 @@ if (!function_exists('studioAssetFromTireRow')) {
             'dir'          => $dir,
             'label'        => $label,
             'group'        => 'tire:' . (int)$row['tire_id'],
-            'group_label'  => (string)($row['tire_name'] ?? 'Collection'),
+            'group_label'  => (string)($row['tire_name'] ?? 'Tire'),
             'series'       => !empty($row['series_id']) ? (string)(int)$row['series_id'] : 'ref',   // 'ref' = a reference image
             'series_label' => (string)($row['series_name'] ?? ''),
             'ext'          => $ext,
@@ -414,7 +414,7 @@ if (!function_exists('studioAttachAssetsToPost')) {
             if (!$a) {
                 $isLibrary = $p['kind'] === 'library';
                 throw new StudioAssetException(
-                    ($isLibrary ? 'Library image' : 'Collection image') . ' #' . $p['id']
+                    ($isLibrary ? 'Library image' : 'Tire image') . ' #' . $p['id']
                     . ' is not an approved asset for ' . ($client['name'] ?? 'this client') . '.', 403);
             }
             $resolved[] = $a;

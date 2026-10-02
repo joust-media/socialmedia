@@ -1,0 +1,216 @@
+/* =====================================================================
+   Admin tool pages (body.page-tool) — AI Builder (build.php), New tire /
+   Edit tire (add-feature.php), Prompt Library (prompts.php, add-prompt.php),
+   Vehicle Library (vehicles.php, add-vehicle.php).
+   They use the shared shell (partials/layout-top.php: large title, back to
+   Manage → Tools, tab bar, Appearance) and the components in
+   components.css / studio.css (ui-card, inset lists, ui-input, studio-label,
+   studio-chip, studio-alert). This file only adds the page-specific pieces.
+   Tokens only; transform / opacity are the only animated properties.
+   ===================================================================== */
+
+/* Intro line under the large title */
+.tl-intro {
+  margin: 0 0 16px; padding: 0 4px;
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead);
+  color: var(--label-secondary);
+}
+.tl-intro strong { color: var(--label); font-weight: 600; }
+
+/* Cards: spacing + a heading row with trailing buttons */
+.tl-card { margin: 0 0 16px; }
+.tl-card .ui-card-header { flex-wrap: wrap; align-items: flex-start; }
+.tl-card .ui-card-heading { flex: 1 1 220px; min-width: 0; }
+.tl-card-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.tl-card-actions .ui-icon { width: 16px; height: 16px; }
+.tl-step {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; margin-right: 8px; border-radius: 50%;
+  background: var(--accent); color: #fff;
+  font-size: var(--text-caption); font-weight: 700; vertical-align: 1px;
+}
+
+/* Form bits */
+.tl-fields { display: flex; flex-direction: column; gap: 16px; }
+.tl-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 599.98px) { .tl-grid { grid-template-columns: minmax(0, 1fr); } }
+.tl-subhead {
+  margin: 20px 0 10px; padding: 14px 2px 0;
+  box-shadow: inset 0 0.5px 0 var(--separator);
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: 0.2px;
+  font-weight: 600; text-transform: uppercase; color: var(--label-secondary);
+}
+.tl-subhead .text-tertiary { text-transform: none; font-weight: 400; letter-spacing: var(--ls-footnote); }
+.tl-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.tl-actions--start { justify-content: flex-start; }
+.tl-mono { font-family: var(--font-mono); font-size: var(--text-subhead); }
+.tl-code {
+  font-family: var(--font-mono); font-size: var(--text-caption);
+  padding: 1px 5px; border-radius: 5px;
+  background: var(--fill-tertiary); color: var(--accent);
+}
+.tl-danger-zone { margin: 8px 0 24px; text-align: center; }
+.tl-danger-zone form { display: inline; }
+
+/* Search row (prompts / vehicles): never wider than the screen — the input shrinks, the buttons stay whole */
+.tl-search { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; min-width: 0; }
+.tl-search .ui-input { flex: 1 1 auto; min-width: 0; width: auto; }
+.tl-search .ui-btn { flex: 0 0 auto; }
+.tl-filters { margin: 0 0 10px; }
+.tl-active { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.tl-active .studio-chip .ui-icon { width: 14px; height: 14px; }
+
+/* List rows with their own buttons (prompts, vehicles): actions drop under the text on a phone */
+.tl-row { align-items: flex-start; }
+.tl-row .ui-row-trailing { align-self: center; }
+.tl-row form { display: inline-flex; margin: 0; }
+.tl-kicker {
+  margin: 0 0 2px;
+  font-size: var(--text-caption); line-height: var(--lh-caption); letter-spacing: 0.3px;
+  font-weight: 600; text-transform: uppercase; color: var(--label-secondary);
+}
+.tl-preview {
+  margin-top: 2px;
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote);
+  color: var(--label-secondary); overflow-wrap: anywhere;
+}
+.tl-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.tl-tag {
+  display: inline-flex; align-items: center; min-height: 22px; padding: 2px 9px;
+  border-radius: var(--radius-pill); background: var(--fill-tertiary); color: var(--label-secondary);
+  font-size: var(--text-caption); line-height: var(--lh-caption); font-weight: 500; text-decoration: none;
+}
+a.tl-tag:hover { color: var(--accent); }
+.tl-tag--accent { background: rgba(0,122,255,.12); color: var(--accent); }
+@media (max-width: 599.98px) {
+  .tl-row { flex-wrap: wrap; }
+  .tl-row .ui-row-trailing { flex: 1 1 100%; justify-content: flex-end; }
+  .tl-row--leading .ui-row-trailing { padding-left: 68px; justify-content: flex-start; }
+}
+
+/* Tables (Variables reference) */
+.tl-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* ---------------------------------------------------------------------
+   AI Builder (build.php)
+   --------------------------------------------------------------------- */
+.tl-context { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.tl-ref-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+.tl-ref-grid:empty { display: none; }
+.tl-ref {
+  position: relative; padding: 0; border: 0; cursor: pointer;
+  aspect-ratio: 1 / 1; border-radius: var(--radius-thumb); overflow: hidden;
+  background: var(--fill-tertiary); color: #fff; text-align: left;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.tl-ref:active { transform: scale(0.97); }
+.tl-ref img, .tl-ref video { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+.tl-ref::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; }
+.tl-ref.selected::after { box-shadow: inset 0 0 0 3px var(--accent); }
+.tl-ref-check {
+  position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.45); box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.9);
+  opacity: 0; transition: opacity var(--dur-fast) var(--ease-out);
+}
+.tl-ref-check .ui-icon { width: 14px; height: 14px; stroke-width: 3; }
+.tl-ref.selected .tl-ref-check { opacity: 1; background: var(--accent); }
+.tl-ref-src {
+  position: absolute; top: 6px; left: 6px; padding: 2px 7px; border-radius: var(--radius-pill);
+  background: rgba(0,0,0,.55); font-size: 10px; line-height: 14px; font-weight: 700; letter-spacing: .3px; text-transform: uppercase;
+}
+.tl-ref-label {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 16px 8px 6px;
+  background: linear-gradient(transparent, rgba(0,0,0,.75));
+  font-size: var(--text-caption); line-height: var(--lh-caption); font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tl-ref-play { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 28px; height: 28px; pointer-events: none; }
+.tl-final { min-height: 140px; font-size: var(--text-subhead); line-height: 1.5; }
+.tl-final-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 12px; }
+.tl-gate { margin: 8px 0 0; font-size: var(--text-footnote); color: var(--pending); }
+.tl-gate[hidden] { display: none; }
+
+/* ---------------------------------------------------------------------
+   New tire / Edit tire (add-feature.php): reference images
+   --------------------------------------------------------------------- */
+.tl-images { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.tl-image {
+  display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 12px; align-items: start;
+  padding: 12px; border-radius: var(--radius-list); background: var(--fill-tertiary);
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.tl-image.marked { opacity: .45; }
+.tl-image-thumb { position: relative; width: 96px; height: 96px; border-radius: 10px; overflow: hidden; background: var(--bg-elevated); }
+.tl-image-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; transition: opacity var(--dur-fast) var(--ease-out); }
+.tl-image-thumb.replacing img { opacity: .4; }
+.tl-image-replace {
+  position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%);
+  padding: 3px 9px; border: 0; border-radius: var(--radius-pill);
+  background: rgba(0,0,0,.65); color: #fff; white-space: nowrap;
+  font-size: var(--text-caption); line-height: var(--lh-caption); font-weight: 600; cursor: pointer;
+}
+.tl-image-replace:disabled { cursor: wait; }
+.tl-image-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.tl-image-body .ui-input { min-height: 38px; padding: 7px 10px; font-size: var(--text-subhead); background: var(--bg-elevated); }
+.tl-image-name { position: relative; }
+.tl-image-name .ui-input { padding-right: 52px; font-family: var(--font-mono); font-size: var(--text-footnote); }
+.tl-image-ext { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-family: var(--font-mono); font-size: var(--text-caption); color: var(--label-secondary); pointer-events: none; }
+.tl-image-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.tl-image-status .studio-chip { min-height: 28px; padding: 3px 10px; }
+.tl-image-status .studio-chip:disabled { cursor: wait; opacity: .6; }
+.tl-image-status .studio-chip.is-active[data-status-set="pending"]  { background: var(--pending); color: #fff; }
+.tl-image-status .studio-chip.is-active[data-status-set="approved"] { background: var(--approve); color: #fff; }
+.tl-image-status .studio-chip.is-active[data-status-set="denied"]   { background: var(--deny); color: #fff; }
+.tl-status-hint { font-size: var(--text-footnote); color: var(--label-secondary); }
+.tl-status-hint.saved { color: var(--approve); font-weight: 600; }
+.tl-status-hint.error { color: var(--deny); font-weight: 600; }
+.tl-image-meta { font-size: var(--text-caption); color: var(--label-secondary); }
+.tl-image-remove { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: var(--text-caption); font-weight: 600; color: var(--label-secondary); cursor: pointer; }
+.tl-image-remove input { width: 18px; height: 18px; margin: 0; accent-color: var(--deny); }
+.tl-comments { padding: 10px 12px; border-radius: 10px; background: var(--bg-elevated); }
+.tl-comments .comment-thread { display: flex; flex-direction: column; gap: 6px; }
+.tl-comments .comment-msg { padding: 6px 10px; border-radius: 8px; background: var(--fill-tertiary); }
+.tl-comments .comment-msg-client { box-shadow: inset 3px 0 0 var(--accent); }
+.tl-comments .comment-msg-admin { box-shadow: inset 3px 0 0 var(--joust); }
+.tl-comments .comment-msg-head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 2px; }
+.tl-comments .comment-msg-actor { font-size: var(--text-caption); font-weight: 700; color: var(--label-secondary); text-transform: capitalize; }
+.tl-comments .comment-msg-time { margin-left: auto; font-size: var(--text-caption); color: var(--label-tertiary); }
+.tl-comments .comment-msg-body { font-size: var(--text-footnote); white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 599.98px) {
+  .tl-image { grid-template-columns: 80px minmax(0, 1fr); }
+  .tl-image-thumb { width: 80px; height: 80px; }
+  .tl-image-remove { grid-column: 1 / -1; flex-direction: row; justify-content: flex-start; }
+}
+
+/* ---------------------------------------------------------------------
+   Vehicle form (add-vehicle.php): image tiles
+   --------------------------------------------------------------------- */
+.tl-thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.tl-thumb { position: relative; aspect-ratio: 1 / 1; border-radius: 10px; overflow: hidden; background: var(--fill-tertiary); transition: opacity var(--dur-fast) var(--ease-out); }
+.tl-thumb img, .tl-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tl-thumb.marked { opacity: .4; }
+.tl-thumb-remove {
+  position: absolute; left: 6px; right: 6px; bottom: 6px;
+  display: flex; align-items: center; justify-content: center; gap: 6px; padding: 3px 6px;
+  border-radius: var(--radius-pill); background: rgba(0,0,0,.6); color: #fff;
+  font-size: var(--text-caption); font-weight: 600; cursor: pointer;
+}
+.tl-thumb-remove input { margin: 0; accent-color: var(--deny); }
+
+@media (prefers-reduced-motion: reduce) {
+  .tl-ref, .tl-ref-check, .tl-image, .tl-thumb, .tl-image-thumb img { transition: none; }
+  .tl-ref:active { transform: none; }
+}
+
+/* Phones: back button + "+ New" share the top row and the large title gets its own full-width row below
+   (iOS large-title layout), so "Prompt Library" / "Vehicle Library" never truncate next to the buttons. */
+@media (max-width: 599.98px) {
+  .page-tool .ui-nav-row { flex-wrap: wrap; align-items: center; row-gap: 0; }
+  .page-tool .ui-nav-leading { order: 1; }
+  .page-tool .ui-nav-trailing { order: 2; margin-left: auto; }
+  .page-tool .ui-nav-heading { order: 3; flex: 1 1 100%; }
+}
+/* Footnotes with an inline link read as one sentence (studio.css lays .studio-help out as a flex row) */
+.page-tool p.studio-help { display: block; }

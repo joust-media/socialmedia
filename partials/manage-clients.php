@@ -160,9 +160,9 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
           ?>
             <li class="studio-client-mod-row" data-client-module="<?= esc($scKey) ?>">
               <div class="studio-client-mod-body">
-                <div class="ui-row-title"><?= esc($scLabel) ?></div>
+                <div class="ui-row-title"><?= esc($scKey === 'tires' ? tiresLabel($scEdit) . ' tab' : $scLabel) ?></div>
                 <div class="ui-row-subtitle"><?= $scKey === 'tires'
-                    ? 'Shows the ' . esc(trim((string)($scEdit['feature_label'] ?? '')) !== '' ? $scEdit['feature_label'] : 'Collections') . ' tab. It also appears on its own once the client has a tire.'
+                    ? 'Shows the ' . esc(tiresLabel($scEdit)) . ' tab and “New tire”. The tab also appears on its own once the client has a tire.'
                     : ($scKey === 'pages'
                         ? 'Shows the Pages tab even with zero pages. It also appears on its own once the client has a page.'
                         : 'Shows the Emails tab even with zero emails. It also appears on its own once the client has an email.') ?></div>

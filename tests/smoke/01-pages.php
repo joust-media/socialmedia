@@ -17,6 +17,8 @@ $adminPages = [
     'projects.php?client=kenda', 'drive.php',
     'add-feature.php?client=kenda&module=tires', 'add-feature.php?client=kenda&module=tires&edit_item=1',
     'prompts.php', 'vehicles.php', 'build.php?client=kenda',
+    'assets.php', 'assets.php?view=collections', 'assets.php?client=kenda&view=library', 'assets.php?client=hmf',
+    'add-prompt.php', 'add-prompt.php?edit=1', 'add-vehicle.php', 'prompts.php?cat=camera&q=mm&tag=x', 'vehicles.php?q=x&make=y&type=z',
 ];
 foreach ($adminPages as $p) {
     test("admin 200 /{$p}", function () use ($p) {
@@ -63,7 +65,7 @@ foreach ($retired as $from => $to) {
 $adminOnly = ['manage.php', 'manage.php?client=kenda', 'manage.php?client=kenda&section=export', 'manage.php?client=kenda&section=tools',
               'studio.php?client=kenda', 'admin.php?client=kenda', 'legacy/admin.php?client=kenda', 'add-post.php?client=kenda', 'batch.php?client=kenda', 'add-email.php?client=privacybee',
               'add-page.php?client=privacybee', 'drive.php', 'add-feature.php?client=kenda&module=tires', 'prompts.php', 'vehicles.php',
-              'build.php?client=kenda', 'migrate.php'];
+              'add-prompt.php', 'add-vehicle.php', 'build.php?client=kenda', 'migrate.php'];
 foreach ($adminOnly as $p) {
     test("client → login /{$p}", function () use ($p) {
         $r = get($p, 'client');
@@ -86,9 +88,10 @@ test('+ New menu: admin, every page, module-aware items', function () {
     ok(preg_match('#href="[^"]*posts\.php\?client=kenda&amp;upload=1"[^>]*data-new-action="upload"#', get('?client=kenda', 'admin')['body']) === 1, 'upload item: no-JS link = Posts with the Upload sheet');
     has(get('', 'admin')['body'], 'data-new-menu', 'unscoped Home too');
 });
-test('Home "Upload" opens the Upload sheet (no-JS: Posts with the sheet open, not Compose)', function () {
+test('Home: "+ New" is the one place to create (Upload → the Upload sheet; no duplicate tiles, no Studio links)', function () {
     $r = status(get('?client=kenda', 'admin'), 200);
-    ok(preg_match('#href="[^"]*posts\.php\?client=kenda&amp;upload=1" data-upload-open[^>]*>.{0,1500}?<span>Upload</span>#s', $r['body']) === 1);
+    ok(preg_match('#href="[^"]*posts\.php\?client=kenda&amp;upload=1" data-new-action="upload"#', $r['body']) === 1, '+ New → Upload');
+    hasNot($r['body'], 'class="home-quick"', 'no New post / Upload tiles');
     hasNot($r['body'], 'admin.php');
     hasNot($r['body'], 'studio.php');
 });

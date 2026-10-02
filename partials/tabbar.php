@@ -13,8 +13,9 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
  *           (isAdmin()), not CSS.
  *   Tires:  only for companies with the tires module enabled or at least one
  *           tires row (companyHasTires(), helpers.php). Labelled with the
- *           company's own word (companies.feature_label, "Tires" for Kenda;
- *           "Collections" when unset) and linking to assets.php?view=collections.
+ *           company's own word (companies.feature_label; "Tires" when unset — tiresLabel())
+ *           and linking to assets.php?view=collections. Tire content lives ONLY there: Assets
+ *           is the Library (assets.php without view=collections), with no Library · Tires switch.
  *   Emails / Pages: only for companies with the module enabled or at least one
  *           row (companyHasEmails() / companyHasPages()) — same for both roles.
  *
@@ -35,8 +36,7 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
  * change 'page' (and the 'scripts' aliases) below.
  */
 if (!defined('UI_TABS_MAX_ADMIN')) { define('UI_TABS_MAX_ADMIN', 6); }
-$uiTiresLabel = trim((string)($client['feature_label'] ?? ''));
-if ($uiTiresLabel === '') { $uiTiresLabel = 'Collections'; }
+$uiTiresLabel = function_exists('tiresLabel') ? tiresLabel($client ?? null) : 'Tires';
 
 $uiTabs = [
     'home'     => ['label' => 'Home',     'icon' => 'house',     'page' => 'index.php',

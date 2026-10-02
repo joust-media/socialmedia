@@ -466,9 +466,9 @@
 
   /* ---- step 2: destination ---- */
   var DEST = {
-    series:    { icon: 'tire',  title: 'Tire series', sub: function () { return 'Renders the client reviews in Assets → ' + featureLabel() + ' · images and video'; } },
-    reference: { icon: 'ref',   title: 'Tire reference', sub: function () { return 'Photos of the real tire that renders are compared with · images only, ' + ((S.init.limits || {}).reference || 6) + ' per tire'; } },
-    library:   { icon: 'photo', title: 'Library', sub: function () { return 'Brand images and video for ' + S.init.client.name + ', reviewed in Assets → Library'; } },
+    series:    { icon: 'tire',  title: 'Tire series', sub: function () { return 'Images the client reviews in ' + featureLabel() + ', one series at a time · images and video'; } },
+    reference: { icon: 'ref',   title: 'Tire reference', sub: function () { return 'Photos of the real tire that series images are compared with · images only, ' + ((S.init.limits || {}).reference || 6) + ' per tire'; } },
+    library:   { icon: 'photo', title: 'Library', sub: function () { return 'Brand images and video for ' + S.init.client.name + ', reviewed in Assets'; } },
     post:      { icon: 'grid',  title: 'New post', sub: function () { return 'Make a post from these files — saved as a Draft only you can see'; } }
   };
   function featureLabel() { return (S.init.client && S.init.client.label) || 'Tires'; }

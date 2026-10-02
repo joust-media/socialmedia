@@ -21,8 +21,13 @@ const { run } = require('./lib');
       await page.mouse.click(10, 400);
       expect(!(await page.isVisible('[data-new-menu-panel]')), 'closed by outside click');
     });
-    await test('only post + upload for a client without Emails / Pages', async (page) => {
+    await test('post + upload + New tire for a tires client without Emails / Pages', async (page) => {
       await page.goto(url('?client=kenda'));
+      const actions = await page.$$eval('[data-new-action]', (els) => els.map((e) => e.dataset.newAction));
+      expect.eq(actions.join(','), 'post,upload,tire');
+    });
+    await test('only post + upload for a client with no modules', async (page) => {
+      await page.goto(url('?client=hmf'));
       const actions = await page.$$eval('[data-new-action]', (els) => els.map((e) => e.dataset.newAction));
       expect.eq(actions.join(','), 'post,upload');
     });

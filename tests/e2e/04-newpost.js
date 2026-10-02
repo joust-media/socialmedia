@@ -95,9 +95,11 @@ async function load(page, url, id) {
         await page.keyboard.press('Escape');
         await page.waitForSelector('.np-root', { state: 'detached' });
         expect.eq(await page.$$eval('.ui-nav [data-newpost]', (e) => e.length), 0, 'Posts header: only the global + New');
-        for (const p of ['?client=kenda']) {
+        for (const p of ['?client=kenda']) {   // Home: its own New post tile is gone — "+ New" is the one entry point there too
           await page.goto(url(p));
-          await page.click('[data-newpost]');
+          expect.eq(await page.$$eval('main [data-newpost]', (e) => e.length), 0, 'Home: no duplicate New post tile');
+          await page.click('[data-new-menu-toggle]');
+          await page.click('[data-new-action="post"]');
           await page.waitForSelector(sel.root);
           await page.keyboard.press('Escape');
           await page.waitForSelector('.np-root', { state: 'detached' });

@@ -192,7 +192,7 @@ function npResolveSlides(PDO $pdo, array $client, array $slides, array $existing
     foreach ($slides as $s) {
         if ($s['type'] === 'asset') {
             $a = studioResolveAsset($pdo, $client, $s['kind'], $s['id']);
-            if (!$a) npFail(403, ($s['kind'] === 'library' ? 'Library image' : 'Collection image') . ' #' . $s['id'] . ' is not an approved asset for ' . $client['name'] . '.', ['ref' => $s['ref']]);
+            if (!$a) npFail(403, ($s['kind'] === 'library' ? 'Library image' : 'Tire image') . ' #' . $s['id'] . ' is not an approved asset for ' . $client['name'] . '.', ['ref' => $s['ref']]);
             $resolved[] = $s + ['asset' => $a];
         } elseif ($s['type'] === 'upload') {
             $c = uploadClaimRead($s['token'], 'post', (string)$client['slug']);

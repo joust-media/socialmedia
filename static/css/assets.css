@@ -1,6 +1,6 @@
 /* =====================================================================
    Joust client portal — Assets (spec §4.2)
-   Library grid / Collections list / full-screen media viewer.
+   Library grid (Assets tab) / Tires list + a tire's grid (Tires tab) / full-screen media viewer.
    Builds on tokens.css + components.css; class prefixes: .as-* (page),
    .ui-viewer* (viewer, shared by later phases). Animates transform/opacity only.
    ===================================================================== */
@@ -9,7 +9,8 @@
    Controls under the large title
    --------------------------------------------------------------------- */
 .as-controls { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 16px; }
-.as-controls .ui-segmented { max-width: 560px; }   /* Library · Collections: no full-width stretch on wide screens */
+.as-controls:empty { display: none; }
+.as-empty .ui-btn { margin-top: 14px; }
 .as-filters {
   display: flex; gap: 6px; flex-wrap: nowrap;
   overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
@@ -228,6 +229,9 @@
    12px radius, square object-fit: cover)
    --------------------------------------------------------------------- */
 .as-grid { padding-bottom: 8px; }
+/* Assets / Tires sit in the same 720px frame as every top-level page: 3-up on phones, 4-up from 600px
+   (components.css .ui-grid goes 5–6-up on a wide window, which would make ~130px tiles in this column). */
+@media (min-width: 600px) { .as-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .as-thumb {
   padding: 0; margin: 0; border: 0; cursor: pointer;
   background: var(--fill-tertiary); color: inherit;
