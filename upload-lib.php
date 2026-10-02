@@ -15,6 +15,8 @@
  *   replace         uploadReplaceApply(): the one implementation behind replace-image.php and the
  *                   `replace` purpose of upload-chunk.php (post_images / tire_images rows).
  *   feature         uploadFeatureInsert(): a reference image row for a tire (add-feature.php's contract).
+ *   library         uploadLibraryStore(): a file for the brand's Library — media/library/<slug>/<name>, a
+ *                   'pending' library_images row (the same status syncLibraryImages() gives an FTP drop).
  *
  * Every function is function_exists-guarded and does no work at load.
  */
@@ -510,6 +512,66 @@ if (!function_exists('uploadFeatureInsert')) {
             'image' => $row + ['src' => basePath() . '/' . $url, 'thumb' => $thumb !== '' ? $thumb : basePath() . '/' . $url],
             'count' => $have + 1,
             'max'   => $max,
+        ]];
+    }
+}
+
+// ---------------------------------------------------------------------
+// Library (the Upload sheet's "Library" destination)
+// ---------------------------------------------------------------------
+
+if (!function_exists('uploadLibraryStore')) {
+    /**
+     * Put a validated file into the brand's Library: media/library/<slug>/<stem>.<ext> (stem = the original
+     * name through safeFilenameStem(); "-2", "-3" … when the name is taken on disk OR by a library_images row,
+     * so a new file can never inherit an old row's approval), 0644, the row inserted as 'pending' — the status
+     * syncLibraryImages() gives a file dropped in by FTP — and the sm / lg previews made (preview-lib.php).
+     * Returns ['code' => 200|500, 'body' => reply]; the reply carries image {id, filename, src, thumb, status, type}.
+     */
+    function uploadLibraryStore(PDO $pdo, array $company, string $src, string $origName, string $ext, bool $isVideo, bool $uploaded): array {
+        if (!function_exists('hasLibraryImagesTable') || !hasLibraryImagesTable($pdo)) {
+            return ['code' => 500, 'body' => ['ok' => false, 'error' => 'The Library is not set up yet — run migrate.php.']];
+        }
+        $slug = preg_replace('/[^a-z0-9\-]/', '', strtolower((string)($company['slug'] ?? '')));
+        if ($slug === '') return ['code' => 400, 'body' => ['ok' => false, 'error' => 'Pick a client first']];
+        $dir = libraryDir($slug);
+        if (function_exists('mediaMkdir')) { mediaMkdir($dir, function_exists('mediaRootPath') ? mediaRootPath() : null); } else { @mkdir($dir, 0755, true); }
+        if (!is_dir($dir) || !is_writable($dir)) return ['code' => 500, 'body' => ['ok' => false, 'error' => 'media/library/' . $slug . '/ is not writable on the server']];
+        // Containment: the folder must resolve to media/library/<slug> (no symlink escape).
+        $real = realpath($dir); $rootReal = realpath(dirname($dir));
+        if ($real !== false && $rootReal !== false && $real !== rtrim($rootReal, '/') . '/' . $slug) {
+            return ['code' => 500, 'body' => ['ok' => false, 'error' => 'The Library folder resolves outside media/library/']];
+        }
+        $stem = trim((string)safeFilenameStem(pathinfo(basename($origName), PATHINFO_FILENAME)), '.-_ ');
+        if ($stem === '' || $stem[0] === '.' || preg_match('/[\/\\\\\0]/', $stem)) $stem = 'upload';
+        $taken = $pdo->prepare("SELECT 1 FROM library_images WHERE company_id = ? AND filename = ? LIMIT 1");
+        $name = '';
+        for ($n = 1; $n < 1000; $n++) {
+            $try = $stem . ($n > 1 ? '-' . $n : '') . '.' . $ext;
+            if (file_exists($dir . '/' . $try)) continue;
+            $taken->execute([(int)$company['id'], $try]);
+            if ($taken->fetchColumn()) continue;
+            $name = $try;
+            break;
+        }
+        if ($name === '') return ['code' => 500, 'body' => ['ok' => false, 'error' => 'Could not pick a free file name']];
+        $dest = $dir . '/' . $name;
+        if (!uploadMoveInto($src, $dest, $uploaded)) return ['code' => 500, 'body' => ['ok' => false, 'error' => 'Failed to save the file (check media/library/ permissions)']];
+        try {
+            $ins = $pdo->prepare("INSERT INTO library_images (company_id, filename, status) VALUES (?, ?, 'pending')");
+            $ins->execute([(int)$company['id'], $name]);
+            $id = (int)$pdo->lastInsertId();
+        } catch (Throwable $e) {
+            @unlink($dest);
+            error_log('upload library insert: ' . $e->getMessage());
+            return ['code' => 500, 'body' => ['ok' => false, 'error' => 'Database error']];
+        }
+        if (!$isVideo && function_exists('previewAfterStore')) { try { previewAfterStore($dest); } catch (Throwable $e) { /* previews are best-effort */ } }
+        $url = libraryFileUrl($slug, $name);
+        $pv  = !$isVideo && function_exists('pvUrls') ? pvUrls($url) : ['thumb' => $url, 'large' => $url];
+        return ['code' => 200, 'body' => [
+            'ok'    => true,
+            'image' => ['id' => $id, 'filename' => $name, 'src' => $url, 'thumb' => (string)$pv['thumb'], 'status' => 'pending', 'type' => $isVideo ? 'video' : 'image'],
         ]];
     }
 }

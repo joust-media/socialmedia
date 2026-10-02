@@ -1,24 +1,14 @@
 /* =====================================================================
    Studio (admin only) — extends the Foundation `App` (app.js loads first).
 
-   App.studio.uploads(zone)  Uploads tab: every file goes to upload-chunk.php
-                             (purpose=batch — one request when small, pieces
-                             through App.chunkUpload when large) and its token
-                             is posted to batch-process.php as claimed[] → one
-                             draft post per file; .MOV shows the Safari-only
-                             warning before upload. UploadQueue: files go up as
-                             they are picked (progress / Cancel / Remove, "Resume
-                             N unfinished uploads" after a reload).
-                             (New posts: the New post pop-up, static/js/newpost.js.)
-   App.studio.renders(root)  Renders tab (tire series): tire + series pickers,
-                             sequential queue to tire-upload.php — one request
-                             per small file, files above the server's chunk_size
-                             in pieces through App.chunkUpload (chunk-upload.js:
-                             progress / speed / ETA, per-piece retry, Cancel,
-                             "Resume N unfinished uploads" after a reload); one
-                             batch id per drop, "New series…" created by the
-                             first file; retry, rescan, and the series list
-                             (rename / reorder / delete → tire-status.php).
+   Uploading lives in the Upload sheet (static/js/upload-sheet.js, App.uploadSheet): the Uploads
+   tab and the Renders tab carry a launcher ([data-upload-drop]) that opens it with the destination
+   preselected (Uploads: a draft post per file; Renders: the tire + series picked here), and files
+   dropped on a launcher come along.
+   App.studio.renders(root)  Renders tab (tire series): tire + series pickers that steer the
+                             launcher, the FTP folder, rescan / repair, and the series list
+                             (rename / reorder / delete / Drive link → tire-status.php); a finished
+                             upload (event upload:done) updates the counts and adds a new series.
    App.studio.export(root)   Export tab: scope + include options → live estimate
                              (export.php action=estimate), Build = start then
                              step until done (progress by bytes, ETA, Cancel),
@@ -39,14 +29,6 @@
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
-  }
-
-  /* Link to one post in Posts. The server hands us a clientUrl('posts.php', ['post' => '__ID__'])
-     template (cfg.postUrl) so the URL shape (.php vs. pretty) is decided in one place (helpers.php);
-     the fallback builds the explicit .php form from the base path. */
-  function postUrl(c, id) {
-    var tpl = c.postUrl || ((c.base || '') + '/posts.php?client=' + encodeURIComponent(c.client || '') + '&post=__ID__');
-    return tpl.replace('__ID__', encodeURIComponent(id));
   }
 
   /* Same transformation as posts.js linkTags(): escape → wrap #tags → newlines. */
@@ -73,250 +55,12 @@
     var min = String(d.getMinutes()); if (min.length < 2) min = '0' + min;
     return DAYS[d.getDay()] + ', ' + MONTHS[d.getMonth()] + ' ' + d.getDate() + ' · ' + h + ':' + min + ' ' + ampm;
   }
-  function fileExt(name) { var m = String(name || '').toLowerCase().match(/\.([a-z0-9]+)$/); return m ? m[1] : ''; }
-  function isQuickTime(file) { return fileExt(file.name) === 'mov' || /quicktime/i.test(file.type || ''); }
-  function isVideoFile(file) { return /^video\//i.test(file.type || '') || ['mp4', 'webm', 'mov', 'm4v'].indexOf(fileExt(file.name)) !== -1; }
-  function mb(bytes) { return (bytes / 1024 / 1024).toFixed(bytes > 10 * 1024 * 1024 ? 0 : 1) + ' MB'; }
 
   var ICON = {
     left:  '<svg class="ui-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg>',
     right: '<svg class="ui-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>',
-    x:     '<svg class="ui-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
-    play:  '<svg class="ui-icon" viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>',
-    check: '<svg class="ui-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 5 5L19 7"/></svg>',
     download: '<svg class="ui-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5v11.5"/><path d="m7.5 10.5 4.5 4.5 4.5-4.5"/><path d="M4.5 16v2a2.5 2.5 0 0 0 2.5 2.5h10a2.5 2.5 0 0 0 2.5-2.5v-2"/></svg>',
     drive: '<svg class="ui-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3.5h6l6.5 11.5-3 5.5H5.5l-3-5.5z"/><path d="M2.5 15h19M15 3.5 8.5 15"/></svg>'
-  };
-
-  /* ================================================================== */
-  /* Drop zones (shared)                                                */
-  /* ================================================================== */
-  function bindDrop(zone, input, onFiles) {
-    ['dragenter', 'dragover'].forEach(function (ev) {
-      zone.addEventListener(ev, function (e) { e.preventDefault(); zone.classList.add('is-dragover'); });
-    });
-    ['dragleave', 'drop'].forEach(function (ev) {
-      zone.addEventListener(ev, function (e) { e.preventDefault(); zone.classList.remove('is-dragover'); });
-    });
-    zone.addEventListener('drop', function (e) {
-      var files = e.dataTransfer && e.dataTransfer.files;
-      if (files && files.length) onFiles(Array.prototype.slice.call(files), true);
-    });
-    if (input) input.addEventListener('change', function () { onFiles(Array.prototype.slice.call(input.files || []), false); });
-  }
-  function capLabel(mb) { return mb >= 1024 ? (mb / 1024) + ' GB' : mb + ' MB'; }
-  /* maxMb may be a number (one cap) or {image, video} (per type: images 50 MB, videos 4 GB). */
-  function fileNote(file, maxMb) {
-    var ext = fileExt(file.name);
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov'].indexOf(ext) === -1) return 'Unsupported type';
-    var cap = typeof maxMb === 'object' ? (isVideoFile(file) ? maxMb.video : maxMb.image) : maxMb;
-    if (file.size > cap * 1024 * 1024) return 'Over ' + capLabel(cap);
-    return '';
-  }
-
-  /* ================================================================== */
-  /* UploadQueue — files → upload-chunk.php (purpose=post | batch)      */
-  /*   One row per file (template: thumb / name / meta / progress /     */
-  /*   status / Cancel / Remove), one upload at a time through          */
-  /*   App.chunkUpload.upload (single request when small, pieces when   */
-  /*   large), a claimed[] token per finished file, and the "Resume N   */
-  /*   unfinished uploads" banner after a reload (localStorage ledger). */
-  /*   opts: endpoint, purpose, kind (ledger), list, tpl, resume {box,   */
-  /*   text, input, discard}, maxMb {image, video}, maxFiles, onChange, */
-  /*   onDone(job, data), cancelSel, itemSel                             */
-  /* ================================================================== */
-  function UploadQueue(opts) {
-    var self = this;
-    this.o = opts;
-    this.chunk = App.chunkUpload || null;
-    this.endpoint = opts.endpoint || cfg.upload || 'upload-chunk.php';
-    this.client = opts.client || cfg.client || (document.body.dataset.client || '');
-    this.jobs = []; this.queue = []; this.busy = false; this.pending = [];
-    if (opts.resume && opts.resume.input) opts.resume.input.addEventListener('change', function () { self.resumeFiles(Array.prototype.slice.call(opts.resume.input.files || [])); opts.resume.input.value = ''; });
-    if (opts.resume && opts.resume.discard) opts.resume.discard.addEventListener('click', function () { self.discardResume(); });
-    this.offerResume();
-  }
-  UploadQueue.prototype.available = function () { return !!(this.chunk && this.chunk.upload); };
-  UploadQueue.prototype.active = function () { return this.jobs.filter(function (j) { return j.state !== 'failed' && j.state !== 'removed'; }); };
-  UploadQueue.prototype.done = function () { return this.jobs.filter(function (j) { return j.state === 'done'; }); };
-  UploadQueue.prototype.tokens = function () { return this.done().map(function (j) { return j.token; }).filter(Boolean); };
-  UploadQueue.prototype.inFlight = function () { return this.jobs.some(function (j) { return j.state === 'queued' || j.state === 'uploading' || j.state === 'held'; }); };
-  UploadQueue.prototype.changed = function () { if (this.o.onChange) this.o.onChange(this); };
-  /** A row + job. opts.hold: create the row but do not start (the caller shows a warning first); opts.uploadId: resume. */
-  UploadQueue.prototype.add = function (file, opts) {
-    opts = opts || {};
-    var item = this.o.tpl.content.firstElementChild.cloneNode(true);
-    var job = { file: file, item: item, state: 'held', token: null, data: null, uploadId: opts.uploadId || null, ctl: null, retryable: false };
-    item._job = job;
-    item.setAttribute('data-file-name', file.name);
-    $('[data-upload-name]', item).textContent = file.name;
-    var meta = $('[data-upload-meta]', item);
-    if (meta) meta.textContent = mb(file.size) + (isVideoFile(file) ? ' · video' : (file.type ? ' · ' + file.type.replace(/^image\//, '') : '')) + (job.uploadId ? ' · resuming' : '');
-    var thumb = $('[data-upload-thumb]', item);
-    if (thumb) {
-      if (isVideoFile(file)) { thumb.innerHTML = ICON.play; thumb.classList.add('is-video'); thumb.title = mb(file.size); }   // poster-less: never decode a multi-GB file for a thumbnail
-      else if (/^image\//.test(file.type)) { var img = document.createElement('img'); img.alt = ''; img.src = URL.createObjectURL(file); thumb.appendChild(img); }
-    }
-    this.o.list.appendChild(item);
-    this.jobs.push(job);
-    var status = $('[data-upload-status]', item);
-    var maxFiles = this.o.maxFiles || 0;
-    if (maxFiles && this.active().length > maxFiles) { this.fail(job, 'Up to ' + maxFiles + ' files at a time — not uploaded.'); return job; }
-    var note = fileNote(file, this.o.maxMb || { image: 50, video: 4096 });
-    if (note) { this.fail(job, note + ' — not uploaded.'); return job; }
-    if (!this.available()) { this.fail(job, 'Uploads need chunk-upload.js — reload the page.'); return job; }
-    if (status) status.textContent = 'Waiting…';
-    if (!opts.hold) this.start(job);
-    else this.changed();
-    return job;
-  };
-  UploadQueue.prototype.start = function (job) {
-    if (job.state !== 'held') return;
-    job.state = 'queued';
-    this.queue.push(job);
-    this.changed();
-    this.next();
-  };
-  UploadQueue.prototype.fail = function (job, msg) {
-    job.state = 'failed'; job.token = null;
-    var status = $('[data-upload-status]', job.item), prog = $('[data-upload-progress]', job.item), cancel = $(this.o.cancelSel || '[data-upload-cancel]', job.item);
-    if (status) { status.textContent = msg; status.classList.remove('is-ok'); status.classList.add('is-error'); }
-    if (prog) prog.hidden = true;
-    if (cancel) cancel.hidden = true;
-    job.item.classList.add('is-failed');
-    this.changed();
-  };
-  /** Cancel a queued / running job (the server drops its spool) or remove a finished / failed row (a parked file is discarded). */
-  UploadQueue.prototype.remove = function (job) {
-    var self = this;
-    if (job.state === 'queued') { this.queue = this.queue.filter(function (j) { return j !== job; }); }
-    if (job.state === 'uploading' && job.ctl) { job.ctl.abort(); return; }   // the rejection handler removes the row
-    if (job.state === 'done' && job.token && this.o.purpose !== 'replace') {
-      try { App.post(this.endpoint, { action: 'claim_discard', token: job.token, client: this.client }); } catch (e) {}
-    }
-    job.state = 'removed'; job.token = null;
-    if (job.item.parentNode) job.item.parentNode.removeChild(job.item);
-    this.jobs = this.jobs.filter(function (j) { return j !== job; });
-    this.changed();
-    if (!this.busy) this.next();
-  };
-  UploadQueue.prototype.next = function () {
-    if (this.busy || !this.queue.length) return;
-    var self = this, job = this.queue.shift(), item = job.item, file = job.file;
-    var prog = $('[data-upload-progress]', item), fill = $('[data-upload-fill]', item), status = $('[data-upload-status]', item), cancel = $(this.o.cancelSel || '[data-upload-cancel]', item);
-    this.busy = true; job.state = 'uploading';
-    if (prog) prog.hidden = false;
-    if (status) status.textContent = 'Uploading… 0%';
-    if (cancel) cancel.hidden = false;
-    var fields = Object.assign({ purpose: this.o.purpose, client: this.client, actor: App.actor || 'admin' }, this.o.fields || {});
-    var ctl = this.chunk.upload({
-      endpoint: this.endpoint, file: file, fields: fields, uploadId: job.uploadId || null,
-      onInit: function (d) {
-        job.uploadId = d.upload_id;
-        self.chunk.remember({ id: d.upload_id, kind: self.o.kind || self.o.purpose, endpoint: self.endpoint, client: self.client, name: file.name, size: file.size, type: file.type || '', fields: { purpose: self.o.purpose }, label: self.o.label || '' });
-      },
-      onProgress: function (p) { if (fill) fill.style.transform = 'translateX(' + (p.pct - 100) + '%)'; if (status) status.textContent = 'Uploading… ' + p.text; },
-      onRetry: function (r) { if (status) status.textContent = 'Connection hiccup — retrying that piece (' + r.attempt + ' of ' + r.max + ')…'; }
-    });
-    job.ctl = ctl;
-    var settle = function () { job.ctl = null; if (cancel) cancel.hidden = true; self.busy = false; self.changed(); self.next(); };
-    ctl.promise.then(function (data) {
-      if (job.uploadId) self.chunk.forget(job.uploadId);
-      job.uploadId = null; job.state = 'done'; job.data = data; job.token = data.token || null;
-      if (fill) fill.style.transform = 'translateX(0)';
-      if (status) { status.textContent = 'Uploaded'; status.classList.remove('is-error'); status.classList.add('is-ok'); }
-      if (self.o.onDone) self.o.onDone(job, data);
-      settle();
-    }, function (e) {
-      if (job.uploadId && (!e || e.aborted || !e.retryable || e.expired)) { self.chunk.forget(job.uploadId); job.uploadId = null; }
-      if (e && e.aborted) { job.state = 'removed'; if (job.item.parentNode) job.item.parentNode.removeChild(job.item); self.jobs = self.jobs.filter(function (j) { return j !== job; }); settle(); return; }
-      self.fail(job, (e && e.error) || 'Upload failed');
-      settle();
-    });
-  };
-  /* ---- resume after a reload: the ledger names the unfinished uploads; the user re-picks the same files ---- */
-  UploadQueue.prototype.offerResume = function () {
-    var r = this.o.resume;
-    if (!this.chunk || !r || !r.box) return;
-    var live = {}; this.jobs.forEach(function (j) { if (j.uploadId) live[j.uploadId] = true; });
-    this.pending = this.chunk.list({ kind: this.o.kind || this.o.purpose, client: this.client }).filter(function (e) { return !live[e.id]; });
-    var n = this.pending.length;
-    r.box.hidden = n === 0;
-    if (r.text && n) {
-      var names = this.pending.map(function (e) { return e.name + ' (' + mb(e.size) + ')'; });
-      r.text.textContent = 'Resume ' + n + ' unfinished upload' + (n === 1 ? '' : 's') + ': ' + names.join(', ') + '. Pick the same file' + (n === 1 ? '' : 's') + ' again and the upload continues where it stopped.';
-    }
-  };
-  UploadQueue.prototype.resumeFiles = function (files) {
-    var self = this, matched = [], unmatched = [];
-    files.forEach(function (f) {
-      var e = self.pending.filter(function (p) { return p.name === f.name && Number(p.size) === f.size && matched.indexOf(p) === -1; })[0];
-      if (!e) { unmatched.push(f.name); return; }
-      matched.push(e);
-      self.add(f, { uploadId: e.id });
-    });
-    if (unmatched.length) toast(unmatched.length + ' file' + (unmatched.length === 1 ? ' does' : 's do') + ' not match an unfinished upload (same name and size needed): ' + unmatched.join(', '), { kind: 'error', duration: 6000 });
-    this.offerResume();
-  };
-  UploadQueue.prototype.discardResume = function () {
-    var self = this;
-    if (!this.pending.length) return;
-    if (!window.confirm('Discard ' + this.pending.length + ' unfinished upload' + (this.pending.length === 1 ? '' : 's') + '? The pieces already sent are deleted from the server.')) return;
-    this.pending.forEach(function (e) { self.chunk.abortStored(e); });
-    this.offerResume();
-  };
-
-  /* ================================================================== */
-  /* Uploads zone → batch-process.php (one draft post per file)        */
-  /* ================================================================== */
-  function Uploads(zone) {
-    var self = this;
-    this.zone = zone;
-    this.endpoint = zone.dataset.endpoint || cfg.batch || '';               // batch-process.php: claimed[] = token → one draft post
-    this.uploadEndpoint = zone.dataset.uploadEndpoint || cfg.upload || '';   // upload-chunk.php purpose=batch
-    this.maxMb = { image: parseInt(zone.dataset.maxImageMb, 10) || parseInt(cfg.maxImageMb, 10) || 50, video: parseInt(zone.dataset.maxVideoMb, 10) || parseInt(cfg.maxVideoMb, 10) || 4096 };
-    this.maxFiles = parseInt(zone.dataset.maxFiles, 10) || parseInt(cfg.maxBatchFiles, 10) || 50;
-    this.input = $('[data-upload-input]', zone);
-    this.list = $('[data-upload-list]', zone);
-    this.tpl = $('[data-upload-item-template]', zone);
-    this.queue = new UploadQueue({
-      endpoint: this.uploadEndpoint, purpose: 'batch', kind: 'batch', list: this.list, tpl: this.tpl, maxMb: this.maxMb, maxFiles: this.maxFiles, cancelSel: '[data-upload-cancel]',
-      label: 'Uploads',
-      resume: { box: $('[data-upload-resume]', zone), text: $('[data-upload-resume-text]', zone), input: $('[data-upload-resume-input]', zone), discard: $('[data-upload-resume-discard]', zone) },
-      onDone: function (job, data) { self.createPost(job, data); }
-    });
-    var drop = $('[data-file-drop]', zone);
-    if (drop) bindDrop(drop, this.input, function (files) { files.forEach(function (f) { self.add(f); }); if (self.input) self.input.value = ''; });
-    zone.addEventListener('click', function (e) {
-      var item = e.target.closest('[data-upload-item]');
-      if (!item) return;
-      if (e.target.closest('[data-upload-anyway]')) { $('[data-upload-warning]', item).hidden = true; if (item._job) self.queue.start(item._job); }
-      if (e.target.closest('[data-upload-skip]')) { if (item._job) self.queue.remove(item._job); else item.remove(); }
-      if (e.target.closest('[data-upload-cancel]')) { if (item._job) self.queue.remove(item._job); }
-    });
-  }
-  Uploads.prototype.add = function (file) {
-    // spec §6: .MOV is warned about before upload ("Safari-only playback"); "Upload anyway" starts it —
-    // batch-process.php accepts video/quicktime and keeps the original .mov in uploads/.
-    var hold = isQuickTime(file);
-    var job = this.queue.add(file, { hold: hold });
-    if (hold && job.state === 'held') $('[data-upload-warning]', job.item).hidden = false;
-  };
-  /** The token is in: one draft post for it (batch-process.php keeps its per-row contract: created[0] / errors[0]). */
-  Uploads.prototype.createPost = function (job, data) {
-    var status = $('[data-upload-status]', job.item), prog = $('[data-upload-progress]', job.item);
-    status.textContent = 'Creating the draft post…';
-    App.post(this.endpoint, { 'claimed[]': data.token, client: cfg.client || '' }).then(function (res) {
-      var d = res.data || {}, created = d.created && d.created[0], err = null;
-      if (!res.ok || d.ok === false) err = res.error || d.error || 'Request failed';
-      else if (!created) err = (d.errors && d.errors[0]) || 'Not accepted';
-      if (err) { status.textContent = err; status.classList.remove('is-ok'); status.classList.add('is-error'); if (prog) prog.hidden = true; return; }
-      var when = created.date ? formatWhen(String(created.date).replace(' ', 'T')) : '';
-      var draft = created.status === 'draft';
-      status.innerHTML = (draft ? 'Draft' : 'Post') + ' #' + esc(created.post_id) + (when ? ' · ' + esc(when) : '')
-        + ' — <a href="' + esc(postUrl(cfg, created.post_id)) + '">' + (draft ? 'add a caption, then Send for review' : 'finish it in Posts') + '</a>';
-      status.classList.add('is-ok');
-    });
   };
 
   /* ================================================================== */
@@ -327,38 +71,20 @@
   function Renders(root) {
     var self = this, rc = cfg.renders || {};
     this.root = root; this.rc = rc;
-    this.endpoint = root.dataset.endpoint || rc.endpoint || 'tire-upload.php';
+    this.endpoint = root.dataset.endpoint || rc.endpoint || 'tire-upload.php';         // repair_media
     this.statusEndpoint = root.dataset.statusEndpoint || rc.status || 'tire-status.php';
-    this.maxMb = parseInt(root.dataset.maxMb, 10) || rc.maxMb || 10;                    // images
-    this.maxVideoMb = parseInt(root.dataset.maxVideoMb, 10) || rc.maxVideoMb || 4096;  // videos (chunked: 4 GB; the server's probe is the authority)
     this.tires = rc.tires || [];
-    this.chunk = App.chunkUpload || null; this.info = null; this.infoP = null;          // chunk-upload.js: probe once, then chunk files above chunk_size
-    this.tireSel = $('[data-renders-tire]', root); this.seriesSel = $('[data-renders-series]', root); this.newName = $('[data-renders-new-name]', root);
-    this.newDrive = $('[data-renders-new-drive]', root);                                  // Google Drive link for a "New series…" (posted as series_drive once the first file created it)
-    this.driveOn = !!(rc.driveOn || this.newDrive);
-    this.input = $('[data-renders-input]', root); this.list = $('[data-renders-list]', root); this.tpl = $('[data-renders-item-template]', root);
+    this.tireSel = $('[data-renders-tire]', root); this.seriesSel = $('[data-renders-series]', root);
+    this.launch = $('[data-renders-launch]', root);                                       // opens the Upload sheet on the picked tire + series
     this.seriesList = $('[data-renders-series-list]', root); this.seriesEmpty = $('[data-renders-series-empty]', root);
-    this.summary = $('[data-renders-summary]', root); this.summaryText = $('[data-renders-summary-text]', root);
-    this.resumeBox = $('[data-renders-resume]', root); this.resumeInput = $('[data-renders-resume-input]', root);
-    this.queue = []; this.busy = false; this.jobs = []; this.createdSeries = {}; this.pending = [];
+    this.driveOn = !!rc.driveOn;
     if (!this.tireSel || !this.seriesSel) return;
     this.tireSel.addEventListener('change', function () { rc.series = 0; self.syncSeries(); });
-    this.seriesSel.addEventListener('change', function () { self.syncNewName(); });
-    if (this.newName) this.newName.addEventListener('input', function () { self.syncTarget(); });
-    var drop = $('[data-file-drop]', root);
-    if (drop && this.input) bindDrop(drop, this.input, function (files) { self.addAll(files); if (self.input) self.input.value = ''; });
-    if (this.resumeInput) this.resumeInput.addEventListener('change', function () { self.resumeFiles(Array.prototype.slice.call(self.resumeInput.files || [])); self.resumeInput.value = ''; });
+    this.seriesSel.addEventListener('change', function () { rc.series = parseInt(self.seriesSel.value, 10) || 0; self.syncTarget(); });
     root.addEventListener('click', function (e) {
       if (e.target.closest('[data-renders-copy]')) { self.copyFolder(); return; }
       if (e.target.closest('[data-renders-rescan]')) { self.rescan(e.target.closest('[data-renders-rescan]')); return; }
       if (e.target.closest('[data-renders-repair]')) { self.repair(e.target.closest('[data-renders-repair]')); return; }
-      if (e.target.closest('[data-renders-clear]')) { self.clearList(); return; }
-      if (e.target.closest('[data-renders-retry-all]')) { self.retryFailed(); return; }
-      if (e.target.closest('[data-renders-resume-discard]')) { self.discardResume(); return; }
-      var retry = e.target.closest('[data-renders-retry]');
-      if (retry) { var item = retry.closest('[data-renders-item]'); if (item && item._job) self.retry(item._job); return; }
-      var cancel = e.target.closest('[data-renders-cancel]');
-      if (cancel) { var ci = cancel.closest('[data-renders-item]'); if (ci && ci._job) self.cancel(ci._job); return; }
       var row = e.target.closest('[data-series-row]');
       if (!row) return;
       if (e.target.closest('[data-series-up]'))     { self.moveSeries(row, -1); }
@@ -374,8 +100,9 @@
     root.addEventListener('input', function (e) {
       if (e.target.matches('[data-series-drive]')) { e.target.removeAttribute('aria-invalid'); var w = e.target.closest('[data-series-drive-wrap]'); if (w) w.classList.toggle('is-dirty', true); }
     });
+    // The Upload sheet finished a tire-series run: count the new files, add a series it created, follow it here.
+    document.addEventListener('upload:done', function (e) { self.uploaded(e.detail || {}); });
     this.syncSeries();
-    this.offerResume();
   }
   Renders.prototype.tire = function () {
     var id = parseInt(this.tireSel.value, 10);
@@ -407,24 +134,28 @@
       if (t) o.textContent = t.name + (t.series.length ? ' · ' + t.series.length + ' series' : '');
     });
   };
-  Renders.prototype.syncNewName = function () {
-    var isNew = this.seriesSel.value === NEW_SERIES;
-    if (this.newName) { this.newName.hidden = !isNew; if (isNew) { var t = this.tire(); if (!this.newName.value) this.newName.placeholder = 'Series ' + ((t ? t.series.length : 0) + 1); } }
-    if (this.newDrive) this.newDrive.hidden = !isNew;
-    this.syncTarget();
-  };
-  Renders.prototype.target = function () {
-    var tire = this.tire(); if (!tire) return null;
-    if (this.seriesSel.value === NEW_SERIES) {
-      var n = (this.newName && this.newName.value.trim()) || ('Series ' + (tire.series.length + 1));
-      return { tireId: tire.id, tireName: tire.name, seriesId: 0, newSeries: n, label: n + ' (new)' };
-    }
-    var s = this.seriesOf(tire, parseInt(this.seriesSel.value, 10));
-    return s ? { tireId: tire.id, tireName: tire.name, seriesId: s.id, newSeries: '', label: s.name } : null;
-  };
+  Renders.prototype.syncNewName = function () { this.syncTarget(); };
+  /** The launcher opens the Upload sheet on the tire + series picked here ("New series…" → the sheet names it). */
   Renders.prototype.syncTarget = function () {
-    var t = this.target(), el = $('[data-renders-target]', this.root);
-    if (el) el.textContent = t ? (t.tireName + ' · ' + t.label) : 'the chosen series';
+    var tire = this.tire(); if (!tire || !this.launch) return;
+    var sv = this.seriesSel.value, s = sv === NEW_SERIES ? null : this.seriesOf(tire, parseInt(sv, 10));
+    this.launch.setAttribute('data-upload-tire', String(tire.id));
+    this.launch.setAttribute('data-upload-series', s ? String(s.id) : 'new');
+    var el = $('[data-renders-target]', this.root);
+    if (el) el.textContent = tire.name + ' · ' + (s ? s.name : 'a new series');
+  };
+  /** upload:done {dest, ok, created} from the Upload sheet → counts + a created series in the pickers and the list. */
+  Renders.prototype.uploaded = function (d) {
+    if (!d.dest || d.dest.kind !== 'series' || !d.ok) return;
+    var tire = null, sid = d.dest.series === 'new' ? (d.created && d.created.id) : parseInt(d.dest.series, 10);
+    for (var i = 0; i < this.tires.length; i++) if (this.tires[i].id === parseInt(d.dest.tire, 10)) tire = this.tires[i];
+    if (!tire || !sid) return;
+    var s = this.seriesOf(tire, sid);
+    if (!s && d.created) { s = { id: d.created.id, name: d.created.name || 'Series', slug: '', folder: '', drive_url: null, counts: { pending: 0, approved: 0, denied: 0, total: 0 } }; tire.series.push(s); }
+    if (!s) return;
+    s.counts.pending += d.ok; s.counts.total += d.ok;
+    this.rc.series = s.id;
+    if (this.tireSel.value === String(tire.id)) this.syncSeries(); else this.renderSeriesList();
   };
   Renders.prototype.copyFolder = function () {
     var code = $('[data-renders-folder]', this.root), text = code ? code.textContent : '';
@@ -461,253 +192,6 @@
       if (res.ok) toast(d.summary || 'Server rules repaired', { kind: 'success' });
       else toast(res.error || 'Repair failed', { kind: 'error' });
     });
-  };
-  /* ---- upload queue ---- */
-  Renders.prototype.addAll = function (files) {
-    var self = this, t = this.target();
-    if (!t) { toast('Pick a tire first.', { kind: 'error' }); return; }
-    if (!files.length) return;
-    var batch = 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);   // one batch id per drop
-    files.forEach(function (f) { self.add(f, t, batch); });
-    if (this.summary) this.summary.hidden = false;
-    this.syncSummary();
-  };
-  Renders.prototype.add = function (file, target, batch, opts) {
-    var item = this.tpl.content.firstElementChild.cloneNode(true);
-    var job = { file: file, item: item, target: target, batch: batch, state: 'queued', tries: 0, uploadId: (opts && opts.uploadId) || null, ctl: null };
-    item._job = job;
-    $('[data-upload-name]', item).textContent = file.name;
-    $('[data-upload-meta]', item).textContent = mb(file.size) + ' · ' + target.tireName + ' · ' + target.label + (job.uploadId ? ' · resuming' : '');
-    var thumb = $('[data-upload-thumb]', item);
-    if (isVideoFile(file)) { thumb.innerHTML = ICON.play; }
-    else if (/^image\//.test(file.type)) { var img = document.createElement('img'); img.alt = ''; img.src = URL.createObjectURL(file); thumb.appendChild(img); }
-    this.list.appendChild(item);
-    this.jobs.push(job);
-    var status = $('[data-upload-status]', item);
-    var cap = isVideoFile(file) ? this.maxVideoMb : this.maxMb;   // tire-upload.php: images 10 MB, videos 4 GB (chunked)
-    if (file.size > cap * 1024 * 1024) { this.fail(job, 'Over ' + (cap >= 1024 ? (cap / 1024) + ' GB' : cap + ' MB') + ' — not uploaded.', false); return job; }
-    if (!/^image\/(jpeg|png|gif|webp)$/.test(file.type) && !/^video\/(mp4|webm|quicktime)$/.test(file.type) && ['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'webm', 'mov'].indexOf(fileExt(file.name)) === -1) {
-      this.fail(job, 'Unsupported type — use JPG, PNG, GIF, WebP, MP4, WebM or MOV.', false); return job;
-    }
-    status.textContent = 'Waiting…';
-    this.queue.push(job);
-    this.next();
-    return job;
-  };
-  /** Cancel a queued or in-flight (chunked) job; the server drops its spool. */
-  Renders.prototype.cancel = function (job) {
-    if (job.state === 'queued') { this.queue = this.queue.filter(function (j) { return j !== job; }); this.fail(job, 'Cancelled', false); return; }
-    if (job.state === 'uploading' && job.ctl) job.ctl.abort();
-  };
-  Renders.prototype.fail = function (job, msg, retryable) {
-    job.state = 'failed';
-    var status = $('[data-upload-status]', job.item), prog = $('[data-upload-progress]', job.item), retry = $('[data-renders-retry]', job.item), cancel = $('[data-renders-cancel]', job.item);
-    status.textContent = msg + (job.uploadId && retryable !== false ? ' — Retry continues where it stopped.' : ''); status.classList.remove('is-ok'); status.classList.add('is-error');
-    if (prog) prog.hidden = true;
-    if (retry) retry.hidden = retryable === false;
-    if (cancel) cancel.hidden = true;
-    job.retryable = retryable !== false;
-    this.syncSummary();
-  };
-  Renders.prototype.retry = function (job) {
-    if (job.state !== 'failed' || !job.retryable) return;
-    job.state = 'queued';
-    var status = $('[data-upload-status]', job.item), retry = $('[data-renders-retry]', job.item), fill = $('[data-upload-fill]', job.item);
-    status.textContent = 'Waiting…'; status.classList.remove('is-error');
-    if (retry) retry.hidden = true;
-    if (fill) fill.style.transform = 'translateX(-100%)';
-    this.queue.push(job);
-    this.syncSummary();
-    this.next();
-  };
-  /** Probe the endpoint once (chunk size + caps). Resolves null when chunking is unavailable → single requests. */
-  Renders.prototype.probe = function () {
-    if (this.infoP) return this.infoP;
-    var self = this;
-    this.infoP = (this.chunk ? this.chunk.probe(this.endpoint) : Promise.resolve(null)).then(function (info) { self.info = info; return info; }, function () { return null; });
-    return this.infoP;
-  };
-  /* ---- resume after a reload: the ledger in localStorage names the unfinished uploads; the user re-picks the same files ---- */
-  Renders.prototype.offerResume = function () {
-    if (!this.chunk || !this.resumeBox) return;
-    var client = cfg.client || (document.body.dataset.client || '');
-    var live = {}; this.jobs.forEach(function (j) { if (j.uploadId) live[j.uploadId] = true; });
-    this.pending = this.chunk.list({ kind: 'tire', client: client }).filter(function (e) { return !live[e.id]; });
-    var n = this.pending.length;
-    this.resumeBox.hidden = n === 0;
-    var t = $('[data-renders-resume-text]', this.resumeBox);
-    if (t && n) {
-      var names = this.pending.map(function (e) { return e.name + ' (' + mb(e.size) + ' → ' + (e.label || 'series') + ')'; });
-      t.textContent = 'Resume ' + n + ' unfinished upload' + (n === 1 ? '' : 's') + ': ' + names.join(', ') + '. Pick the same file' + (n === 1 ? '' : 's') + ' again and the upload continues where it stopped.';
-    }
-  };
-  Renders.prototype.resumeFiles = function (files) {
-    var self = this, matched = [], unmatched = [];
-    files.forEach(function (f) {
-      var e = self.pending.filter(function (p) { return p.name === f.name && Number(p.size) === f.size && matched.indexOf(p) === -1; })[0];
-      if (!e) { unmatched.push(f.name); return; }
-      matched.push(e);
-      var fields = e.fields || {}, tire = null;
-      for (var i = 0; i < self.tires.length; i++) if (self.tires[i].id === +fields.tire_id) tire = self.tires[i];
-      var s = tire ? self.seriesOf(tire, +fields.series_id) : null;
-      var label = (e.label || '').split(' · ');
-      var target = { tireId: +fields.tire_id || 0, tireName: tire ? tire.name : (label[0] || 'tire'), seriesId: +fields.series_id || 0, newSeries: '', label: s ? s.name : (label[1] || 'series') };
-      self.add(f, target, 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), { uploadId: e.id });
-    });
-    if (unmatched.length) toast(unmatched.length + ' file' + (unmatched.length === 1 ? ' does' : 's do') + ' not match an unfinished upload (same name and size needed): ' + unmatched.join(', '), { kind: 'error', duration: 6000 });
-    if (matched.length && this.summary) { this.summary.hidden = false; this.syncSummary(); }
-    this.offerResume();
-  };
-  Renders.prototype.discardResume = function () {
-    var self = this;
-    if (!this.pending.length) return;
-    if (!window.confirm('Discard ' + this.pending.length + ' unfinished upload' + (this.pending.length === 1 ? '' : 's') + '? The pieces already sent are deleted from the server.')) return;
-    this.pending.forEach(function (e) { self.chunk.abortStored(e); });
-    this.offerResume();
-  };
-  Renders.prototype.retryFailed = function () { var self = this; this.jobs.forEach(function (j) { if (j.state === 'failed' && j.retryable) self.retry(j); }); };
-  Renders.prototype.clearList = function () {
-    this.jobs = this.jobs.filter(function (j) { return j.state === 'queued' || j.state === 'uploading'; });
-    $$('[data-renders-item]', this.list).forEach(function (li) { if (!li._job || (li._job.state !== 'queued' && li._job.state !== 'uploading')) li.remove(); });
-    if (this.summary) this.summary.hidden = this.jobs.length === 0;
-    this.syncSummary();
-  };
-  Renders.prototype.syncSummary = function () {
-    var ok = 0, fail = 0, left = 0, retry = 0;
-    this.jobs.forEach(function (j) { if (j.state === 'done') ok++; else if (j.state === 'failed') { fail++; if (j.retryable) retry++; } else left++; });
-    if (this.summaryText) this.summaryText.textContent = ok + ' uploaded' + (fail ? ' · ' + fail + ' failed' : '') + (left ? ' · ' + left + ' to go' : '');
-    var ra = $('[data-renders-retry-all]', this.root); if (ra) ra.hidden = retry === 0;
-  };
-  Renders.prototype.next = function () {
-    if (this.busy) return;
-    if (!this.queue.length) { this.finishBatch(); return; }
-    var self = this, job = this.queue.shift(), item = job.item;
-    var prog = $('[data-upload-progress]', item), status = $('[data-upload-status]', item);
-    this.busy = true; job.state = 'uploading'; job.tries++;
-    prog.hidden = false; status.textContent = 'Uploading… 0%';
-    // The server's probe decides: files above chunk_size (and every resumed job) go in pieces, the rest in one request.
-    this.probe().then(function (info) {
-      if (self.chunk && info && (job.uploadId || job.file.size > info.chunk_size)) self.sendChunked(job, info);
-      else self.sendSingle(job);
-    });
-  };
-  /** Shared success handling: the tile turns into an "open in Assets" link, the series picker learns the series. */
-  Renders.prototype.done = function (job, data) {
-    var t = job.target, item = job.item, status = $('[data-upload-status]', item), fill = $('[data-upload-fill]', item), created = this.createdSeries[job.batch];
-    job.state = 'done';
-    if (fill) fill.style.transform = 'translateX(0)';
-    if (data.series && data.series.id) this.noteSeries(job, data.series);
-    var sid = (data.series && data.series.id) || t.seriesId || (created && created.id) || 0;
-    var link = (this.rc.assetsUrl || '').replace('__TIRE__', String(t.tireId)).replace('__SERIES__', String(sid)) + '&image=' + encodeURIComponent(data.image.id);
-    status.innerHTML = 'Uploaded · To Review — <a href="' + esc(link) + '">open in Assets</a>';
-    status.classList.remove('is-error'); status.classList.add('is-ok');
-    if (data.image.thumb) { var th = $('[data-upload-thumb]', item); if (th && !isVideoFile(job.file)) th.innerHTML = '<img src="' + esc(data.image.thumb) + '" alt="">'; }
-  };
-  /** Chunked path (chunk-upload.js): init → pieces with progress / retry → finish; the ledger entry survives a reload. */
-  Renders.prototype.sendChunked = function (job, info) {
-    var self = this, t = job.target, item = job.item, file = job.file;
-    var fill = $('[data-upload-fill]', item), status = $('[data-upload-status]', item), cancel = $('[data-renders-cancel]', item);
-    var client = cfg.client || (document.body.dataset.client || '');
-    var fields = { client: client, tire_id: t.tireId, batch: job.batch, actor: App.actor || 'admin' };
-    var created = this.createdSeries[job.batch];
-    if (t.seriesId) fields.series_id = t.seriesId;
-    else if (created) fields.series_id = created.id;
-    else fields.new_series = t.newSeries;
-    if (cancel) cancel.hidden = false;
-    var ctl = this.chunk.send({
-      endpoint: this.endpoint, file: file, fields: fields, chunkSize: info.chunk_size, uploadId: job.uploadId || null,
-      onInit: function (d) {
-        job.uploadId = d.upload_id;
-        if (d.series && d.series.id) { if (!t.seriesId) self.createdSeries[job.batch] = d.series; fields.series_id = d.series.id; }
-        self.chunk.remember({ id: d.upload_id, kind: 'tire', endpoint: self.endpoint, client: client, name: file.name, size: file.size, type: file.type || '',
-                              fields: { tire_id: t.tireId, series_id: fields.series_id || 0 }, label: t.tireName + ' · ' + t.label });
-      },
-      onProgress: function (p) { if (fill) fill.style.transform = 'translateX(' + (p.pct - 100) + '%)'; status.textContent = 'Uploading… ' + p.text; },
-      onRetry: function (r) { status.textContent = 'Connection hiccup — retrying that piece (' + r.attempt + ' of ' + r.max + ')…'; }
-    });
-    job.ctl = ctl;
-    var settle = function () { job.ctl = null; if (cancel) cancel.hidden = true; self.busy = false; self.syncSummary(); self.next(); };
-    ctl.promise.then(function (data) {
-      self.chunk.forget(job.uploadId); job.uploadId = null;
-      self.done(job, data);
-      settle();
-    }, function (e) {
-      if (e && e.aborted) { self.chunk.forget(job.uploadId); job.uploadId = null; self.fail(job, 'Cancelled', false); settle(); return; }
-      var retryable = !!(e && e.retryable);
-      if (!retryable || (e && e.expired)) { self.chunk.forget(job.uploadId); job.uploadId = null; }
-      self.fail(job, (e && e.error) || 'Upload failed', retryable);
-      settle();
-    });
-  };
-  /** Single-request path (small files): one multipart POST with xhr.upload progress. */
-  Renders.prototype.sendSingle = function (job) {
-    var self = this, item = job.item, file = job.file, t = job.target;
-    var fill = $('[data-upload-fill]', item), status = $('[data-upload-status]', item);
-    var fd = new FormData();
-    fd.append('client', cfg.client || (document.body.dataset.client || ''));
-    fd.append('tire_id', String(t.tireId));
-    // A "New series…" drop: the first file creates it; the reply's series.id is reused for the rest of the batch.
-    var created = this.createdSeries[job.batch];
-    if (t.seriesId) fd.append('series_id', String(t.seriesId));
-    else if (created) fd.append('series_id', String(created.id));
-    else fd.append('new_series', t.newSeries);
-    fd.append('batch', job.batch);
-    fd.append('actor', App.actor || 'admin');
-    fd.append('file', file, file.name);
-    var xhr = new XMLHttpRequest();
-    xhr.upload.addEventListener('progress', function (e) {
-      if (!e.lengthComputable) return;
-      var pct = Math.round(e.loaded / e.total * 100);
-      fill.style.transform = 'translateX(' + (pct - 100) + '%)';
-      status.textContent = 'Uploading… ' + pct + '%';
-    });
-    xhr.onload = function () {
-      var data = null; try { data = JSON.parse(xhr.responseText); } catch (e) {}
-      fill.style.transform = 'translateX(0)';
-      if (!data || data.ok === false || xhr.status >= 400 || !data.image) {
-        var msg = (data && data.error) || ('Upload failed (' + xhr.status + ')');
-        self.fail(job, msg, [400, 403, 404, 409, 413, 415, 422].indexOf(xhr.status) === -1);   // bad request / seat / type / size / not migrated: retrying the same file cannot help
-      } else {
-        self.done(job, data);
-      }
-      self.busy = false; self.syncSummary(); self.next();
-    };
-    xhr.onerror = function () { self.fail(job, 'Network error — try again.', true); self.busy = false; self.next(); };
-    xhr.open('POST', this.endpoint);
-    xhr.setRequestHeader('Accept', 'application/json');
-    xhr.send(fd);
-  };
-  /** The server created (or resolved) a series: remember it for the batch and show it in the pickers/list. */
-  Renders.prototype.noteSeries = function (job, series) {
-    var tire = null, t = job.target;
-    for (var i = 0; i < this.tires.length; i++) if (this.tires[i].id === t.tireId) tire = this.tires[i];
-    if (!tire) return;
-    if (!t.seriesId) this.createdSeries[job.batch] = series;
-    var s = this.seriesOf(tire, series.id);
-    if (!s) { s = { id: series.id, name: series.name || t.newSeries, slug: series.slug || '', folder: series.folder || '', drive_url: series.drive_url || null, counts: { pending: 0, approved: 0, denied: 0, total: 0 } }; tire.series.push(s); }
-    s.counts.pending++; s.counts.total++;
-    var wasNew = this.seriesSel.value === NEW_SERIES;
-    this.rc.series = wasNew ? s.id : parseInt(this.seriesSel.value, 10);
-    if (wasNew && this.newName) this.newName.value = '';
-    // A "New series…" drop with a Drive link: the first file created the series, now attach the link to it (once).
-    if (wasNew && this.newDrive && this.newDrive.value.trim() && !s.drive_url) {
-      var url = this.newDrive.value.trim(), self = this;
-      this.newDrive.value = '';
-      App.post(this.statusEndpoint, { action: 'series_drive', series_id: s.id, drive_url: url, actor: App.actor }).then(function (res) {
-        if (!res.ok) { toast(res.error || 'Could not save the Google Drive link', { kind: 'error', duration: 6000 }); self.renderSeriesList(); return; }
-        s.drive_url = (res.data && res.data.series && res.data.series.drive_url) || url;
-        self.renderSeriesList();
-      });
-    }
-    if (this.tireSel.value === String(tire.id)) this.syncSeries(); else this.renderSeriesList();
-  };
-  Renders.prototype.finishBatch = function () {
-    if (this._toasted === this.jobs.length || !this.jobs.length) return;
-    var ok = 0, fail = 0;
-    this.jobs.forEach(function (j) { if (j.state === 'done') ok++; else if (j.state === 'failed') fail++; });
-    if (ok + fail !== this.jobs.length) return;
-    this._toasted = this.jobs.length;
-    toast(ok + ' uploaded' + (fail ? ' · ' + fail + ' failed' : ''), { kind: fail ? 'error' : 'success', duration: 4000 });
   };
   /* ---- series list: rename / reorder / delete (tire-status.php) ---- */
   Renders.prototype.renderSeriesList = function () {
@@ -1111,7 +595,6 @@
 
   /* ================================================================== */
   App.studio = {
-    uploads:  function (zone) { return new Uploads(zone); },
     renders:  function (root) { return new Renders(root); },
     export:   function (root) { return new Export(root); },
     linkTags: linkTags,
@@ -1120,7 +603,6 @@
   };
 
   function init() {
-    $$('[data-upload-zone]').forEach(function (zone) { App.studio.instances.uploads = new Uploads(zone); });
     $$('[data-renders]').forEach(function (root) { App.studio.instances.renders = new Renders(root); });
     $$('[data-export]').forEach(function (root) { App.studio.instances.export = new Export(root); });
     initHub();

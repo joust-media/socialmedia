@@ -932,6 +932,9 @@
       if (approveBtn) approveBtn.addEventListener('click', function () { self.approveSelected(); });
       var postBtn = $('[data-select-post]');   // admin only (assets.php)
       if (postBtn) postBtn.addEventListener('click', function () { self.postSelected(); });
+      var dlBtn = $('[data-select-download]'), exBtn = $('[data-select-export]');   // admin only: zip / manifest CSV of the approved selection
+      if (dlBtn) dlBtn.addEventListener('click', function () { self.downloadSelected(dlBtn); });
+      if (exBtn) exBtn.addEventListener('click', function () { self.exportSelected(exBtn); });
       document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && self.selecting && !viewer.isOpen) self.setSelecting(false); });
 
       // Video tiles: posters + duration badges are filled by App.video (video.js) from its probe/cache.
@@ -1321,10 +1324,57 @@
     selectedApproved: function () { return this.selectedTiles().filter(function (t) { return t.dataset.status === 'approved'; }); },
     updateSelection: function () {
       var n = this.selectedTiles().length, count = $('[data-select-count]'), btn = $('[data-select-approve]'), post = $('[data-select-post]');
+      var dl = $('[data-select-download]'), ex = $('[data-select-export]');
       var k = this.selectedToApprove().length, m = this.selectedApproved().length;
       if (count) count.textContent = n === 1 ? '1 selected' : n + ' selected';
       if (btn && !this._busyBatch) { btn.disabled = k === 0; btn.textContent = k > 0 ? 'Approve ' + k : 'Approve'; }
-      if (post) { post.disabled = m === 0 || this._busyBatch; post.textContent = m > 0 ? 'Create post with ' + m : 'Create post'; post.title = m === 0 ? 'Select approved images to build a post' : ''; }
+      if (post) { post.disabled = m === 0 || this._busyBatch; post.innerHTML = 'Create post' + (m > 0 ? '<span class="as-sel-n"> with ' + m + '</span>' : ''); post.title = m === 0 ? 'Select approved images to build a post' : ''; }
+      if (dl && !this._busyZip) { dl.disabled = m === 0 || dl.getAttribute('data-zip') === '0'; if (dl.getAttribute('data-zip') === '0') dl.title = 'This server can only export the CSV list (32-bit PHP)'; }
+      if (ex) ex.disabled = m === 0;
+      // One bar, the actions the grid can use: approved grids offer post / Download / Export, the others Approve
+      // (both when the selection mixes them). The client seat only ever has Approve.
+      if (post) {
+        var approvedGrid = this.grid && this.grid.dataset.filter === 'approved';
+        [post, dl, ex].forEach(function (b) { if (b) b.hidden = !(approvedGrid || m > 0); });
+        if (btn) btn.hidden = approvedGrid && k === 0;
+      }
+    },
+    /** The approved selection as export refs (tire:<id> / library:<id>), grid order. */
+    selectedRefs: function () { return this.selectedApproved().map(function (t) { return t.dataset.kind + ':' + t.dataset.id; }); },
+    /** Admin "Download": a zip of the approved selection — export.php scope=selection (start, step until done, then the download). */
+    downloadSelected: function (btn) {
+      var self = this, refs = this.selectedRefs(), ep = btn.getAttribute('data-endpoint');
+      if (!refs.length || this._busyZip || !ep) return;
+      this._busyZip = true; btn.disabled = true; btn.setAttribute('aria-busy', 'true');
+      var label = $('span', btn), was = label ? label.textContent : '';
+      var say = function (t) { if (label) label.textContent = t; };
+      var done = function (msg, kind) {
+        self._busyZip = false; btn.removeAttribute('aria-busy'); say(was); self.updateSelection();
+        if (msg) toast(msg, { kind: kind || 'success', duration: 4000 });
+      };
+      say('Zipping…');
+      App.post(ep, { action: 'start', scope: 'selection', items: refs.join(',') }).then(function (res) {
+        if (!res.ok) { done(res.error || 'Could not start the zip', 'error'); return; }
+        var job = res.data.job, tries = 0;
+        var step = function () {
+          App.post(ep, { action: 'step', job: job }).then(function (r) {
+            if (!r.ok) { if (r.status === 409 && tries++ < 5) { afterMs(800, step); return; } done(r.error || 'The zip failed', 'error'); return; }
+            var d = r.data || {};
+            if (d.bytes) say('Zipping… ' + Math.min(99, Math.floor((d.bytes_done || 0) / d.bytes * 100)) + '%');
+            if (!d.done) { step(); return; }
+            window.location.href = ep + '&action=download&job=' + encodeURIComponent(job);
+            done(refs.length === 1 ? 'Downloading 1 file' : 'Downloading ' + refs.length + ' files as one zip');
+          });
+        };
+        step();
+      });
+    },
+    /** Admin "Export": the selection's manifest CSV (tire, series, file name, approval date, comments, Drive link). */
+    exportSelected: function (btn) {
+      var refs = this.selectedRefs(), ep = btn.getAttribute('data-endpoint');
+      if (!refs.length || !ep) return;
+      window.location.href = ep + '&action=manifest&scope=selection&items=' + encodeURIComponent(refs.join(','));
+      toast('Exporting the list of ' + refs.length + (refs.length === 1 ? ' file' : ' files') + ' (CSV)', { kind: 'success' });
     },
     /** Admin: the approved selection → the New post pop-up (newpost.js), in tap order of the grid. */
     postSelected: function () {

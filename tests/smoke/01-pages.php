@@ -40,11 +40,11 @@ foreach ($clientPages as $p) {
     });
 }
 
-// Retired composer routes (the New post pop-up replaced them): every old link lands somewhere that works.
+// Retired composer / upload routes (the New post pop-up and the Upload sheet replaced them): every old link lands somewhere that works.
 $retired = [
     'studio.php?client=kenda&tab=compose'  => 'studio.php?client=kenda&newpost=1',
-    'studio.php?client=kenda&tab=batch'    => 'studio.php?client=kenda&tab=uploads',
-    'batch.php?client=kenda'               => 'studio.php?client=kenda&tab=uploads',
+    'studio.php?client=kenda&tab=batch'    => 'studio.php?client=kenda&tab=uploads&upload=1&dest=post&each=1',
+    'batch.php?client=kenda'               => 'studio.php?client=kenda&tab=uploads&upload=1&dest=post&each=1',
     'add-post.php?client=kenda'            => 'posts.php?client=kenda&newpost=1',
     'add-post.php?client=kenda&edit=2'     => 'posts.php?client=kenda&post=2&newpost=edit',
     'admin.php?client=kenda&tab=compose'   => 'studio.php?client=kenda&tab=compose',
@@ -81,12 +81,12 @@ test('+ New menu: admin, every page, module-aware items', function () {
     has($r['body'], 'data-new-action="email"');
     has($r['body'], 'data-new-action="page"');
     ok(preg_match('/data-new-action="email"/', $r['body']) && preg_match('#href="[^"]*add-email\.php\?client=privacybee"[^>]*data-new-action="email"#', $r['body']), 'email item links to add-email');
-    ok(preg_match('#href="[^"]*studio\.php\?client=kenda&amp;tab=uploads"[^>]*data-new-action="upload"#', get('?client=kenda', 'admin')['body']) === 1, 'upload item links to Studio Uploads');
+    ok(preg_match('#href="[^"]*studio\.php\?client=kenda&amp;tab=uploads&amp;upload=1"[^>]*data-new-action="upload"#', get('?client=kenda', 'admin')['body']) === 1, 'upload item: no-JS link = Studio Uploads with the Upload sheet');
     has(get('', 'admin')['body'], 'data-new-menu', 'unscoped Home too');
 });
-test('Home "Upload" goes to Studio Uploads (not Compose)', function () {
+test('Home "Upload" opens the Upload sheet (no-JS: Studio Uploads, not Compose)', function () {
     $r = status(get('?client=kenda', 'admin'), 200);
-    ok(preg_match('#href="[^"]*studio\.php\?client=kenda&amp;tab=uploads"[^>]*>.{0,1500}?<span>Upload</span>#s', $r['body']) === 1);
+    ok(preg_match('#href="[^"]*studio\.php\?client=kenda&amp;tab=uploads&amp;upload=1" data-upload-open[^>]*>.{0,1500}?<span>Upload</span>#s', $r['body']) === 1);
     hasNot($r['body'], 'admin.php');
 });
 test('back links: tire form → Assets, libraries / builder → Studio hub', function () {

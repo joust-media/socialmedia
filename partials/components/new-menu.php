@@ -9,7 +9,8 @@
  *
  * Items (each <a role="menuitem" data-new-action="…" href="…"> — the href is the working fallback):
  *   post    New post   always → the New post pop-up (App.newPost; href posts.php?newpost=1, unscoped: its client chooser)
- *   upload  Upload     always (images / video → one Draft post per file)
+ *   upload  Upload     always → the Upload sheet (App.uploadSheet: tire series / Reference / Library / New post;
+ *                      registered through App.newMenu.handle('upload'); href studio.php?tab=uploads&upload=1)
  *   email   New email  only when the scoped client has Emails (companyHasEmails())
  *   page    New page   only when the scoped client has Pages (companyHasPages())
  *
@@ -36,9 +37,10 @@ if (!function_exists('newMenuItems')) {
         $items[] = [
             'action' => 'upload',
             'label'  => 'Upload',
-            'sub'    => 'Images or video — each file becomes a draft post',
-            'icon'   => 'download',
-            'href'   => $scoped ? clientUrl('studio.php', ['tab' => 'uploads']) : pagePath('studio'),
+            'sub'    => 'Images or video — to a tire, the Library or a new post',
+            'icon'   => 'upload',
+            // no-JS fallback: Studio → Uploads with the Upload sheet open (upload-sheet.js; unscoped → its client chooser)
+            'href'   => $scoped ? uploadSheetUrl('studio.php', [], ['tab' => 'uploads']) : pagePath('studio') . '?upload=1',
         ];
         if ($scoped && $pdo) {
             $hasEmails = false; $hasPages = false;

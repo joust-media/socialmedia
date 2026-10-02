@@ -475,6 +475,8 @@ html[data-theme="dark"]  .ui-theme-control [data-theme-value="dark"] {
   box-shadow: 0 8px 24px rgba(0,0,0,.2);
 }
 .ui-toast.is-visible { opacity: 1; transform: translate(-50%, 0); }
+.ui-toast.has-link.is-visible { pointer-events: auto; }
+.ui-toast-link { margin-left: 6px; color: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
 .ui-toast--error { background: var(--deny); color: #fff; }
 .ui-toast--success { background: var(--approve); color: #fff; }
 html:not(:has(.ui-tabbar)) .ui-toast { bottom: calc(24px + env(safe-area-inset-bottom)); }

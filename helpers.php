@@ -84,6 +84,7 @@ require_once __DIR__ . '/partials/components/inset-list.php';
 require_once __DIR__ . '/partials/components/card.php';
 require_once __DIR__ . '/partials/components/video.php';
 require_once __DIR__ . '/partials/components/new-menu.php';   // admin "+ New" (navbar.php)
+require_once __DIR__ . '/partials/components/upload-sheet.php'; // admin Upload sheet: boot tags (layout-bottom.php) + uploadSheetUrl() / uploadSheetAttrs()
 
 /** The admin's hub for the global tools (Prompt / Vehicle Library, AI Builder, Drive, Clients) — the parent
  *  their back links point at. Today the unscoped Studio page; the one place to repoint when it moves. */

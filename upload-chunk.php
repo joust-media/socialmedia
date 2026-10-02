@@ -23,6 +23,10 @@
  *                     inserted (6 per item — 409 when full); reply {ok, image:{id, image_url, src, thumb, …}, count, max}
  *   purpose=replace   replace_kind = post|tire, replace_id = the image row → the file is swapped in right away;
  *                     reply = replace-image.php's {ok, image_id, image_url, src, media_type}
+ *   purpose=library   the Upload sheet's Library destination (static/js/upload-sheet.js) → images + videos, stored as
+ *                     media/library/<slug>/<name> with a 'pending' library_images row (uploadLibraryStore — the
+ *                     status an FTP drop gets from syncLibraryImages()); reply {ok, image:{id, filename, src, thumb,
+ *                     status, type}}
  *
  * Errors: 400 bad request · 403 seat / tenant / cross-site · 404 unknown row or upload · 405 · 409 chunk out of
  * order / incomplete / reference set full · 413 too large · 415 unsupported type · 422 not a valid image/video · 500.
@@ -60,7 +64,7 @@ requireSameSiteFetch();   // cross-site requests get a JSON 403 (helpers.php)
 if (!currentAdmin()) { ucFail(403, 'Admin sign-in required'); }
 
 $iniMax   = (string)(ini_get('upload_max_filesize') ?: '?');
-$purposes = ['post', 'batch', 'feature', 'replace'];
+$purposes = ['post', 'batch', 'feature', 'replace', 'library'];
 
 /** The spool root: the app's uploads/ (created 0755); 500 when unusable. */
 function ucRoot(): string {
@@ -73,7 +77,7 @@ function ucRoot(): string {
 function ucTarget(PDO $pdo, array $in): array {
     global $purposes;
     $purpose = (string)($in['purpose'] ?? '');
-    if (!in_array($purpose, $purposes, true)) { ucFail(400, 'purpose must be post, batch, feature or replace'); }
+    if (!in_array($purpose, $purposes, true)) { ucFail(400, 'purpose must be post, batch, feature, replace or library'); }
     $slug = preg_replace('/[^a-z0-9\-]/', '', strtolower(trim((string)($in['client'] ?? ''))));
     if ($slug === '') { ucFail(400, 'Pick a client first'); }
     $co = $pdo->prepare("SELECT id, slug FROM companies WHERE slug = ?");
@@ -81,6 +85,7 @@ function ucTarget(PDO $pdo, array $in): array {
     $company = $co->fetch();
     if (!$company) { ucFail(404, 'Unknown client'); }
     $t = ['purpose' => $purpose, 'client' => $slug, 'company_id' => (int)$company['id']];
+    if ($purpose === 'library' && !hasLibraryImagesTable($pdo)) { ucFail(409, 'The Library is not set up yet — run migrate.php.'); }
     if ($purpose === 'feature') {
         $tire = uploadFeatureTire($pdo, (int)($in['feature_id'] ?? 0));
         if (!$tire) { ucFail(404, 'Item not found'); }
@@ -128,6 +133,13 @@ function ucFinalize(PDO $pdo, array $t, string $src, string $origName, string $e
         $ucDiscard = null;
         echo json_encode(['ok' => true, 'purpose' => $purpose] + $claim + $extra);
         exit;
+    }
+    if ($purpose === 'library') {
+        $r = uploadLibraryStore($pdo, ['id' => (int)$t['company_id'], 'slug' => (string)$t['client']], $src, $origName, $ext, $isVideo, $uploaded);
+        if ((int)$r['code'] !== 200) { ucFail((int)$r['code'], (string)($r['body']['error'] ?? 'Upload failed')); }
+        $ucDiscard = null;
+        $r['body'] = ['purpose' => 'library'] + $r['body'] + $extra;
+        ucReply($r);
     }
     if ($purpose === 'feature') {
         $tire = uploadFeatureTire($pdo, (int)$t['feature_id']);

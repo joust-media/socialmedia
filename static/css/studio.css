@@ -378,24 +378,16 @@
 .studio-pool-videos-toggle[hidden] { display: none; }
 
 /* ---------------------------------------------------------------------
-   Renders (tire series uploads)
+   Renders (tire series: pickers, FTP folder, series list — uploads open the Upload sheet, upload.css)
    --------------------------------------------------------------------- */
 .studio-renders-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; margin-bottom: 16px; }
 @media (min-width: 900px) { .studio-renders-grid { grid-template-columns: minmax(0, 1fr) minmax(320px, 460px); gap: 24px; } }
 .studio-renders-pick { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.studio-renders-newname { margin-top: 8px; }
-.studio-renders-newname[hidden] { display: none; }
 .studio-renders-folder code { font-family: var(--font-mono); font-size: var(--text-caption); color: var(--label); word-break: break-all; }
 .studio-renders-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.studio-renders-summary {
-  display: flex; align-items: center; gap: 10px; margin: 4px 0 0;
-  font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary); font-variant-numeric: tabular-nums;
-}
-.studio-renders-summary[hidden] { display: none; }
-.studio-renders-summary .ui-btn[hidden] { display: none; }
 .studio-upload-item .studio-upload-retry { align-self: center; flex: 0 0 auto; }
 .studio-upload-item .studio-upload-retry[hidden] { display: none; }
-.studio-renders-note { margin: 8px 0 0; }
+.studio-renders-note { margin: 8px 0 0; }   /* add-page.php's upload note */
 /* Compose / Batch one-off rows reuse the upload item; the poster-less video thumb is a play glyph */
 .studio-upload-thumb.is-video { color: var(--label-secondary); }
 .studio-upload-item.is-failed .studio-upload-name { color: var(--label-secondary); }
@@ -438,8 +430,6 @@
 .studio-series-drive-open[hidden] { display: none; }
 .studio-series-ctl { grid-column: 2; grid-row: 1 / span 2; display: flex; align-items: center; gap: 4px; }
 .studio-series-row--drive .studio-series-ctl { grid-row: 1 / span 3; }
-.studio-renders-newdrive { margin-top: 8px; }
-.studio-renders-newdrive[hidden] { display: none; }
 .studio-series-ctl .ui-btn[disabled] { opacity: .35; }
 .studio-series-ctl .ui-icon { width: 14px; height: 14px; }
 .studio-series-empty[hidden] { display: none; }

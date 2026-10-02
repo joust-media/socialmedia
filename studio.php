@@ -6,19 +6,21 @@
  *   ?client=<slug>        scope (helpers.php); without it → client chooser
  *   &tab=posts|uploads|emails|pages|renders|export|clients   initial segment (default posts)
  *   &tab=compose          (retired) → 302 studio.php?client=…&newpost=1: Studio with the New post pop-up open
- *   &tab=batch            (retired) → 302 studio.php?client=…&tab=uploads (the "+ New → Upload" route)
+ *   &tab=batch            (retired) → 302 studio.php?client=…&tab=uploads&upload=1&dest=post&each=1 (the Upload sheet)
+ *   &upload=1[&dest=…]    opens the Upload sheet on load (static/js/upload-sheet.js — every admin page honours it)
  *   &msg=…                flash after a save
  *
  * Sections (scoped). "New post" in the toolbar opens the New post pop-up (static/js/newpost.js →
  * post-compose.php), which replaced the Compose tab, its right-hand form column and the Batch tab.
- *   Uploads  — drag-drop zone → batch-process.php (one Draft post per file into uploads/)
+ *   Uploads  — a launcher for the Upload sheet (App.uploadSheet), "New post · a draft post per file" preselected;
+ *              files dropped on it come along. The sheet is the one uploader (tire series, Reference, Library, posts).
  *   Posts    — segment counts into posts.php + recent client responses (renderActivityFeed)
  *   Emails   — <section data-studio-emails> (present once migrate.php created the emails table);
  *              the Emails admin worker owns everything inside that section.
  *   Renders  — tire series (tire-series-lib.php, feature-gated by hasTireSeries()): pick a tire +
- *              series (or a new one), drop files → one XHR per file to tire-upload.php, rescan the
- *              FTP folders, and manage the series list (rename / reorder / delete via tire-status.php).
- *              &tab=renders&tire=<id>[&series=<id>] preselects (the Assets "Upload more…" deep link).
+ *              series (or "New series…") and the launcher opens the Upload sheet on it (files → tire-upload.php);
+ *              rescan the FTP folders, and manage the series list (rename / reorder / delete via tire-status.php).
+ *              &tab=renders&tire=<id>[&series=<id>] preselects.
  */
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
@@ -139,7 +141,7 @@ if (!$client) {
 // Compose + Batch are retired (the New post pop-up); their old links keep working through redirects.
 $tabRequested = strtolower(trim((string)($_GET['tab'] ?? '')));
 if ($tabRequested === 'compose') { header('Location: ' . clientUrl('studio.php', ['newpost' => 1]), true, 302); exit; }
-if ($tabRequested === 'batch')   { header('Location: ' . clientUrl('studio.php', ['tab' => 'uploads']), true, 302); exit; }
+if ($tabRequested === 'batch')   { header('Location: ' . uploadSheetUrl('studio.php', ['dest' => 'post', 'each' => true], ['tab' => 'uploads']), true, 302); exit; }
 $tabs = ['posts' => 'Posts', 'uploads' => 'Uploads'];
 $hasEmails = hasEmailsTable($pdo);          // migration-gated; admin always gets the tab so the first email can be added
 if ($hasEmails) $tabs['emails'] = 'Emails';
@@ -222,23 +224,17 @@ foreach ($tabs as $key => $label) {
 $studioConfig = [
     'base'      => basePath(),
     'endpoint'  => basePath() . '/status.php',
-    'batch'     => basePath() . '/batch-process.php?client=' . rawurlencode($client['slug']),
-    'upload'    => basePath() . '/upload-chunk.php?client=' . rawurlencode($client['slug']),   // Uploads tab / Compose one-offs: files go up in pieces when large (chunk-upload-lib.php) and come back as claimed[] tokens
     'client'    => $client['slug'],
     'brand'     => ['name' => $client['name'], 'logo' => brandLogoUrl($client['logo_url'] ?? '')],
     'maxImages' => POST_MAX_MEDIA,
-    'maxImageMb' => 50,
-    'maxVideoMb' => 4096,
-    'maxBatchFiles' => 50,
     'tab'       => $tab,
     'tabUrl'    => clientUrl('studio.php', ['tab' => '__TAB__']),
-    'postUrl'   => clientUrl('posts.php', ['post' => '__ID__']),   // studio.js: "finish it in Posts" links
     'clientAdmin' => basePath() . '/client-admin.php',             // Clients tab endpoint (create / update / logo / modules)
     'clientsUrl'  => clientUrl('studio.php', ['tab' => 'clients']),
 ];
 if ($hasRenders) {
     $studioConfig['renders'] = [
-        'endpoint'  => basePath() . '/tire-upload.php?client=' . rawurlencode($client['slug']),   // POST client, tire_id, series_id | new_series, batch, file (?client= so helpers.php scopes it too)
+        'endpoint'  => basePath() . '/tire-upload.php?client=' . rawurlencode($client['slug']),   // action=repair_media (uploads go through the Upload sheet)
         'status'    => basePath() . '/tire-status.php',            // series_create / series_rename / series_drive / series_reorder / series_delete / rescan
         'driveOn'   => $rendersDriveOn,                            // Drive link fields (series list + "New series…") only once migrate.php 29 ran
         'assetsUrl' => clientUrl('assets.php', ['view' => 'collections', 'item' => '__TIRE__', 'series' => '__SERIES__']),
@@ -246,8 +242,6 @@ if ($hasRenders) {
         'tires'     => $rendersTires,
         'tire'      => $rendersTire,
         'series'    => $rendersSeries,
-        'maxMb'     => 10,      // images (tire-upload.php: 413 above)
-        'maxVideoMb' => 4096,   // videos: sent in pieces (chunk-upload-lib.php), so the host's upload_max_filesize no longer caps them
     ];
 }
 $studioConfig['export'] = [
@@ -267,9 +261,9 @@ $pageWide    = true;
 $navWide     = true;        // header column matches the 1200px body (as assets.php)
 $bodyClass   = 'page-studio page-studio-hub';
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">' . "\n"
-             . '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">';
+             . '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">' . "\n"
+             . '<link rel="stylesheet" href="' . h(staticUrl('css/upload.css')) . '">';   // the Upload sheet + its launchers (Uploads, Renders)
 $footExtra   = '<script>window.StudioConfig = ' . json_encode($studioConfig, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n"
-             . '<script src="' . h(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n"   // App.chunkUpload (Uploads + Renders: large videos in pieces, resumable)
              . '<script src="' . h(staticUrl('js/studio.js')) . '" defer></script>' . "\n"
              . '<script src="' . h(staticUrl('js/studio-previews.js')) . '" defer></script>';   // Export → Image previews backfill (preview-job.php)
 
@@ -288,41 +282,12 @@ include __DIR__ . '/partials/layout-top.php';
 
 <!-- Uploads ------------------------------------------------------------ -->
 <section class="studio-section" data-studio-section="uploads"<?= $tab === 'uploads' ? '' : ' hidden' ?>>
-  <div class="studio-uploads" data-upload-zone data-endpoint="<?= h($studioConfig['batch']) ?>" data-upload-endpoint="<?= h($studioConfig['upload']) ?>" data-max-image-mb="50" data-max-video-mb="4096" data-max-files="50">
-    <label class="studio-dropzone studio-dropzone--lg" data-file-drop>
-      <input type="file" data-upload-input accept="image/*,video/mp4,video/quicktime,.mov" multiple>
-      <span class="studio-dropzone-icon"><?= icon('download') ?></span>
-      <span class="studio-dropzone-label">Drop images or video here</span>
-      <span class="studio-dropzone-hint">image/*, MP4, QuickTime · up to 4 GB per video, 50 MB per image (large files go up in pieces and can resume) · up to 50 files at a time · each file becomes a <?= postsHaveDraft($pdo) ? 'Draft' : 'To Review' ?> post (spaced 3 days apart)<?= postsHaveDraft($pdo) ? ' that only you can see — add a caption in Posts → Drafts, then Send for review' : '' ?>.</span>
-    </label>
-    <div class="studio-resume" data-upload-resume hidden role="status">
-      <span class="studio-resume-text" data-upload-resume-text>Resume unfinished uploads</span>
-      <label class="ui-btn ui-btn--filled ui-btn--sm studio-resume-pick">Pick the files<input type="file" data-upload-resume-input accept="image/*,video/mp4,video/quicktime,.mov" multiple hidden></label>
-      <button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-upload-resume-discard>Discard</button>
-    </div>
-    <ul class="studio-uploadlist" data-upload-list role="list"></ul>
-    <template data-upload-item-template>
-      <li class="studio-upload-item" data-upload-item>
-        <div class="studio-upload-thumb" data-upload-thumb></div>
-        <div class="studio-upload-body">
-          <div class="studio-upload-name" data-upload-name></div>
-          <div class="studio-upload-meta text-secondary" data-upload-meta></div>
-          <div class="studio-upload-warning" data-upload-warning hidden>
-            <strong>.MOV plays in Safari only.</strong> Chrome and Firefox will show a download fallback instead of the video. Convert to MP4 for everyone, or upload anyway.
-            <div class="ui-btn-group studio-upload-warning-actions">
-              <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-upload-skip>Skip</button>
-              <button type="button" class="ui-btn ui-btn--tinted ui-btn--sm" data-upload-anyway>Upload anyway</button>
-            </div>
-          </div>
-          <div class="studio-progress" data-upload-progress hidden>
-            <div class="studio-progress-bar"><div class="studio-progress-fill" data-upload-fill></div></div>
-          </div>
-          <div class="studio-upload-status" data-upload-status></div>
-        </div>
-        <button type="button" class="ui-btn ui-btn--plain ui-btn--sm studio-upload-retry studio-upload-cancel" data-upload-cancel hidden>Cancel</button>
-      </li>
-    </template>
-  </div>
+  <?php // The Upload sheet (upload-sheet.js) is the one uploader; this tab opens it with "a draft post per file" preselected ?>
+  <a class="us-launch" href="<?= h(uploadSheetUrl('studio.php', ['dest' => 'post', 'each' => true], ['tab' => 'uploads'])) ?>"<?= uploadSheetAttrs(['dest' => 'post', 'each' => true]) ?> data-upload-drop data-studio-upload>
+    <?= icon('upload') ?>
+    <span class="us-launch-label">Upload images or video</span>
+    <span class="us-launch-hint">Click or drop files here · each file becomes a <?= postsHaveDraft($pdo) ? 'Draft post only you can see (add captions in Posts → Drafts)' : 'post To Review' ?> — or send them to a tire, the Library or one carousel post instead. Up to 4 GB per video, 50 MB per image.</span>
+  </a>
 </section>
 
 <!-- Posts -------------------------------------------------------------- -->
@@ -351,7 +316,7 @@ include __DIR__ . '/partials/layout-top.php';
 <?php if ($hasRenders): ?>
 <!-- Renders (tire series) ---------------------------------------------- -->
 <section class="studio-section" data-studio-section="renders"<?= $tab === 'renders' ? '' : ' hidden' ?>>
-  <div class="studio-renders" data-renders data-endpoint="<?= h($studioConfig['renders']['endpoint']) ?>" data-status-endpoint="<?= h($studioConfig['renders']['status']) ?>" data-max-mb="<?= (int)$studioConfig['renders']['maxMb'] ?>" data-max-video-mb="<?= (int)$studioConfig['renders']['maxVideoMb'] ?>">
+  <div class="studio-renders" data-renders data-endpoint="<?= h($studioConfig['renders']['endpoint']) ?>" data-status-endpoint="<?= h($studioConfig['renders']['status']) ?>">
     <?php if (!$rendersTires): ?>
       <div class="ui-empty">No tires yet for <?= h($client['name']) ?>. <a href="<?= h(clientUrl('add-feature.php', ['module' => 'tires'])) ?>">Create the first tire</a>, then upload its renders here.</div>
     <?php else:
@@ -368,13 +333,9 @@ include __DIR__ . '/partials/layout-top.php';
               <?php endforeach; ?>
             </select></div>
           <div class="studio-field"><label class="studio-label" for="rendersSeries">Series</label>
-            <select class="ui-select" id="rendersSeries" data-renders-series aria-describedby="rendersSeriesHelp"></select>
-            <input class="ui-input studio-renders-newname" type="text" data-renders-new-name maxlength="80" placeholder="Name the new series, e.g. Series 3" aria-label="New series name" hidden>
-            <?php if ($rendersDriveOn): ?>
-              <input class="ui-input studio-renders-newdrive" type="url" data-renders-new-drive maxlength="512" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Google Drive link (optional) — https://drive.google.com/…" aria-label="Google Drive link for the new series" hidden>
-            <?php endif; ?></div>
+            <select class="ui-select" id="rendersSeries" data-renders-series aria-describedby="rendersSeriesHelp"></select></div>
         </div>
-        <p class="studio-help" id="rendersSeriesHelp">Uploads land in the chosen series; “New series…” creates one (named after the first file’s batch when left blank).</p>
+        <p class="studio-help" id="rendersSeriesHelp">Upload opens the Upload sheet on the chosen series; “New series…” lets you name one there.</p>
         <p class="studio-help studio-renders-folder">
           <span>FTP folder:</span> <code data-renders-folder><?= h($rendersSel['folder']) ?>/</code>
           <button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-renders-copy title="Copy the folder path">Copy</button>
@@ -387,42 +348,13 @@ include __DIR__ . '/partials/layout-top.php';
         </div>
       </div>
 
-      <label class="studio-dropzone studio-dropzone--lg" data-file-drop>
-        <input type="file" data-renders-input accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov" multiple>
-        <span class="studio-dropzone-icon"><?= icon('download') ?></span>
-        <span class="studio-dropzone-label">Drop renders here</span>
-        <span class="studio-dropzone-hint">JPG, PNG, GIF, WebP up to <?= (int)$studioConfig['renders']['maxMb'] ?> MB · MP4, WebM, MOV up to <?= (int)round($studioConfig['renders']['maxVideoMb'] / 1024) ?> GB · one upload at a time, each file lands in <strong data-renders-target>the chosen series</strong> as “To Review” for <?= h($client['name']) ?>.</span>
-      </label>
-      <p class="studio-help studio-renders-note" data-renders-note>Videos of any size are supported; uploads are sent in pieces and can resume after a dropped connection or a page reload.</p>
+      <?php $rendersSeriesSel = $rendersSeries ?: (!empty($rendersSel['series']) ? (int)end($rendersSel['series'])['id'] : 'new'); ?>
+      <a class="us-launch" href="<?= h(uploadSheetUrl('studio.php', ['dest' => 'series', 'tire' => (int)$rendersSel['id'], 'series' => $rendersSeriesSel], ['tab' => 'renders'])) ?>"<?= uploadSheetAttrs(['dest' => 'series', 'tire' => (int)$rendersSel['id'], 'series' => $rendersSeriesSel]) ?> data-upload-drop data-renders-launch>
+        <?= icon('upload') ?>
+        <span class="us-launch-label">Upload renders</span>
+        <span class="us-launch-hint">Click or drop files here · they land in <strong data-renders-target><?= h($rendersSel['name']) ?></strong> as “To Review” for <?= h($client['name']) ?>. Images up to 50 MB, videos up to 4 GB (sent in pieces, resumable).</span>
+      </a>
     </div>
-
-    <div class="studio-resume" data-renders-resume hidden role="status">
-      <span class="studio-resume-text" data-renders-resume-text>Resume unfinished uploads</span>
-      <label class="ui-btn ui-btn--filled ui-btn--sm studio-resume-pick">Pick the files<input type="file" data-renders-resume-input accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov" multiple hidden></label>
-      <button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-renders-resume-discard>Discard</button>
-    </div>
-
-    <div class="studio-renders-summary" data-renders-summary hidden>
-      <span data-renders-summary-text>0 uploaded</span>
-      <button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-renders-retry-all hidden>Retry failed</button>
-      <button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-renders-clear>Clear list</button>
-    </div>
-    <ul class="studio-uploadlist" data-renders-list role="list"></ul>
-    <template data-renders-item-template>
-      <li class="studio-upload-item" data-renders-item>
-        <div class="studio-upload-thumb" data-upload-thumb></div>
-        <div class="studio-upload-body">
-          <div class="studio-upload-name" data-upload-name></div>
-          <div class="studio-upload-meta text-secondary" data-upload-meta></div>
-          <div class="studio-progress" data-upload-progress hidden>
-            <div class="studio-progress-bar"><div class="studio-progress-fill" data-upload-fill></div></div>
-          </div>
-          <div class="studio-upload-status" data-upload-status></div>
-        </div>
-        <button type="button" class="ui-btn ui-btn--gray ui-btn--sm studio-upload-retry" data-renders-retry hidden>Retry</button>
-        <button type="button" class="ui-btn ui-btn--plain ui-btn--sm studio-upload-retry studio-upload-cancel" data-renders-cancel hidden>Cancel</button>
-      </li>
-    </template>
 
     <section class="ui-card studio-series-card" data-renders-series-card>
       <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Series for <span data-renders-tire-name><?= h($rendersSel['name']) ?></span></h3>
