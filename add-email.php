@@ -10,7 +10,7 @@
  *   POST (requireSameSiteFetch on every action; hidden `action` + `id` like add-post.php)
  *     create | update   code*, title, html_url, subject, preview_text, trigger_text, send_at,
  *                       priority, status, live, groups[], new_groups, notes
- *                       → create: emails.php?client&email=<id> · update: emails.php?client&status=all&msg=
+ *                       → create: emails.php?client&email=<id> · update: emails.php?client&email=<id>&msg=
  *     delete            id → map rows + row removed, 'deleted' logged
  *     group_add         name            (ensureEmailGroup) — email_groups are "Audiences" in the UI
  *     group_rename      id, name
@@ -18,7 +18,9 @@
  *     Audience actions redirect to manage.php?client=…&section=tools&msg=…#audiences, everything else to
  *   emails.php?client=…&status=all&msg=… (the flash is toasted once).
  *
- * Rules mirrored from email-status.php: live=1 only when status=approved (the 409 rule);
+ * Rules mirrored from email-status.php: the form never decides for the client — a new email is Draft or
+ * To Review, an existing one keeps its status or goes back to Draft / To Review (reviewFormStatusOptions(),
+ * helpers.php; Approve for client… stays in the sheet's ⋯ menu); live=1 only when status=approved (the 409 rule);
  * the code is unique per company (case-insensitive, normalised via emailNormalizeCode()).
  * Activity: 'created' on create; one batch of edited_<field> rows per save
  * (+ marked_live / unmarked_live when the flag flips); 'deleted' on delete.
@@ -65,7 +67,7 @@ $errors   = [];
 $flash    = trim((string)($_GET['msg'] ?? ''));
 $editId   = (int)($_GET['edit'] ?? 0);
 $email    = null;
-$statuses = ['draft' => 'Draft', 'pending' => 'To Review', 'approved' => 'Approved', 'denied' => 'Needs changes'];
+$statuses = ['draft' => 'Draft', 'pending' => 'To Review', 'approved' => 'Approved', 'denied' => 'Needs changes'];   // every stored value
 $priorities = ['' => '—', 'low' => 'Low', 'medium' => 'Medium', 'high' => 'High'];
 
 /** Form values (strings; groups = ids). */
@@ -157,8 +159,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             else { $sendAt = date('Y-m-d', $ts); $vals['send_at'] = $sendAt; }
         }
         if (!array_key_exists($vals['priority'], $priorities)) $errors[] = 'Priority must be Low, Medium or High.';
-        if (!isset($statuses[$vals['status']])) { $errors[] = 'Unknown status.'; $vals['status'] = 'draft'; }
-        if ($vals['live'] && $vals['status'] !== 'approved') $errors[] = 'Only an approved email can be marked live — set the status to Approved first.';
+        // Same transitions as the sheet (email-status.php): the form keeps or routes (Draft / To Review), never approves.
+        $oldStatus = $action === 'update' ? (string)$email['status'] : '';
+        $statusErr = reviewFormStatusError($oldStatus, $vals['status'], (bool)$vals['live'], 'email');
+        if ($statusErr !== '') {
+            $errors[] = $statusErr;
+            if (!isset(reviewFormStatusOptions($oldStatus)[$vals['status']])) $vals['status'] = $oldStatus !== '' ? $oldStatus : 'draft';
+            if ($vals['status'] !== 'approved') $vals['live'] = 0;
+        }
 
         $known = [];
         foreach (emailGroupsForCompany($pdo, $cid) as $g) $known[(int)$g['id']] = $g;
@@ -256,7 +264,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
                 $pdo->commit();
-                emailsStudioRedirect(emailDisplayLabel(['code' => $code, 'title' => $vals['title']]) . ($changes ? ' saved (' . count($changes) . ' change' . (count($changes) === 1 ? '' : 's') . ').' : ' saved — no changes.'));
+                // Back to the email that was edited (its sheet opens, the flash is toasted once)
+                header('Location: ' . emailUrl(['id' => $editId], ['msg' => emailDisplayLabel(['code' => $code, 'title' => $vals['title']]) . ($changes ? ' saved (' . count($changes) . ' change' . (count($changes) === 1 ? '' : 's') . ').' : ' saved — no changes.')]));
+                exit;
             } catch (Throwable $ex) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
                 error_log('add-email save: ' . $ex->getMessage());
@@ -287,6 +297,7 @@ $isEdit     = $email !== null;
 $groups     = emailGroupsForCompany($pdo, $cid);
 $formAction = $isEdit ? 'update' : 'create';
 $formTitle  = $isEdit ? 'Edit ' . emailDisplayLabel($email) : 'New email';
+$statusOpts = reviewFormStatusOptions($isEdit ? (string)$email['status'] : '');   // Draft · To Review (+ keep Approved / Needs changes)
 $selfUrl    = clientUrl('add-email.php', $isEdit ? ['edit' => (int)$email['id']] : []);
 $studioUrl  = $isEdit ? emailUrl($email) : clientUrl('emails.php', ['status' => 'all']);   // Back / Cancel
 $thread     = $isEdit && hasActivityLog($pdo) ? commentThread($pdo, 'email', (int)$email['id']) : [];
@@ -337,17 +348,18 @@ include __DIR__ . '/partials/layout-top.php';
         <div class="studio-field">
           <label class="studio-label" for="email-status">Status</label>
           <select class="ui-select" id="email-status" name="status" data-email-status>
-            <?php foreach ($statuses as $k => $label): ?>
+            <?php foreach ($statusOpts as $k => $label): ?>
               <option value="<?= h($k) ?>"<?= $vals['status'] === $k ? ' selected' : '' ?>><?= h($label) ?></option>
             <?php endforeach; ?>
           </select>
+          <p class="studio-help" data-status-help>The client approves. <?= $isEdit ? 'Approve for client… is in the email’s ⋯ menu.' : 'Send it for review when it’s ready.' ?></p>
         </div>
         <div class="studio-field">
           <span class="studio-label">Live</span>
           <label class="studio-chip<?= $vals['live'] ? ' is-active' : '' ?>" data-email-live-chip title="Only an approved email can go live">
             <input type="checkbox" name="live" value="1" data-email-live<?= $vals['live'] ? ' checked' : '' ?><?= $vals['status'] === 'approved' ? '' : ' disabled' ?>> Live in production
           </label>
-          <p class="studio-help" data-email-live-help<?= $vals['status'] === 'approved' ? ' hidden' : '' ?>>Set the status to Approved to mark this email live.</p>
+          <p class="studio-help" data-email-live-help<?= $vals['status'] === 'approved' ? ' hidden' : '' ?>>Only an approved email can go live.</p>
         </div>
       </div>
 

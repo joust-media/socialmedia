@@ -520,8 +520,8 @@
   function appendComment(art, text, actor) {
     var root = art.closest('.ui-sheet-root') || document;
     var thread = $('[data-thread]', root); if (!thread) return;
-    var side = actor === 'client' ? 'client' : 'joust';
-    var who  = actor === 'client' ? 'You' : (actor === 'admin' ? 'Joust' : 'Note');
+    var bw = App.bubbleWho ? App.bubbleWho(actor) : { side: 'mine', who: 'You' };   // drawn from the viewer's seat
+    var side = bw.side, who = escapeHtml(bw.who);
     var msg = document.createElement('div');
     msg.className = 'pd-msg pd-msg--' + side + ' ui-enter';
     msg.setAttribute('data-actor', actor);
@@ -533,7 +533,7 @@
     thread.setAttribute('data-count', n);
     var c = $('[data-comment-count]', root); if (c) c.textContent = n;
     var id = art.getAttribute('data-id');
-    var lc = $('[data-comment-count-for="' + id + '"]'); if (lc) lc.textContent = n + (n === 1 ? ' comment' : ' comments');
+    var lc = $('[data-comment-count-for="' + id + '"]'); if (lc) { lc.textContent = n + (n === 1 ? ' comment' : ' comments'); if (lc.parentNode && lc.parentNode.hidden) lc.parentNode.hidden = false; }
     if (actor === 'client') {
       var qc = $('[data-queue-count="' + id + '"]');
       if (qc) { var k = (parseInt((qc.textContent.match(/\d+/) || ['0'])[0], 10) || 0) + 1; qc.textContent = k + ' client ' + (k === 1 ? 'comment' : 'comments'); }

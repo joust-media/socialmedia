@@ -104,6 +104,13 @@ if (!$client) {
 $cid       = (int)$client['id'];
 $visibleTo = $admin ? 'admin' : 'client';
 
+// A client without Emails (no module, no emails): old admin links (admin.php?tab=emails) land on the module
+// switch in Manage → Clients, not on an empty, tab-less Emails page.
+if ($admin && !$isPartial && $emailParam <= 0 && $hasTable && !companyHasEmails($client, $pdo) && (int)(emailCounts($pdo, $cid)['total'] ?? 0) === 0) {
+    header('Location: ' . manageUrl('clients', ['edit' => $cid, 'msg' => $client['name'] . ' doesn’t use Emails yet — turn it on here.']));
+    exit;
+}
+
 // ---------------------------------------------------------------------
 // Filters: Audience chips (multi, `audience=a,b` or repeated; `group=` is the old alias) + q search
 // ---------------------------------------------------------------------
@@ -128,8 +135,8 @@ $q = isset($_GET['q']) && is_string($_GET['q']) ? trim(mb_substr($_GET['q'], 0, 
 // ---------------------------------------------------------------------
 // Segments
 // ---------------------------------------------------------------------
-$segments = $admin
-    ? ['draft' => 'Draft', 'pending' => 'To Review', 'approved' => 'Approved', 'live' => 'Live', 'denied' => 'Needs changes']
+$segments = $admin   // admin: Joust's own work first (Draft · Needs changes) so the queue is on screen at 390 px
+    ? ['draft' => 'Draft', 'denied' => 'Needs changes', 'pending' => 'To Review', 'approved' => 'Approved', 'live' => 'Live']
     : ['pending' => 'To Review', 'approved' => 'Approved', 'live' => 'Live'];
 $segment = strtolower(trim((string)($_GET['status'] ?? 'pending')));
 if ($segment !== 'all' && !isset($segments[$segment])) { $segment = 'pending'; }
@@ -497,7 +504,7 @@ include __DIR__ . '/partials/layout-top.php';
               <?php if ($queue): ?>
                 <span class="pl-meta-item"><span class="pl-meta-sep">·</span><span data-queue-count="<?= $eid ?>"><?= $qCount > 0 ? $qCount . ' client ' . ($qCount === 1 ? 'comment' : 'comments') : 'no client comments' ?></span></span>
               <?php else: ?>
-                <span class="pl-meta-item"><span class="pl-meta-sep">·</span><span data-comment-count-for="<?= $eid ?>"><?= $nCmt ?> <?= $nCmt === 1 ? 'comment' : 'comments' ?></span></span>
+                <span class="pl-meta-item"<?= $nCmt > 0 ? '' : ' hidden' ?>><span class="pl-meta-sep">·</span><span data-comment-count-for="<?= $eid ?>"><?= $nCmt ?> <?= $nCmt === 1 ? 'comment' : 'comments' ?></span></span>
               <?php endif; ?>
             </div>
           </div>

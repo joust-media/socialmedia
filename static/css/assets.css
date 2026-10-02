@@ -490,10 +490,10 @@ video.ui-viewer-media { width: 100%; background: #000; touch-action: auto; }
 }
 .ui-viewer-thread .ui-thread { gap: 8px; }
 .ui-viewer-thread .pd-msg { display: flex; flex-direction: column; }
-.ui-viewer-thread .pd-msg--client { align-items: flex-end; }
-.ui-viewer-thread .pd-msg--joust  { align-items: flex-start; }
+.ui-viewer-thread .pd-msg--mine   { align-items: flex-end; }
+.ui-viewer-thread .pd-msg--theirs { align-items: flex-start; }
 .ui-viewer-thread .ui-bubble { white-space: pre-wrap; overflow-wrap: anywhere; }
-.ui-viewer-thread .ui-bubble--joust { background: rgba(118,118,128,.34); color: #fff; }
+.ui-viewer-thread .ui-bubble--theirs { background: rgba(118,118,128,.34); color: #fff; }
 .ui-viewer-thread .ui-bubble-meta { padding: 0 6px; color: var(--label-secondary); }
 .ui-viewer-thread .pd-thread-empty, .ui-viewer-thread-loading, .ui-viewer-thread-error {
   margin: 6px 0 8px; text-align: center;

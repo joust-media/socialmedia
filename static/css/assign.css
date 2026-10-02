@@ -27,6 +27,7 @@
 }
 .asg-menu > button:hover, .asg-menu > button:focus-visible,
 .asg-menu > a:hover, .asg-menu > a:focus-visible { background: var(--fill-tertiary); outline: none; }
+.asg-menu > button.is-destructive { color: var(--deny); }
 .asg-menu > a { border-top: 0.5px solid var(--separator); border-radius: 0 0 8px 8px; margin-top: 4px; color: var(--label-secondary); }
 
 .asg-row-more {
@@ -136,6 +137,7 @@ li + li > .asg-pick.ui-row--leading::before { left: 64px; }
 .asg-check-row[data-state="mixed"] .asg-box-dash { display: block; }
 
 .asg-field { display: flex; flex-direction: column; gap: 6px; }
+.asg-field[hidden] { display: none; }   /* the Position field stays hidden until a flow with steps is picked */
 .asg-label {
   padding: 0 4px;
   font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: 0.2px;

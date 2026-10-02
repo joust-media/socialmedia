@@ -70,7 +70,14 @@ test('admin post sheet has the admin menu', function () {
 test('client never sees denied posts', function () {
     $r = status(get('posts.php?client=kenda&status=denied&month=all', 'client'), 200);
     hasNot($r['body'], 'data-post-item="4"');
-    is(get('posts.php?client=kenda&post=4&partial=1', 'client')['code'], 404);
+    // Their own "requested changes" link: a read-only notice + their note — never the work in progress (round 3 #11)
+    $p = status(get('posts.php?client=kenda&post=4&partial=1', 'client'), 200)['body'];
+    has($p, 'data-hidden-post');
+    hasNot($p, 'Winter is coming', 'no caption');
+    hasNot($p, 'data-carousel', 'no media');
+    hasNot($p, 'data-comment-form', 'no composer');
+    hasNot($p, 'data-decide', 'no decisions');
+    is(get('posts.php?client=kenda&post=6&partial=1', 'client')['code'], 404, 'a draft stays not found');
 });
 test('client never sees draft emails / pages', function () {
     $r = status(get('emails.php?client=privacybee&status=all', 'client'), 200);

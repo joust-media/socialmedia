@@ -8,7 +8,7 @@
  *
  *   GET  ?action=options&client=<slug>&kind=email|page[&ids=3,5]
  *        → {ok, kind, from:{slug,name}, clients:[{slug,name,avatar,emails,pages,current}],
- *           flows:[{id,name,slug,step_count,steps:[{email_id,label,position}]}],      (kind=email)
+ *           flows:[{id,name,slug,step_count,steps:[{email_id,code,label,position}]}], (kind=email)
  *           audiences:[{id,name,slug,count,selected}],                                 (kind=email)
  *           items:[{id,label}]}
  *
@@ -153,6 +153,7 @@ try {
                     $steps = [];
                     foreach (emailFlowSteps($pdo, (int)$f['id']) as $st) {
                         $steps[] = ['email_id' => (int)$st['email_id'], 'position' => (int)$st['position'],
+                                    'code'  => trim((string)($st['email']['code'] ?? '')),   // "After W2" in the Position select
                                     'label' => !empty($st['email']) ? emailDisplayLabel($st['email']) : 'Email #' . (int)$st['email_id']];
                     }
                     $flows[] = ['id' => (int)$f['id'], 'name' => (string)$f['name'], 'slug' => (string)$f['slug'], 'step_count' => count($steps), 'steps' => $steps];

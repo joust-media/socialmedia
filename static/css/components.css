@@ -586,8 +586,9 @@ html:not(:has(.ui-tabbar)) .ui-toast { bottom: calc(24px + env(safe-area-inset-b
   background: var(--fill-tertiary); color: var(--label);
   align-self: flex-start; border-bottom-left-radius: 6px;
 }
-.ui-bubble--client { background: var(--accent); color: #fff; align-self: flex-end; border-bottom-left-radius: 18px; border-bottom-right-radius: 6px; }
-.ui-bubble--joust  { background: var(--fill-tertiary); }
+/* --mine = the viewer's own message (right, accent, "You"); --theirs = the other party (left, gray, named) */
+.ui-bubble--mine   { background: var(--accent); color: #fff; align-self: flex-end; border-bottom-left-radius: 18px; border-bottom-right-radius: 6px; }
+.ui-bubble--theirs { background: var(--fill-tertiary); }
 .ui-bubble-meta { margin-top: 3px; font-size: var(--text-caption); line-height: var(--lh-caption); color: var(--label-tertiary); }
 .ui-thread { display: flex; flex-direction: column; gap: 6px; }
 

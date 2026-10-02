@@ -41,8 +41,6 @@
     return d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })
          + ' · ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   }
-  /** Cache-bust a URL that may already carry a query (preview URLs can). */
-  function bust(url) { return url ? url + (url.indexOf('?') < 0 ? '?' : '&') + 't=' + Date.now() : url; }
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; });
   }
@@ -209,7 +207,7 @@
     if (tpl) return Promise.resolve(tpl.innerHTML);
     if (!cfg.partialUrl) return Promise.reject(new Error('No detail available'));
     return fetch(cfg.partialUrl.replace('__ID__', encodeURIComponent(id)), { credentials: 'same-origin', headers: { 'Accept': 'text/html' } })
-      .then(function (res) { if (!res.ok) throw new Error('Could not load this post'); return res.text(); });
+      .then(function (res) { if (!res.ok) throw new Error(res.status === 404 ? 'This post is no longer available' : 'Could not load this post'); return res.text(); });
   }
 
   function splitDetail(html) {
@@ -220,7 +218,7 @@
     var body = $('[data-pd-body]', art), footer = $('[data-pd-footer]', art);
     var shell = art.cloneNode(false);
     shell.innerHTML = body ? body.outerHTML : '';
-    return { body: shell.outerHTML, footer: footer ? footer.outerHTML : '' };
+    return { body: shell.outerHTML, footer: footer ? footer.outerHTML : '', title: art.getAttribute('data-title') || '' };
   }
 
   P.open = function (id, opts) {
@@ -230,6 +228,7 @@
     var title = item ? (item.getAttribute('data-title') || 'Post') : 'Post';
     return detailHtml(id).then(function (html) {
       var parts = splitDetail(html);
+      if (!item && parts.title) title = parts.title;   // a post outside the list (e.g. the client's own Needs-changes link)
       var root = sheetRoot();
       if (!root) return null;
       var wasOpen = App.sheet.current === root;
@@ -247,6 +246,7 @@
       P.current = { id: id, item: item, root: root };
       P.videoFallback(root);
       initCarousel(root);
+      syncSlidePick(root);
       autosize($('[data-comment-input]', root));
       syncState(root);
       if (opts.deny) openDeny(root);
@@ -354,11 +354,8 @@
       if (k in show) el.hidden = !show[k];
     });
     var label = $('.pd-when-label', root);
-    if (label) label.textContent = posted ? 'Scheduled for' : 'Planned for';
-    // Caption / hashtags are frozen once Scheduled (status.php → 409): hide the Edit button,
-    // disable the ⋯ menu item and fold an open editor.
+    // Caption / hashtags are frozen once Scheduled (status.php → 409): hide the Edit button and fold an open editor.
     var capBtn = $('[data-caption-edit]', root); if (capBtn) capBtn.hidden = posted;
-    var capMenu = $('[data-caption-menu]', root); if (capMenu) { capMenu.disabled = posted; if (posted) capMenu.title = 'Unmark scheduled first'; else capMenu.removeAttribute('title'); }
     if (posted) { var capForm = $('[data-edit-form="caption"]', root); if (capForm) capForm.hidden = true; }
     // "date has passed" note: only for Scheduled posts whose date is before today (data-past from PHP)
     var pastNote = $('[data-when-past]', root);
@@ -648,8 +645,8 @@
   function appendComment(art, text, actor) {
     var root = art.closest('.ui-sheet-root') || document;
     var thread = $('[data-thread]', root); if (!thread) return;
-    var side = actor === 'client' ? 'client' : 'joust';
-    var who  = actor === 'client' ? 'You' : (actor === 'admin' ? 'Joust' : 'Note');
+    var bw = App.bubbleWho ? App.bubbleWho(actor) : { side: 'mine', who: 'You' };   // drawn from the viewer's seat
+    var side = bw.side, who = escapeHtml(bw.who);
     var msg = document.createElement('div');
     msg.className = 'pd-msg pd-msg--' + side + ' ui-enter';
     msg.setAttribute('data-actor', actor);
@@ -662,7 +659,7 @@
     var n = (parseInt(thread.getAttribute('data-count') || '0', 10) || 0) + 1;
     thread.setAttribute('data-count', n);
     var c = $('[data-comment-count]', root); if (c) c.textContent = n;
-    var lc = $('[data-comment-count-for="' + art.getAttribute('data-id') + '"]'); if (lc) lc.textContent = n + (n === 1 ? ' comment' : ' comments');
+    var lc = $('[data-comment-count-for="' + art.getAttribute('data-id') + '"]'); if (lc) { lc.textContent = n + (n === 1 ? ' comment' : ' comments'); if (lc.parentNode && lc.parentNode.hidden) lc.parentNode.hidden = false; }
     var body = $('[data-sheet-body]', root); if (body) body.scrollTop = body.scrollHeight;
   }
 
@@ -701,6 +698,14 @@
   /* ---- carousel ----------------------------------------------------- */
   /* App.carousel (carousel.js) when loaded: swipe, dots, "2 / 7", arrows, ←/→, only the visible video plays.
      The fallback below is the pre-carousel.js behaviour (dots + counter). */
+  /* The comment "Slide" picker follows the slide on screen: slide 1 on open, then every swipe / arrow / dot /
+     slide chip (carousel:change). "All slides" stays one tap away in the picker. */
+  function syncSlidePick(root, index) {
+    var pick = $('[data-comment-slide]', root); if (!pick) return;
+    if (index == null) { var car = $('[data-carousel]', root); index = car && App.carousel && App.carousel.index ? App.carousel.index(car) : 0; }
+    var v = String((parseInt(index, 10) || 0) + 1);
+    if ($('option[value="' + v + '"]', pick)) pick.value = v;
+  }
   function initCarousel(root) {
     if (App.carousel && App.carousel.init) { App.carousel.init(root); return; }
     $$('[data-carousel]', root).forEach(function (car) {
@@ -727,11 +732,6 @@
       });
       update();
     });
-  }
-  function currentSlide(root) {
-    var car = $('[data-carousel]', root); if (!car) return null;
-    var i = parseInt(car.getAttribute('data-index') || '0', 10);
-    return $('[data-slide="' + i + '"]', car);
   }
 
   /* ---- video (spec §6) — App.video owns fallback / posters / unmute --- */
@@ -850,61 +850,6 @@
       }
     });
   }
-  /* Replace: with chunk-upload.js the file goes to upload-chunk.php purpose=replace (one request when small,
-     pieces when large — videos up to 4 GB, images up to 50 MB); otherwise replace-image.php. Same reply shape. */
-  function replaceImage(art, input) {
-    var file = input.files && input.files[0]; if (!file) return;
-    var isVid = /^video\//i.test(file.type || '') || /\.(mp4|webm|mov|m4v)$/i.test(file.name || '');
-    var capMb = isVid ? (parseInt(cfg.maxVideoMb, 10) || 4096) : (parseInt(cfg.maxImageMb, 10) || 50);
-    if (file.size > capMb * 1024 * 1024) { toast('File exceeds ' + (capMb >= 1024 ? (capMb / 1024) + ' GB' : capMb + ' MB'), 'error'); input.value = ''; return; }
-    var slide = currentSlide(art); if (!slide) return;
-    var imageId = slide.getAttribute('data-image-id');
-    slide.classList.add('is-busy');
-    toast('Uploading…');
-    var chunk = App.chunkUpload && App.chunkUpload.upload ? App.chunkUpload : null;
-    var uploadEp = input.getAttribute('data-upload-endpoint') || cfg.upload || '';
-    var send;
-    if (chunk && uploadEp) {
-      var lastPct = -1;
-      send = chunk.upload({
-        endpoint: uploadEp, file: file,
-        fields: { purpose: 'replace', replace_kind: 'post', replace_id: imageId, client: (document.body && document.body.dataset.client) || '' },
-        onProgress: function (p) { if (p.pct !== lastPct && (p.count > 1 || p.pct === 100)) { lastPct = p.pct; toast('Uploading… ' + p.text); } }
-      }).promise.then(function (d) { return { ok: true, data: d }; }, function (e) { return { ok: false, data: { error: (e && e.error) || 'Replace failed' } }; });
-    } else {
-      var fd = new FormData();
-      fd.append('image_id', imageId); fd.append('image', file); fd.append('type', 'post');
-      send = fetch(input.getAttribute('data-replace-endpoint') || cfg.replace || 'replace-image.php', { method: 'POST', body: fd, credentials: 'same-origin' })
-        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok && d && d.ok, data: d }; }); });
-    }
-    send
-      .then(function (res) {
-        slide.classList.remove('is-busy');
-        if (!res.ok) { toast((res.data && res.data.error) || 'Replace failed', 'error'); return; }
-        var url = bust((cfg.base || '') + '/' + String(res.data.image_url).replace(/^\/+/, ''));
-        var type = res.data.media_type || 'image';
-        // Previews of the new file (reply thumb / large, preview-ui.php pvReplyFields): the slide shows lg, the list row sm
-        var large = type === 'image' && res.data.large ? bust(res.data.large) : url;
-        var thumbUrl = type === 'image' && res.data.thumb ? bust(res.data.thumb) : url;
-        slide.setAttribute('data-media-type', type); slide.setAttribute('data-src', url); slide.setAttribute('data-original', url);
-        if (type === 'video') {
-          slide.innerHTML = App.video
-            ? App.video.markup(url, { autoplay: true, unmute: true, cls: 'pd-video' })
-            : '<video playsinline muted controls preload="metadata"><source src="' + escapeHtml(url) + '"></video>';
-          P.videoFallback(slide);
-        } else {
-          slide.innerHTML = '<button type="button" class="pd-slide-btn" data-viewer-open data-original="' + escapeHtml(url) + '" aria-label="View full screen"><img src="' + escapeHtml(large) + '" alt="" decoding="async"></button>';
-        }
-        if (slide.getAttribute('data-slide') === '0') {
-          var item = itemEl(art.getAttribute('data-id'));
-          var thumb = item && $('.pl-thumb img', item);
-          if (thumb && type === 'image') { thumb.removeAttribute('srcset'); thumb.removeAttribute('sizes'); thumb.src = thumbUrl; }   // srcset would keep the old candidates
-        }
-        toast(type === 'video' ? 'Video replaced' : 'Image replaced', 'success');
-      })
-      .catch(function () { slide.classList.remove('is-busy'); toast('Replace failed', 'error'); })
-      .then(function () { input.value = ''; });
-  }
 
   /* ================================================================== */
   /* Wiring                                                              */
@@ -1013,7 +958,6 @@
         var rr = $('[data-when-toggle]', root); if (rr) rr.setAttribute('aria-expanded', 'false');
         return;
       }
-      if (t.closest('[data-replace-image]')) { closeMenu(root); var inp = $('[data-replace-input]', root); if (inp) inp.click(); return; }
       if (t.closest('[data-download-media]')) { closeMenu(root); downloadMedia(root, id); return; }
 
       var when = t.closest('[data-when-toggle]');
@@ -1080,7 +1024,7 @@
         if (slidePick && slidePick.value) text = '[Slide ' + parseInt(slidePick.value, 10) + '] ' + text;
         var send = $('[data-comment-send]', form); if (send) send.disabled = true;
         P.comment(art.getAttribute('data-id'), text).then(function (res) {
-          if (res && res.ok && input) { input.value = ''; autosize(input); if (slidePick) slidePick.value = ''; }
+          if (res && res.ok && input) { input.value = ''; autosize(input); syncSlidePick(root); }
           if (send) send.disabled = !(input && input.value.trim());
         });
         return;
@@ -1100,13 +1044,14 @@
         var send = $('[data-comment-send]', e.target.closest('form')); if (send) send.disabled = !e.target.value.trim();
       }
     });
+    document.addEventListener('carousel:change', function (e) {
+      var root = sheetRoot(); if (!root || !root.contains(e.target)) return;
+      syncSlidePick(root, e.detail ? e.detail.index : null);
+    });
     document.addEventListener('keydown', function (e) {
       if (e.key !== 'Enter' || e.shiftKey || !e.target.matches || !e.target.matches('[data-comment-input]')) return;
       e.preventDefault();
       var form = e.target.closest('form'); if (form && form.requestSubmit) form.requestSubmit(); else if (form) form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
-    });
-    document.addEventListener('change', function (e) {
-      if (e.target.matches && e.target.matches('[data-replace-input]')) { var art = pd(); if (art) replaceImage(art, e.target); }
     });
 
     // deep link (?post=ID): open the sheet once the shared App (sheet, toast) is

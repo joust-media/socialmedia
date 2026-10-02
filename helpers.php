@@ -519,6 +519,35 @@ if (!function_exists('postsClientVisibleSql')) {
     }
 }
 
+/**
+ * Status rules of the full edit forms (add-email.php / add-page.php) — the same transitions as the
+ * sheets (email-status.php / page-status.php): a form routes work, it never decides for the client.
+ *   reviewFormStatusOptions($current)  the Status choices: Draft · To Review, plus "keep" for a row the
+ *                                      client already decided (Approved / Needs changes) — so editing an
+ *                                      approved item keeps it approved (posts' "keep" rule, post-compose.php)
+ *   reviewFormStatusError($old, $new, $live, $noun)  '' when the save is allowed, else the message
+ * Approving (and Needs changes) stays the client's — or the sheet's ⋯ "Approve for client…" with its confirm.
+ */
+if (!function_exists('reviewFormStatusOptions')) {
+    function reviewFormStatusOptions(string $current = ''): array {
+        $keep = [];
+        if ($current === 'approved') $keep['approved'] = 'Approved (keep)';
+        elseif ($current === 'denied') $keep['denied'] = 'Needs changes (keep)';
+        return $keep + ['draft' => 'Draft', 'pending' => 'To Review'];
+    }
+}
+if (!function_exists('reviewFormStatusError')) {
+    function reviewFormStatusError(string $old, string $new, bool $live, string $noun): string {
+        if (!isset(reviewFormStatusOptions($old)[$new])) {
+            if ($new === 'approved') return "Only the client approves. If they approved this {$noun} outside the portal, use Approve for client… in the {$noun}'s ⋯ menu.";
+            if ($new === 'denied')   return "Needs changes is the client's call. Use Needs changes… in the {$noun}'s ⋯ menu to note what they asked for.";
+            return 'Unknown status.';
+        }
+        if ($live && $new !== 'approved') return "Only an approved {$noun} can be marked live.";
+        return '';
+    }
+}
+
 /** Presentational only: is this a Scheduled post (posted = 1) whose scheduled_date fell on a
  *  day strictly before today (server local date)? Compared on the date, not the datetime, so a
  *  post scheduled for later today is NOT past. Pending/approved posts and null dates never are. */
@@ -1769,7 +1798,9 @@ if (!function_exists('activityFinalizeRows')) {
                     break;
                 case 'created':
                     $icon = 'plus'; $tone = 'accent';
-                    if ($r['thing'] === 'post')     { $verb = 'added'; $t = "$who added $objT for review"; $hh = "$whoH added $objH for review"; }
+                    // A post that is still a Draft was never sent to the client: no "for review" (it says what it is)
+                    if ($r['thing'] === 'post' && (($r['_entry']['_meta']['status'] ?? '') === 'draft')) { $verb = 'started a draft'; $t = "$who started a draft: $objT"; $hh = "$whoH started a draft: $objH"; }
+                    elseif ($r['thing'] === 'post') { $verb = 'added'; $t = "$who added $objT for review"; $hh = "$whoH added $objH for review"; }
                     elseif ($r['thing'] === 'task') { $verb = 'opened'; $t = "$who opened $objT"; $hh = "$whoH opened $objH"; }
                     else                            { $verb = 'added'; $t = "$who added $objT"; $hh = "$whoH added $objH"; }
                     break;
@@ -2084,7 +2115,8 @@ function appIconTags(): string {
  * commentBubble() renders server-side. 'client' is '' on unscoped pages.
  */
 function avatarScriptTag($client = null): string {
-    $data = ['admin' => joustAvatar('ui-avatar--xs'), 'client' => !empty($client['name']) ? clientAvatar($client, 'ui-avatar--xs') : ''];
+    $data = ['admin' => joustAvatar('ui-avatar--xs'), 'client' => !empty($client['name']) ? clientAvatar($client, 'ui-avatar--xs') : '',
+             'names' => ['client' => !empty($client['name']) ? (string)$client['name'] : '']];   // App.bubbleWho(): the client's name on the admin seat
     return '<script>window.AppAvatars = ' . json_encode($data, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) . ';</script>' . "\n";
 }
 

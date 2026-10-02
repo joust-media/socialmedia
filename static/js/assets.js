@@ -433,8 +433,8 @@
         r.thread.innerHTML = '<div class="ui-thread pd-thread ui-viewer-thread-list" data-thread data-count="0"></div>';
         list = $('[data-thread]', r.thread);
       }
-      var side = actor === 'client' ? 'client' : 'joust';
-      var who  = actor === 'client' ? 'You' : (actor === 'admin' ? 'Joust' : 'Note');
+      var bw = App.bubbleWho ? App.bubbleWho(actor) : { side: 'mine', who: 'You' };   // drawn from the viewer's seat
+      var side = bw.side, who = escapeHtml(bw.who);
       var msg  = document.createElement('div');
       msg.className = 'pd-msg pd-msg--' + side + ' ui-enter';
       msg.setAttribute('data-actor', actor);

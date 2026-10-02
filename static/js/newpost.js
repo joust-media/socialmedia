@@ -188,7 +188,7 @@
               '<div class="np-field"><div class="np-label-row"><label class="np-label" for="npTags">Hashtags</label><button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-np-defaults hidden>Add client defaults</button></div>' +
                 '<textarea class="ui-textarea np-tags" id="npTags" data-np-field="hashtags" rows="2" maxlength="2000" placeholder="#Brand #Campaign"></textarea></div>' +
               '<div class="np-field-row">' +
-                '<div class="np-field"><label class="np-label" for="npDate">Scheduled for</label><input class="ui-input" type="datetime-local" id="npDate" data-np-field="scheduled_date">' +
+                '<div class="np-field"><label class="np-label" for="npDate">Post date</label><input class="ui-input" type="datetime-local" id="npDate" data-np-field="scheduled_date">' +
                   '<p class="np-field-error" data-np-err="scheduled_date" hidden></p></div>' +
                 '<div class="np-field" data-np-type-field hidden><span class="np-label" id="npTypeLabel">Type</span><div class="ui-segmented np-type" role="radiogroup" aria-labelledby="npTypeLabel" data-np-type></div></div>' +
               '</div>' +
@@ -202,7 +202,7 @@
                 '<div data-np-preview-media></div>' +
                 '<section class="ig"><header class="ig-head"><span class="ui-avatar ui-avatar--sm ig-avatar" data-np-avatar></span><span class="ig-name" data-np-brand></span></header>' +
                   '<div class="ig-caption" data-np-preview-caption></div><div class="ig-tags" data-np-preview-tags hidden></div></section>' +
-                '<div class="pd-when"><div class="pd-when-row"><span class="pd-when-body"><span class="pd-when-label">Planned for</span><span class="pd-when-date" data-np-preview-date></span></span></div></div>' +
+                '<div class="pd-when"><div class="pd-when-row"><span class="pd-when-body"><span class="pd-when-label">Post date</span><span class="pd-when-date" data-np-preview-date></span></span></div></div>' +
               '</article>' +
             '</div>' +
           '</section>' +
@@ -695,6 +695,7 @@
       if (missing) toast(missing + ' of the selected images are not approved — left out', 'error', 4000);
       if (added) markDirty();
       renderAll(); renderUploads();
+      if (added) captionNext();   // "Upload & make post" / Assets selection: typing goes straight into the caption
     });
   }
 
@@ -923,6 +924,7 @@
     });
     if (skipped) toast(skipped + ' file' + (skipped === 1 ? '' : 's') + ' left out — up to ' + MAX + ' slides per post', 'error', 4000);
     markDirty(); clearErrors('slides'); renderAll(); renderUploads();
+    captionNext();   // an inline upload (two panes): the caption is the next thing to do
     pump();
   }
   function pump() {

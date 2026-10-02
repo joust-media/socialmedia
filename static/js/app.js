@@ -238,6 +238,14 @@
     if (actor === 'admin')  return a.admin  || '';
     return '';
   };
+  /** Side + label of a bubble from the VIEWER's seat (= commentBubble() / commentActorLabel(), comment-thread.php):
+   *  the viewer's own message → {side: 'mine', who: 'You'}; the other party → {side: 'theirs', who: 'Joust' | client name}. */
+  App.bubbleWho = function (actor) {
+    var viewer = App.role === 'admin' ? 'admin' : 'client';
+    var names = (window.AppAvatars && window.AppAvatars.names) || {};
+    if ((actor === 'admin' || actor === 'client') && actor === viewer) return { side: 'mine', who: 'You' };
+    return { side: 'theirs', who: actor === 'admin' ? 'Joust' : (actor === 'client' ? (names.client || 'Client') : 'Note') };
+  };
 
   /* ---------------------------------------------------------------- */
   /* Fetch helper — application/x-www-form-urlencoded, JSON back      */
@@ -422,9 +430,14 @@
     $$('.ui-segmented--scroll').forEach(function (control) {
       if (control._segScroll) { segEdges(control); return; }
       control._segScroll = true;
+      // Scroll just far enough to show the active segment (not centred): the leading segments — the admin's own
+      // Draft · Needs changes — stay on screen whenever the active one fits beside them.
       var active = $('.ui-segmented-item.is-active', control);
       if (active && control.scrollWidth > control.clientWidth) {
-        control.scrollLeft = Math.max(0, active.offsetLeft - (control.clientWidth - active.offsetWidth) / 2);
+        var cr = control.getBoundingClientRect(), ar = active.getBoundingClientRect();
+        var left = ar.left - cr.left + control.scrollLeft;                 // the active item's x inside the scroller
+        var over = left + ar.width + 12 - control.clientWidth;
+        control.scrollLeft = over > 0 ? Math.min(over, left) : 0;
       }
       control.addEventListener('scroll', function () { segEdges(control); }, { passive: true });
       segEdges(control);

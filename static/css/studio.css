@@ -45,6 +45,8 @@
 }
 .studio-chips::-webkit-scrollbar { display: none; }
 .studio-chips--wrap { flex-wrap: wrap; overflow: visible; }
+/* Wrapping rows never push the page sideways on a 320 px phone: a long chip label wraps inside its pill */
+.studio-chips--wrap .studio-chip { flex-shrink: 1; max-width: 100%; white-space: normal; }
 .studio-chip {
   display: inline-flex; align-items: center; gap: 6px;
   min-height: 32px; padding: 4px 12px; flex: 0 0 auto;

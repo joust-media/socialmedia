@@ -167,8 +167,6 @@ button.fl-timing { cursor: default; }
   font-size: var(--text-headline); line-height: var(--lh-headline); letter-spacing: var(--ls-headline); font-weight: var(--fw-headline);
   overflow-wrap: anywhere;
 }
-.fl-trigger { margin-top: 1px; }
-.fl-trigger--empty { color: var(--label-tertiary); font-style: italic; }
 .fl-card-body { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
 .fl-label {
   display: inline-block; margin-right: 6px;
@@ -188,7 +186,7 @@ button.fl-timing { cursor: default; }
 .fl-actions .ui-btn--plain { padding-inline: 6px; }
 
 /* Live + past: fade like the list */
-.fl-step--past .fl-code-tile, .fl-step--past .fl-title, .fl-step--past .fl-trigger, .fl-step--past .fl-card-body { opacity: .5; }
+.fl-step--past .fl-code-tile, .fl-step--past .fl-title, .fl-step--past .fl-card-body { opacity: .5; }
 .fl-step--past .fl-meta { opacity: .75; }
 
 /* Compact: subject/preview hidden, tighter connectors — the whole flow on one screen */

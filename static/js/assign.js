@@ -322,15 +322,19 @@
         if (posFor === pick.value) {
           // same flow: keep the chosen position
         } else if (f && f.steps.length) {
+          // "At the end" (default) · "First" · "After <code>" for every step but the last (= At the end)
           posFor = pick.value;
-          var html = '<option value="">At the end (step ' + (f.steps.length + 1) + ')</option><option value="0">First</option>';
+          var name = function (s, i) { return s.code || ('step ' + (i + 1)); };
+          var last = f.steps[f.steps.length - 1];
+          var html = '<option value="">At the end (after ' + esc(name(last, f.steps.length - 1)) + ')</option><option value="0">First (before ' + esc(name(f.steps[0], 0)) + ')</option>';
           f.steps.forEach(function (s, i) {
             if (i === f.steps.length - 1) return;
-            html += '<option value="' + (i + 1) + '">After step ' + (i + 1) + ' · ' + esc(s.label) + '</option>';
+            html += '<option value="' + (i + 1) + '">After ' + esc(name(s, i)) + '</option>';
           });
           pos.innerHTML = html;
           posWrap.hidden = false;
         } else {
+          // an empty flow or a new one: nothing to place it against — the field stays hidden (the email goes first)
           posFor = pick.value;
           pos.innerHTML = '<option value="">At the end</option>';
           posWrap.hidden = true;

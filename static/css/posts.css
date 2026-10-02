@@ -87,6 +87,7 @@ li + li > .pl-card::before { left: 100px; }
   color: var(--label-secondary);
 }
 .pl-meta-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }   /* "·" wraps with its item */
+.pl-meta-item[hidden] { display: none; }   /* "0 comments" is not said at all (it showed as an orphan "· 0 comments" line) */
 .pl-meta-sep { color: var(--label-tertiary); }
 .pl-card .ui-row-chevron { align-self: center; }
 .pl-when { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 6px; }
@@ -357,8 +358,8 @@ li + li > .pl-card::before { left: 100px; }
 .pd-comment-count { font-weight: 500; }
 .pd-thread { gap: 8px; }
 .pd-msg { display: flex; flex-direction: column; }
-.pd-msg--client { align-items: flex-end; }
-.pd-msg--joust  { align-items: flex-start; }
+.pd-msg--mine   { align-items: flex-end; }
+.pd-msg--theirs { align-items: flex-start; }
 .pd-msg .ui-bubble { white-space: pre-wrap; overflow-wrap: anywhere; }
 .pd-msg .ui-bubble-meta { padding: 0 6px; }
 .pd-thread-empty {
@@ -391,7 +392,7 @@ li + li > .pl-card::before { left: 100px; }
   font: inherit; font-size: var(--text-caption); line-height: var(--lh-caption); font-weight: 600;
   cursor: pointer;
 }
-.ui-bubble--client .pd-slide-chip { background: rgba(255,255,255,.22); }
+.ui-bubble--mine .pd-slide-chip { background: rgba(255,255,255,.22); }
 .pd-slide-chip img, .pd-slide-chip-blank { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; background: rgba(0,0,0,.25); flex: 0 0 auto; }
 .pd-slide-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* Timestamp chip (spec §6): shown by App.video when the sheet contains a video; inserts "m:ss — " */
@@ -488,3 +489,11 @@ li + li > .pl-card::before { left: 100px; }
 }
 .pd-viewer-original:hover { background: rgba(255,255,255,.22); }
 
+/* Client seat: a post they marked Needs changes (renderPostHiddenNotice) — what is happening + their note, read-only */
+.pd-hidden { display: flex; flex-direction: column; gap: 8px; padding: 8px 0 4px; }
+.pd-hidden-lead { margin: 0; }
+.pd-hidden-title { margin: 0; font-size: var(--text-headline); line-height: var(--lh-headline); letter-spacing: var(--ls-headline); font-weight: 600; }
+.pd-hidden-text { margin: 0; color: var(--label-secondary); }
+.pd-hidden-note { margin: 8px 0 0; padding: 10px 12px; border-radius: 12px; background: var(--fill-tertiary); }
+.pd-hidden-note-head { font-size: var(--text-caption); line-height: var(--lh-caption); font-weight: 600; color: var(--label-secondary); text-transform: uppercase; letter-spacing: .02em; }
+.pd-hidden-note blockquote { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }

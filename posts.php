@@ -213,9 +213,25 @@ if ($postParam > 0) {
     $directPost = $st->fetch() ?: null;
 }
 
+// A client following their own "You requested changes on …" link: the post left their view (it is Joust's
+// queue now). The sheet says so and shows their note (renderPostHiddenNotice) — never a silent 404 and never
+// the work in progress. Drafts and other clients' posts stay "not found".
+$hiddenPost = null;
+if (!$directPost && !$admin && $postParam > 0 && $client) {
+    $st = $pdo->prepare($selectSql . " WHERE p.id = ? AND p.company_id = ? AND p.status = 'denied' LIMIT 1");
+    $st->execute([$postParam, (int)$client['id']]);
+    $hiddenPost = $st->fetch() ?: null;
+}
+
 if ($isPartial) {
     header('Content-Type: text/html; charset=UTF-8');
     header('Cache-Control: no-store');
+    if (!$directPost && $hiddenPost) {
+        $one = [$hiddenPost];
+        postsAttachRelations($pdo, $one, $hasMedia, $hasLog);
+        echo renderPostHiddenNotice($one[0], reviewLatestNote($one[0]['comments'], (string)($client['name'] ?? '')));
+        exit;
+    }
     if (!$directPost) {
         http_response_code(404);
         echo '<div class="ui-empty">This post is no longer available.</div>';
@@ -254,9 +270,11 @@ if ($monthParam === 'all') {
 // ---------------------------------------------------------------------
 // Segment
 // ---------------------------------------------------------------------
+// Admin: Joust's own work first — Draft · Needs changes — so the queue is on screen at 390 px (the
+// segmented control scrolls sideways on phones); then the client's To Review, Approved, Scheduled.
 $segments = ($hasDraft ? ['draft' => 'Draft'] : [])
+          + ($admin ? ['denied' => 'Needs changes'] : [])
           + ['pending' => 'To Review', 'approved' => 'Approved', 'scheduled' => 'Scheduled'];
-if ($admin) { $segments['denied'] = 'Needs changes'; }
 
 $segment = strtolower(trim((string)($_GET['status'] ?? 'pending')));
 if ($directPost) {
@@ -449,10 +467,6 @@ $bodyClass   = 'page-posts';
 $postsConfig = [
     'base'        => basePath(),
     'endpoint'    => basePath() . '/status.php',
-    'replace'     => basePath() . '/replace-image.php',
-    'upload'      => basePath() . '/upload-chunk.php',   // Replace image/video: purpose=replace, in pieces when large (chunk-upload.js)
-    'maxImageMb'  => 50,
-    'maxVideoMb'  => 4096,
     'partialUrl'  => postsUrl(['post' => '__ID__', 'partial' => 1]),
     'rowUrl'      => postsUrl(['post' => '__ID__', 'partial' => 'row']),   // App.posts.refresh(): one row after a pop-up save
     'month'       => $selectedMonth,                                        // '' = all months (refresh: is the row in this view?)
@@ -472,7 +486,7 @@ $postsConfig = [
     'flash'       => $admin && isset($_GET['msg']) && is_string($_GET['msg']) ? mb_substr(trim($_GET['msg']), 0, 300) : '',
 ];
 $footExtra = '<script>window.PostsConfig = ' . json_encode($postsConfig, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n"
-           . ($admin ? '<script src="' . h(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n" : '')   // App.chunkUpload for Replace (admin only)
+           . ($admin ? '<script src="' . h(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n" : '')   // App.chunkUpload for the New post pop-up's uploads (admin only)
            . '<script src="' . h(staticUrl('js/carousel.js')) . '" defer></script>' . "\n"   // App.carousel: swipe, dots, "2 / 7", arrows, ←/→ (both seats)
            . '<script src="' . h(staticUrl('js/posts.js')) . '" defer></script>';
 
@@ -548,7 +562,7 @@ $renderRow = function (array $post, int $rowIndex = 0) use ($client, $segment, $
               <?php if ($queue): ?>
                 <span class="pl-meta-item"><span class="pl-meta-sep">·</span><span data-queue-count="<?= $pid ?>"><?= $qCount > 0 ? $qCount . ' client ' . ($qCount === 1 ? 'comment' : 'comments') : 'no client comments' ?></span></span>
               <?php else: ?>
-                <span class="pl-meta-item"><span class="pl-meta-sep">·</span><span data-comment-count-for="<?= $pid ?>"><?= $nCmt ?> <?= $nCmt === 1 ? 'comment' : 'comments' ?></span></span>
+                <span class="pl-meta-item"<?= $nCmt > 0 ? '' : ' hidden' ?>><span class="pl-meta-sep">·</span><span data-comment-count-for="<?= $pid ?>"><?= $nCmt ?> <?= $nCmt === 1 ? 'comment' : 'comments' ?></span></span>
               <?php endif; ?>
             </div>
           </div>

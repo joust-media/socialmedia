@@ -11,7 +11,7 @@
  *            approved_at (optional datetime for the "Approved Sep 5" row)
  *            last_edit (optional ['actor','created_at'] of the newest edited_caption / edited_hashtags
  *                       row → "Edited by <client> · 5m ago" under the caption when actor = client)
- *     $opts: 'admin'     bool  — default isAdmin(). Admin-only markup (⋯ menu, date editor, Replace,
+ *     $opts: 'admin'     bool  — default isAdmin(). Admin-only markup (⋯ menu: Edit post… is the one editor, date editor,
  *                        the admin footer rows, the Needs changes note banner) is NEVER emitted otherwise.
  *                        The caption / hashtags editor is shared by both seats (hidden once Scheduled).
  *     Footer, one primary per state — client: To Review → Needs changes · Approve. Admin (Joust's own next step):
@@ -40,7 +40,7 @@
  *     Video through renderVideoElement() (spec §6: autoplay muted, tap-to-unmute pill, App.video
  *     fallback card).
  *   pdSlideThumbs(array $images): array — sm URL per slide ('' for video), for comment slide chips.
- *     $opts: 'admin' (adds nothing by itself — Replace lives in the ⋯ menu), 'label',
+ *     $opts: 'admin' (adds nothing by itself — media is replaced in Edit post…), 'label',
  *            'autoplay' (default true).
  *
  *   pdMediaUrl(string $url): string — root-rooted URL for an image_url value.
@@ -218,7 +218,6 @@ if (!function_exists('renderPostDetail')) {
         $admin     = array_key_exists('admin', $opts) ? (bool)$opts['admin'] : (function_exists('isAdmin') && isAdmin());
         $hasPosted = !array_key_exists('hasPosted', $opts) || $opts['hasPosted'];
         $endpoint  = pdMediaUrl((string)($opts['endpoint'] ?? 'status.php'));
-        $replaceEp = pdMediaUrl('replace-image.php');
 
         $id       = (int)($post['id'] ?? 0);
         $status   = strtolower((string)($post['status'] ?? 'pending'));
@@ -260,11 +259,9 @@ if (!function_exists('renderPostDetail')) {
             $out .= '<div class="pd-more">'
                   . '<button type="button" class="ui-btn ui-btn--gray ui-btn--icon ui-btn--sm" data-menu-toggle aria-haspopup="menu" aria-expanded="false" aria-label="More actions">' . (function_exists('icon') ? icon('ellipsis') : '&hellip;') . '</button>'
                   . '<div class="pd-menu" role="menu" data-menu hidden>'
-                  // Full editor (media add / remove / reorder / replace, caption, date, type): the New post pop-up in edit mode (newpost.js)
+                  // ONE editor (media add / remove / reorder / replace, caption, date, type): the New post pop-up in edit
+                  // mode (newpost.js). The inline "Edit caption" / date "Edit" stay as quick shortcuts on the sheet itself.
                   . '<button type="button" role="menuitem" data-newpost-edit="' . $id . '">Edit post…</button>'
-                  . '<button type="button" role="menuitem" data-edit="caption" data-caption-menu' . ($posted ? ' disabled title="Unmark scheduled first"' : '') . '>Edit caption</button>'
-                  . '<button type="button" role="menuitem" data-edit="date">Edit date</button>'
-                  . '<button type="button" role="menuitem" data-replace-image' . ($images ? '' : ' disabled') . '>Replace image</button>'
                   // Every file of the post, saved one by one (posts.js) — what Classic admin's "Save" button did
                   . '<button type="button" role="menuitem" data-download-media' . ($images ? '' : ' disabled') . '>Download media</button>'
                   // The client's decisions, taken on their behalf only on purpose (never a footer button for the admin):
@@ -288,9 +285,6 @@ if (!function_exists('renderPostDetail')) {
 
         // ---- 1. Media carousel -------------------------------------------
         $out .= renderPostMedia($images, ['admin' => $admin, 'label' => (string)$brand['name'] . ' post']);
-        if ($admin) {
-            $out .= '<input type="file" class="ui-visually-hidden" data-replace-input accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov" tabindex="-1" data-replace-endpoint="' . pdEsc($replaceEp) . '" data-upload-endpoint="' . pdEsc(pdMediaUrl('upload-chunk.php')) . '">';   // upload-chunk.php purpose=replace: large replacements in pieces
-        }
 
         // ---- 2. Caption preview ----------------------------------------------
         // Caption + hashtags are editable by BOTH seats until the post is Scheduled
@@ -325,7 +319,7 @@ if (!function_exists('renderPostDetail')) {
         $out .= '<div class="pd-when" data-when>';
         $out .= '<button type="button" class="pd-when-row" data-when-toggle aria-expanded="false">'
               . (function_exists('icon') ? icon('calendar', 'pd-when-icon') : '')
-              . '<span class="pd-when-body"><span class="pd-when-label">' . ($posted ? 'Scheduled for' : 'Planned for') . '</span>'
+              . '<span class="pd-when-body"><span class="pd-when-label">Post date</span>'
               . '<span class="pd-when-date" data-when-display data-iso="' . pdEsc($whenTs ? date('Y-m-d\TH:i', $whenTs) : '') . '">' . pdEsc($whenTs ? pdFormatWhen($when) : 'Date to be confirmed') . '</span></span>'
               . '<span class="pd-when-cta">' . ($admin ? 'Edit' : 'Request a change') . '</span>'
               . '</button>';
@@ -333,7 +327,7 @@ if (!function_exists('renderPostDetail')) {
         $out .= '<p class="pd-when-past text-tertiary" data-when-past' . ($isPast ? '' : ' hidden') . '>This post\'s date has passed.</p>';
         if ($admin) {
             $out .= '<form class="pd-editor" data-edit-form="date" hidden>'
-                  . '<label class="pd-editor-label" for="pd-date-' . $id . '">Scheduled date</label>'
+                  . '<label class="pd-editor-label" for="pd-date-' . $id . '">Post date</label>'
                   . '<input class="ui-input" type="datetime-local" id="pd-date-' . $id . '" name="scheduled_date" value="' . pdEsc($whenTs ? date('Y-m-d\TH:i', $whenTs) : '') . '" required>'
                   . '<div class="ui-btn-group"><button type="button" class="ui-btn ui-btn--gray" data-edit-cancel>Cancel</button><button type="submit" class="ui-btn ui-btn--filled ui-btn--primary">Save</button></div>'
                   . '</form>';
@@ -420,5 +414,35 @@ if (!function_exists('renderPostDetail')) {
         $out .= '</div>'; // /.pd-footer
         $out .= '</article>';
         return $out;
+    }
+}
+
+if (!function_exists('renderPostHiddenNotice')) {
+    /**
+     * Client seat, a post they marked Needs changes (it left their view: Joust's queue). Their own activity row
+     * ("You requested changes on …") still links here, so the sheet says what is going on and shows THEIR note —
+     * never the work in progress, never a silent 404. Read-only: no composer, no decisions.
+     *   $note: reviewLatestNote() of the post's comments (the client's latest note) or null.
+     */
+    function renderPostHiddenNotice(array $post, ?array $note): string
+    {
+        $id    = (int)($post['id'] ?? 0);
+        $name  = function_exists('postDisplayLabel') ? postDisplayLabel($post) : ('post #' . $id);
+        $out   = '<article class="pd pd--hidden" data-post-detail="' . $id . '" data-id="' . $id . '" data-status="denied" data-posted="0" data-hidden-post data-title="' . pdEsc($name) . '">';
+        $out  .= '<div class="pd-body" data-pd-body>';
+        $out  .= '<section class="pd-hidden">'
+               . '<p class="pd-hidden-lead">' . (function_exists('statusPill') ? statusPill('denied', false, ['class' => 'pd-pill']) : '') . '</p>'
+               . '<h3 class="pd-hidden-title">Joust is updating this post</h3>'
+               . '<p class="pd-hidden-text">You asked for changes on <strong>' . pdEsc($name) . '</strong>. It comes back to To Review when it is ready — nothing to do until then.</p>';
+        if ($note && trim((string)$note['text']) !== '') {
+            $when = $note['at'] !== '' && function_exists('relativeTime') ? relativeTime($note['at']) : '';
+            $out .= '<figure class="pd-hidden-note" data-hidden-note>'
+                  . '<figcaption class="pd-hidden-note-head">Your note' . ($when !== '' ? ' · ' . pdEsc($when) : '') . '</figcaption>'
+                  . '<blockquote>' . ((int)$note['slide'] > 0 ? '<span class="pd-note-slide">On slide ' . (int)$note['slide'] . ':</span> ' : '') . nl2br(pdEsc($note['text'])) . '</blockquote>'
+                  . '</figure>';
+        }
+        $out  .= '</section></div>';
+        $out  .= '<div class="pd-footer" data-pd-footer><div class="pd-actions"><button type="button" class="ui-btn ui-btn--large ui-btn--gray" data-sheet-close>Back to posts</button></div></div>';
+        return $out . '</article>';
     }
 }

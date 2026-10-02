@@ -61,7 +61,7 @@ if (!function_exists('reviewNoteBanner')) {
         $text = $note ? $note['text'] : '';
         $out .= '<p class="pd-note-text" data-pd-note-text>'
               . ($note && $note['slide'] > 0 ? '<span class="pd-note-slide">On slide ' . (int)$note['slide'] . ':</span> ' : '')
-              . ($text !== '' ? reviewEsc($text) : '<span class="text-tertiary">No note left — see the comments below.</span>') . '</p>';
+              . ($text !== '' ? reviewEsc($text) : '<span class="text-tertiary">No note left.</span>') . '</p>';
         return $out . '</section>';
     }
 }

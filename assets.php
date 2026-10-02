@@ -824,18 +824,23 @@ include __DIR__ . '/partials/layout-top.php';
 <?php else: ?>
 
   <?php if ($collection):
-    // Admin Edit / Delete for the tire (never rendered for clients) — in the Reference card either way
+    // Admin Edit + ⋯ (Delete tire…, asks first) for the tire (never rendered for clients) — in the Reference card either way.
+    // Delete is never a visible header button: it sits behind ⋯ (assign.js runs the [data-asg-menu] menus on every admin page).
     $refAdminHtml = '';
     if ($isAdmin) {
         $refUpload = ['dest' => 'reference', 'tire' => $itemId];   // the Upload sheet with this tire's Reference preselected
         $refAdminHtml = '<div class="as-reference-admin">'
             . '<a class="ui-btn ui-btn--sm ui-btn--tinted" href="' . esc(uploadSheetUrl('assets.php', $refUpload, ['view' => 'collections', 'item' => $itemId, 'series' => 'ref'])) . '"' . uploadSheetAttrs($refUpload) . ' data-ref-upload>' . icon('upload') . '<span>Upload</span></a>'
             . '<a class="ui-btn ui-btn--sm ui-btn--gray" href="' . esc(clientUrl('add-feature.php', ['module' => 'tires', 'edit_item' => $itemId])) . '">Edit</a>'
-            . '<button type="button" class="ui-btn ui-btn--sm ui-btn--deny ui-btn--tinted"'
+            . '<div class="asg-more as-tire-more">'
+            . '<button type="button" class="ui-btn ui-btn--sm ui-btn--gray ui-btn--icon asg-more-btn" data-asg-menu-toggle aria-haspopup="menu" aria-expanded="false" aria-label="' . esc('More actions for ' . $collection['name']) . '">' . icon('ellipsis') . '</button>'
+            . '<div class="asg-menu" role="menu" data-asg-menu hidden>'
+            . '<button type="button" role="menuitem" class="is-destructive"'
             . ' data-action="delete_tire" data-endpoint="' . esc(basePath() . '/tire-status.php') . '"'
             . ' data-param-action="delete_tire" data-tire-id="' . $itemId . '"'
             . ' data-confirm="' . esc('Delete “' . $collection['name'] . '” and all of its images? This cannot be undone.') . '"'
-            . ' data-href="' . esc(clientUrl('assets.php', ['view' => 'collections'])) . '">Delete</button>'
+            . ' data-href="' . esc(clientUrl('assets.php', ['view' => 'collections'])) . '" data-tire-delete-menu>Delete tire…</button>'
+            . '</div></div>'
             . '</div>';
     }
   ?>
