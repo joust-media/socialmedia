@@ -11,6 +11,17 @@ const { run } = require('./lib');
       expect.eq(await page.$$eval('[data-posts-items] [data-post-item]', (els) => els.length), 2);
       expect.eq(await page.$$eval('[data-posts-items] [data-swipe]', (els) => els.length), 0, 'no swipe rows');
     });
+    await test('status segments: no label is clipped or overlaps, the page never scrolls sideways', async (page) => {
+      await page.goto(url('posts.php?client=kenda&status=denied&month=all'));
+      const m = await page.$eval('.ui-segmented[aria-label="Post status"]', (s) => ({
+        clipped: [...s.querySelectorAll('.ui-segmented-item')].filter((i) => i.scrollWidth > i.clientWidth + 1).map((i) => i.textContent.trim()),
+        doc: document.documentElement.scrollWidth, vw: window.innerWidth,
+        active: (() => { const a = s.querySelector('.is-active').getBoundingClientRect(), r = s.getBoundingClientRect(); return a.left >= r.left - 1 && a.right <= r.right + 1; })(),
+      }));
+      expect.eq(m.clipped.length, 0, 'clipped labels ' + JSON.stringify(m.clipped));
+      expect(m.doc <= m.vw, 'no horizontal page scroll (' + m.doc + ' > ' + m.vw + ')');
+      expect(m.active, 'the active segment (Needs changes) is scrolled into view');
+    });
     await test('Send for review without a caption → error toast + caption editor', async (page) => {
       await page.goto(url('posts.php?client=kenda&status=draft&month=all'));
       await page.click('[data-post-item="7"] [data-submit-post="7"]');

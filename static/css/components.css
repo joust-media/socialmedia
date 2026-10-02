@@ -288,6 +288,33 @@ a.ui-row:active, button.ui-row:active { background: var(--fill-tertiary); }
   .ui-segmented--dense .ui-segmented-item { padding-inline: 4px; font-size: var(--text-caption); letter-spacing: 0; gap: 3px; }
   .ui-segmented--dense .ui-segmented-count { display: none; }
 }
+/* Scrollable variant (segmented(…, ['scroll' => true]) — admin Posts' five segments). On phones the
+   items keep their natural width (labels + counts never overlap) and the control scrolls sideways;
+   app.js sets .is-overflow-start / .is-overflow-end so a fade marks the side with more segments. */
+@media (max-width: 600px) {
+  .ui-segmented--scroll {
+    overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .ui-segmented--scroll::-webkit-scrollbar { display: none; }
+  .ui-segmented--scroll .ui-segmented-item,
+  .ui-segmented--scroll.ui-segmented--dense .ui-segmented-item {
+    flex: 1 0 auto; padding-inline: 10px; font-size: var(--text-footnote); letter-spacing: var(--ls-footnote); gap: 5px;
+  }
+  .ui-segmented--scroll.ui-segmented--dense .ui-segmented-count { display: inline; }
+  .ui-segmented--scroll.is-overflow-end {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+            mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+  }
+  .ui-segmented--scroll.is-overflow-start {
+    -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent);
+            mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent);
+  }
+  .ui-segmented--scroll.is-overflow-start.is-overflow-end {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+            mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+  }
+}
 
 /* ---------------------------------------------------------------------
    Buttons

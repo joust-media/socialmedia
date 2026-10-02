@@ -21,7 +21,7 @@
  *     'entity' ('post'), 'stamp' (default true), 'slides' (slide count — ≥ 2 adds the
  *     optional [data-comment-slide] picker; the comment is stored as "[Slide N] text").
  *
- *   commentSlideSplit(string $text): [int $slide, string $rest] — parse the "[Slide N] " prefix.
+ *   commentSlideSplit(string $text): [int $slide, string $rest] — parse the "[Slide N] " prefix (helpers.php).
  *   commentSlideChip(int $n, string $thumb): string — the chip a slide comment shows in the thread
  *     (commentThreadHtml($rows, ['slides' => pdSlideThumbs($images)])).
  *
@@ -38,14 +38,7 @@ if (!function_exists('commentActorLabel')) {
     }
 }
 
-if (!function_exists('commentSlideSplit')) {
-    /** "[Slide 3] Darker please" → [3, 'Darker please']; anything else → [0, $text]. (No schema change: the slide is a text prefix.) */
-    function commentSlideSplit(string $text): array
-    {
-        if (preg_match('/^\[Slide (\d{1,2})\]\s*/u', $text, $m)) return [(int)$m[1], (string)substr($text, strlen($m[0]))];
-        return [0, $text];
-    }
-}
+// commentSlideSplit() lives in helpers.php (the activity feed, digest and Home notes use it too).
 
 if (!function_exists('commentSlideChip')) {
     /** The chip above a slide comment: the slide's sm thumb + "Slide N"; posts.js scrolls the carousel to it. */

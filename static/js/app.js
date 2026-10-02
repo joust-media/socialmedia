@@ -404,6 +404,31 @@
     if (!item || item.tagName === 'A') return;
     App.segmented.select(item);
   });
+  // Scrollable controls (.ui-segmented--scroll, phones): fade the side that has more segments,
+  // and bring the active segment into view on load.
+  function segEdges(control) {
+    var max = control.scrollWidth - control.clientWidth;
+    control.classList.toggle('is-overflow-start', max > 1 && control.scrollLeft > 1);
+    control.classList.toggle('is-overflow-end', max > 1 && control.scrollLeft < max - 1);
+  }
+  function initSegScroll() {
+    $$('.ui-segmented--scroll').forEach(function (control) {
+      if (control._segScroll) { segEdges(control); return; }
+      control._segScroll = true;
+      var active = $('.ui-segmented-item.is-active', control);
+      if (active && control.scrollWidth > control.clientWidth) {
+        control.scrollLeft = Math.max(0, active.offsetLeft - (control.clientWidth - active.offsetWidth) / 2);
+      }
+      control.addEventListener('scroll', function () { segEdges(control); }, { passive: true });
+      segEdges(control);
+    });
+  }
+  App.segmented.refresh = initSegScroll;
+  window.addEventListener('resize', function () { $$('.ui-segmented--scroll').forEach(segEdges); });
+  document.addEventListener('focusin', function (e) {
+    var item = e.target.closest && e.target.closest('.ui-segmented--scroll .ui-segmented-item');
+    if (item && item.scrollIntoView) item.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  });
   document.addEventListener('keydown', function (e) {
     var item = e.target.closest && e.target.closest('.ui-segmented-item');
     if (!item || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
@@ -597,6 +622,7 @@
     App.role  = (document.body && document.body.dataset.role)  || App.role;
     App.actor = (document.body && document.body.dataset.actor) || App.role;
     initNav();
+    initSegScroll();
     App.theme.apply();
     document.dispatchEvent(new CustomEvent('app:ready', { detail: { App: App } }));
   };

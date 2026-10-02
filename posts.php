@@ -363,7 +363,9 @@ function postsQueueInfo(array $post, ?string $deniedAt, ?array $client): array {
         if ($t) { $ts = max($ts, $t); }
     }
     return [
-        'note'         => $note ? trim((string)$note['detail']) : '',
+        // "[Slide 3] text" → note_slide 3 + the text (the raw prefix is never shown)
+        'note'         => $note ? trim(commentSlideSplit(trim((string)$note['detail']))[1]) : '',
+        'note_slide'   => $note ? commentSlideSplit(trim((string)$note['detail']))[0] : 0,
         'note_who'     => $who,
         'note_at'      => $note ? (string)$note['created_at'] : ($deniedAt ?? ''),
         'client_count' => count($clientRows),
@@ -525,7 +527,7 @@ $renderRow = function (array $post, int $rowIndex = 0) use ($client, $segment, $
             <?php if ($queue): ?>
               <div class="pl-note<?= $qNote === '' ? ' pl-note--empty' : '' ?>" data-queue-note>
                 <?php if ($qNote !== ''): ?>
-                  <q><?= h($qNote) ?></q>
+                  <?php if (!empty($queue['note_slide'])): ?>On slide <?= (int)$queue['note_slide'] ?>: <?php endif; ?><q><?= h($qNote) ?></q>
                   <span class="pl-note-meta"><?= h($queue['note_who']) ?><?php if ($qWhen !== ''): ?> · <time title="<?= h($qAbs) ?>"><?= h($qWhen) ?></time><?php endif; ?></span>
                 <?php else: ?>
                   <span>No note left<?php if ($qWhen !== ''): ?> · denied <time title="<?= h($qAbs) ?>"><?= h($qWhen) ?></time><?php endif; ?></span>
@@ -579,7 +581,7 @@ include __DIR__ . '/partials/layout-top.php';
 ?>
 
 <div class="posts-toolbar">
-  <?= segmented($segItems, ['label' => 'Post status']) ?>
+  <?= segmented($segItems, ['label' => 'Post status', 'scroll' => true]) ?>
 </div>
 
 <?php if (!$posts): ?>

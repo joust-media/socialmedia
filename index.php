@@ -284,8 +284,11 @@ if ($isAdmin) {
                 $seen[$pid] = true;
                 $name = trim((string)($r['post_name'] ?? ''));
                 if ($name === '' || activityLooksLikeFilename($name)) $name = homeFirstLine($r['post_caption'] ?? '', 60);
+                // "[Slide 3] text" → lead "On slide 3" + the text (the raw prefix is never shown)
+                [$slideNo, $noteText] = commentSlideSplit(trim((string)$r['detail']));
                 $needsNotes[] = [
-                    'text' => trim((string)$r['detail']),
+                    'text' => trim($noteText),
+                    'lead' => $slideNo > 0 ? 'On slide ' . $slideNo : '',
                     'on'   => $name !== '' ? $name : 'Post #' . $pid,
                     'when' => relativeTime($r['created_at']),
                     'href' => clientUrl('posts', ['post' => $pid]),

@@ -224,6 +224,26 @@ test('slide comment: stored as "[Slide 2] …", rendered as a slide chip', funct
     has($b, 'data-goto-slide="1"'); has($b, '<span>Slide 2</span>'); has($b, 'Darker sky please');
     hasNot($b, '[Slide 2]', 'the prefix itself is not shown');
 });
+test('slide comment: feeds, Home notes and the Needs changes row say "on slide N:", never the raw prefix', function () {
+    status(post('status.php', ['id' => 2, 'comment' => '[Slide 3] Crop tighter', 'actor' => 'client', 'client' => 'kenda'], 'client'), 200);
+    foreach (['admin', 'client'] as $seat) {
+        $b = get('index.php?client=kenda', $seat)['body'];
+        has($b, 'on slide 3: <q>Crop tighter</q>', "$seat Home activity");
+        hasNot($b, '[Slide 3]', "$seat Home: no raw prefix");
+    }
+    $b = get('index.php', 'admin')['body'];   // cross-client feed
+    has($b, 'on slide 3: <q>Crop tighter</q>', 'cross-client feed');
+    hasNot($b, '[Slide 3]', 'cross-client feed: no raw prefix');
+    // a note on a Needs-changes post (post 4 is denied): Home "Latest notes" + the queue row
+    status(post('status.php', ['id' => 4, 'comment' => '[Slide 1] Wrong tire', 'actor' => 'client', 'client' => 'kenda'], 'client'), 200);
+    $b = get('index.php?client=kenda', 'admin')['body'];
+    has($b, '<span class="home-note-lead">On slide 1:</span> <q>Wrong tire</q>', 'Home note lead');
+    hasNot($b, '[Slide 1]', 'Home notes: no raw prefix');
+    $b = get('posts.php?client=kenda&status=denied', 'admin')['body'];
+    has($b, 'On slide 1: <q>Wrong tire</q>', 'Needs changes row');
+    hasNot($b, '[Slide 1]', 'Needs changes row: no raw prefix');
+    is((string)q1("SELECT detail FROM activity_log WHERE entity_id = 4 AND action = 'commented' ORDER BY id DESC LIMIT 1"), '[Slide 1] Wrong tire', 'stored text unchanged');
+});
 // ---- update -------------------------------------------------------------------------------------
 test('load: the post with its slides in order', function () {
     $j = status(get(NP . '&action=load&id=2'), 200)['json'];

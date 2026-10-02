@@ -1212,6 +1212,25 @@ if (!function_exists('activityLooksLikeFilename')) {
 }
 
 /**
+ * Slide comments (the post sheet's "Slide" picker) are stored as "[Slide N] text" — no schema change.
+ * commentSlideSplit("[Slide 3] Darker please") → [3, 'Darker please']; anything else → [0, $text].
+ * commentSlideHuman() is the plain-text form for feed sentences, the digest and Home notes:
+ * "on slide 3: Darker please" (the stored text is never rewritten).
+ */
+if (!function_exists('commentSlideSplit')) {
+    function commentSlideSplit(string $text): array {
+        if (preg_match('/^\[Slide (\d{1,2})\]\s*/u', $text, $m)) return [(int)$m[1], (string)substr($text, strlen($m[0]))];
+        return [0, $text];
+    }
+}
+if (!function_exists('commentSlideHuman')) {
+    function commentSlideHuman(string $text): string {
+        [$n, $rest] = commentSlideSplit($text);
+        return $n > 0 ? 'on slide ' . $n . ': ' . $rest : $text;
+    }
+}
+
+/**
  * Resolve the human "thing + parent" for one recentActivity() entry.
  *
  * Returns ['thing' => 'post'|'image'|'collection'|'task'|'item',
@@ -1392,7 +1411,8 @@ if (!function_exists('activityPrimaryAction')) {
  *     tone        approve | deny | accent | scheduled | neutral
  *     time        created_at of the newest merged row; time_rel / time_abs formatted
  *     count       how many items the row stands for (1 unless collapsed)
- *     children    [['text','who','time','time_rel','href'], …]  comment texts (for the disclosure)
+ *     children    [['text','slide','who','time','time_rel','href'], …]  comment texts (for the disclosure;
+ *                 a "[Slide N] " prefix is split off into 'slide' = N, 0 otherwise)
  *     edits       ['caption','schedule',…] for edit batches
  *     who, is_you, actor, action, actions, verb, thing, name, parent, parent_key,
  *     entity_type, entity_id, entity_ids, company_id, company_name, company_slug, batch_id
@@ -1423,8 +1443,11 @@ if (!function_exists('humanizeActivityRows')) {
             $children = [];
             foreach ((array)($e['details'] ?? []) as $d) {
                 if (($d['action'] ?? '') === 'commented' && trim((string)($d['text'] ?? '')) !== '') {
+                    // "[Slide 3] text" → slide 3 + the text; sentences say "on slide 3: …" (never the raw prefix)
+                    [$slideNo, $body] = commentSlideSplit(trim((string)$d['text']));
                     $children[] = [
-                        'text'     => trim((string)$d['text']),
+                        'text'     => trim($body),
+                        'slide'    => $slideNo,
                         'who'      => $who,
                         'time'     => (string)($e['created_at'] ?? ''),
                         'time_rel' => relativeTime($e['created_at'] ?? null),
@@ -1731,8 +1754,9 @@ if (!function_exists('activityFinalizeRows')) {
             if (count($r['children']) === 1) {
                 $q = $r['children'][0]['text'];
                 $qShort = (function_exists('mb_strlen') && mb_strlen($q) > 240) ? rtrim(mb_substr($q, 0, 239)) . '…' : $q;
-                $t  .= " — '" . $qShort . "'";
-                $hh .= ' — <q>' . $h($qShort) . '</q>';
+                $onSlide = !empty($r['children'][0]['slide']) ? 'on slide ' . (int)$r['children'][0]['slide'] . ': ' : '';
+                $t  .= ' — ' . $onSlide . "'" . $qShort . "'";
+                $hh .= ' — ' . $onSlide . '<q>' . $h($qShort) . '</q>';
             }
             $r['verb']     = $verb;
             $r['text']     = $t;
@@ -1789,7 +1813,7 @@ function renderActivityFeed(PDO $pdo, $companyId = null, $limit = 20) {
         if (count($r['children']) > 1) {
             foreach ($r['children'] as $c) {
                 $q = $c['text'];
-                $detailHtml .= '<div class="activity-detail">"' . $h(mb_substr($q, 0, 240))
+                $detailHtml .= '<div class="activity-detail">' . (!empty($c['slide']) ? 'on slide ' . (int)$c['slide'] . ': ' : '') . '"' . $h(mb_substr($q, 0, 240))
                             . (mb_strlen($q) > 240 ? '…' : '') . '"</div>';
             }
         }

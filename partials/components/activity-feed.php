@@ -69,6 +69,7 @@ if (!function_exists('activityFeed')) {
                 foreach ($children as $c) {
                     $q = (string)($c['text'] ?? '');
                     $inner .= '<li><a class="activity-comment" href="' . $esc($c['href'] ?? $href) . '">'
+                            . (!empty($c['slide']) ? 'on slide ' . (int)$c['slide'] . ': ' : '')
                             . '<q>' . $esc($q) . '</q>'
                             . (!empty($c['time_rel']) ? '<span class="activity-comment-time">' . $esc($c['time_rel']) . '</span>' : '')
                             . '</a></li>';
