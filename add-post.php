@@ -87,7 +87,19 @@ function composerDone(bool $ok, string $msg, array $extra = [], int $code = 200)
 // -------------------------------------------------------------
 if (!$client) {
     if ($wantsJson) { composerDone(false, 'Pick a client first.', [], 400); }
-    header('Location: ' . pagePath('posts'));   // the admin's client chooser
+    // ?edit=<id> knows its client: that post's sheet with the pop-up in edit mode.
+    $unscopedEdit = (int)($_GET['edit'] ?? 0);
+    if ($unscopedEdit > 0) {
+        $st = $pdo->prepare("SELECT c.slug FROM posts p INNER JOIN companies c ON c.id = p.company_id WHERE p.id = ?");
+        $st->execute([$unscopedEdit]);
+        $slug = (string)($st->fetchColumn() ?: '');
+        if ($slug !== '') {
+            header('Location: ' . clientUrl('posts.php', ['client' => $slug, 'post' => $unscopedEdit, 'newpost' => 'edit']), true, 302);
+            exit;
+        }
+    }
+    // Otherwise the New post pop-up, which asks "Which client is this post for?" first (newpost.js).
+    header('Location: ' . pagePath('posts') . '?newpost=1', true, 302);
     exit;
 }
 $clientQs = 'client=' . urlencode($client['slug']);

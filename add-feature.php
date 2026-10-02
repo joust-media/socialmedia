@@ -330,16 +330,65 @@ $tireScript = <<<'JS'
     cb.addEventListener('change', () => { chip.classList.toggle('is-active', cb.checked); });
   });
 
-  // ---- Inline status change (Pending / Approve / Deny) -------------
-  document.addEventListener('click', async (e) => {
+  // ---- Inline status change (To Review / Approved / Needs changes) -------------
+  // "Needs changes" asks for the note first (tire-status.php requires >= 3 characters), in the shared sheet —
+  // the same rule and wording as the post / email / page "Needs changes…" flows.
+  const NOTE_MIN = 3;
+  let noteRow = null;
+  function noteEsc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+  function askNote(row) {
+    const App = window.App;
+    if (!App || !App.sheet || !document.getElementById('uiSheet')) {   // no sheet shell: a plain prompt
+      const t = window.prompt('What should change? (at least ' + NOTE_MIN + ' characters)');
+      if (t !== null && t.trim().length >= NOTE_MIN) saveStatus(row, 'denied', t.trim());
+      return;
+    }
+    noteRow = row;
+    const name = (row.querySelector('[data-display-name]') || {}).value || '';
+    const html = '<form class="tl-note" data-tl-note-form novalidate>'
+      + '<label class="studio-label" for="tlNote">What should change' + (name ? ' in <strong>' + noteEsc(name) + '</strong>' : '') + '?</label>'
+      + '<textarea class="ui-textarea" id="tlNote" data-tl-note data-sheet-autofocus rows="3" minlength="' + NOTE_MIN + '" maxlength="2000" placeholder="What should change?" required></textarea>'
+      + '<p class="studio-help" data-tl-note-hint>A short note is required (at least ' + NOTE_MIN + ' characters). It is added to the image\'s comments.</p>'
+      + '</form>';
+    const footer = '<div class="ui-btn-group">'
+      + '<button type="button" class="ui-btn ui-btn--large ui-btn--gray" data-sheet-close>Cancel</button>'
+      + '<button type="button" class="ui-btn ui-btn--large ui-btn--deny ui-btn--primary" data-tl-note-submit disabled>Needs changes</button></div>';
+    App.sheet.open('#uiSheet', { title: 'Needs changes', html: html, footer: footer });
+  }
+  function noteValid() {
+    const ta = document.querySelector('[data-tl-note]'), btn = document.querySelector('[data-tl-note-submit]'), hint = document.querySelector('[data-tl-note-hint]');
+    const len = ta ? ta.value.trim().length : 0, ok = len >= NOTE_MIN;
+    if (btn) btn.disabled = !ok;
+    if (hint) hint.classList.toggle('is-error', !ok && len > 0);
+    return ok;
+  }
+  function sendNote() {
+    if (!noteRow || !noteValid()) { const ta = document.querySelector('[data-tl-note]'); if (ta) ta.focus(); return; }
+    const row = noteRow, text = document.querySelector('[data-tl-note]').value.trim();
+    noteRow = null;
+    window.App.sheet.close();
+    saveStatus(row, 'denied', text);
+  }
+  document.addEventListener('input', (e) => { if (e.target.matches && e.target.matches('[data-tl-note]')) noteValid(); });
+  document.addEventListener('submit', (e) => { if (e.target.matches && e.target.matches('[data-tl-note-form]')) { e.preventDefault(); sendNote(); } });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && e.target.matches && e.target.matches('[data-tl-note]')) { e.preventDefault(); sendNote(); }
+  });
+  document.addEventListener('click', (e) => { if (e.target.closest('[data-tl-note-submit]')) { e.preventDefault(); sendNote(); } });
+  document.addEventListener('sheet:close', () => { noteRow = null; });
+
+  document.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-status-set]');
     if (!btn) return;
     const row     = btn.closest('[data-tire-row]');
-    const imageId = row.getAttribute('data-image-id');
     const next    = btn.getAttribute('data-status-set');
-    const current = row.getAttribute('data-status');
-    if (next === current) return;
+    if (next === row.getAttribute('data-status')) return;
+    if (next === 'denied') { askNote(row); return; }
+    saveStatus(row, next, '');
+  });
 
+  async function saveStatus(row, next, note) {
+    const imageId = row.getAttribute('data-image-id');
     const allBtns = row.querySelectorAll('[data-status-set]');
     const hint    = row.querySelector('[data-status-hint]');
     allBtns.forEach(b => b.disabled = true);
@@ -350,6 +399,7 @@ $tireScript = <<<'JS'
       fd.append('id', imageId);
       fd.append('status', next);
       fd.append('actor', 'admin');
+      if (note) fd.append('comment', note);   // Needs changes: the note (also the image's latest comment)
       const res  = await fetch('tire-status.php', { method: 'POST', body: fd });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Failed');
@@ -377,7 +427,7 @@ $tireScript = <<<'JS'
     } finally {
       allBtns.forEach(b => b.disabled = false);
     }
-  });
+  }
 
   // ---- Image replacement (admin tire-edit) -------------------------
   // One hidden file input shared by every per-row Replace button.

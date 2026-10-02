@@ -144,11 +144,11 @@ test('Manage: four sections, each one renders', function () {
     hasNot(status(get('manage.php?client=kenda&section=clients&edit=0'), 200)['body'], 'data-client-edit=', 'edit=0 → the list');
     has(status(get('manage.php'), 200)['body'], 'data-client-new', 'unscoped: New client');
     $e = status(get('manage.php?client=kenda&section=export&tire=1&series=2'), 200)['body'];
-    has($e, 'data-manage-section="export"'); has($e, 'data-export-form'); has($e, 'data-previews');
+    has($e, 'data-manage-section="export"'); has($e, 'data-export-form'); hasNot($e, 'data-previews ', 'Image previews moved to Tools'); has($e, 'data-previews-moved');
     has($e, '<option value="1" selected>Klever AT2</option>', 'tire preselected');
     has($e, '"series":2', 'series preselected (StudioConfig.export)');
     $u = status(get('manage.php?section=export'), 200)['body'];
-    has($u, 'data-manage-clients="export"', 'unscoped: pick a client'); has($u, 'data-previews'); hasNot($u, 'data-export-form');
+    has($u, 'data-manage-clients="export"', 'unscoped: pick a client'); hasNot($u, 'data-export-form');
     $d = status(get('drive.php'), 200)['body'];
     ok(preg_match('#class="ui-segmented-item is-active"[^>]*aria-current="page" data-manage-section-link="drive"#', $d) === 1, 'Drive carries the Manage switch, Drive active');
     $t = status(get('manage.php?client=kenda&section=tools'), 200)['body'];

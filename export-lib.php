@@ -415,7 +415,7 @@ if (!function_exists('exportEnumerate')) {
         }
 
         $seriesOn = function_exists('hasTireSeries') && hasTireSeries($pdo);
-        if ($opts['scope'] === 'series' && !$seriesOn) throw new InvalidArgumentException('Render series are not set up yet — run migrate.php.');
+        if ($opts['scope'] === 'series' && !$seriesOn) throw new InvalidArgumentException('Tire series are not set up yet — run migrate.php.');
 
         // Series per tire: name, folder, drive_url (one lib call per tire that has approved rows — resolved lazily).
         $seriesByTire = [];

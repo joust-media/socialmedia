@@ -209,6 +209,34 @@ function caFields(PDO $pdo, int $exceptId): array {
     return ['name' => $name, 'slug' => $slug, 'feature_label' => $label];
 }
 
+/** The Settings fields posted with the form (default_hashtags / product_type / industry — only columns that exist,
+ *  only keys that were posted) → ['sets' => [...], 'params' => [...], 'fields' => [...]], or ['error', 'code'] when too long.
+ *  Shared by action=settings and action=update (Manage → Clients posts the fields and Settings as ONE form). */
+function caSettingsFromPost(PDO $pdo): array {
+    $cols   = caSettingsColumns($pdo);
+    $limits = ['default_hashtags' => 4000, 'product_type' => 120, 'industry' => 120];
+    $out = ['sets' => [], 'params' => [], 'fields' => []];
+    foreach ($limits as $col => $max) {
+        if (!in_array($col, $cols, true) || !array_key_exists($col, $_POST)) continue;
+        $v = trim(str_replace(["\r\n", "\r"], "\n", (string)$_POST[$col]));
+        if (mb_strlen($v) > $max) return ['error' => str_replace('_', ' ', ucfirst($col)) . ' is too long (' . $max . ' characters max).', 'code' => 422];
+        $out['sets'][] = $col . ' = ?'; $out['params'][] = $v === '' ? null : $v; $out['fields'][] = $col;
+    }
+    return $out;
+}
+
+/** Write caSettingsFromPost() output for company $id → the columns that actually changed ([] when none). Throws on a DB error. */
+function caSaveSettings(PDO $pdo, int $id, array $set): array {
+    if (!$set['sets']) return [];
+    $prev = $pdo->prepare("SELECT " . implode(', ', $set['fields']) . " FROM companies WHERE id = ?");
+    $prev->execute([$id]);
+    $before = $prev->fetch() ?: [];
+    $pdo->prepare("UPDATE companies SET " . implode(', ', $set['sets']) . " WHERE id = ?")->execute(array_merge($set['params'], [$id]));
+    $changed = [];
+    foreach ($set['fields'] as $k => $col) { if ((string)($before[$col] ?? '') !== (string)($set['params'][$k] ?? '')) $changed[] = $col; }
+    return $changed;
+}
+
 switch ($action) {
     // ---- create -------------------------------------------------------------
     case 'create': {
@@ -248,6 +276,8 @@ switch ($action) {
         if (!$co) caReply(404, ['error' => 'Unknown client.'], $scope);
         $f = caFields($pdo, $id);
         if (isset($f['error'])) caReply($f['code'], ['error' => $f['error']], $scope, $id);
+        $set = caSettingsFromPost($pdo);   // the Settings fields ride along (one Save on the client card); validated before anything is written
+        if (isset($set['error'])) caReply($set['code'], ['error' => $set['error']], $scope, $id);
         $changed = [];
         foreach (['name', 'slug', 'feature_label'] as $k) { if ((string)($co[$k] ?? '') !== $f[$k]) $changed[] = $k; }
         $logoUrl = (string)$co['logo_url'];
@@ -283,6 +313,16 @@ switch ($action) {
                 caReply(500, ['error' => 'The database refused the change: ' . mb_substr($e->getMessage(), 0, 160)], $scope, $id);
             }
             caLog($pdo, $id, 'updated', 'Client updated: ' . $f['name'], implode(', ', $changed));
+        }
+        try {
+            $setChanged = caSaveSettings($pdo, $id, $set);
+        } catch (Throwable $e) {
+            error_log('client-admin update settings failed: ' . $e->getMessage());
+            caReply(500, ['error' => 'The database refused the settings change.'], $scope, $id);
+        }
+        if ($setChanged) {
+            caLog($pdo, $id, 'updated', 'Settings updated: ' . $f['name'], implode(', ', $setChanged));
+            $changed = array_merge($changed, $setChanged);
         }
         if ($scope !== '' && $scope === (string)$co['slug']) $scope = $f['slug'];   // the scoped client was renamed: follow it
         $msg = ($changed ? 'Saved ' . implode(', ', array_map(static fn($k) => str_replace('_', ' ', $k), $changed)) . ' for ' . $f['name'] . '.' : 'Nothing changed.') . $pagesMoveWarning;
@@ -342,29 +382,16 @@ switch ($action) {
     case 'settings': {
         $co = caCompany($pdo, $id);
         if (!$co) caReply(404, ['error' => 'Unknown client.'], $scope);
-        $cols = caSettingsColumns($pdo);
-        if (!$cols) caReply(409, ['error' => 'Run migrate.php first to enable client settings.'], $scope, $id);
-        $limits = ['default_hashtags' => 4000, 'product_type' => 120, 'industry' => 120];
-        $sets = []; $params = []; $fields = [];
-        foreach ($limits as $col => $max) {
-            if (!in_array($col, $cols, true) || !array_key_exists($col, $_POST)) continue;
-            $v = trim(str_replace(["\r\n", "\r"], "\n", (string)$_POST[$col]));
-            if (mb_strlen($v) > $max) caReply(422, ['error' => str_replace('_', ' ', ucfirst($col)) . ' is too long (' . $max . ' characters max).'], $scope, $id);
-            $sets[] = $col . ' = ?'; $params[] = $v === '' ? null : $v; $fields[] = $col;
-        }
-        if (!$sets) caReply(400, ['error' => 'Nothing to save.'], $scope, $id);
-        $prev = $pdo->prepare("SELECT " . implode(', ', $fields) . " FROM companies WHERE id = ?");
-        $prev->execute([$id]);
-        $before = $prev->fetch() ?: [];
-        $params[] = $id;
+        if (!caSettingsColumns($pdo)) caReply(409, ['error' => 'Run migrate.php first to enable client settings.'], $scope, $id);
+        $set = caSettingsFromPost($pdo);
+        if (isset($set['error'])) caReply($set['code'], ['error' => $set['error']], $scope, $id);
+        if (!$set['sets']) caReply(400, ['error' => 'Nothing to save.'], $scope, $id);
         try {
-            $pdo->prepare("UPDATE companies SET " . implode(', ', $sets) . " WHERE id = ?")->execute($params);
+            $changed = caSaveSettings($pdo, $id, $set);
         } catch (Throwable $e) {
             error_log('client-admin settings failed: ' . $e->getMessage());
             caReply(500, ['error' => 'The database refused the change.'], $scope, $id);
         }
-        $changed = [];
-        foreach ($fields as $k => $col) { if ((string)($before[$col] ?? '') !== (string)($params[$k] ?? '')) $changed[] = $col; }
         if ($changed) caLog($pdo, $id, 'updated', 'Settings updated: ' . $co['name'], implode(', ', $changed));
         caReply(200, ['message' => $changed ? 'Settings saved for ' . $co['name'] . '.' : 'Nothing changed.', 'id' => $id, 'changed' => $changed], $scope, $id);
     }

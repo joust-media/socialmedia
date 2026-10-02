@@ -166,12 +166,13 @@ function checkLayout(L, expect, where) {
       expect.eq(await page.$$eval('[data-client-modules] [data-client-module]', (e) => e.length), 3, 'Tires / Emails / Pages toggles');
       await Promise.all([page.waitForURL(/section=export/), page.click('[data-manage-section-link="export"]')]);
       await page.waitForFunction(() => { const e = document.querySelector('[data-export-estimate]'); return e && !/Counting/.test(e.textContent); }, null, { timeout: 15000 });
-      await page.waitForFunction(() => { const e = document.querySelector('[data-previews-status]'); return e && !/Checking/.test(e.textContent); }, null, { timeout: 15000 });
       await Promise.all([page.waitForURL(/drive\.php/), page.click('[data-manage-section-link="drive"]')]);
       expect(await page.$eval('[data-manage-section-link="drive"]', (a) => a.classList.contains('is-active')), 'Drive active');
       expect(await page.$eval('.ui-tabbar [data-tab="manage"]', (a) => a.classList.contains('is-active')), 'Manage tab stays lit');
       await Promise.all([page.waitForURL(/section=tools/), page.click('[data-manage-section-link="tools"]')]);
-      for (const k of ['new-tire', 'series', 'builder', 'prompts', 'vehicles', 'projects', 'digest']) expect(await page.$(`[data-tool="${k}"]`), k);
+      for (const k of ['new-tire', 'series', 'builder', 'prompts', 'vehicles', 'projects', 'digest', 'previews']) expect(await page.$(`[data-tool="${k}"]`), k);
+      // Maintenance → Image previews (moved from Export): its status loads in place
+      await page.waitForFunction(() => { const e = document.querySelector('[data-previews-status]'); return e && !/Checking/.test(e.textContent); }, null, { timeout: 15000 });
       await Promise.all([page.waitForURL(/prompts\.php/), page.click('[data-tool="prompts"]')]);
       await Promise.all([page.waitForURL(/manage\.php\?(client=kenda&)?section=tools/), page.click('.ui-back')]);
     });
@@ -188,7 +189,8 @@ function checkLayout(L, expect, where) {
     await test('client settings save (default hashtags → the New post pop-up)', async (page) => {
       await page.goto(url('manage.php?client=kenda'));
       await page.fill('[data-client-hashtags]', '#KendaTires #Grip');
-      await Promise.all([page.waitForNavigation(), page.click('[data-client-settings] button[type="submit"]')]);
+      expect(!(await page.$('[data-client-settings] button[type="submit"]')), 'no separate Save settings');
+      await Promise.all([page.waitForNavigation(), page.click('[data-client-save]')]);
       expect.eq(await page.inputValue('[data-client-hashtags]'), '#KendaTires #Grip');
     });
   }, { role: 'admin', viewports: ['desktop', 'phone'], reseed: 'viewport' });

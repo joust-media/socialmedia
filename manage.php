@@ -8,13 +8,13 @@
  *                           logo, Settings = default hashtags + AI Builder profile, module toggles — the ONLY
  *                           place a client's Tires / Emails / Pages tabs are turned on or off). Scoped → that
  *                           client's card opens; &edit=<id> another one; &edit=0 the list.
- *   &section=export         Export & previews: approved-asset zip for the scoped client (export.php;
- *                           &tire=<id>[&series=<id>] preselects — the Assets "Export approved…" shortcut),
- *                           Recent exports, and Image previews (preview-job.php). Unscoped: a client list +
- *                           previews for every client.
+ *   &section=export         Export: approved-asset zip for the scoped client (export.php;
+ *                           &tire=<id>[&series=<id>] preselects — the Assets "Export approved…" shortcut) and
+ *                           Recent exports. Unscoped: a client list.
  *   &section=drive          → drive.php (the Drive storage view; it carries the same Manage switch)
  *   &section=tools          Tools: New tire, the client's tires (→ Manage series), AI Builder, Prompt / Vehicle
- *                           Library, Projects, Emails import / export + Audiences, Pages server rules, Send digest.
+ *                           Library, Projects, Emails import / export + Audiences, and Maintenance: Pages server rules,
+ *                           Send digest, Image previews (preview-job.php; #previews — every client when unscoped).
  *   &msg=…                  flash after a save (shown once)
  *
  * Old Studio / Classic admin URLs land here through legacyAdminTarget() (helpers.php).
@@ -121,7 +121,7 @@ $studioConfig = ['base' => basePath(), 'client' => $client['slug'] ?? '', 'clien
 if ($exportConfig) $studioConfig['export'] = $exportConfig;
 $footExtra   = '<script>window.StudioConfig = ' . json_encode($studioConfig, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n"
              . '<script src="' . h(staticUrl('js/studio.js')) . '" defer></script>'
-             . ($section === 'export' ? "\n" . '<script src="' . h(staticUrl('js/studio-previews.js')) . '" defer></script>' : '');   // Export → Image previews (preview-job.php)
+             . ($section === 'tools' ? "\n" . '<script src="' . h(staticUrl('js/studio-previews.js')) . '" defer></script>' : '');   // Tools → Maintenance → Image previews (preview-job.php)
 
 include __DIR__ . '/partials/layout-top.php';
 ?>
@@ -222,26 +222,7 @@ include __DIR__ . '/partials/layout-top.php';
   </div>
   <?php endif; ?>
 
-  <!-- Image previews backfill (preview-lib.php / preview-job.php / static/js/studio-previews.js) -->
-  <section class="ui-card studio-export-card manage-previews" data-previews data-endpoint="<?= h(basePath() . '/preview-job.php' . ($client ? '?client=' . rawurlencode($client['slug']) : '')) ?>">
-    <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Image previews</h3>
-      <p class="ui-card-subtitle">Small (480 px) and large (1600 px) <?= h(strtoupper(previewFormat())) ?> copies of every image, used by tiles, lists and the viewer instead of the full originals. New uploads get them automatically; this builds them for everything already on the server (tire images, library, posts). Originals are never changed.</p></div></div>
-    <div class="ui-card-body">
-      <?php if ($client): ?>
-        <label class="studio-export-choice"><input type="checkbox" data-previews-all> <span>All clients (not just <?= h($client['name']) ?>)</span></label>
-      <?php else: ?>
-        <input type="checkbox" data-previews-all checked hidden aria-hidden="true" tabindex="-1">
-        <p class="text-secondary">Every client’s images.</p>
-      <?php endif; ?>
-      <p class="studio-export-estimate" data-previews-status aria-live="polite">Checking…</p>
-      <div class="studio-export-progress" data-previews-progress hidden role="status">
-        <div class="studio-progress"><div class="studio-progress-bar"><div class="studio-progress-fill" data-previews-fill style="width:0%"></div></div></div>
-      </div>
-      <div class="studio-export-actions">
-        <button type="button" class="ui-btn ui-btn--filled" data-previews-build><span>Build previews</span></button>
-      </div>
-    </div>
-  </section>
+  <p class="studio-help manage-moved-note" data-previews-moved>Image previews are in <a href="<?= h(manageUrl('tools') . '#previews') ?>">Tools → Maintenance</a>.</p>
 </section>
 
 <?php elseif ($section === 'tools'): ?>
@@ -340,8 +321,27 @@ include __DIR__ . '/partials/layout-top.php';
                     'trailing' => '<form method="POST" action="' . h(basePath() . '/digest.php') . '" target="digest_iframe" data-digest-form><input type="hidden" name="source" value="manual"><button type="submit" class="ui-btn ui-btn--gray ui-btn--sm">Send digest</button></form>',
                     'attrs' => ['data-tool' => 'digest']]) ?>
     <?php endif; ?>
-    <?= insetRow(['href' => manageUrl('export'), 'icon' => 'download', 'title' => 'Image previews', 'subtitle' => 'Build the small / large preview copies — in Export', 'attrs' => ['data-tool' => 'previews']]) ?>
   <?= insetListClose() ?>
+  <!-- Maintenance → Image previews backfill (preview-lib.php / preview-job.php / static/js/studio-previews.js) -->
+  <section class="ui-card studio-export-card manage-previews" id="previews" data-previews data-tool="previews" data-endpoint="<?= h(basePath() . '/preview-job.php' . ($client ? '?client=' . rawurlencode($client['slug']) : '')) ?>">
+    <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Image previews</h3>
+      <p class="ui-card-subtitle">Small (480 px) and large (1600 px) <?= h(strtoupper(previewFormat())) ?> copies of every image, used by tiles, lists and the viewer instead of the full originals. New uploads get them automatically; this builds them for everything already on the server (tire images, library, posts). Originals are never changed.</p></div></div>
+    <div class="ui-card-body">
+      <?php if ($client): ?>
+        <label class="studio-export-choice"><input type="checkbox" data-previews-all> <span>All clients (not just <?= h($client['name']) ?>)</span></label>
+      <?php else: ?>
+        <input type="checkbox" data-previews-all checked hidden aria-hidden="true" tabindex="-1">
+        <p class="text-secondary">Every client’s images.</p>
+      <?php endif; ?>
+      <p class="studio-export-estimate" data-previews-status aria-live="polite">Checking…</p>
+      <div class="studio-export-progress" data-previews-progress hidden role="status">
+        <div class="studio-progress"><div class="studio-progress-bar"><div class="studio-progress-fill" data-previews-fill style="width:0%"></div></div></div>
+      </div>
+      <div class="studio-export-actions">
+        <button type="button" class="ui-btn ui-btn--filled" data-previews-build><span>Build previews</span></button>
+      </div>
+    </div>
+  </section>
   <iframe name="digest_iframe" class="ui-visually-hidden" aria-hidden="true" tabindex="-1"></iframe>
 
   <?php if (!$client): ?>

@@ -449,7 +449,7 @@ if ($errors) npOut(422, ['ok' => false, 'error' => implode(' ', $errors), 'error
 
 $draftOn   = npDraftSupported($pdo);
 // Never fall back to a client-visible status for a "Save draft": without the Draft state the admin must send it for review.
-if ($intent === 'draft' && !$draftOn) npFail(409, 'Drafts need the latest migrate.php (step 35) — run it, or send this post for review.');
+if ($intent === 'draft' && !$draftOn) npFail(409, 'Saving a draft needs the latest migrate.php (step 35) — run it, or send this post for review.');
 $hasName   = hasPostsNameColumn($pdo);
 $hasType   = hasPostTypeColumn($pdo);
 $created   = [];      // files written by this request (unlinked on rollback)

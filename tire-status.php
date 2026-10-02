@@ -90,7 +90,7 @@ if (in_array($action, $seriesActions, true)) {
         echo json_encode(['ok' => false, 'error' => $msg]);
         exit;
     };
-    if (!hasTireSeries($pdo)) { $fail(409, 'Render series are not set up yet — run migrate.php.'); }
+    if (!hasTireSeries($pdo)) { $fail(409, 'Tire series are not set up yet — run migrate.php.'); }
     if ($action !== 'approve_series' && !currentAdmin()) { $fail(403, 'Admin sign-in required'); }
     $actor   = actorFromPost();
     $batchId = newBatchId();

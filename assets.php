@@ -746,6 +746,13 @@ $navTrailing = '';
 if ($newTireUrl !== '') {   // a page button under the large title (the nav row keeps room for the title at 320px)
     $navLinks = [['label' => 'New tire', 'href' => $newTireUrl, 'tinted' => true, 'attrs' => ['data-new-tire' => '1']]];
 }
+// Admin "Upload" on the Library: the page's primary action, in the header like "New tire" / "New prompt"
+// (the Upload sheet with the Library preselected — upload-sheet.js; the no-JS href opens it on load).
+if ($isAdmin && $view === 'library') {
+    $navLinks = [['label' => 'Upload', 'href' => uploadSheetUrl('assets.php', ['dest' => 'library'], ['view' => 'library']), 'tinted' => true,
+                  'class' => 'as-library-upload',
+                  'attrs' => ['data-upload-open' => '', 'data-upload-dest' => 'library', 'data-library-upload' => '']]];
+}
 if ($isGrid && $items) {
     $navTrailing .= '<button type="button" class="ui-btn ui-btn--sm ui-btn--gray" data-assets-select aria-pressed="false">Select</button>';
 }
@@ -759,13 +766,8 @@ if ($collection) {
 include __DIR__ . '/partials/layout-top.php';
 ?>
 
-<?php if (($isAdmin && $view === 'library') || $isGrid): ?>
+<?php if ($isGrid): // the status filter chips (the admin's Library Upload sits in the header — $navLinks above) ?>
 <div class="as-controls">
-  <?php if ($isAdmin && $view === 'library'): // admin: the Upload sheet with the Library preselected ?>
-    <a class="ui-btn ui-btn--sm ui-btn--tinted as-library-upload" href="<?= esc(uploadSheetUrl('assets.php', ['dest' => 'library'], ['view' => 'library'])) ?>"<?= uploadSheetAttrs(['dest' => 'library']) ?> data-library-upload><?= icon('upload') ?><span>Upload</span></a>
-  <?php endif; ?>
-
-  <?php if ($isGrid): ?>
     <nav class="as-filters" aria-label="Filter">
       <?php foreach ($filters as $f): ?>
         <a class="as-chip<?= $f === $filter ? ' is-active' : '' ?>" href="<?= esc(assetsUrl(['filter' => $f])) ?>"<?= $f === $filter ? ' aria-current="page"' : '' ?>>
@@ -773,7 +775,6 @@ include __DIR__ . '/partials/layout-top.php';
         </a>
       <?php endforeach; ?>
     </nav>
-  <?php endif; ?>
 </div>
 <?php endif; ?>
 
@@ -874,12 +875,15 @@ include __DIR__ . '/partials/layout-top.php';
         <?php
           // videos = the videos this seat may see in the series (admin: all, client: minus denied) → the small "3▶" glyph
           $vidsOf = static function (array $c) use ($isAdmin): int { return max(0, (int)($c['total'] ?? 0) - ($isAdmin ? 0 : (int)($c['denied'] ?? 0))); };
-          $chips = [['key' => 'ref', 'label' => 'Reference · ' . (int)$refCounts['approved'], 'pending' => (int)$refCounts['pending'], 'drive' => false, 'videos' => $vidsOf($videoCounts['reference'] ?? [])]];
-          foreach ($seriesList as $sr) { $chips[] = ['key' => (string)(int)$sr['id'], 'label' => (string)$sr['name'], 'pending' => (int)($sr['counts']['pending'] ?? 0), 'drive' => !empty($sr['drive_url']), 'videos' => $vidsOf($videoCounts['series'][(int)$sr['id']] ?? [])]; }
+          // One meaning per chip: its count is the number of images in the ACTIVE status filter (To Review /
+          // Approved / Needs changes) — the same number the grid shows when you open that series.
+          $filterNoun = ['pending' => 'to review', 'approved' => 'approved', 'denied' => 'need changes'][$filter] ?? $filter;
+          $chips = [['key' => 'ref', 'label' => 'Reference', 'n' => (int)($refCounts[$filter] ?? 0), 'drive' => false, 'videos' => $vidsOf($videoCounts['reference'] ?? [])]];
+          foreach ($seriesList as $sr) { $chips[] = ['key' => (string)(int)$sr['id'], 'label' => (string)$sr['name'], 'n' => (int)($sr['counts'][$filter] ?? 0), 'drive' => !empty($sr['drive_url']), 'videos' => $vidsOf($videoCounts['series'][(int)$sr['id']] ?? [])]; }
           foreach ($chips as $ch): $on = $ch['key'] === $seriesKey; ?>
           <a class="as-chip as-series-chip<?= $on ? ' is-active' : '' ?>" href="<?= esc(assetsUrl(['series' => $ch['key'], 'offset' => null, 'type' => null])) ?>"
              data-series-chip="<?= esc($ch['key']) ?>"<?= $on ? ' aria-current="page"' : '' ?>>
-            <?= esc($ch['label']) ?><span class="as-chip-count as-chip-count--pending" data-series-pending="<?= esc($ch['key']) ?>"<?= $ch['pending'] > 0 ? '' : ' hidden' ?>><?= $ch['pending'] ?></span><?= $ch['drive'] ? '<span class="as-chip-drive" data-series-drive-chip="' . esc($ch['key']) . '" title="Also in Google Drive" aria-label="Also in Google Drive">' . icon('drive') . '</span>' : '' ?><?= $ch['videos'] > 0 ? '<span class="as-chip-videos" data-series-videos="' . esc($ch['key']) . '" title="' . esc($ch['videos'] . ($ch['videos'] === 1 ? ' video' : ' videos')) . '" aria-label="' . esc($ch['videos'] . ($ch['videos'] === 1 ? ' video' : ' videos')) . '">' . $ch['videos'] . icon('play') . '</span>' : '' ?>
+            <?= esc($ch['label']) ?><span class="as-chip-count<?= $filter === 'pending' && $ch['n'] > 0 ? ' as-chip-count--pending' : '' ?>" data-series-count="<?= esc($ch['key']) ?>" data-series-filter="<?= esc($filter) ?>" title="<?= esc($ch['n'] . ' ' . $filterNoun) ?>"><?= $ch['n'] ?></span><?= $ch['drive'] ? '<span class="as-chip-drive" data-series-drive-chip="' . esc($ch['key']) . '" title="Also in Google Drive" aria-label="Also in Google Drive">' . icon('drive') . '</span>' : '' ?><?= $ch['videos'] > 0 ? '<span class="as-chip-videos" data-series-videos="' . esc($ch['key']) . '" title="' . esc($ch['videos'] . ($ch['videos'] === 1 ? ' video' : ' videos')) . '" aria-label="' . esc($ch['videos'] . ($ch['videos'] === 1 ? ' video' : ' videos')) . '">' . $ch['videos'] . icon('play') . '</span>' : '' ?>
           </a>
         <?php endforeach; ?>
       </nav>

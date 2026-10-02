@@ -77,7 +77,7 @@ $navLinksExtra = isset($navLinksExtra) ? (string)$navLinksExtra : '';
           $lattr = '';
           foreach (($lnk['attrs'] ?? []) as $k => $v) {
               $k = preg_replace('/[^a-zA-Z0-9\-]/', '', (string)$k);
-              if ($k !== '') $lattr .= ' ' . $k . '="' . esc($v) . '"';
+              if ($k !== '') $lattr .= ' ' . $k . ((string)$v === '' ? '' : '="' . esc($v) . '"');   // '' → a bare boolean attribute
           }
         ?>
           <a class="<?= esc($lcls) ?>" href="<?= esc($lnk['href']) ?>"<?= $lattr ?>><?= esc($lnk['label']) ?></a>

@@ -214,3 +214,8 @@ a.tl-tag:hover { color: var(--accent); }
 }
 /* Footnotes with an inline link read as one sentence (studio.css lays .studio-help out as a flex row) */
 .page-tool p.studio-help { display: block; }
+
+/* Edit tire → a reference photo's "Needs changes": the note sheet (#uiSheet) */
+.tl-note { display: flex; flex-direction: column; gap: 8px; }
+.tl-note .ui-textarea { width: 100%; min-height: 96px; }
+.tl-note .studio-help.is-error { color: var(--deny); }

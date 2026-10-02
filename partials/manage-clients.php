@@ -10,8 +10,9 @@ if (!function_exists('esc') || !function_exists('isAdmin') || !isAdmin()) { http
  *   - list of every company: logo (brandLogoUrl() → uploads/ → static/brand/<slug> → initials),
  *     name, slug, feature label, Tires / Emails / Pages module state; a row opens its edit card
  *   - edit card (?edit=<id>; scoped to a client without &edit → that client's card, &edit=0 → the list):
- *     the same fields, replace / remove logo, Settings (default hashtags; AI Builder product type +
- *     industry — once their migration-gated columns exist), module toggles
+ *     ONE form + ONE "Save changes" for the fields and Settings (default hashtags; AI Builder product type +
+ *     industry — once their migration-gated columns exist), then replace / remove logo, module toggles.
+ *     No file paths in the copy (they sit in a tooltip on the logo help line).
  *
  * Every form posts to client-admin.php (studio.js submits them with fetch + FormData and
  * follows the JSON `redirect`; without JS the endpoint redirects back here itself).
@@ -92,8 +93,29 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
           <div class="studio-field"><label class="studio-label" for="clientLabel<?= (int)$scEdit['id'] ?>">Feature label <span class="text-tertiary">Tires tab name</span></label>
             <input class="ui-input" type="text" name="feature_label" id="clientLabel<?= (int)$scEdit['id'] ?>" value="<?= esc($scEdit['feature_label'] ?? '') ?>" maxlength="60" placeholder="Tires"></div>
         </div>
+      <?php if ($scSettingCols): ?>
+        <div class="studio-client-settings" data-client-settings>
+        <div class="studio-label">Settings</div>
+        <?php if (in_array('default_hashtags', $scSettingCols, true)): ?>
+          <div class="studio-field"><label class="studio-label" for="clientTags<?= (int)$scEdit['id'] ?>">Default hashtags <span class="text-tertiary">pre-filled on every new post</span></label>
+            <textarea class="ui-textarea" name="default_hashtags" id="clientTags<?= (int)$scEdit['id'] ?>" rows="2" maxlength="4000" placeholder="#Brand #Campaign" data-client-hashtags><?= esc($scEdit['default_hashtags'] ?? '') ?></textarea></div>
+        <?php endif; ?>
+        <?php if (in_array('product_type', $scSettingCols, true) || in_array('industry', $scSettingCols, true)): ?>
+        <div class="studio-field-row">
+          <?php if (in_array('product_type', $scSettingCols, true)): ?>
+          <div class="studio-field"><label class="studio-label" for="clientProduct<?= (int)$scEdit['id'] ?>">Product type <span class="text-tertiary">AI Builder</span></label>
+            <input class="ui-input" type="text" name="product_type" id="clientProduct<?= (int)$scEdit['id'] ?>" maxlength="120" value="<?= esc($scEdit['product_type'] ?? '') ?>" placeholder="e.g. tires, apparel, software"></div>
+          <?php endif; ?>
+          <?php if (in_array('industry', $scSettingCols, true)): ?>
+          <div class="studio-field"><label class="studio-label" for="clientIndustry<?= (int)$scEdit['id'] ?>">Industry <span class="text-tertiary">AI Builder</span></label>
+            <input class="ui-input" type="text" name="industry" id="clientIndustry<?= (int)$scEdit['id'] ?>" maxlength="120" value="<?= esc($scEdit['industry'] ?? '') ?>" placeholder="e.g. powersports, retail, SaaS"></div>
+          <?php endif; ?>
+        </div>
+        <?php endif; ?>
+        </div>
+      <?php endif; ?>
         <div class="studio-client-actions">
-          <button type="submit" class="ui-btn ui-btn--filled">Save changes</button>
+          <button type="submit" class="ui-btn ui-btn--filled" data-client-save>Save changes</button>
           <span class="studio-client-status" data-client-status aria-live="polite"></span>
         </div>
       </form>
@@ -119,37 +141,10 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
             </form>
           <?php endif; ?>
         </div>
-        <p class="studio-help">PNG, JPG, GIF or WebP up to 2 MB; resized to 512px and saved as <code>uploads/logo_<?= esc($scEdit['slug']) ?>.png</code> (or .jpg).
-          <?php if (brandStaticLogoUrl((string)$scEdit['slug']) !== '' && trim((string)$scEdit['logo_url']) === ''): ?>Showing the bundled mark <code>static/brand/<?= esc($scEdit['slug']) ?>.png</code> until one is uploaded.<?php endif; ?></p>
+        <p class="studio-help" title="<?= esc('Saved as uploads/logo_' . $scEdit['slug'] . '.png (or .jpg); the bundled mark is static/brand/' . $scEdit['slug'] . '.png') ?>">PNG, JPG, GIF or WebP up to 2 MB, resized to 512px.
+          <?php if (brandStaticLogoUrl((string)$scEdit['slug']) !== '' && trim((string)$scEdit['logo_url']) === ''): ?>Showing the logo that ships with the portal until one is uploaded.<?php endif; ?></p>
       </div>
 
-      <?php if ($scSettingCols): ?>
-      <form method="POST" action="<?= esc($scEndpoint) ?>" class="studio-client-form studio-client-settings" data-client-form data-client-settings autocomplete="off">
-        <input type="hidden" name="action" value="settings">
-        <input type="hidden" name="id" value="<?= (int)$scEdit['id'] ?>">
-        <div class="studio-label">Settings</div>
-        <?php if (in_array('default_hashtags', $scSettingCols, true)): ?>
-          <div class="studio-field"><label class="studio-label" for="clientTags<?= (int)$scEdit['id'] ?>">Default hashtags <span class="text-tertiary">pre-filled on every new post</span></label>
-            <textarea class="ui-textarea" name="default_hashtags" id="clientTags<?= (int)$scEdit['id'] ?>" rows="2" maxlength="4000" placeholder="#Brand #Campaign" data-client-hashtags><?= esc($scEdit['default_hashtags'] ?? '') ?></textarea></div>
-        <?php endif; ?>
-        <?php if (in_array('product_type', $scSettingCols, true) || in_array('industry', $scSettingCols, true)): ?>
-        <div class="studio-field-row">
-          <?php if (in_array('product_type', $scSettingCols, true)): ?>
-          <div class="studio-field"><label class="studio-label" for="clientProduct<?= (int)$scEdit['id'] ?>">Product type <span class="text-tertiary">AI Builder</span></label>
-            <input class="ui-input" type="text" name="product_type" id="clientProduct<?= (int)$scEdit['id'] ?>" maxlength="120" value="<?= esc($scEdit['product_type'] ?? '') ?>" placeholder="e.g. tires, apparel, software"></div>
-          <?php endif; ?>
-          <?php if (in_array('industry', $scSettingCols, true)): ?>
-          <div class="studio-field"><label class="studio-label" for="clientIndustry<?= (int)$scEdit['id'] ?>">Industry <span class="text-tertiary">AI Builder</span></label>
-            <input class="ui-input" type="text" name="industry" id="clientIndustry<?= (int)$scEdit['id'] ?>" maxlength="120" value="<?= esc($scEdit['industry'] ?? '') ?>" placeholder="e.g. powersports, retail, SaaS"></div>
-          <?php endif; ?>
-        </div>
-        <?php endif; ?>
-        <div class="studio-client-actions">
-          <button type="submit" class="ui-btn ui-btn--tinted">Save settings</button>
-          <span class="studio-client-status" data-client-status aria-live="polite"></span>
-        </div>
-      </form>
-      <?php endif; ?>
 
       <div class="studio-client-modules" data-client-modules>
         <div class="studio-label">Modules</div>
@@ -189,7 +184,7 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
   <!-- New client card -->
   <section class="ui-card studio-client-card" data-client-new>
     <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">New client</h3>
-      <p class="ui-card-subtitle">The slug becomes the review link (<code>?client=slug</code>) and the folder names under <code>media/</code> — pick it once.</p></div></div>
+      <p class="ui-card-subtitle">The slug becomes the review link (<code>?client=slug</code>) and the client's folder names — pick it once.</p></div></div>
     <div class="ui-card-body">
       <form method="POST" action="<?= esc($scEndpoint) ?>" enctype="multipart/form-data" class="studio-client-form" data-client-form autocomplete="off">
         <input type="hidden" name="action" value="create">
@@ -209,7 +204,7 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
           <button type="submit" class="ui-btn ui-btn--filled">Create client</button>
           <span class="studio-client-status" data-client-status aria-live="polite"></span>
         </div>
-        <p class="studio-help">No logo yet? A bundled mark in <code>static/brand/&lt;slug&gt;.png</code> shows automatically (there is one for <code>privacybee</code>, <code>cometic</code> and <code>hmf</code>); otherwise the client's initial does.</p>
+        <p class="studio-help" title="Bundled marks live in static/brand/&lt;slug&gt;.png">No logo yet? If a logo ships with the portal for this client it shows automatically; otherwise the client's initial does.</p>
       </form>
     </div>
   </section>
@@ -232,6 +227,6 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
           'attrs'       => ['data-client-row' => $scC['slug']],
       ]) ?>
     <?php endforeach; ?>
-  <?= insetListClose('Logos come from the uploaded file, else the bundled static/brand mark, else the initial. Clients cannot be deleted here.') ?>
+  <?= insetListClose('Logos come from the uploaded file, else the logo that ships with the portal, else the initial. Clients cannot be deleted here.') ?>
 </div>
 <?php unset($scSettingCols, $scCompanies, $scModules, $scModuleIds, $scEnabled, $scEditId, $scEdit, $scEndpoint, $scListUrl, $scErrFlash, $scFmt, $scC, $scM, $scR, $scSt, $scErr, $scKey, $scLabel, $scOn, $scHas); ?>

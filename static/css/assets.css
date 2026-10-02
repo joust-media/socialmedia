@@ -155,7 +155,7 @@
 .as-series-approve[hidden] { display: none; }
 /* Admin "Upload" (series head, Reference card, Library): opens the Upload sheet with the destination preselected */
 .as-series-upload .ui-icon, .as-library-upload .ui-icon, [data-ref-upload] .ui-icon { width: 16px; height: 16px; }
-.as-library-upload { align-self: flex-start; order: 3; }
+
 .as-series-approve .ui-icon { width: 16px; height: 16px; stroke-width: 2.6; }
 /* "Open in Google Drive" — the client's alternative way into the series (tire_series.drive_url); a secondary CTA in the accent tint */
 .as-series-drive { gap: 7px; font-weight: 600; box-shadow: inset 0 0 0 1px rgba(0,122,255,.22); }

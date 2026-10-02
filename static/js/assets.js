@@ -1268,21 +1268,22 @@
       };
       if (from) bump('[data-count="' + from + '"]', -1);
       if (to)   bump('[data-count="' + to + '"]', 1);
+      // Counts that follow the active status filter (Photos · Videos, the series chips) move by "in / out of this filter"
+      var type = this.grid && this.grid.dataset.type, filter = this.grid && this.grid.dataset.filter;
+      var td = (to === filter ? 1 : 0) - (from === filter ? 1 : 0);
+      if (td && (type === 'photos' || type === 'videos')) bump('[data-type-count="' + type + '"]', td);
+      // Series switcher: the chip of the series the grid shows counts its images in the active filter
+      var key = this.grid && this.grid.dataset.series;
+      if (key && td) {
+        $$('[data-series-count="' + key + '"]').forEach(function (el) {
+          var v = Math.max(0, (parseInt(el.textContent, 10) || 0) + td);
+          el.textContent = String(v);
+          el.classList.toggle('as-chip-count--pending', filter === 'pending' && v > 0);
+        });
+      }
       var delta = (to === 'pending' ? 1 : 0) - (from === 'pending' ? 1 : 0);
       if (!delta) return;
-      // Photos · Videos control: its counts follow the status filter, so the active type moves with the filter chip
-      var type = this.grid && this.grid.dataset.type, filter = this.grid && this.grid.dataset.filter;
-      if (type === 'photos' || type === 'videos') {
-        var td = (to === filter ? 1 : 0) - (from === filter ? 1 : 0);
-        if (td) bump('[data-type-count="' + type + '"]', td);
-      }
-      // Series switcher: the pending badge of the series the grid shows (hidden at 0)
-      var key = this.grid && this.grid.dataset.series;
       if (key) {
-        $$('[data-series-pending="' + key + '"]').forEach(function (el) {
-          var v = Math.max(0, (parseInt(el.textContent, 10) || 0) + delta);
-          el.textContent = String(v); el.hidden = v === 0;
-        });
         var approveAll = $('[data-action="approve_series"]');
         if (approveAll && (parseInt(($('[data-count="pending"]') || {}).textContent, 10) || 0) === 0) approveAll.hidden = true;
       }
