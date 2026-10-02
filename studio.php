@@ -286,7 +286,7 @@ include __DIR__ . '/partials/layout-top.php';
   <a class="us-launch" href="<?= h(uploadSheetUrl('studio.php', ['dest' => 'post', 'each' => true], ['tab' => 'uploads'])) ?>"<?= uploadSheetAttrs(['dest' => 'post', 'each' => true]) ?> data-upload-drop data-studio-upload>
     <?= icon('upload') ?>
     <span class="us-launch-label">Upload images or video</span>
-    <span class="us-launch-hint">Click or drop files here · each file becomes a <?= postsHaveDraft($pdo) ? 'Draft post only you can see (add captions in Posts → Drafts)' : 'post To Review' ?> — or send them to a tire, the Library or one carousel post instead. Up to 4 GB per video, 50 MB per image.</span>
+    <span class="us-launch-hint">Click or drop files here · each file becomes a <?= postsHaveDraft($pdo) ? 'Draft post only you can see (add captions in Posts → Draft)' : 'post To Review' ?> — or send them to a tire, the Library or one carousel post instead. Up to 4 GB per video, 50 MB per image.</span>
   </a>
 </section>
 

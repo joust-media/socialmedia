@@ -176,7 +176,7 @@ function note(line) { fs.appendFileSync(CLICKS, line + '\n'); }
       expect(body.indexOf('e2e-lib') !== -1 && body.indexOf('clip') !== -1, 'both To Review in the Library');
     });
 
-    await test('New post, a draft per file: Studio Uploads launcher → Drafts', async (page) => {
+    await test('New post, a draft per file: Studio Uploads launcher → Draft', async (page) => {
       const drafts = url('posts.php?client=kenda&status=draft&month=all');
       await page.goto(url('studio.php?client=kenda&tab=uploads'));
       const before = ((await html(page, drafts)).match(/data-draft\b/g) || []).length;
@@ -190,7 +190,7 @@ function note(line) { fs.appendFileSync(CLICKS, line + '\n'); }
       expect(/2 draft posts created/.test(t.text), t.text);
       expect(/status=draft/.test(t.href), t.href);
       const after = ((await html(page, t.dest)).match(/data-draft\b/g) || []).length;
-      expect(after > before, `more drafts in Posts → Drafts (${before} → ${after})`);
+      expect(after > before, `more drafts in Posts → Draft (${before} → ${after})`);
     });
 
     await test('New post: upload an image and make a post from it — the files hand off to the New post pop-up', async (page) => {

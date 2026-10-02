@@ -34,7 +34,7 @@
  * Tire series (tire-series-lib.php, feature-gated by hasTireSeries()):
  *   Reference card (series on): always on top of an open tire, above the switcher — "Reference · N approved",
  *                      the approved reference images as a strip of sm tiles (tap → viewer), "+ M to review" →
- *                      series=ref; pending ones ("To review") when none is approved; empty state (admin: "Add
+ *                      series=ref; pending ones ("To Review") when none is approved; empty state (admin: "Add
  *                      reference images"). The switcher's first chip reads "Reference · N" (N approved).
  *   &series=<id>|ref   which series of the open collection the grid shows
  *                      (ref = the reference images, i.e. rows without a series);
@@ -300,7 +300,7 @@ if (!function_exists('assetsTileHtml')) {
 /**
  * The Reference card at the top of an open tire (above the series switcher, whatever series the grid shows):
  * "REFERENCE · N APPROVED", the tire name, and the tire's approved reference images as a row of sm tiles —
- * else the pending ones ("To review"), else a compact empty state (admin: "Add reference images").
+ * else the pending ones ("To Review"), else a compact empty state (admin: "Add reference images").
  * Tap a tile → the viewer over the strip's tiles (assets.js initRefStrip). When some reference images still
  * wait (pending, + denied for admin) a "+ M to review" link switches the grid to the Reference view.
  * $ctx: rows (reference tire_images the seat may see, sort_order order, each with 'src'), counts
@@ -319,7 +319,7 @@ if (!function_exists('assetsRefStripHtml')) {
         $rows  = array_values(array_filter($ctx['rows'], static function ($r) use ($mode) { return (string)$r['status'] === $mode; }));
         $shown = array_slice($rows, 0, $max);
         $label = $mode === 'approved' ? 'Reference · <span data-ref-count>' . $nA . '</span> approved'
-               : ($mode === 'pending' ? 'Reference · <span class="as-refstrip-label">To review</span>' : 'Reference');
+               : ($mode === 'pending' ? 'Reference · <span class="as-refstrip-label">To Review</span>' : 'Reference');
         $toReview = $nP + $nD;
         $link = '';
         if ($mode === 'approved' && $toReview > 0) {

@@ -572,7 +572,7 @@
       note.classList.add('is-warn');
     } else {
       var k = S.dest.kind;
-      note.textContent = k === 'post' ? (S.dest.each ? 'Each file becomes its own Draft post, spaced 3 days apart — add captions in Posts → Drafts.' : 'Next: the New post pop-up opens with these files as slides; add a caption and save it as a Draft.')
+      note.textContent = k === 'post' ? (S.dest.each ? 'Each file becomes its own Draft post, spaced 3 days apart — add captions in Posts → Draft.' : 'Next: the New post pop-up opens with these files as slides; add a caption and save it as a Draft.')
         : 'Everything lands as To Review for ' + S.init.client.name + '.';
       note.classList.remove('is-warn');
     }
@@ -752,10 +752,10 @@
     if (!S || !S.jobs.length) return null;
     var c = counts(), d = S.jobs[0].dest;
     if (!c.done) return { ok: 0, failed: c.failed };
-    var where = d.kind === 'post' ? (d.each ? 'Drafts' : 'the post') : destLabel(d);
+    var where = d.kind === 'post' ? (d.each ? 'Draft' : 'the post') : destLabel(d);
     var msg = d.kind === 'post' && d.each ? plural(c.done, 'draft post') + ' created' : plural(c.done, 'file') + ' uploaded to ' + where;
     if (c.failed) msg += ' · ' + c.failed + ' failed';
-    return { ok: c.done, failed: c.failed, message: msg, url: destUrl(d), linkLabel: d.kind === 'post' ? 'Open Drafts' : 'View' };
+    return { ok: c.done, failed: c.failed, message: msg, url: destUrl(d), linkLabel: d.kind === 'post' ? 'Open Draft' : 'View' };
   }
   /** New post (one post): the parked files → the New post pop-up as slides, in the order they were chosen. */
   function handOff() {

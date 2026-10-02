@@ -26,7 +26,7 @@ checks. See `tests/README.md`. `tests/` is never deployed.
 - **Draft** (`posts.status = 'draft'`, `migrate.php` step 35): a post Joust is still building.
   The client never sees it anywhere (lists, counts, badges, Home, activity, deep links;
   `status.php` answers 404 to the client seat). Studio uploads and batch posts start as drafts
-  with an empty caption. **Send for review** (Posts → Drafts, or the post sheet;
+  with an empty caption. **Send for review** (Posts → Draft, or the post sheet;
   `status.php action=submit`) moves it to To Review and needs a caption first. Until step 35
   has run, those paths keep the old behaviour (To Review, placeholder caption).
 - **Carousels**: up to `POST_MAX_MEDIA` (20, `helpers.php`) images / videos per post.
