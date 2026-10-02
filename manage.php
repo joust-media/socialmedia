@@ -113,8 +113,7 @@ $navSubtitle = $client ? $client['name'] : 'All clients';
 $htmlTitle   = 'Manage — ' . MANAGE_SECTIONS[$section] . ($client ? ' — ' . $client['name'] : '');
 $activeTab   = 'manage';
 $navTrailing = $client ? clientAvatar($client) : joustAvatar();
-$pageWide    = $section === 'export';
-$navWide     = $pageWide;
+// One frame for every top-level page (the default 720px column, titles in the label colour) — Export included.
 $bodyClass   = 'page-studio page-manage page-manage--' . $section;
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">';
 $studioConfig = ['base' => basePath(), 'client' => $client['slug'] ?? '', 'clientAdmin' => basePath() . '/client-admin.php',
@@ -350,5 +349,8 @@ include __DIR__ . '/partials/layout-top.php';
   <?php endif; ?>
 </section>
 <?php endif; ?>
+
+<?php // Phones / tablets: the sidebar (and its "Sign out") is a bottom bar there, so Manage carries the one sign-out link. ?>
+<p class="manage-signout" data-manage-signout>Signed in as Joust · <a href="<?= h(pagePath('logout')) ?>">Sign out</a></p>
 
 <?php include __DIR__ . '/partials/layout-bottom.php'; ?>

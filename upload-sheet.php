@@ -69,7 +69,7 @@ foreach ($st->fetchAll() as $t) {
 usOut(200, [
     'ok'       => true,
     'client'   => ['slug' => (string)$client['slug'], 'name' => (string)$client['name'], 'logo' => brandLogoUrl((string)($client['logo_url'] ?? '')),
-                   'label' => trim((string)($client['feature_label'] ?? '')) ?: 'Tires'],   // the Assets segment the series live under
+                   'label' => tiresLabel($client)],   // the Tires tab the series live under (the client's word, "Tires" by default)
     'tires'    => $tires,
     'features' => [
         'tires'   => $tires || companyHasTires($client, $pdo),

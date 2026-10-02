@@ -108,7 +108,10 @@ $sid = $snap ? (int)($snap['id'] ?? 0) : 0;
 // Chrome: Manage → Drive (Manage tab, Joust mark; the overview shows the Manage section switch, sub-views a back button)
 $activeTab   = 'manage';
 $navTrailing = joustAvatar();
-$pageWide    = true;
+// The overview is a Manage section: the same 720px frame as every top-level page. The pushed table views
+// (Offboard first, the file lists) keep the wide column, with the title aligned to it.
+$pageWide    = $view !== 'overview';
+$navWide     = $pageWide;
 $bodyClass   = 'page-drive page-drive--' . $view;
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/drive.css')) . '">';
 $footExtra   = '';

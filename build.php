@@ -185,425 +185,32 @@ $ctx = [
     'product_name' => '',
 ];
 $profileIncomplete = ($ctx['product_type'] === '' || $ctx['industry'] === '');
-?>
-<!DOCTYPE html>
-<html lang="en" data-theme="dark">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>AI Builder — <?= h($client['name']) ?></title>
-<?= renderAppHead() ?>
-<style>
-  :root {
-    --bg: #18191a; --surface: #242526; --surface-2: #3a3b3c;
-    --border: #3e4042; --text: #e4e6eb; --text-muted: #b0b3b8;
-    --accent: #2d88ff; --accent-hover: #4599ff;
-    --success: #16a34a; --warn: #f59e0b;
-    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.3);
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text);
-         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-         font-size: 15px; line-height: 1.4; min-height: 100vh; }
 
-  .topbar { position: sticky; top: 0; z-index: 100;
-            background: var(--surface); border-bottom: 1px solid var(--border);
-            box-shadow: var(--shadow); }
-  .topbar-inner { max-width: 1100px; margin: 0 auto; padding: 12px 20px;
-                  display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .brand { display: flex; align-items: center; gap: 10px;
-           font-weight: 700; font-size: 19px; letter-spacing: -0.4px; }
-  .brand-mark { width: 32px; height: 32px; border-radius: 8px;
-                background: var(--accent); color: #fff;
-                display: flex; align-items: center; justify-content: center; font-weight: 800; }
-  .brand-sub { font-size: 12px; font-weight: 600; color: var(--text-muted);
-               text-transform: uppercase; letter-spacing: 1px;
-               padding: 3px 8px; border-radius: 4px;
-               background: var(--surface-2); border: 1px solid var(--border); }
-  .top-actions { display: flex; gap: 8px; align-items: center; }
-  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-         padding: 8px 14px; border-radius: 8px; font-size: 14px; font-weight: 600;
-         cursor: pointer; border: 1px solid var(--border);
-         background: var(--surface-2); color: var(--text);
-         text-decoration: none; transition: background 0.15s, transform 0.1s; }
-  .btn:hover { background: var(--border); }
-  .btn:active { transform: scale(0.98); }
-  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .btn.primary:hover { background: var(--accent-hover); }
-  .btn.primary:disabled { opacity: 0.45; cursor: not-allowed; }
-  .btn.sm { padding: 6px 10px; font-size: 13px; }
-
-  .wrap { max-width: 1100px; margin: 0 auto; padding: 22px 20px 90px; }
-  h1 { margin: 0 0 4px; font-size: 23px; letter-spacing: -0.3px; }
-  .subtitle { color: var(--text-muted); margin: 0 0 18px; }
-
-  .notice { padding: 12px 16px; border-radius: 8px; margin-bottom: 18px; font-size: 14px; }
-  .notice.warn  { background: #78350f; color: #fde68a; border: 1px solid #a16207; }
-  .notice.warn a { color: #fde68a; }
-
-  .card { background: var(--surface); border: 1px solid var(--border);
-          border-radius: 12px; box-shadow: var(--shadow); margin-bottom: 18px; }
-  .card-header { padding: 14px 18px; border-bottom: 1px solid var(--border);
-                 display: flex; align-items: center; justify-content: space-between;
-                 gap: 12px; flex-wrap: wrap; }
-  .card-title { font-size: 15px; font-weight: 700; margin: 0;
-                display: flex; align-items: center; gap: 8px; }
-  .step-num { width: 22px; height: 22px; border-radius: 50%;
-              background: var(--accent); color: #fff; font-size: 12px; font-weight: 800;
-              display: inline-flex; align-items: center; justify-content: center; }
-  .card-body { padding: 18px; }
-
-  /* Reference image grid */
-  .ref-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-              gap: 10px; }
-  .ref-item { position: relative; border: 2px solid var(--border); border-radius: 10px;
-              overflow: hidden; cursor: pointer; background: var(--surface-2);
-              aspect-ratio: 1/1; transition: border-color 0.15s, transform 0.1s; }
-  .ref-item:hover { border-color: var(--text-muted); }
-  .ref-item.selected { border-color: var(--accent);
-                       box-shadow: 0 0 0 3px rgba(45,136,255,0.25); }
-  .ref-item img, .ref-item video { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .ref-check { position: absolute; top: 6px; right: 6px;
-               width: 22px; height: 22px; border-radius: 50%;
-               background: rgba(0,0,0,0.6); color: #fff; font-size: 13px; font-weight: 800;
-               display: flex; align-items: center; justify-content: center; opacity: 0; }
-  .ref-item.selected .ref-check { opacity: 1; background: var(--accent); }
-  .ref-label { position: absolute; left: 0; right: 0; bottom: 0;
-               background: linear-gradient(transparent, rgba(0,0,0,0.85));
-               color: #fff; font-size: 11px; font-weight: 600;
-               padding: 14px 8px 6px; white-space: nowrap;
-               overflow: hidden; text-overflow: ellipsis; }
-  .ref-src { position: absolute; top: 6px; left: 6px;
-             font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;
-             padding: 2px 6px; border-radius: 8px;
-             background: rgba(0,0,0,0.65); color: #fff; }
-  .ref-vid-tag { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
-                 font-size: 22px; pointer-events: none; text-shadow: 0 1px 4px rgba(0,0,0,0.8); }
-
-  /* Vehicle picker */
-  .ref-section-label { font-size: 12px; font-weight: 700; color: var(--text-muted);
-                       text-transform: uppercase; letter-spacing: 0.5px;
-                       margin-bottom: 8px; display: block; }
-  .vehicle-pick { margin-bottom: 4px; }
-  .vehicle-select { width: 100%; background: var(--surface-2); border: 1px solid var(--border);
-                    color: var(--text); padding: 10px 12px; border-radius: 8px;
-                    font: inherit; font-size: 14px; }
-  .vehicle-select:focus { outline: none; border-color: var(--accent);
-                          box-shadow: 0 0 0 3px rgba(45,136,255,0.18); }
-  .vehicle-pick .help { font-size: 11px; color: var(--text-muted);
-                        display: block; margin-top: 5px; }
-  .vehicle-pick .help a { color: var(--accent); }
-  #vehicleRefGrid { margin-bottom: 6px; }
-  #vehicleRefGrid:empty { display: none; }
-
-  /* Composition form */
-  .compose-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-  @media (max-width: 720px) { .compose-grid { grid-template-columns: 1fr; } }
-  .field { display: flex; flex-direction: column; gap: 6px; }
-  .field.full { grid-column: 1 / -1; }
-  .field label { font-size: 12px; font-weight: 700; color: var(--text-muted);
-                 text-transform: uppercase; letter-spacing: 0.5px; }
-  .field label .req { color: var(--accent); }
-  .field label .opt { color: var(--text-muted); font-weight: 500; text-transform: none;
-                      letter-spacing: 0; }
-  .field select, .field input[type="text"], .field textarea {
-    background: var(--surface-2); border: 1px solid var(--border);
-    color: var(--text); padding: 10px 12px; border-radius: 8px;
-    font: inherit; width: 100%; font-size: 14px;
-  }
-  .field textarea { resize: vertical; min-height: 64px; font-family: inherit; }
-  .field select:focus, .field input:focus, .field textarea:focus {
-    outline: none; border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(45,136,255,0.18);
-  }
-  .field .help { font-size: 11px; color: var(--text-muted); }
-  .subhead { font-size: 12px; font-weight: 700; color: var(--text-muted);
-             text-transform: uppercase; letter-spacing: 0.5px;
-             margin: 18px 0 10px; padding-top: 14px; border-top: 1px solid var(--border); }
-
-  /* Final prompt */
-  .final-text { width: 100%; min-height: 130px; background: var(--surface-2);
-                border: 1px solid var(--border); color: var(--text);
-                padding: 12px 14px; border-radius: 8px; font: inherit; font-size: 15px;
-                line-height: 1.5; resize: vertical; }
-  .final-text:focus { outline: none; border-color: var(--accent); }
-  .final-actions { display: flex; gap: 10px; align-items: center;
-                   flex-wrap: wrap; margin-top: 12px; }
-  .gen-reminder { font-size: 13px; color: var(--text-muted); }
-  .gen-reminder strong { color: var(--text); }
-  .gate-hint { font-size: 12px; color: var(--warn); margin-top: 8px; }
-
-  .context-bar { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px;
-                 color: var(--text-muted); margin-bottom: 8px; }
-  .context-bar strong { color: var(--text); }
-
-  .empty { padding: 28px 18px; text-align: center; color: var(--text-muted);
-           border: 1px dashed var(--border); border-radius: 10px; }
-
-  .toast { position: fixed; bottom: 24px; left: 50%;
-           transform: translateX(-50%) translateY(20px);
-           background: #e4e6eb; color: #050505;
-           padding: 12px 20px; border-radius: 24px; font-size: 14px; font-weight: 600;
-           opacity: 0; pointer-events: none; transition: opacity 0.25s, transform 0.25s;
-           z-index: 1000; box-shadow: 0 4px 16px rgba(0,0,0,0.3); }
-  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-</style>
-</head>
-<body>
-
-<?= renderAppChrome('AI Builder', [
-      'subtitle' => $client['name'],
-      'active'   => 'manage',
-      'width'    => '1100px',
-      'back'     => ['href' => adminToolsUrl(), 'label' => 'Manage'],
-      'links'    => [
-        ['label' => 'Prompt Library',  'href' => 'prompts.php'],
-        ['label' => 'Vehicle Library', 'href' => 'vehicles.php'],
-        ['label' => 'Sign out',        'href' => 'logout.php'],
-      ],
-    ]) ?>
-
-<div class="wrap">
-
-  <h1>AI Builder</h1>
-  <p class="subtitle">
-    Compose a prompt from the library, copy it, and download the reference images
-    to run the generation manually. (Direct AI generation arrives in Phase 2.)
-  </p>
-
-  <div class="context-bar">
-    <span>Brand: <strong><?= h($ctx['brand_name']) ?></strong></span>
-    <span>Product type: <strong><?= $ctx['product_type'] !== '' ? h($ctx['product_type']) : '—' ?></strong></span>
-    <span>Industry: <strong><?= $ctx['industry'] !== '' ? h($ctx['industry']) : '—' ?></strong></span>
-  </div>
-
-  <?php if (!$promptsReady): ?>
-    <div class="notice warn">
-      ⚠ The <code>prompts</code> table doesn't exist yet. Visit
-      <a href="migrate.php">migrate</a>, then add prompts in the
-      <a href="prompts.php">Prompt Library</a>.
-    </div>
-  <?php elseif ($profileIncomplete): ?>
-    <div class="notice warn">
-      ⚠ This client is missing <strong>product type</strong> and/or <strong>industry</strong>.
-      Those variables will be skipped until you set them on the
-      <a href="<?= h(manageUrl('clients', ['edit' => (int)$client['id']])) ?>">client settings</a> (Manage → Clients).
-    </div>
-  <?php endif; ?>
-
-  <!-- STEP 1 — Reference images ------------------------------------ -->
-  <div class="card">
-    <div class="card-header">
-      <h2 class="card-title"><span class="step-num">1</span> Reference images</h2>
-      <button type="button" class="btn sm primary" id="downloadBtn" disabled>
-        ⬇ Download selected (<span id="selCount">0</span>)
-      </button>
-    </div>
-    <div class="card-body">
-      <?php if (hasVehiclesTable($pdo)): ?>
-        <div class="vehicle-pick">
-          <label for="selVehicle" class="ref-section-label">🚗 Vehicle (optional)</label>
-          <select id="selVehicle" class="vehicle-select">
-            <option value="">— No vehicle —</option>
-            <?php foreach ($vehicles as $v): ?>
-              <option value="<?= (int)$v['id'] ?>"><?= h($v['label']) ?><?= $v['type'] !== '' ? '  ·  ' . h($v['type']) : '' ?></option>
-            <?php endforeach; ?>
-          </select>
-          <span class="help">
-            <?php if (empty($vehicles)): ?>
-              No vehicles in the library yet — <a href="add-vehicle.php" target="_blank">add one</a>.
-            <?php else: ?>
-              Adds the vehicle's images below and fills the {{vehicle_*}} variables.
-            <?php endif; ?>
-          </span>
-        </div>
-        <div class="ref-grid" id="vehicleRefGrid"></div>
-        <div class="ref-section-label" style="margin-top:16px;">📰 Feed images</div>
-      <?php endif; ?>
-      <?php if (empty($refImages)): ?>
-        <div class="empty">
-          No feed images found for <?= h($client['name']) ?>.
-          Add posts or product items first.
-        </div>
-      <?php else: ?>
-        <div class="ref-grid" id="refGrid">
-          <?php foreach ($refImages as $img): ?>
-            <div class="ref-item" data-ref
-                 data-key="<?= h($img['key']) ?>"
-                 data-url="<?= h($img['url']) ?>"
-                 data-type="<?= h($img['type']) ?>"
-                 data-label="<?= h($img['label']) ?>">
-              <?php if ($img['type'] === 'video'): ?>
-                <video src="<?= h($img['url']) ?>" muted preload="metadata"></video>
-                <span class="ref-vid-tag">▶</span>
-              <?php else: ?>
-                <?= pvImg($img['url'], 'sm', ['sizes' => pvSizes('legacy'), 'alt' => $img['label']]) ?>
-              <?php endif; ?>
-              <span class="ref-src"><?= h($img['source']) ?></span>
-              <span class="ref-check">✓</span>
-              <span class="ref-label"><?= h($img['label']) ?></span>
-            </div>
-          <?php endforeach; ?>
-        </div>
-        <p class="help" style="margin:12px 0 0;color:var(--text-muted);font-size:12px;">
-          Click images to select them. The first selected image fills <code>{{product_name}}</code>.
-        </p>
-      <?php endif; ?>
-    </div>
-  </div>
-
-  <!-- STEP 2 — Compose --------------------------------------------- -->
-  <div class="card">
-    <div class="card-header">
-      <h2 class="card-title"><span class="step-num">2</span> Compose the prompt</h2>
-      <a class="btn sm" href="prompts.php" target="_blank">Manage library ↗</a>
-    </div>
-    <div class="card-body">
-      <?php
-        // Helper to render one category dropdown.
-        function renderPromptSelect($id, $catSlug, $promptsByCat, $required) {
-            $opts = $promptsByCat[$catSlug] ?? [];
-            echo '<select id="' . h($id) . '" data-segment>';
-            echo '<option value="">' . ($required ? '— Required —' : '— None —') . '</option>';
-            foreach ($opts as $p) {
-                echo '<option value="' . (int)$p['id'] . '" '
-                   . 'data-models="' . h($p['compatible_models'] ?? '') . '">'
-                   . h($p['name']) . '</option>';
-            }
-            echo '</select>';
-            if (empty($opts)) {
-                echo '<span class="help">No ' . h($catSlug) . ' prompts yet — '
-                   . '<a href="add-prompt.php" target="_blank">add one</a>.</span>';
-            }
-        }
-      ?>
-      <div class="compose-grid">
-        <div class="field">
-          <label>🎥 Camera <span class="req">*</span></label>
-          <?php renderPromptSelect('sel-camera', 'camera', $promptsByCat, true); ?>
-        </div>
-        <div class="field">
-          <label>💡 Lighting <span class="req">*</span></label>
-          <?php renderPromptSelect('sel-lighting', 'lighting', $promptsByCat, true); ?>
-        </div>
-        <div class="field">
-          <label>🏞 Environment <span class="req">*</span></label>
-          <?php renderPromptSelect('sel-environment', 'environment', $promptsByCat, true); ?>
-        </div>
-        <div class="field">
-          <label>📦 Product <span class="req">*</span></label>
-          <?php renderPromptSelect('sel-product', 'product', $promptsByCat, true); ?>
-        </div>
-      </div>
-
-      <div class="subhead">🧍 Characters <span style="font-weight:500;text-transform:none;letter-spacing:0;">— optional, up to <?= PROMPT_CHARACTER_SLOTS ?></span></div>
-      <div class="compose-grid">
-        <?php for ($i = 1; $i <= PROMPT_CHARACTER_SLOTS; $i++): ?>
-          <div class="field">
-            <label>Character <?= $i ?> <span class="opt">(optional)</span></label>
-            <?php renderPromptSelect('sel-char-' . $i, 'character', $promptsByCat, false); ?>
-          </div>
-        <?php endfor; ?>
-      </div>
-
-      <div class="subhead">📐 Rules &amp; extras <span style="font-weight:500;text-transform:none;letter-spacing:0;">— optional</span></div>
-      <div class="compose-grid">
-        <div class="field">
-          <label>📐 References <span class="opt">(rules the AI must follow)</span></label>
-          <?php renderPromptSelect('sel-references', 'references', $promptsByCat, false); ?>
-        </div>
-        <div class="field">
-          <label>✨ Custom <span class="opt">(optional)</span></label>
-          <?php renderPromptSelect('sel-custom', 'custom', $promptsByCat, false); ?>
-        </div>
-      </div>
-
-      <div class="subhead">Settings</div>
-      <div class="compose-grid">
-        <div class="field">
-          <label for="productName">Product name <span class="opt">— fills {{product_name}}</span></label>
-          <input type="text" id="productName" placeholder="Auto-fills from first selected image">
-        </div>
-        <div class="field">
-          <label for="selModel">Model</label>
-          <select id="selModel">
-            <?php foreach (promptModels() as $slug => $meta): ?>
-              <option value="<?= h($slug) ?>" data-type="<?= h($meta['type']) ?>">
-                <?= h($meta['label']) ?> — <?= h(ucfirst($meta['type'])) ?>
-              </option>
-            <?php endforeach; ?>
-          </select>
-        </div>
-        <div class="field">
-          <label for="selAspect">Aspect ratio</label>
-          <select id="selAspect">
-            <?php foreach (promptAspectRatios() as $ratio => $px): ?>
-              <option value="<?= h($ratio) ?>"><?= h($ratio) ?> (<?= h($px) ?>)</option>
-            <?php endforeach; ?>
-          </select>
-        </div>
-        <div class="field">
-          <label for="modifier">Custom modifier <span class="opt">(optional)</span></label>
-          <textarea id="modifier" placeholder="One-off tweak appended to the end of the prompt"></textarea>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- STEP 3 — Final prompt ---------------------------------------- -->
-  <div class="card">
-    <div class="card-header">
-      <h2 class="card-title"><span class="step-num">3</span> Final prompt</h2>
-    </div>
-    <div class="card-body">
-      <textarea class="final-text" id="finalText" readonly
-                placeholder="Pick a Camera, Lighting, Environment and Product prompt above…"></textarea>
-      <div class="final-actions">
-        <button type="button" class="btn primary" id="copyBtn" disabled>📋 Copy prompt</button>
-        <span class="gen-reminder">
-          Then generate manually in
-          <strong id="reminderModel"><?= h(promptModelLabel(array_key_first(promptModels()))) ?></strong>
-          · aspect <strong id="reminderAspect"><?= h(array_key_first(promptAspectRatios())) ?></strong>
-        </span>
-      </div>
-      <div class="gate-hint" id="gateHint" style="display:none;">
-        Pick a Camera, Lighting, Environment and Product prompt to enable Copy.
-      </div>
-    </div>
-  </div>
-
-</div>
-
-<div class="toast" id="toast">Copied!</div>
-
+// The Builder's behaviour (selection, compose, copy, download) — printed after </main> by layout-bottom.php.
+$builderScript = <<<'JS'
 <script>
   // ---- Data from the server ------------------------------------------------
   // json_encode keeps "/" escaped (default) so prompt text cannot break out of this block.
-  const PROMPTS     = <?= json_encode($promptIndex, JSON_UNESCAPED_UNICODE) ?>;
-  const BASE_CTX    = <?= json_encode($ctx, JSON_UNESCAPED_UNICODE) ?>;
-  const KNOWN_VARS  = <?= json_encode(promptVariableNames()) ?>;
-  const SEP         = <?= json_encode(PROMPT_SEPARATOR) ?>;
-  const CLIENT_SLUG = <?= json_encode($client['slug']) ?>;
+  const PROMPTS     = __PROMPTS__;
+  const BASE_CTX    = __BASE_CTX__;
+  const KNOWN_VARS  = __KNOWN_VARS__;
+  const SEP         = __SEP__;
+  const CLIENT_SLUG = __CLIENT_SLUG__;
   const STORE_KEY   = 'jsm_builder:' + CLIENT_SLUG;
-  const VEHICLES    = <?= json_encode($vehicles, JSON_UNESCAPED_UNICODE) ?>;
+  const VEHICLES    = __VEHICLES__;
   // Vehicle variables — filled when a vehicle is picked, merged into the context.
   let vehicleCtx = { vehicle_manufacturer: '', vehicle_model: '', vehicle_year: '', vehicle_type: '' };
+
+  const PLAY_ICON   = __PLAY_ICON__;
+  const CHECK_ICON  = __CHECK_ICON__;
 
   const SEGMENT_IDS = ['sel-camera','sel-lighting','sel-environment','sel-product',
                        'sel-char-1','sel-char-2','sel-char-3','sel-char-4',
                        'sel-references','sel-custom'];
   const REQUIRED_IDS = ['sel-camera','sel-lighting','sel-environment','sel-product'];
 
-  // ---- Toast --------------------------------------------------------------
-  const toastEl = document.getElementById('toast');
-  let toastTimer;
-  function showToast(msg) {
-    toastEl.textContent = msg;
-    toastEl.classList.add('show');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1900);
-  }
+  // ---- Toast (the shared one: App.toast, app.js) ---------------------------
+  function showToast(msg) { if (window.App && App.toast) App.toast(msg); }
 
   // ---- Variable substitution (mirrors prompt-lib.php) ---------------------
   function substitute(text, ctx) {
@@ -674,10 +281,10 @@ $profileIncomplete = ($ctx['product_type'] === '' || $ctx['industry'] === '');
     finalEl.value = compose();
     const ready = requiredFilled();
     copyBtn.disabled = !ready;
-    gateHint.style.display = ready ? 'none' : 'block';
+    gateHint.hidden = ready;
 
     document.getElementById('reminderModel').textContent =
-      document.getElementById('selModel').selectedOptions[0].textContent.split(' — ')[0];
+      document.getElementById('selModel').selectedOptions[0].textContent.trim().split(' — ')[0];
     document.getElementById('reminderAspect').textContent =
       document.getElementById('selAspect').value;
     saveState();
@@ -747,6 +354,7 @@ $profileIncomplete = ($ctx['product_type'] === '' || $ctx['industry'] === '');
     if (selected.has(key)) {
       selected.delete(key);
       item.classList.remove('selected');
+      item.setAttribute('aria-pressed', 'false');
     } else {
       selected.set(key, {
         url:   item.getAttribute('data-url'),
@@ -754,15 +362,18 @@ $profileIncomplete = ($ctx['product_type'] === '' || $ctx['industry'] === '');
         label: item.getAttribute('data-label')
       });
       item.classList.add('selected');
+      item.setAttribute('aria-pressed', 'true');
     }
     syncSelection();
   });
 
   // Build a selectable reference-image tile (used for vehicle images).
   function makeRefItem(info, source) {
-    const div = document.createElement('div');
-    div.className = 'ref-item';
+    const div = document.createElement('button');
+    div.type = 'button';
+    div.className = 'tl-ref';
     div.setAttribute('data-ref', '');
+    div.setAttribute('aria-pressed', 'false');
     div.dataset.key = info.key;
     div.dataset.url = info.url;
     div.dataset.type = info.type;
@@ -772,7 +383,7 @@ $profileIncomplete = ($ctx['product_type'] === '' || $ctx['industry'] === '');
       v.src = info.url; v.muted = true; v.preload = 'metadata';
       div.appendChild(v);
       const tag = document.createElement('span');
-      tag.className = 'ref-vid-tag'; tag.textContent = '▶';
+      tag.className = 'tl-ref-play'; tag.innerHTML = PLAY_ICON;
       div.appendChild(tag);
     } else {
       const img = document.createElement('img');
@@ -780,13 +391,13 @@ $profileIncomplete = ($ctx['product_type'] === '' || $ctx['industry'] === '');
       div.appendChild(img);
     }
     const src = document.createElement('span');
-    src.className = 'ref-src'; src.textContent = source;
+    src.className = 'tl-ref-src'; src.textContent = source;
     div.appendChild(src);
     const chk = document.createElement('span');
-    chk.className = 'ref-check'; chk.textContent = '✓';
+    chk.className = 'tl-ref-check'; chk.innerHTML = CHECK_ICON;
     div.appendChild(chk);
     const lbl = document.createElement('span');
-    lbl.className = 'ref-label'; lbl.textContent = info.label;
+    lbl.className = 'tl-ref-label'; lbl.textContent = info.label;
     div.appendChild(lbl);
     return div;
   }
@@ -837,7 +448,7 @@ $profileIncomplete = ($ctx['product_type'] === '' || $ctx['industry'] === '');
     const text = document.getElementById('finalText').value.trim();
     if (!text) return;
     const ok = await copyText(text);
-    showToast(ok ? '📋 Prompt copied' : 'Copy failed — select the text manually');
+    showToast(ok ? 'Prompt copied' : 'Copy failed — select the text manually');
   });
 
   // ---- Download selected reference images -------------------------------
@@ -869,7 +480,7 @@ $profileIncomplete = ($ctx['product_type'] === '' || $ctx['industry'] === '');
     btn.innerHTML = original;
     btn.disabled = false;
     document.getElementById('selCount').textContent = selected.size;
-    showToast('⬇ Downloaded ' + done + ' reference image' + (done === 1 ? '' : 's'));
+    showToast('Downloaded ' + done + ' reference image' + (done === 1 ? '' : 's'));
   });
 
   // ---- Init -------------------------------------------------------------
@@ -880,6 +491,187 @@ $profileIncomplete = ($ctx['product_type'] === '' || $ctx['industry'] === '');
   applyVehicle();
   refresh();
 </script>
+JS;
 
-</body>
-</html>
+// ---- Chrome: the shared shell (theme follows Appearance like every page; back to Manage → Tools) ----
+$pageTitle   = 'AI Builder';
+$htmlTitle   = 'AI Builder — ' . $client['name'];
+$navSubtitle = $client['name'];
+$navBack     = ['href' => adminToolsUrl(), 'label' => 'Manage'];
+$navLinks    = [
+    ['label' => 'Prompt Library',  'href' => pagePath('prompts')],
+    ['label' => 'Vehicle Library', 'href' => pagePath('vehicles')],
+];
+$activeTab   = 'manage';
+$bodyClass   = 'page-studio page-tool page-builder';
+$headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">' . "\n"
+             . '<link rel="stylesheet" href="' . h(staticUrl('css/tools.css')) . '">';
+$footExtra   = str_replace(
+    ['__PROMPTS__', '__BASE_CTX__', '__KNOWN_VARS__', '__SEP__', '__CLIENT_SLUG__', '__VEHICLES__', '__PLAY_ICON__', '__CHECK_ICON__'],
+    [json_encode($promptIndex ?: new stdClass(), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG), json_encode($ctx, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG),
+     json_encode(promptVariableNames()), json_encode(PROMPT_SEPARATOR), json_encode($client['slug']), json_encode($vehicles, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG),
+     json_encode(icon('play')), json_encode(icon('checkmark'))],
+    $builderScript);
+include __DIR__ . '/partials/layout-top.php';
+
+/** One category <select> (Compose card). */
+function renderPromptSelect($id, $catSlug, $promptsByCat, $required) {
+    $opts = $promptsByCat[$catSlug] ?? [];
+    echo '<select class="ui-select" id="' . h($id) . '" data-segment>';
+    echo '<option value="">' . ($required ? 'Required — pick one' : 'None') . '</option>';
+    foreach ($opts as $p) {
+        echo '<option value="' . (int)$p['id'] . '" data-models="' . h($p['compatible_models'] ?? '') . '">' . h($p['name']) . '</option>';
+    }
+    echo '</select>';
+    if (empty($opts)) {
+        echo '<p class="studio-help">No ' . h($catSlug) . ' prompts yet — <a href="' . h(pagePath('add-prompt')) . '" target="_blank">add one</a>.</p>';
+    }
+}
+?>
+
+<p class="tl-intro">Compose a prompt from the library, copy it, and download the reference images to run the generation by hand.</p>
+
+<div class="tl-context" aria-label="Client profile">
+  <span class="tl-tag">Brand: <?= h($ctx['brand_name']) ?></span>
+  <span class="tl-tag">Product type: <?= $ctx['product_type'] !== '' ? h($ctx['product_type']) : '—' ?></span>
+  <span class="tl-tag">Industry: <?= $ctx['industry'] !== '' ? h($ctx['industry']) : '—' ?></span>
+</div>
+
+<?php if (!$promptsReady): ?>
+  <div class="studio-alert studio-alert--error" role="alert">
+    The <code>prompts</code> table doesn't exist yet. Run <a href="<?= h(pagePath('migrate')) ?>">migrate</a>, then add prompts in the
+    <a href="<?= h(pagePath('prompts')) ?>">Prompt Library</a>.
+  </div>
+<?php elseif ($profileIncomplete): ?>
+  <div class="studio-alert" role="status">
+    This client has no <strong>product type</strong> and/or <strong>industry</strong> yet, so those variables are skipped.
+    Set them in <a href="<?= h(manageUrl('clients', ['edit' => (int)$client['id']])) ?>">Manage → Clients</a>.
+  </div>
+<?php endif; ?>
+
+<!-- Step 1 — Reference images -->
+<section class="ui-card tl-card" data-builder-step="refs">
+  <div class="ui-card-header">
+    <div class="ui-card-heading"><h3 class="ui-card-title"><span class="tl-step">1</span>Reference images</h3>
+      <p class="ui-card-subtitle">Tap images to select them. The first one fills <code class="tl-code">{{product_name}}</code>.</p></div>
+    <div class="tl-card-actions">
+      <button type="button" class="ui-btn ui-btn--sm ui-btn--filled" id="downloadBtn" disabled><?= icon('download') ?><span>Download (<span id="selCount">0</span>)</span></button>
+    </div>
+  </div>
+  <div class="ui-card-body tl-fields">
+    <?php if (hasVehiclesTable($pdo)): ?>
+      <div class="studio-field">
+        <label for="selVehicle" class="studio-label">Vehicle <span class="text-tertiary">optional</span></label>
+        <select id="selVehicle" class="ui-select">
+          <option value="">No vehicle</option>
+          <?php foreach ($vehicles as $v): ?>
+            <option value="<?= (int)$v['id'] ?>"><?= h($v['label']) ?><?= $v['type'] !== '' ? '  ·  ' . h($v['type']) : '' ?></option>
+          <?php endforeach; ?>
+        </select>
+        <p class="studio-help">
+          <?php if (empty($vehicles)): ?>
+            No vehicles in the library yet — <a href="<?= h(pagePath('add-vehicle')) ?>" target="_blank">add one</a>.
+          <?php else: ?>
+            Adds the vehicle's images below and fills the vehicle variables.
+          <?php endif; ?>
+        </p>
+      </div>
+      <div class="tl-ref-grid" id="vehicleRefGrid"></div>
+      <span class="studio-label" style="margin:0">Feed images</span>
+    <?php endif; ?>
+    <?php if (empty($refImages)): ?>
+      <div class="ui-empty">No feed images for <?= h($client['name']) ?> yet. Add posts or tire images first.</div>
+    <?php else: ?>
+      <div class="tl-ref-grid" id="refGrid">
+        <?php foreach ($refImages as $img): ?>
+          <button type="button" class="tl-ref" data-ref aria-pressed="false"
+                  data-key="<?= h($img['key']) ?>" data-url="<?= h($img['url']) ?>"
+                  data-type="<?= h($img['type']) ?>" data-label="<?= h($img['label']) ?>">
+            <?php if ($img['type'] === 'video'): ?>
+              <video src="<?= h($img['url']) ?>" muted preload="metadata"></video>
+              <span class="tl-ref-play"><?= icon('play') ?></span>
+            <?php else: ?>
+              <?= pvImg($img['url'], 'sm', ['sizes' => '120px', 'alt' => '']) ?>
+            <?php endif; ?>
+            <span class="tl-ref-src"><?= h($img['source'] === 'Product' ? 'Tire' : $img['source']) ?></span>
+            <span class="tl-ref-check"><?= icon('checkmark') ?></span>
+            <span class="tl-ref-label"><?= h($img['label']) ?></span>
+          </button>
+        <?php endforeach; ?>
+      </div>
+    <?php endif; ?>
+  </div>
+</section>
+
+<!-- Step 2 — Compose -->
+<section class="ui-card tl-card" data-builder-step="compose">
+  <div class="ui-card-header">
+    <div class="ui-card-heading"><h3 class="ui-card-title"><span class="tl-step">2</span>Compose the prompt</h3></div>
+    <div class="tl-card-actions"><a class="ui-btn ui-btn--sm ui-btn--gray" href="<?= h(pagePath('prompts')) ?>" target="_blank">Prompt Library</a></div>
+  </div>
+  <div class="ui-card-body">
+    <div class="tl-grid">
+      <div class="studio-field"><label class="studio-label" for="sel-camera">Camera</label><?php renderPromptSelect('sel-camera', 'camera', $promptsByCat, true); ?></div>
+      <div class="studio-field"><label class="studio-label" for="sel-lighting">Lighting</label><?php renderPromptSelect('sel-lighting', 'lighting', $promptsByCat, true); ?></div>
+      <div class="studio-field"><label class="studio-label" for="sel-environment">Environment</label><?php renderPromptSelect('sel-environment', 'environment', $promptsByCat, true); ?></div>
+      <div class="studio-field"><label class="studio-label" for="sel-product">Product</label><?php renderPromptSelect('sel-product', 'product', $promptsByCat, true); ?></div>
+    </div>
+
+    <h4 class="tl-subhead">Characters <span class="text-tertiary">— optional, up to <?= PROMPT_CHARACTER_SLOTS ?></span></h4>
+    <div class="tl-grid">
+      <?php for ($i = 1; $i <= PROMPT_CHARACTER_SLOTS; $i++): ?>
+        <div class="studio-field"><label class="studio-label" for="sel-char-<?= $i ?>">Character <?= $i ?></label><?php renderPromptSelect('sel-char-' . $i, 'character', $promptsByCat, false); ?></div>
+      <?php endfor; ?>
+    </div>
+
+    <h4 class="tl-subhead">Rules &amp; extras <span class="text-tertiary">— optional</span></h4>
+    <div class="tl-grid">
+      <div class="studio-field"><label class="studio-label" for="sel-references">References <span class="text-tertiary">rules the AI must follow</span></label><?php renderPromptSelect('sel-references', 'references', $promptsByCat, false); ?></div>
+      <div class="studio-field"><label class="studio-label" for="sel-custom">Custom</label><?php renderPromptSelect('sel-custom', 'custom', $promptsByCat, false); ?></div>
+    </div>
+
+    <h4 class="tl-subhead">Settings</h4>
+    <div class="tl-grid">
+      <div class="studio-field">
+        <label class="studio-label" for="productName">Product name <span class="text-tertiary">fills {{product_name}}</span></label>
+        <input class="ui-input" type="text" id="productName" placeholder="From the first selected image">
+      </div>
+      <div class="studio-field">
+        <label class="studio-label" for="selModel">Model</label>
+        <select class="ui-select" id="selModel">
+          <?php foreach (promptModels() as $slug => $meta): ?>
+            <option value="<?= h($slug) ?>" data-type="<?= h($meta['type']) ?>"><?= h($meta['label']) ?> — <?= h(ucfirst($meta['type'])) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="studio-field">
+        <label class="studio-label" for="selAspect">Aspect ratio</label>
+        <select class="ui-select" id="selAspect">
+          <?php foreach (promptAspectRatios() as $ratio => $px): ?>
+            <option value="<?= h($ratio) ?>"><?= h($ratio) ?> (<?= h($px) ?>)</option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div class="studio-field">
+        <label class="studio-label" for="modifier">Custom modifier <span class="text-tertiary">optional</span></label>
+        <textarea class="ui-textarea" id="modifier" rows="2" placeholder="A one-off tweak added to the end of the prompt"></textarea>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Step 3 — Final prompt -->
+<section class="ui-card tl-card" data-builder-step="final">
+  <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title"><span class="tl-step">3</span>Final prompt</h3></div></div>
+  <div class="ui-card-body">
+    <label class="ui-visually-hidden" for="finalText">Final prompt</label>
+    <textarea class="ui-textarea tl-final" id="finalText" readonly placeholder="Pick a Camera, Lighting, Environment and Product prompt above…"></textarea>
+    <div class="tl-final-actions">
+      <button type="button" class="ui-btn ui-btn--filled" id="copyBtn" disabled>Copy prompt</button>
+      <span class="studio-help" style="margin:0">Then generate by hand in <strong id="reminderModel"><?= h(promptModelLabel(array_key_first(promptModels()))) ?></strong> · aspect <strong id="reminderAspect"><?= h(array_key_first(promptAspectRatios())) ?></strong></span>
+    </div>
+    <p class="tl-gate" id="gateHint" hidden>Pick a Camera, Lighting, Environment and Product prompt to enable Copy.</p>
+  </div>
+</section>
+
+<?php include __DIR__ . '/partials/layout-bottom.php'; ?>

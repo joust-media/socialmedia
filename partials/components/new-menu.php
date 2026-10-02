@@ -13,6 +13,8 @@
  *                      registered through App.newMenu.handle('upload'); href posts.php?upload=1)
  *   email   New email  only when the scoped client has Emails (companyHasEmails())
  *   page    New page   only when the scoped client has Pages (companyHasPages())
+ *   tire    New tire   only when the scoped client has the Tires module switched on (companyTiresModuleOn() — the
+ *                      condition add-feature.php enforces); href add-feature.php?module=tires (a page, no pop-up)
  *
  * JS contract (app.js App.newMenu): a click on an item first dispatches a cancelable
  * `app:new` event on document — detail {action, href, item, client}. A handler registered with
@@ -53,6 +55,12 @@ if (!function_exists('newMenuItems')) {
             if ($hasPages) {
                 $items[] = ['action' => 'page', 'label' => 'New page', 'sub' => 'Add a landing page for review',
                             'icon' => 'page', 'href' => clientUrl('add-page.php')];
+            }
+            $hasTireMod = false;
+            try { $hasTireMod = function_exists('companyTiresModuleOn') && companyTiresModuleOn($client, $pdo); } catch (Throwable $e) { $hasTireMod = false; }
+            if ($hasTireMod) {
+                $items[] = ['action' => 'tire', 'label' => 'New tire', 'sub' => 'Name it, then add reference photos and series',
+                            'icon' => 'tire', 'href' => clientUrl('add-feature.php', ['module' => 'tires'])];
             }
         }
         return $items;

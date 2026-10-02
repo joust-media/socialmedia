@@ -45,8 +45,10 @@ function checkLayout(L, expect, where) {
   }
   if (L.title) {
     // Section titles must never truncate; a client / flow name may ellipsize, but never under the buttons.
-    if (/^(Posts|Assets|Manage|Emails|Pages|Flows|Drive|Projects|Today)$/.test(L.title.text)) expect(!L.title.truncated, `${where}: title "${L.title.text}" not truncated`);
-    if (L.trailing) expect(L.title.box.r <= L.trailing.l + 0.5, `${where}: title clear of the trailing buttons`);
+    if (/^(Posts|Assets|Tires|Manage|Emails|Pages|Flows|Drive|Projects|Today|AI Builder|Prompt Library|Vehicle Library|New tire|Edit tire|New prompt|New vehicle)$/.test(L.title.text)) expect(!L.title.truncated, `${where}: title "${L.title.text}" not truncated`);
+    // clear of the trailing buttons when they share a row (tool pages put the large title on its own row on phones)
+    const sameRow = L.trailing && L.title.box.t < L.trailing.b - 0.5 && L.title.box.b > L.trailing.t + 0.5;
+    if (sameRow) expect(L.title.box.r <= L.trailing.l + 0.5, `${where}: title clear of the trailing buttons`);
     L.trailingItems.forEach((b) => expect(b.r <= L.vw + 0.5 && b.l >= 0, `${where}: trailing button inside the viewport`));
   }
 }
@@ -58,11 +60,14 @@ function checkLayout(L, expect, where) {
       const phone = viewport !== 'desktop';
       await test('admin: Home · Assets · Tires · Posts · Manage, nothing overlaps (Kenda)', async (page) => {
         for (const p of ['?client=kenda', 'assets.php?client=kenda', 'assets.php?client=kenda&view=collections', 'posts.php?client=kenda&month=all',
-                         'manage.php?client=kenda', 'manage.php?client=kenda&section=tools', 'manage.php?client=kenda&section=export', 'drive.php', 'manage.php']) {
+                         'manage.php?client=kenda', 'manage.php?client=kenda&section=tools', 'manage.php?client=kenda&section=export', 'drive.php', 'manage.php',
+                         'build.php?client=kenda', 'add-feature.php?client=kenda&module=tires', 'add-feature.php?client=kenda&module=tires&edit_item=1',
+                         'prompts.php', 'vehicles.php', 'add-prompt.php', 'add-vehicle.php']) {
           await page.goto(url(p));
           const L = await layout(page);
           checkLayout(L, expect, `${viewport} ${p}`);
           if (p.indexOf('client=kenda') !== -1) expect.eq(L.tabs.map((t) => t.key).join(','), 'home,assets,tires,posts,manage', p);
+          if (L.title) expect(!L.title.truncated || !/^(Prompt Library|Vehicle Library|AI Builder|New tire|Edit tire|Tires)$/.test(L.title.text), `${viewport} ${p}: title "${L.title.text}" not truncated`);
         }
         const L = await layout(page);
         if (!phone) expect(L.tabs[0].box.w > 150, 'desktop: a sidebar');
@@ -228,6 +233,137 @@ function checkLayout(L, expect, where) {
       await page.waitForSelector('#seriesManageSheet.is-open');
       expect(/item=2/.test(page.url()) && !/manage=/.test(page.url()), 'clean URL: ' + page.url());
       expect((await page.textContent('#seriesManageSheet [data-sm-folder]')).indexOf('media/tires/') === 0, 'FTP folder');
+    });
+  }, { role: 'admin', viewports: ['desktop', 'phone'], reseed: 'test' });
+
+  // ---- one page frame: the same title colour, title position and column width on every top-level page ---------
+  const TOP = ['?client=kenda', 'assets.php?client=kenda', 'assets.php?client=kenda&view=collections', 'posts.php?client=kenda&month=all',
+               'emails.php?client=privacybee', 'pages.php?client=privacybee', 'manage.php?client=kenda', 'manage.php?client=kenda&section=export',
+               'manage.php?client=kenda&section=tools', 'drive.php'];
+  await run('frame', async ({ test, url, expect, viewport }) => {
+    for (const theme of ['light', 'dark']) {
+      await test(`top-level pages share one frame (${theme})`, async (page) => {
+        await page.addInitScript((t) => { try { localStorage.setItem('portal.theme', t); } catch (e) {} }, theme);
+        const seen = [];
+        for (const p of TOP) {
+          await page.goto(url(p));
+          seen.push(Object.assign({ p }, await page.evaluate(() => {
+            const t = document.querySelector('.ui-nav-title'), inner = document.querySelector('.ui-nav-inner'), main = document.querySelector('main.ui-page');
+            const label = getComputedStyle(document.documentElement).getPropertyValue('--label').trim();
+            const probe = document.createElement('span'); probe.style.color = label; document.body.appendChild(probe);
+            const labelRgb = getComputedStyle(probe).color; probe.remove();
+            return { color: getComputedStyle(t).color, labelRgb, titleLeft: Math.round(t.getBoundingClientRect().left),
+                     navW: Math.round(inner.getBoundingClientRect().width), mainW: Math.round(main.getBoundingClientRect().width),
+                     mainLeft: Math.round(main.getBoundingClientRect().left), size: getComputedStyle(t).fontSize };
+          })));
+        }
+        const first = seen[0];
+        for (const s of seen) {
+          expect.eq(s.color, s.labelRgb, `${viewport} ${theme} ${s.p}: title in the label colour`);
+          expect(s.color !== 'rgb(255, 106, 61)', `${s.p}: never Joust orange`);
+          expect.eq(s.color, first.color, `${s.p}: same title colour as Home`);
+          expect.eq(s.titleLeft, first.titleLeft, `${viewport} ${s.p}: title starts where Home's does`);
+          expect.eq(s.navW, first.navW, `${viewport} ${s.p}: same nav column`);
+          expect.eq(s.mainW, first.mainW, `${viewport} ${s.p}: same content column`);
+          expect.eq(s.mainLeft, first.mainLeft, `${viewport} ${s.p}: content column aligned`);
+          expect.eq(s.size, first.size, `${viewport} ${s.p}: same large-title size`);
+        }
+      });
+    }
+  }, { role: 'admin', viewports: ['desktop', 'phone'] });
+
+  // ---- tool pages: shared shell, no overflow at 320, follow Appearance ------------------------------------------
+  const TOOLS = ['build.php?client=kenda', 'add-feature.php?client=kenda&module=tires', 'add-feature.php?client=kenda&module=tires&edit_item=1',
+                 'prompts.php', 'prompts.php?tag=studio', 'vehicles.php', 'add-prompt.php?edit=1', 'add-vehicle.php'];
+  await run('tools', async ({ test, url, expect, viewport }) => {
+    await test('no horizontal overflow, no Sign out row, the title in full', async (page) => {
+      for (const p of TOOLS) {
+        await page.goto(url(p));
+        const m = await page.evaluate(() => {
+          const t = document.querySelector('.ui-nav-title');
+          const over = Array.from(document.querySelectorAll('main *, .ui-nav *')).filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.right > window.innerWidth + 1 && !e.closest('.tl-table-wrap, .studio-chips, .ui-nav-links'); }).map((e) => e.tagName + '.' + e.className).slice(0, 3);
+          const signOut = Array.from(document.querySelectorAll('.ui-nav a, main a')).some((a) => /sign out/i.test(a.textContent));
+          return { doc: document.documentElement.scrollWidth, vw: window.innerWidth, over, signOut, title: t.textContent.trim(), truncated: t.scrollWidth > t.clientWidth + 1 };
+        });
+        expect(m.doc <= m.vw, `${viewport} ${p}: no horizontal scroll (${m.doc} > ${m.vw})`);
+        expect.eq(m.over.length, 0, `${viewport} ${p}: nothing past the right edge ${JSON.stringify(m.over)}`);
+        expect(!m.signOut, `${viewport} ${p}: no Sign out row`);
+        expect(!m.truncated, `${viewport} ${p}: title "${m.title}" not truncated`);
+      }
+      // the Search button stays whole on a 320px phone
+      for (const p of ['prompts.php', 'vehicles.php']) {
+        await page.goto(url(p));
+        const b = await page.$eval('[data-tool-search] button[type="submit"]', (el) => { const r = el.getBoundingClientRect(); return { r: r.right, vw: window.innerWidth, clip: el.scrollWidth > el.clientWidth + 1 }; });
+        expect(b.r <= b.vw && !b.clip, `${viewport} ${p}: Search button inside the screen`);
+      }
+    });
+    await test('the AI Builder follows Appearance (light and dark), and still composes a prompt', async (page) => {
+      for (const theme of ['light', 'dark']) {
+        await page.addInitScript((t) => { try { localStorage.setItem('portal.theme', t); } catch (e) {} }, theme);
+        await page.goto(url('build.php?client=kenda'));
+        expect.eq(await page.evaluate(() => document.documentElement.getAttribute('data-theme')), theme, 'theme from Appearance');
+        expect(!(await page.evaluate(() => document.documentElement.hasAttribute('data-theme-pinned'))), 'not pinned');
+      }
+      for (const id of ['sel-camera', 'sel-lighting', 'sel-environment', 'sel-product']) {
+        const v = await page.$eval('#' + id, (s) => { const o = Array.from(s.options).find((x) => x.value && !x.disabled); return o ? o.value : ''; });
+        if (v) await page.selectOption('#' + id, v);
+      }
+      await page.click('#refGrid [data-ref]');
+      expect.eq(await page.getAttribute('#refGrid [data-ref]', 'aria-pressed'), 'true', 'tile selected');
+      expect(await page.isEnabled('#downloadBtn'), 'Download enabled');
+      expect((await page.inputValue('#finalText')).length > 10, 'final prompt composed');
+      expect(await page.isEnabled('#copyBtn'), 'Copy enabled');
+    });
+  }, { role: 'admin', viewports: ['w320', 'phone', 'desktop'] });
+
+  // ---- New tire: from "+ New" and from the Tires list; the selection bar on a tire's grid ----------------------
+  await run('tires', async ({ test, url, expect }) => {
+    await test('+ New → New tire opens the form; the Tires list has the same button', async (page) => {
+      await page.goto(url('posts.php?client=kenda'));
+      await page.click('[data-new-menu-toggle]');
+      await Promise.all([page.waitForURL(/add-feature\.php\?client=kenda&module=tires$/), page.click('[data-new-action="tire"]')]);
+      expect.eq((await page.textContent('.ui-nav-title')).trim(), 'New tire');
+      await page.fill('#item_name', 'E2E Mud Pro');
+      await Promise.all([page.waitForNavigation(), page.click('[data-tire-form] button[type="submit"]')]);
+      expect(/msg=/.test(page.url()), 'saved: ' + page.url());
+      await page.goto(url('assets.php?client=kenda&view=collections'));
+      expect(await page.isVisible('text=E2E Mud Pro'), 'on the Tires list');
+      await Promise.all([page.waitForURL(/add-feature\.php/), page.click('[data-new-tire]')]);
+    });
+    await test('Edit tire: status chips save in place; prompt form inserts variables', async (page) => {
+      await page.goto(url('add-feature.php?client=kenda&module=tires&edit_item=1'));
+      const row = '[data-tire-row]:first-of-type';
+      await page.click(row + ' [data-status-set="pending"]');   // (Needs changes asks for a note — tire-status.php 422 — so To Review here)
+      await page.waitForFunction((r) => { const el = document.querySelector(r + ' [data-status-hint]'); return el && /Saved/.test(el.textContent); }, row);
+      expect(await page.$eval(row + ' [data-status-set="pending"]', (b) => b.classList.contains('is-active')), 'To Review on');
+      const id = await page.getAttribute(row, 'data-image-id');
+      await page.click(row + ' [data-status-set="approved"]');
+      await page.waitForFunction((r) => document.querySelector(r).getAttribute('data-status') === 'approved', row);
+      await page.check(row + ' [data-tire-remove]');
+      expect(await page.$eval(row, (r) => r.classList.contains('marked')), 'marked for removal');
+      await page.uncheck(row + ' [data-tire-remove]');
+      expect(!!id, 'row id');
+      await page.goto(url('add-prompt.php'));
+      await page.click('[data-var="brand_name"]');
+      expect((await page.inputValue('#prompt_text')).indexOf('{{brand_name}}') !== -1, 'variable inserted');
+      await page.fill('#prompt_text', 'Bad {{nope}}');
+      await page.waitForFunction(() => document.getElementById('submitBtn').disabled);
+      await page.click('[data-model-chip]');
+      expect(await page.$eval('[data-model-chip]', (c) => c.classList.contains('is-active')), 'model chip on');
+    });
+    await test('Tires tab → a tire → Select approved → Create post · Download · Export', async (page) => {
+      await page.goto(url('assets.php?client=kenda'));
+      expect(!(await page.$('[aria-label="Assets view"]')), 'no Library · Tires switch');
+      await Promise.all([page.waitForURL(/view=collections/), page.click('.ui-tabbar [data-tab="tires"]')]);
+      await page.goto(url('assets.php?client=kenda&view=collections&item=1&series=1&filter=approved'));
+      await page.click('[data-assets-select]');
+      const tiles = await page.$$('#assetsGrid .as-thumb[data-status="approved"]');
+      await tiles[0].click(); await tiles[1].click();
+      for (const s of ['[data-select-post]', '[data-select-download]', '[data-select-export]']) expect(await page.isEnabled(s), s + ' enabled');
+      const [csv] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }), page.click('[data-select-export]')]);
+      expect(/manifest\.csv$/.test(csv.suggestedFilename()), csv.suggestedFilename());
+      await page.click('[data-select-post]');
+      await page.waitForFunction(() => window.App && App.newPost && App.newPost._state && App.newPost._state() && App.newPost._state().slides.length === 2, null, { timeout: 10000 });
     });
   }, { role: 'admin', viewports: ['desktop', 'phone'], reseed: 'test' });
 })();

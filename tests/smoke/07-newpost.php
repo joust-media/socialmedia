@@ -310,7 +310,7 @@ test('admin entry points are server-gated', function () {
     has(get('assets.php?client=kenda&view=collections&item=1', 'admin')['body'], 'data-select-post');
     has(get('assets.php?client=kenda&view=collections&item=1', 'admin')['body'], 'data-viewer-use-in-post');
     hasNot(get('assets.php?client=kenda&view=collections&item=1', 'client')['body'], 'data-viewer-use-in-post');
-    has(get('?client=kenda', 'admin')['body'], 'data-newpost');
+    has(get('?client=kenda', 'admin')['body'], 'window.NewPostConfig', 'Home boots the pop-up for "+ New" (its own New post tile is gone)');
     has(get('manage.php?client=kenda', 'admin')['body'], 'window.NewPostConfig', 'Manage boots the pop-up for "+ New"');
     hasNot(get('manage.php?client=kenda', 'admin')['body'], 'data-studio-tab', 'no Studio tabs left');
 });

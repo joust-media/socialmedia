@@ -1260,7 +1260,7 @@
       this.grid.parentNode.insertBefore(el, this.grid.nextSibling);
     },
 
-    /* ---------------- live counts (filter chips, segmented control, tab badge) ---------------- */
+    /* ---------------- live counts (filter chips, series switcher, tab badge) ---------------- */
     adjustCounts: function (from, to) {
       if (from === to) return;
       var bump = function (sel, delta) {
@@ -1286,9 +1286,7 @@
         var approveAll = $('[data-action="approve_series"]');
         if (approveAll && (parseInt(($('[data-count="pending"]') || {}).textContent, 10) || 0) === 0) approveAll.hidden = true;
       }
-      var seg = $('.ui-segmented-item.is-active .ui-segmented-count');
-      if (seg) { var v = Math.max(0, (parseInt(seg.textContent, 10) || 0) + delta); if (v > 0) seg.textContent = String(v); else seg.remove(); }
-      else if (delta > 0) { var act = $('.ui-segmented-item.is-active'); if (act) act.insertAdjacentHTML('beforeend', ' <span class="ui-segmented-count">1</span>'); }
+      // (No Library · Tires segment any more — Library and Tires are separate tabs — so only the tab badge below moves.)
       // Tab-bar badge: the Tires tab (data-tab="tires", collections view) when the company has one, else Assets
       var tab = (this.cfg.view === 'collections' && $('.ui-tab[data-tab="tires"]')) || $('.ui-tab[data-tab="assets"]') || $('.ui-tab--assets');
       if (tab) {

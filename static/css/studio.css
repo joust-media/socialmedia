@@ -3,12 +3,11 @@
    Tools), add-email.php, add-page.php, emails-io.php. Loads after
    tokens/base/components/motion. The .studio-* class names are kept from
    the retired Studio page.
-   Only transform/opacity are animated. --joust is used ONLY on the large
-   title here.
+   Only transform/opacity are animated.
    ===================================================================== */
 
-/* Large title in Joust orange — the admin-only surfaces */
-.page-studio .ui-nav-title { color: var(--joust); }
+/* Large titles are the system label colour on every page (admin and client alike — base.css .ui-nav-title);
+   --joust stays on the Joust avatar / bubble and the Manage tab only. */
 
 /* ---------------------------------------------------------------------
    Shared bits
@@ -237,7 +236,7 @@
    Manage → Export: options card + Recent exports (export.php), Image previews
    --------------------------------------------------------------------- */
 .studio-export-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
-@media (min-width: 960px) { .studio-export-grid { grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr); gap: 24px; } }
+/* One column: Export sits in the same 720px frame as every other top-level page (Recent exports below the options). */
 .studio-export-card .ui-card-subtitle code, .studio-export-form code, .studio-export .studio-help code { font-family: var(--font-mono); font-size: var(--text-caption); }
 .studio-export-form { display: flex; flex-direction: column; gap: 14px; }
 .studio-export-fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
@@ -276,6 +275,8 @@
    Manage (manage.php): Export & previews spacing, Tools
    --------------------------------------------------------------------- */
 .manage-previews { margin-top: 16px; }
-.page-manage--export .manage-previews { max-width: 720px; }
+/* Sign out on phones / tablets (≥1024px the sidebar footer has it) */
+.manage-signout { margin: 28px 0 0; text-align: center; font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary); }
+@media (min-width: 1024px) { .manage-signout { display: none; } }
 .page-manage .ui-row-trailing form { display: inline-flex; margin: 0; }
 .studio-client-settings .ui-textarea { min-height: 64px; }

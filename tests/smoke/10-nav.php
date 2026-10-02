@@ -35,6 +35,12 @@ test('admin tab bar: Home · Assets · Tires · Posts · Manage (no Studio, no P
     is(tabs(status(get('emails.php?client=privacybee'), 200)['body']), ['home', 'assets', 'posts', 'emails', 'pages', 'manage'], 'privacybee: 6');
     is(tabs(status(get(''), 200)['body']), ['home', 'assets', 'posts', 'manage'], 'unscoped');
 });
+test('unscoped Assets renders a client chooser in place (no bounce to Home)', function () {
+    $b = status(get('assets.php'), 200)['body'];
+    is(tabs($b), ['home', 'assets', 'posts', 'manage']);
+    ok(preg_match('#class="ui-tab ui-tab--assets is-active"#', $b) === 1, 'Assets lit');
+    has($b, 'data-assets-clients="library"');
+});
 test('client tab bar is unchanged (Projects, never Manage)', function () {
     is(tabs(status(get('posts.php?client=kenda', 'client'), 200)['body']), ['home', 'assets', 'tires', 'posts', 'projects']);
     is(tabs(status(get('emails.php?client=privacybee', 'client'), 200)['body']), ['home', 'assets', 'posts', 'emails', 'pages', 'projects']);
@@ -98,11 +104,12 @@ $routes = [
     'legacy/features.php?client=kenda&module=tires&item=1' => 'assets.php?client=kenda&view=collections&item=1',
     'features.php?client=privacybee&module=emails'    => 'emails.php?client=privacybee',
     'features.php?client=privacybee&module=pages'     => 'pages.php?client=privacybee',
-    'tires.php'                                       => '/portal/',
+    'tires.php'                                       => 'assets.php?view=collections',   // the unscoped Tires chooser
     'add-tire.php'                                    => '/portal/',
     'batch.php'                                       => 'posts.php?upload=1',
     'manage.php?section=drive'                        => 'drive.php',
-    'assets.php'                                      => '/portal/',
+    'assets.php?client=privacybee&view=collections'   => 'assets.php?client=privacybee',   // no Tires tab → the Library
+    'legacy/library.php'                              => 'assets.php?view=library',        // unscoped → the Assets chooser
 ];
 foreach ($routes as $from => $to) {
     test("old route /{$from} → {$to} (200)", function () use ($from, $to) {

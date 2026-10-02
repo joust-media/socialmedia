@@ -144,7 +144,7 @@ if (in_array($action, $seriesActions, true)) {
                 $upd->execute([$sid]);
                 $n = (int)$upd->rowCount();
                 if ($n > 0) {
-                    $noun = $type === 'videos' ? 'video' : ($type === 'photos' ? 'photo' : 'render');
+                    $noun = $type === 'videos' ? 'video' : ($type === 'photos' ? 'photo' : 'image');
                     logTireSeriesActivity($pdo, $actor, 'approved', $sid,
                         "Approved {$n} {$noun}" . ($n === 1 ? '' : 's') . " in " . (string)$tire['name'] . " · " . $series['name'],
                         null, $batchId, (int)$tire['company_id']);
@@ -258,7 +258,7 @@ if (in_array($action, $seriesActions, true)) {
                 $pdo->beginTransaction();
                 $res = deleteTireSeries($pdo, $sid, $deleteFiles);
                 logTireSeriesActivity($pdo, $actor, 'deleted', $sid,
-                    'Deleted series ' . (string)$tire['name'] . ' · ' . $series['name'] . ' (' . (int)$res['images'] . ' renders' . ($deleteFiles ? ', files removed' : '') . ')',
+                    'Deleted series ' . (string)$tire['name'] . ' · ' . $series['name'] . ' (' . (int)$res['images'] . ' images' . ($deleteFiles ? ', files removed' : '') . ')',
                     null, $batchId, (int)$tire['company_id']);
                 $pdo->commit();
                 echo json_encode(['ok' => true, 'series_id' => $sid, 'images' => (int)$res['images'], 'files' => (int)$res['files']]);
