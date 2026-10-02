@@ -50,6 +50,11 @@ jobs:
           #   - .htaccess lives on the server (controls site routing/PHP config) and is not tracked in the repo
           #   - redirect-old-folder/ is the kit for the OLD socialmedia/ folder, placed there by hand
           #   - tests/ is the local test harness (tests/README.md) and must never be served
+          #   - runtime state the app may create (defence in depth - today it all lives
+          #     under uploads/ or the docroot sibling ../media/, never in tracked paths):
+          #     image previews (.thumbs/), chunk-upload spool (.spool/), export zips and
+          #     preview-job files (.exports/), logs, host PHP ini files, and media/ in case
+          #     a media folder is ever created inside the app folder
           exclude: |
             **/.git*
             **/.git*/**
@@ -64,3 +69,12 @@ jobs:
             media-hardening/**
             docs/**
             tests/**
+            media/**
+            **/.thumbs/**
+            **/.spool/**
+            **/.exports/**
+            **/*.log
+            **/.user.ini
+            php.ini
+            .well-known/**
+            cgi-bin/**
