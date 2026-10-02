@@ -6,6 +6,7 @@
  *   &status=pending|approved|scheduled   segment (admin also: draft, denied) — default pending
  *   &month=YYYY-MM|all            default: current month if it has posts, else all (feed.php semantics)
  *   &post=<id>                    open that post's detail on load (segment/month follow the post)
+ *   &newpost=1|upload|edit        (admin) open the New post pop-up on load (newpost.js); edit needs &post=<id>
  *   &post=<id>&partial=1          return ONLY the detail partial HTML (for lists > 40 items)
  *   &partial=list&offset=<n>      the next POSTS_PAGE rows of the list (same status/month) as markup — "Load more";
  *                                 headers X-Posts-Total / X-Posts-Next ('' when done). The page renders the first
@@ -430,7 +431,9 @@ $emptyCopy = [
 // ---------------------------------------------------------------------
 $pageTitle   = 'Posts';
 $activeTab   = 'posts';
-$navTrailing = '<button type="button" class="ui-btn ui-btn--tinted ui-btn--sm posts-month-pill" data-sheet-open="#postMonthSheet" aria-haspopup="dialog">'
+// Admin: "New post" opens the New post pop-up (newpost.js, booted by layout-bottom.php); the href is the no-JS deep link.
+$navTrailing = ($admin ? '<a class="ui-btn ui-btn--filled ui-btn--sm posts-new" href="' . h(clientUrl('posts.php', ['newpost' => 1])) . '" data-newpost>' . icon('plus') . '<span>New post</span></a>' : '')
+             . '<button type="button" class="ui-btn ui-btn--tinted ui-btn--sm posts-month-pill" data-sheet-open="#postMonthSheet" aria-haspopup="dialog">'
              . h($monthLabel) . icon('chevron-down', 'posts-month-chevron') . '</button>'
              . (!empty($client) ? clientAvatar($client) : '');
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">';
@@ -460,6 +463,7 @@ $postsConfig = [
 ];
 $footExtra = '<script>window.PostsConfig = ' . json_encode($postsConfig, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n"
            . ($admin ? '<script src="' . h(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n" : '')   // App.chunkUpload for Replace (admin only)
+           . '<script src="' . h(staticUrl('js/carousel.js')) . '" defer></script>' . "\n"   // App.carousel: swipe, dots, "2 / 7", arrows, ←/→ (both seats)
            . '<script src="' . h(staticUrl('js/posts.js')) . '" defer></script>';
 
 /** One list row (the page and the "Load more" partial render the same markup). $rowIndex: position in the list (first rows load their thumb eagerly). */

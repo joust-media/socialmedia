@@ -106,11 +106,11 @@ test('post sheet renders every slide with dots and a counter (seed carousel + a 
     $r = status(get('posts.php?client=kenda&post=2&partial=1', 'client'), 200);
     is(substr_count($r['body'], 'class="pd-slide"'), 3);
     is(substr_count($r['body'], 'data-carousel-dot='), 3);
-    has($r['body'], '>1/3<');
+    has($r['body'], '>1 / 3<');
     $pid = (int)status(createPost(['assets' => array_slice(APPROVED_PICKS, 0, 12)]), 200)['json']['post_id'];
     $r = status(get("posts.php?client=kenda&post={$pid}&partial=1", 'admin'), 200);
     is(substr_count($r['body'], 'class="pd-slide"'), 12);
-    has($r['body'], '>1/12<');
+    has($r['body'], '>1 / 12<');
 });
 test('list row says "N media" for a carousel', function () {
     $r = status(get('posts.php?client=kenda&status=pending&month=all', 'client'), 200);

@@ -8,7 +8,7 @@
  *   newMenuHtml(?array $client, ?PDO $pdo): string   '' for the client seat
  *
  * Items (each <a role="menuitem" data-new-action="…" href="…"> — the href is the working fallback):
- *   post    New post   always (unscoped admin: the Studio client chooser)
+ *   post    New post   always → the New post pop-up (App.newPost; href posts.php?newpost=1, unscoped: its client chooser)
  *   upload  Upload     always (images / video → one Draft post per file)
  *   email   New email  only when the scoped client has Emails (companyHasEmails())
  *   page    New page   only when the scoped client has Pages (companyHasPages())
@@ -30,7 +30,8 @@ if (!function_exists('newMenuItems')) {
             'label'  => 'New post',
             'sub'    => 'Approved images or new files, saved as a draft',
             'icon'   => 'grid',
-            'href'   => $scoped ? clientUrl('studio.php', ['tab' => 'compose']) : pagePath('studio'),
+            // no-JS fallback: Posts with the New post pop-up open (newpost.js; unscoped → its client chooser)
+            'href'   => $scoped ? clientUrl('posts.php', ['newpost' => 1]) : pagePath('posts') . '?newpost=1',
         ];
         $items[] = [
             'action' => 'upload',

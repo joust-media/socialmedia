@@ -5,10 +5,9 @@ require __DIR__ . '/lib.php';
 $adminPages = [
     '', '?client=kenda', '?client=privacybee', '?client=hmf',
     'studio.php', 'studio.php?tab=clients',
-    'studio.php?client=kenda', 'studio.php?client=kenda&tab=batch', 'studio.php?client=kenda&tab=uploads',
+    'studio.php?client=kenda', 'studio.php?client=kenda&tab=uploads',
     'studio.php?client=kenda&tab=posts', 'studio.php?client=kenda&tab=renders', 'studio.php?client=kenda&tab=export',
     'studio.php?client=kenda&tab=clients', 'studio.php?client=privacybee&tab=emails', 'studio.php?client=privacybee&tab=pages',
-    'add-post.php?client=kenda', 'add-post.php?client=kenda&edit=2', 'batch.php?client=kenda',
     'assets.php?client=kenda', 'assets.php?client=kenda&view=collections', 'assets.php?client=kenda&view=collections&item=1',
     'assets.php?client=kenda&view=collections&item=1&series=1',
     'posts.php', 'posts.php?client=kenda', 'posts.php?client=kenda&status=draft', 'posts.php?client=kenda&status=approved',
@@ -38,6 +37,24 @@ foreach ($clientPages as $p) {
         $r = status(get($p, 'client'), 200);
         hasNot($r['body'], 'Fatal error');
         hasNot($r['body'], 'Warning:');
+    });
+}
+
+// Retired composer routes (the New post pop-up replaced them): every old link lands somewhere that works.
+$retired = [
+    'studio.php?client=kenda&tab=compose'  => 'studio.php?client=kenda&newpost=1',
+    'studio.php?client=kenda&tab=batch'    => 'studio.php?client=kenda&tab=uploads',
+    'batch.php?client=kenda'               => 'studio.php?client=kenda&tab=uploads',
+    'add-post.php?client=kenda'            => 'posts.php?client=kenda&newpost=1',
+    'add-post.php?client=kenda&edit=2'     => 'posts.php?client=kenda&post=2&newpost=edit',
+    'admin.php?client=kenda&tab=compose'   => 'studio.php?client=kenda&tab=compose',
+];
+foreach ($retired as $from => $to) {
+    test("admin retired /{$from} → {$to}", function () use ($from, $to) {
+        $r = get($from, 'admin');
+        ok(in_array($r['code'], [301, 302], true), "redirect (got {$r['code']})");
+        has($r['location'], $to);
+        status(get(preg_replace('#^(https?://[^/]+)?/portal/#', '', $r['location']), 'admin'), $from === 'admin.php?client=kenda&tab=compose' ? 302 : 200, 'the target answers');
     });
 }
 

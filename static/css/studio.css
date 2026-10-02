@@ -13,8 +13,9 @@
 /* ---------------------------------------------------------------------
    Shared bits
    --------------------------------------------------------------------- */
-.studio-toolbar { margin: 4px 0 18px; }
-.studio-toolbar .ui-segmented { max-width: 560px; }
+.studio-toolbar { margin: 4px 0 18px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.studio-toolbar .ui-segmented { max-width: 560px; flex: 1 1 320px; }
+.studio-newpost { flex: 0 0 auto; margin-left: auto; }
 .studio-section[hidden] { display: none; }
 .studio-section-title {
   margin: 0;

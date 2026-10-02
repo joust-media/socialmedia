@@ -908,6 +908,9 @@ include __DIR__ . '/partials/layout-top.php';
   <div class="as-selectbar ui-glass ui-glass--top" data-assets-selectbar hidden>
     <span class="as-selectbar-count" data-select-count>0 selected</span>
     <button type="button" class="ui-btn ui-btn--approve" data-select-approve disabled><?= icon('checkmark') ?>Approve</button>
+    <?php if ($isAdmin): // approved selection → the New post pop-up (newpost.js); never rendered for clients ?>
+      <button type="button" class="ui-btn ui-btn--filled" data-select-post disabled>Create post</button>
+    <?php endif; ?>
   </div>
 <?php endif; ?>
 

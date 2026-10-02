@@ -370,6 +370,44 @@ has approved, categorised by tire, and hands it over as a single download:
   file list without building a zip; on a 32-bit PHP build the tab offers only that.
 - Staging shares `media/` with production, so an export built there contains the real files.
 
+## New post pop-up (admin)
+
+One sheet builds and edits every post: `static/js/newpost.js` (`App.newPost`) + `static/css/newpost.css`,
+server `post-compose.php`, booted on every admin page by `partials/layout-bottom.php`
+(`partials/components/new-post.php`). Nothing of it reaches the client seat.
+
+- **Open it from**: "+ New → New post" (`App.newMenu` calls `App.newPost.open`), "New post" on Posts,
+  Studio and Home, Assets → Select → "Create post with N" (approved items), the media viewer's ⋯ →
+  "Use in post", the Posts detail ⋯ → "Edit post…" (edit mode), or any URL with `?newpost=1`
+  (`=upload` opens the Upload pane, `=edit&post=<id>` edits, `&newpost_assets=tire:1,library:4`
+  preselects). Retired routes redirect here: `studio.php?tab=compose` → `studio.php?newpost=1`,
+  `add-post.php` → `posts.php?newpost=1`, `add-post.php?edit=<id>` → `posts.php?post=<id>&newpost=edit`,
+  `studio.php?tab=batch` and `batch.php` → Studio → Uploads.
+- **Layout**: header (client, close) · the slide tray pinned under it (numbered, slide 1 = Cover,
+  drag or Alt+←/→ to reorder, Delete / × to remove, a tap opens Move left / right · Make cover ·
+  Replace · Remove, "N / 20", an amber badge on slides whose shape differs from the cover because
+  Instagram crops to slide 1) · Media pane (Approved grid grouped tire → Reference / series, then
+  Library; tire chips multi-select, series chips, Photos / Videos, name search, 60 per page + Load
+  more · Upload pane: chunked, each file joins the tray) · Details pane (caption with a 2,200 counter,
+  hashtags + client defaults, date, type Auto / Post / Story / Reel, reference name, live preview) ·
+  sticky footer (Save draft · Send for review; edit: Save changes / Save & resubmit). Phone: full
+  screen with a Media → Details switch. Esc, focus trap, and an unsaved-changes guard.
+- **`post-compose.php`** (admin + same-site, JSON; tenant = `?client=`): `init`, `clients`,
+  `picker` (`tires`, `library`, `series=<tire>:<ref|id>`, `media`, `q`, `offset`, `limit` ≤ 60,
+  `refs`), `load&id=`, `create` / `update` with `slides[]` in carousel order (`tire:<id>`,
+  `library:<id>`, `upload:<token>`, and on update `image:<post_images.id>`) + caption, hashtags,
+  scheduled_date, post_type ('' = auto: one video → Reel), name, `intent=draft|review|keep`.
+  Approved assets are copied into `uploads/` (previews reused), uploads claimed; update rewrites
+  `post_images.sort_order` in one transaction, deletes removed rows and unlinks a file only when no
+  other row still points at it, and logs `edited_media`. 403 for the client seat, another tenant's
+  post / asset / upload, or an unapproved asset; 422 for 21+ slides or a review without caption /
+  slide / date; 409 for a draft before migrate.php step 35.
+- **Carousel (both seats)**: `renderPostMedia()` + `static/js/carousel.js` (`App.carousel`):
+  scroll-snap swipe, dots, "2 / 7", arrows on hover-capable pointers, ←/→ on the focused track,
+  lg previews, only the visible slide's video plays. With 2+ slides the comment composer offers a
+  "Slide" picker; the comment is stored as `[Slide 3] …` (no schema change) and the thread shows a
+  slide chip (thumb + "Slide 3") that jumps the carousel there.
+
 ## Large uploads (chunked, resumable)
 
 Shared hosting caps one request at `upload_max_filesize` / `post_max_size` (often 64 MB or
@@ -380,8 +418,8 @@ request exactly as before. The surfaces and their endpoints:
 
 | Surface | Endpoint | Caps |
 | --- | --- | --- |
-| Studio → Compose (one-offs) | `upload-chunk.php` `purpose=post` → `claimed[]` tokens to `add-post.php` | videos 4 GB, images 50 MB, 20 media per post (`POST_MAX_MEDIA`) |
-| Studio → Uploads tab, Batch (direct files) | `upload-chunk.php` `purpose=batch` → `claimed[]` tokens to `batch-process.php` | videos 4 GB, images 50 MB, 50 files per batch |
+| New post pop-up → Upload | `upload-chunk.php` `purpose=post` → `upload:<token>` (or `claim:<token>`) slides to `post-compose.php`; `claim:<token>` in `media[]` / `claimed[]` to `add-post.php` for its JSON callers | videos 4 GB, images 50 MB, 20 slides per post (`POST_MAX_MEDIA`) |
+| Studio → Uploads tab ("+ New → Upload") | `upload-chunk.php` `purpose=batch` → `claimed[]` tokens to `batch-process.php` | videos 4 GB, images 50 MB, 50 files per batch |
 | Tire reference images (`add-feature.php`, "Add more images") | `upload-chunk.php` `purpose=feature` (`feature_id`) | images 50 MB, 6 per item, images only |
 | Replace image / video (Posts detail, Assets viewer, `add-feature.php`) | `upload-chunk.php` `purpose=replace` (`replace_kind=post\|tire`, `replace_id`) — `replace-image.php` stays the single-request path | videos 4 GB, images 50 MB |
 | Studio → Renders | `tire-upload.php` | images 10 MB, videos 4 GB |

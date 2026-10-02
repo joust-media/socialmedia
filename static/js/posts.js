@@ -540,6 +540,14 @@
   };
 
   /* ---- comments ----------------------------------------------------- */
+  /* "[Slide 3] text" → the chip (the slide's sm thumb + "Slide 3") the server renders (commentSlideChip()). */
+  function slideChipHtml(root, n) {
+    var fig = $('[data-carousel] [data-slide="' + (n - 1) + '"]', root);
+    var thumb = fig ? (fig.getAttribute('data-thumb') || '') : '';
+    return '<button type="button" class="pd-slide-chip" data-goto-slide="' + (n - 1) + '" aria-label="Show slide ' + n + '">'
+         + (thumb ? '<img src="' + escapeHtml(thumb) + '" alt="" decoding="async">' : '<span class="pd-slide-chip-blank" aria-hidden="true"></span>')
+         + '<span>Slide ' + n + '</span></button>';
+  }
   function appendComment(art, text, actor) {
     var root = art.closest('.ui-sheet-root') || document;
     var thread = $('[data-thread]', root); if (!thread) return;
@@ -548,7 +556,9 @@
     var msg = document.createElement('div');
     msg.className = 'pd-msg pd-msg--' + side + ' ui-enter';
     msg.setAttribute('data-actor', actor);
-    msg.innerHTML = '<div class="ui-bubble ui-bubble--' + side + '">' + escapeHtml(text).replace(/\n/g, '<br>') + '</div>'
+    var chip = '', m = /^\[Slide (\d{1,2})\]\s*/.exec(text);
+    if (m) { chip = slideChipHtml(root, parseInt(m[1], 10)); text = text.slice(m[0].length); }
+    msg.innerHTML = '<div class="ui-bubble ui-bubble--' + side + '">' + chip + escapeHtml(text).replace(/\n/g, '<br>') + '</div>'
                   + '<div class="ui-bubble-meta">' + (App.actorAvatar ? App.actorAvatar(actor) : '') + who + ' · just now</div>';
     var empty = $('[data-thread-empty]', thread); if (empty) empty.hidden = true;
     thread.appendChild(msg);
@@ -592,7 +602,10 @@
   }
 
   /* ---- carousel ----------------------------------------------------- */
+  /* App.carousel (carousel.js) when loaded: swipe, dots, "2 / 7", arrows, ←/→, only the visible video plays.
+     The fallback below is the pre-carousel.js behaviour (dots + counter). */
   function initCarousel(root) {
+    if (App.carousel && App.carousel.init) { App.carousel.init(root); return; }
     $$('[data-carousel]', root).forEach(function (car) {
       var track = $('[data-carousel-track]', car); if (!track || track.__init) return;
       track.__init = true;
@@ -605,7 +618,7 @@
         i = Math.max(0, Math.min(n - 1, i));
         car.setAttribute('data-index', i);
         dots.forEach(function (d, k) { d.classList.toggle('is-active', k === i); d.setAttribute('aria-selected', k === i ? 'true' : 'false'); });
-        if (counter) counter.textContent = (i + 1) + '/' + n;
+        if (counter) counter.textContent = (i + 1) + ' / ' + n;
         // pause videos that scrolled away
         $$('video', car).forEach(function (v, k) { if (k !== i && !v.paused) v.pause(); });
       }
@@ -913,6 +926,16 @@
         copyText(copy.getAttribute('data-text') || '').then(function (ok) { toast(ok ? 'Caption copied' : 'Copy failed — select and copy manually', ok ? 'success' : 'error'); });
         return;
       }
+      var gotoSlide = t.closest('[data-goto-slide]');
+      if (gotoSlide) {
+        var car = $('[data-carousel]', root), gi = parseInt(gotoSlide.getAttribute('data-goto-slide'), 10) || 0;
+        if (car && App.carousel) App.carousel.go(car, gi);
+        else if (car) { var tr = $('[data-carousel-track]', car); if (tr) tr.scrollTo({ left: gi * tr.clientWidth, behavior: 'smooth' }); }
+        var sb = $('[data-sheet-body]', root); if (sb && car) sb.scrollTo({ top: Math.max(0, car.offsetTop - 12), behavior: App.reducedMotion && App.reducedMotion() ? 'auto' : 'smooth' });
+        return;
+      }
+      // "Edit post…" (admin ⋯ menu) → the New post pop-up in edit mode (newpost.js listens for the same click)
+      if (t.closest('[data-newpost-edit]')) { closeMenu(root); return; }
       var view = t.closest('[data-viewer-open]');
       if (view) { var img = $('img', view); if (img) openViewer(img.currentSrc || img.src, img.alt, view.getAttribute('data-original') || ''); return; }   // the lg preview on screen, the file behind "View original"
     });
@@ -934,9 +957,12 @@
       if (form.hasAttribute('data-comment-form')) {
         var input = $('[data-comment-input]', form), text = input ? input.value.trim() : '';
         if (!text) return;
+        // Optional "Slide" picker (≥ 2 slides): stored as a "[Slide N] " prefix — no schema change
+        var slidePick = $('[data-comment-slide]', form);
+        if (slidePick && slidePick.value) text = '[Slide ' + parseInt(slidePick.value, 10) + '] ' + text;
         var send = $('[data-comment-send]', form); if (send) send.disabled = true;
         P.comment(art.getAttribute('data-id'), text).then(function (res) {
-          if (res && res.ok && input) { input.value = ''; autosize(input); }
+          if (res && res.ok && input) { input.value = ''; autosize(input); if (slidePick) slidePick.value = ''; }
           if (send) send.disabled = !(input && input.value.trim());
         });
         return;

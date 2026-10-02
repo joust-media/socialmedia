@@ -232,7 +232,29 @@ li + li > .pl-card::before { left: 100px; }
   transition: transform var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
 }
 .pd-dot.is-active { background: #fff; transform: scale(1.25); }
-.pd-counter { position: absolute; top: 10px; right: 10px; }
+.pd-counter { position: absolute; top: 10px; right: 10px; font-variant-numeric: tabular-nums; }
+.pd-track:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.pd-dot:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+/* Prev / next arrows — only where a hover-capable pointer exists (touch swipes) */
+.pd-arrow {
+  position: absolute; top: 50%; z-index: 1;
+  width: 32px; height: 32px; margin-top: -16px; padding: 0;
+  display: none; align-items: center; justify-content: center;
+  border: 0; border-radius: 50%;
+  background: rgba(255,255,255,.86); color: #000;
+  box-shadow: 0 1px 4px rgba(0,0,0,.25);
+  cursor: pointer;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.pd-arrow .ui-icon { width: 16px; height: 16px; }
+.pd-arrow--prev { left: 10px; }
+.pd-arrow--next { right: 10px; }
+.pd-arrow:disabled { opacity: 0; pointer-events: none; }
+.pd-arrow:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .pd-arrow { display: inline-flex; opacity: 0; }
+  .pd-media:hover .pd-arrow:not(:disabled), .pd-media:focus-within .pd-arrow:not(:disabled) { opacity: 1; }
+}
 
 /* 2. Instagram-style caption preview (shared with Studio) */
 .ig { padding: 12px 0 2px; }
@@ -315,6 +337,30 @@ li + li > .pl-card::before { left: 100px; }
 
 /* 5. Sticky footer: composer + deny note + state rows + action bar */
 .pd-composer { display: flex; align-items: flex-end; gap: 8px; margin-bottom: 10px; }
+.pd-composer--slides { flex-wrap: wrap; }
+/* Optional "Slide" picker (≥ 2 slides) — a compact native select styled as a pill */
+.pd-composer-slide {
+  flex: 0 0 auto; align-self: center; max-width: 120px;
+  height: 30px; padding: 0 26px 0 10px;
+  border: 0; border-radius: var(--radius-pill);
+  background: var(--fill-tertiary) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 8px center / 12px;
+  color: var(--label); font: inherit; font-size: var(--text-footnote);
+  -webkit-appearance: none; appearance: none;
+}
+.pd-composer-slide:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pd-composer--slides .pd-composer-input { flex: 1 1 200px; }
+/* A comment about one slide: thumb + "Slide 3" chip on top of the bubble; tap → the carousel goes there */
+.pd-slide-chip {
+  display: flex; align-items: center; gap: 6px;
+  margin: -2px 0 6px; padding: 2px 8px 2px 2px;
+  border: 0; border-radius: var(--radius-pill);
+  background: rgba(0,0,0,.08); color: inherit;
+  font: inherit; font-size: var(--text-caption); line-height: var(--lh-caption); font-weight: 600;
+  cursor: pointer;
+}
+.ui-bubble--client .pd-slide-chip { background: rgba(255,255,255,.22); }
+.pd-slide-chip img, .pd-slide-chip-blank { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; background: rgba(0,0,0,.25); flex: 0 0 auto; }
+.pd-slide-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* Timestamp chip (spec §6): shown by App.video when the sheet contains a video; inserts "m:ss — " */
 .pd-composer-stamp {
   flex: 0 0 auto; align-self: center; gap: 4px; padding: 4px 10px; min-height: 26px;
@@ -407,3 +453,8 @@ li + li > .pl-card::before { left: 100px; }
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
 }
 .pd-viewer-original:hover { background: rgba(255,255,255,.22); }
+
+/* Admin "New post" in the Posts header (opens the New post pop-up). Phones already carry "+ New" in the same
+   bar, so the duplicate is dropped there to keep the large title visible. */
+.posts-new .ui-icon { width: 16px; height: 16px; }
+@media (max-width: 599.98px) { .posts-new { display: none; } }

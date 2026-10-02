@@ -126,6 +126,8 @@ $viewerCommentsEndpoint = isset($viewerCommentsEndpoint) ? (string)$viewerCommen
     <a class="ui-viewer-menu-item" role="menuitem" data-viewer-original href="#" target="_blank" rel="noopener" hidden><?= icon('photo') ?>View original</a>
     <a class="ui-viewer-menu-item" role="menuitem" data-viewer-drive href="#" target="_blank" rel="noopener noreferrer" hidden><?= icon('drive') ?>Open series in Google Drive</a>
     <?php if ($viewerAdmin): // admin-only: never rendered for clients ?>
+      <?php // approved items only (assets.js shows / hides it): opens the New post pop-up with this image as slide 1 ?>
+      <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-use-in-post hidden><?= icon('plus') ?>Use in post</button>
       <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-replace data-tire-only><?= icon('photo') ?>Replace image…</button>
       <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-set-reference data-tire-only><?= icon('checkmark') ?>Set as reference</button>
       <a class="ui-viewer-menu-item" role="menuitem" data-viewer-manage data-tire-only href="#"><?= icon('wand') ?>Manage in Studio</a>

@@ -18,7 +18,12 @@
  *     hidden timestamp chip ([data-video-stamp], spec §6) that App.video reveals
  *     when the surrounding detail contains a video; clicking it inserts "m:ss — "
  *     at the caret. $opts: 'placeholder', 'endpoint' (default 'status.php'),
- *     'entity' ('post'), 'stamp' (default true).
+ *     'entity' ('post'), 'stamp' (default true), 'slides' (slide count — ≥ 2 adds the
+ *     optional [data-comment-slide] picker; the comment is stored as "[Slide N] text").
+ *
+ *   commentSlideSplit(string $text): [int $slide, string $rest] — parse the "[Slide N] " prefix.
+ *   commentSlideChip(int $n, string $thumb): string — the chip a slide comment shows in the thread
+ *     (commentThreadHtml($rows, ['slides' => pdSlideThumbs($images)])).
  *
  * Actor → side mapping is the only role logic here; whether a viewer may post
  * is decided by the including page (server-side), not by this partial.
@@ -33,13 +38,39 @@ if (!function_exists('commentActorLabel')) {
     }
 }
 
+if (!function_exists('commentSlideSplit')) {
+    /** "[Slide 3] Darker please" → [3, 'Darker please']; anything else → [0, $text]. (No schema change: the slide is a text prefix.) */
+    function commentSlideSplit(string $text): array
+    {
+        if (preg_match('/^\[Slide (\d{1,2})\]\s*/u', $text, $m)) return [(int)$m[1], (string)substr($text, strlen($m[0]))];
+        return [0, $text];
+    }
+}
+
+if (!function_exists('commentSlideChip')) {
+    /** The chip above a slide comment: the slide's sm thumb + "Slide N"; posts.js scrolls the carousel to it. */
+    function commentSlideChip(int $n, string $thumb = ''): string
+    {
+        $esc = static function ($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); };
+        return '<button type="button" class="pd-slide-chip" data-goto-slide="' . ($n - 1) . '" aria-label="' . $esc('Show slide ' . $n) . '">'
+             . ($thumb !== '' ? '<img src="' . $esc($thumb) . '" alt="" loading="lazy" decoding="async">' : '<span class="pd-slide-chip-blank" aria-hidden="true"></span>')
+             . '<span>Slide ' . $n . '</span></button>';
+    }
+}
+
 if (!function_exists('commentBubble')) {
-    function commentBubble(array $row): string
+    /** $opts['slides']: sm thumbs per slide (renderPostDetail) → "[Slide N] …" comments get a slide chip. */
+    function commentBubble(array $row, array $opts = []): string
     {
         $esc   = static function ($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); };
         $actor = strtolower(trim((string)($row['actor'] ?? 'unknown')));
         $side  = $actor === 'client' ? 'client' : 'joust';
         $text  = (string)($row['detail'] ?? '');
+        $chip  = '';
+        if (isset($opts['slides']) && is_array($opts['slides'])) {
+            [$slideNo, $rest] = commentSlideSplit($text);
+            if ($slideNo > 0) { $chip = commentSlideChip($slideNo, (string)($opts['slides'][$slideNo - 1] ?? '')); $text = $rest; }
+        }
         $when  = (string)($row['created_at'] ?? '');
         $rel   = function_exists('relativeTime') ? relativeTime($when) : '';
         $abs   = function_exists('absoluteTime') ? absoluteTime($when) : $when;
@@ -49,7 +80,7 @@ if (!function_exists('commentBubble')) {
         $avatar = function_exists('actorAvatar') ? actorAvatar($actor, $GLOBALS['client'] ?? null, 'ui-avatar--xs pd-msg-avatar') : '';
 
         $out  = '<div class="pd-msg pd-msg--' . $side . '" data-actor="' . $esc($actor) . '">';
-        $out .= '<div class="ui-bubble ui-bubble--' . $side . '">' . nl2br($esc($text)) . '</div>';
+        $out .= '<div class="ui-bubble ui-bubble--' . $side . '">' . $chip . nl2br($esc($text)) . '</div>';
         $out .= '<div class="ui-bubble-meta">' . $avatar . $esc(commentActorLabel($actor));
         if ($rel !== '') { $out .= ' · <time title="' . $esc($abs) . '">' . $esc($rel) . '</time>'; }
         $out .= '</div></div>';
@@ -70,7 +101,7 @@ if (!function_exists('commentThreadHtml')) {
         $out = '<div class="' . $esc($cls) . '"' . $attrs . '>';
         foreach ($rows as $row) {
             if (trim((string)($row['detail'] ?? '')) === '') continue;
-            $out .= commentBubble($row);
+            $out .= commentBubble($row, isset($opts['slides']) ? ['slides' => (array)$opts['slides']] : []);
         }
         $empty = array_key_exists('empty', $opts) ? (string)$opts['empty'] : 'No messages yet.';
         if ($empty !== '') {
@@ -88,7 +119,18 @@ if (!function_exists('commentComposer')) {
         $endpoint    = $opts['endpoint'] ?? 'status.php';
         $inputId     = 'comment-' . $postId;
         $stamp       = !array_key_exists('stamp', $opts) || $opts['stamp'];
-        return '<form class="pd-composer" data-comment-form data-id="' . (int)$postId . '" data-endpoint="' . $esc($endpoint) . '" autocomplete="off">'
+        $nSlides     = (int)($opts['slides'] ?? 0);
+        // ≥ 2 slides: an optional "Slide" picker; posts.js sends the comment as "[Slide N] text" (no schema change)
+        $slidePick   = '';
+        if ($nSlides >= 2) {
+            $slidePick = '<label class="ui-visually-hidden" for="' . $esc($inputId) . '-slide">About slide</label>'
+                       . '<select class="pd-composer-slide" id="' . $esc($inputId) . '-slide" data-comment-slide title="Comment on one slide">'
+                       . '<option value="">All slides</option>';
+            for ($i = 1; $i <= $nSlides; $i++) $slidePick .= '<option value="' . $i . '">Slide ' . $i . '</option>';
+            $slidePick .= '</select>';
+        }
+        return '<form class="pd-composer' . ($slidePick !== '' ? ' pd-composer--slides' : '') . '" data-comment-form data-id="' . (int)$postId . '" data-endpoint="' . $esc($endpoint) . '" autocomplete="off">'
+             . $slidePick
              . ($stamp
                  ? '<button type="button" class="ui-pill ui-pill--accent ui-pill--nodot pd-composer-stamp" data-video-stamp hidden title="Insert the current video time" aria-label="Insert the current video time">'
                    . (function_exists('icon') ? icon('play') : '') . '<span data-video-stamp-label>0:00</span></button>'

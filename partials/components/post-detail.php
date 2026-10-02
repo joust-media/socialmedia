@@ -29,8 +29,12 @@
  *     Studio must render exactly this so what Lance sees is what the client sees.
  *
  *   renderPostMedia(array $images, array $opts = []): string
- *     Paged carousel with dots; video through renderVideoElement() (spec §6:
- *     autoplay muted, tap-to-unmute pill, App.video fallback card).
+ *     Swipeable carousel (up to 20 slides; static/js/carousel.js): scroll-snap track, dots,
+ *     "2 / 7" counter, prev / next arrows on hover-capable pointers, ←/→ on the focused track,
+ *     lg previews, each slide carries data-thumb (sm); only the visible slide's video plays.
+ *     Video through renderVideoElement() (spec §6: autoplay muted, tap-to-unmute pill, App.video
+ *     fallback card).
+ *   pdSlideThumbs(array $images): array — sm URL per slide ('' for video), for comment slide chips.
  *     $opts: 'admin' (adds nothing by itself — Replace lives in the ⋯ menu), 'label',
  *            'autoplay' (default true).
  *
@@ -130,24 +134,41 @@ if (!function_exists('renderCaptionPreview')) {
     }
 }
 
+if (!function_exists('pdSlideThumbs')) {
+    /** The sm preview URL of every slide ('' for a video) — the comment thread's "Slide 3" chips. */
+    function pdSlideThumbs(array $images): array
+    {
+        $out = [];
+        foreach (array_values($images) as $img) {
+            $src = pdMediaUrl((string)($img['url'] ?? ''));
+            $out[] = pdIsVideo($img) ? '' : (function_exists('pvUrl') ? pvUrl($src, 'sm') : $src);
+        }
+        return $out;
+    }
+}
+
 if (!function_exists('renderPostMedia')) {
     function renderPostMedia(array $images, array $opts = []): string
     {
-        $images = array_slice(array_values($images), 0, defined('POST_MAX_MEDIA') ? POST_MAX_MEDIA : 20);
+        $images = array_slice(array_values($images), 0, defined('POST_MAX_MEDIA') ? POST_MAX_MEDIA : 20);   // Instagram's carousel cap
         $n = count($images);
         if ($n === 0) {
             return '<div class="pd-media pd-media--empty"><span class="text-tertiary">No media yet</span></div>';
         }
         $label    = (string)($opts['label'] ?? 'Post media');
         $autoplay = !array_key_exists('autoplay', $opts) || $opts['autoplay'];
-        $out  = '<div class="pd-media" data-carousel data-count="' . $n . '" aria-roledescription="carousel" aria-label="' . pdEsc($label) . '">';
-        $out .= '<div class="pd-track" data-carousel-track>';
+        // Swipeable carousel (static/js/carousel.js — App.carousel): scroll-snap track, dots, "2 / 7", arrows on
+        // hover-capable pointers, ←/→ on the focused track; only the visible slide's video plays.
+        $out  = '<div class="pd-media" data-carousel data-count="' . $n . '" data-autoplay="' . ($autoplay ? '1' : '0') . '" aria-roledescription="carousel" aria-label="' . pdEsc($label) . '">';
+        $out .= '<div class="pd-track" data-carousel-track tabindex="0">';
         foreach ($images as $i => $img) {
             $src  = pdMediaUrl((string)($img['url'] ?? ''));
             $ext  = strtolower(pathinfo((string)($img['url'] ?? ''), PATHINFO_EXTENSION));
             $id   = (int)($img['id'] ?? 0);
             $vid  = pdIsVideo($img);
-            $out .= '<figure class="pd-slide" data-slide="' . $i . '" data-image-id="' . $id . '" data-media-type="' . ($vid ? 'video' : 'image') . '" data-src="' . pdEsc($src) . '" data-ext="' . pdEsc($ext) . '">';
+            $thumb = $vid ? '' : (function_exists('pvUrl') ? pvUrl($src, 'sm') : $src);
+            $out .= '<figure class="pd-slide" data-slide="' . $i . '" data-image-id="' . $id . '" data-media-type="' . ($vid ? 'video' : 'image') . '" data-src="' . pdEsc($src) . '" data-ext="' . pdEsc($ext) . '" data-thumb="' . pdEsc($thumb) . '"'
+                  . ' aria-roledescription="slide" aria-label="' . ($i + 1) . ' of ' . $n . '"' . ($i > 0 ? ' aria-hidden="true"' : '') . '>';
             if ($vid) {
                 // spec §6 markup (playsinline muted controls preload=metadata, quicktime source first,
                 // mp4 twin when on disk, fallback card) — one renderer for the whole portal.
@@ -162,18 +183,23 @@ if (!function_exists('renderPostMedia')) {
                 $img = function_exists('pvImg')
                     ? pvImg($src, 'lg', ['sizes' => pvSizes('slide'), 'eager' => $i === 0, 'alt' => $label . ' ' . ($i + 1)])
                     : '<img src="' . pdEsc($src) . '" alt="' . pdEsc($label . ' ' . ($i + 1)) . '" loading="' . ($i === 0 ? 'eager' : 'lazy') . '" decoding="async">';
-                $out .= '<button type="button" class="pd-slide-btn" data-viewer-open data-original="' . pdEsc($src) . '" aria-label="View full screen">' . $img . '</button>';
+                $out .= '<button type="button" class="pd-slide-btn" data-viewer-open data-original="' . pdEsc($src) . '" aria-label="View slide ' . ($i + 1) . ' full screen">' . $img . '</button>';
             }
             $out .= '</figure>';
         }
         $out .= '</div>';
         if ($n > 1) {
+            $chev = static function (string $d): string {
+                return '<svg class="ui-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' . $d . '"/></svg>';
+            };
+            $out .= '<button type="button" class="pd-arrow pd-arrow--prev" data-carousel-prev aria-label="Previous slide" disabled>' . $chev('m15 5-7 7 7 7') . '</button>';
+            $out .= '<button type="button" class="pd-arrow pd-arrow--next" data-carousel-next aria-label="Next slide">' . $chev('m9 5 7 7-7 7') . '</button>';
             $out .= '<div class="pd-dots" role="tablist" aria-label="Slides">';
             for ($d = 0; $d < $n; $d++) {
-                $out .= '<button type="button" class="pd-dot' . ($d === 0 ? ' is-active' : '') . '" data-carousel-dot="' . $d . '" role="tab" aria-selected="' . ($d === 0 ? 'true' : 'false') . '" aria-label="Slide ' . ($d + 1) . '"></button>';
+                $out .= '<button type="button" class="pd-dot' . ($d === 0 ? ' is-active' : '') . '" data-carousel-dot="' . $d . '" role="tab" aria-selected="' . ($d === 0 ? 'true' : 'false') . '" aria-label="Slide ' . ($d + 1) . '"' . ($d === 0 ? '' : ' tabindex="-1"') . '></button>';
             }
             $out .= '</div>';
-            $out .= '<span class="ui-pill ui-pill--glass ui-pill--nodot pd-counter" data-carousel-counter>1/' . $n . '</span>';
+            $out .= '<span class="ui-pill ui-pill--glass ui-pill--nodot pd-counter" data-carousel-counter aria-hidden="true">1 / ' . $n . '</span>';
         }
         return $out . '</div>';
     }
@@ -220,6 +246,8 @@ if (!function_exists('renderPostDetail')) {
             $out .= '<div class="pd-more">'
                   . '<button type="button" class="ui-btn ui-btn--gray ui-btn--icon ui-btn--sm" data-menu-toggle aria-haspopup="menu" aria-expanded="false" aria-label="More actions">' . (function_exists('icon') ? icon('ellipsis') : '&hellip;') . '</button>'
                   . '<div class="pd-menu" role="menu" data-menu hidden>'
+                  // Full editor (media add / remove / reorder / replace, caption, date, type): the New post pop-up in edit mode (newpost.js)
+                  . '<button type="button" role="menuitem" data-newpost-edit="' . $id . '">Edit post…</button>'
                   . '<button type="button" role="menuitem" data-edit="caption" data-caption-menu' . ($posted ? ' disabled title="Unmark scheduled first"' : '') . '>Edit caption</button>'
                   . '<button type="button" role="menuitem" data-edit="date">Edit date</button>'
                   . '<button type="button" role="menuitem" data-replace-image' . ($images ? '' : ' disabled') . '>Replace image</button>'
@@ -291,14 +319,15 @@ if (!function_exists('renderPostDetail')) {
 
         // ---- 4. Comments thread ------------------------------------------------
         $out .= '<section class="pd-comments"><h3 class="pd-section-title">Comments <span class="pd-comment-count text-tertiary" data-comment-count>' . count($comments) . '</span></h3>';
-        $out .= commentThreadHtml($comments, ['empty' => 'No messages yet — questions and change requests go here.']);
+        // "[Slide 3] …" comments render a slide chip (thumb + "Slide 3"; tap → the carousel goes there)
+        $out .= commentThreadHtml($comments, ['empty' => 'No messages yet — questions and change requests go here.', 'slides' => pdSlideThumbs($images)]);
         $out .= '</section>';
 
         $out .= '</div>'; // /.pd-body
 
         // ---- 5. Sticky footer: composer + action bar / status row ------------
         $out .= '<div class="pd-footer" data-pd-footer>';
-        $out .= commentComposer($id, ['endpoint' => $endpoint]);
+        $out .= commentComposer($id, ['endpoint' => $endpoint, 'slides' => count(array_slice($images, 0, defined('POST_MAX_MEDIA') ? POST_MAX_MEDIA : 20))]);   // ≥ 2 slides → the "Slide" picker
 
         // Deny note (required, min 3) — the same form for client and admin
         $out .= '<form class="pd-deny" data-deny-form hidden>'

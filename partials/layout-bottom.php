@@ -24,6 +24,11 @@ unset($uiShowTabs);
 ?>
 <div class="ui-toast" id="uiToast" role="status" aria-live="polite"></div>
 <?= isset($footExtra) ? $footExtra : '' ?>
+<?php
+// Admin: the New post pop-up (App.newPost) on every page — "+ New", "New post", Assets "Create post with N", "Edit post…"
+require_once __DIR__ . '/components/new-post.php';
+echo newPostBootHtml($client ?? null);
+?>
 <?= appScript() ?>
 <script src="<?= esc(staticUrl('js/video.js')) ?>" defer></script>
 

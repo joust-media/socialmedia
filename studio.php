@@ -4,13 +4,14 @@
  * session is redirected to login by requireAdmin() before any output.
  *
  *   ?client=<slug>        scope (helpers.php); without it → client chooser
- *   &tab=compose|batch|uploads|posts|emails   initial segment (default compose)
+ *   &tab=posts|uploads|emails|pages|renders|export|clients   initial segment (default posts)
+ *   &tab=compose          (retired) → 302 studio.php?client=…&newpost=1: Studio with the New post pop-up open
+ *   &tab=batch            (retired) → 302 studio.php?client=…&tab=uploads (the "+ New → Upload" route)
  *   &msg=…                flash after a save
  *
- * Sections (scoped):
- *   Compose  — the composer (Approved Pool picker + form + live preview), posts to add-post.php
- *   Batch    — summary + the batch builder (batch.php)
- *   Uploads  — drag-drop zone → batch-process.php (one pending post per file into uploads/)
+ * Sections (scoped). "New post" in the toolbar opens the New post pop-up (static/js/newpost.js →
+ * post-compose.php), which replaced the Compose tab, its right-hand form column and the Batch tab.
+ *   Uploads  — drag-drop zone → batch-process.php (one Draft post per file into uploads/)
  *   Posts    — segment counts into posts.php + recent client responses (renderActivityFeed)
  *   Emails   — <section data-studio-emails> (present once migrate.php created the emails table);
  *              the Emails admin worker owns everything inside that section.
@@ -144,7 +145,11 @@ if (!$client) {
 // =============================================================
 // MODE B — client selected: the hub
 // =============================================================
-$tabs = ['compose' => 'Compose', 'batch' => 'Batch', 'uploads' => 'Uploads', 'posts' => 'Posts'];
+// Compose + Batch are retired (the New post pop-up); their old links keep working through redirects.
+$tabRequested = strtolower(trim((string)($_GET['tab'] ?? '')));
+if ($tabRequested === 'compose') { header('Location: ' . clientUrl('studio.php', ['newpost' => 1]), true, 302); exit; }
+if ($tabRequested === 'batch')   { header('Location: ' . clientUrl('studio.php', ['tab' => 'uploads']), true, 302); exit; }
+$tabs = ['posts' => 'Posts', 'uploads' => 'Uploads'];
 $hasEmails = hasEmailsTable($pdo);          // migration-gated; admin always gets the tab so the first email can be added
 if ($hasEmails) $tabs['emails'] = 'Emails';
 $hasPages = function_exists('hasPagesTable') && hasPagesTable($pdo);   // Pages module (migration-gated; pages-lib.php)
@@ -153,8 +158,8 @@ $hasRenders = function_exists('hasTireSeries') && hasTireSeries($pdo);   // tire
 if ($hasRenders) $tabs['renders'] = 'Renders';
 $tabs['export'] = 'Export';                   // approved-asset zip (export-lib.php / export.php), one folder per tire
 $tabs['clients'] = 'Clients';                 // company management (partials/studio-clients.php → client-admin.php)
-$tab  = strtolower(trim((string)($_GET['tab'] ?? 'compose')));
-if (!isset($tabs[$tab])) $tab = 'compose';
+$tab  = $tabRequested !== '' ? $tabRequested : 'posts';
+if (!isset($tabs[$tab])) $tab = 'posts';
 
 // Renders: every tire of this client with its series (one lib call per tire) + the preselection from the URL.
 $rendersTires = []; $rendersTire = 0; $rendersSeries = 0;
@@ -199,12 +204,8 @@ if ($exportTire && !in_array($exportTire, array_column($exportTires, 'id'), true
 $exportSeries = $exportTire && $tab === 'export' ? max(0, (int)($_GET['series'] ?? 0)) : 0;
 $exportZipOn  = exportZipSupported();
 
-$pool         = studioApprovedPool($pdo, $client);
-$supportsType = hasPostTypeColumn($pdo);
 $hasPosted    = hasPostedColumn($pdo);
 $postedExpr   = $hasPosted ? 'p.posted' : '0';
-$defaultTags  = trim((string)($client['default_hashtags'] ?? ''));
-$categories   = $pdo->query("SELECT id, name FROM categories ORDER BY sort_order, name")->fetchAll();
 
 // Posts segment counts (same rules as posts.php)
 $counts = ['draft' => 0, 'pending' => 0, 'approved' => 0, 'scheduled' => 0, 'denied' => 0];
@@ -215,36 +216,6 @@ foreach ($st->fetchAll() as $row) {
     if (!empty($row['posted'])) { $counts['scheduled'] += $n; }
     elseif (isset($counts[$row['status']])) { $counts[$row['status']] += $n; }
 }
-
-// Latest scheduled post (batch spacing starts there)
-$st = $pdo->prepare('SELECT MAX(scheduled_date) FROM posts WHERE company_id = ?');
-$st->execute([(int)$client['id']]);
-$latestDate = $st->fetchColumn();
-
-$composerHtml = studioComposerHtml([
-    'client'          => $client,
-    'pool'            => $pool,
-    'action'          => clientUrl('add-post.php'),
-    'isEdit'          => false,
-    'post'            => [
-        'name' => '', 'caption' => '', 'hashtags' => $defaultTags, 'status' => 'pending',
-        'post_type' => 'post', 'scheduled' => date('Y-m-d\TH:i'), 'categories' => [],
-    ],
-    'editImages'      => [],
-    'categories'      => $categories,
-    'supportsType'    => $supportsType,
-    'maxImages'       => POST_MAX_MEDIA,
-    'hasDraft'        => postsHaveDraft($pdo),
-    'maxImageMb'      => 50,
-    'maxVideoGb'      => 4,
-    'submitText'      => 'Create post',
-    'cancelUrl'       => '',
-    'assetsUrl'       => clientUrl('assets.php', ['view' => 'library', 'filter' => 'approved']),
-    'selected'        => [],
-    'errors'          => [],
-    'defaultHashtags' => $defaultTags,
-    'formId'          => 'composer',
-]);
 
 $segItems = [];
 foreach ($tabs as $key => $label) {
@@ -307,7 +278,7 @@ $bodyClass   = 'page-studio page-studio-hub';
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">' . "\n"
              . '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">';
 $footExtra   = '<script>window.StudioConfig = ' . json_encode($studioConfig, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n"
-             . '<script src="' . h(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n"   // App.chunkUpload (Renders: large videos in pieces, resumable)
+             . '<script src="' . h(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n"   // App.chunkUpload (Uploads + Renders: large videos in pieces, resumable)
              . '<script src="' . h(staticUrl('js/studio.js')) . '" defer></script>' . "\n"
              . '<script src="' . h(staticUrl('js/studio-previews.js')) . '" defer></script>';   // Export → Image previews backfill (preview-job.php)
 
@@ -320,25 +291,9 @@ include __DIR__ . '/partials/layout-top.php';
 
 <div class="studio-toolbar">
   <?= segmented($segItems, ['label' => 'Studio sections', 'class' => 'studio-segmented']) ?>
+  <?php // The New post pop-up (newpost.js → post-compose.php) replaces the Compose + Batch tabs; the href is the no-JS deep link ?>
+  <a class="ui-btn ui-btn--filled ui-btn--sm studio-newpost" href="<?= h(clientUrl('posts.php', ['newpost' => 1])) ?>" data-newpost><?= icon('plus') ?><span>New post</span></a>
 </div>
-
-<!-- Compose ------------------------------------------------------------ -->
-<section class="studio-section" data-studio-section="compose"<?= $tab === 'compose' ? '' : ' hidden' ?>>
-  <?= $composerHtml ?>
-</section>
-
-<!-- Batch -------------------------------------------------------------- -->
-<section class="studio-section" data-studio-section="batch"<?= $tab === 'batch' ? '' : ' hidden' ?>>
-  <?= card(
-        '<p>Pick several approved assets, turn them into posts in one go, and set captions, dates and types in an editable list. Rows without a date are spaced from the latest scheduled post'
-        . ($latestDate ? ' (<strong>' . h(date('M j, Y', strtotime($latestDate))) . '</strong>)' : '') . '.</p>'
-        . '<p class="text-secondary">' . count($pool['assets']) . ' approved asset' . (count($pool['assets']) === 1 ? '' : 's') . ' available · '
-        . (int)$pool['counts']['library'] . ' in Library · ' . (int)$pool['counts']['tire'] . ' in ' . count($pool['collections']) . ' collection' . (count($pool['collections']) === 1 ? '' : 's') . '</p>',
-        [
-          'title'  => 'Batch builder',
-          'footer' => '<a class="ui-btn ui-btn--filled" href="' . h(clientUrl('batch.php')) . '">Open batch builder</a>',
-        ]) ?>
-</section>
 
 <!-- Uploads ------------------------------------------------------------ -->
 <section class="studio-section" data-studio-section="uploads"<?= $tab === 'uploads' ? '' : ' hidden' ?>>

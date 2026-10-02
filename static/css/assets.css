@@ -292,6 +292,16 @@
 .as-selectbar.is-visible { transform: none; opacity: 1; }
 .as-selectbar-count { font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead); color: var(--label-secondary); font-variant-numeric: tabular-nums; }
 .as-selectbar .ui-btn { min-width: 140px; }
+/* Admin: approved tiles are selectable too ("Create post with N"); the bar holds two actions */
+body[data-role="admin"] .as-grid.is-selecting .as-thumb[data-status="approved"] { opacity: 1; cursor: pointer; }
+.as-selectbar [data-select-post] { margin-left: auto; }
+.as-selectbar:has([data-select-post]) [data-select-approve] { margin-left: auto; }
+.as-selectbar:has([data-select-post]) [data-select-post] { margin-left: 0; }
+@media (max-width: 599.98px) {
+  .as-selectbar:has([data-select-post]) { flex-wrap: wrap; gap: 8px; }
+  .as-selectbar:has([data-select-post]) .as-selectbar-count { flex: 1 1 100%; }
+  .as-selectbar:has([data-select-post]) .ui-btn { flex: 1 1 0; min-width: 0; }
+}
 @media (min-width: 1024px) {
   .as-selectbar { left: var(--sidebar-w); bottom: 0; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
 }

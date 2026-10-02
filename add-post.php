@@ -1,6 +1,11 @@
 <?php
 /**
- * Studio → Composer (spec §4.5). Admin only.
+ * Studio → Composer (spec §4.5). Admin only. The composer PAGE is retired — the New post pop-up
+ * (static/js/newpost.js → post-compose.php) creates and edits posts now:
+ *   GET add-post.php?client=…            → 302 posts.php?client=…&newpost=1            (pop-up open)
+ *   GET add-post.php?client=…&edit=<id>  → 302 posts.php?client=…&post=<id>&newpost=edit (detail + pop-up in edit mode)
+ * The POST handler below stays for the callers that still post here (legacy/admin.php delete, the
+ * format=json contract); a non-JSON POST lands on the post (or back on Posts with its errors as the flash).
  *
  * Creates / edits a post + its post_images. Media can come from:
  *   1. the Approved Pool — assets[] = "library:<id>" | "tire:<id>" in carousel order.
@@ -756,149 +761,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // -------------------------------------------------------------
-// Fetch for display
+// The composer page is retired: create / edit happen in the New post pop-up (static/js/newpost.js →
+// post-compose.php). Every GET — and a non-JSON POST that did not finish above — lands on Posts with the
+// pop-up open (edit mode for ?edit=<id>); a failed form POST carries its errors as the flash.
 // -------------------------------------------------------------
-$allCategories = $pdo->query("SELECT id, name FROM categories ORDER BY sort_order, name")->fetchAll();
-$pool          = studioApprovedPool($pdo, $client);
-
-$editPost   = null;
-$editImages = [];
-$editPostCategories = [];
-$editId = (int)($_GET['edit'] ?? 0);
-if ($editId > 0) {
-    $stmt = $pdo->prepare("SELECT * FROM posts WHERE id = ? AND company_id = ?");
-    $stmt->execute([$editId, $client['id']]);
-    $editPost = $stmt->fetch();
-    if ($editPost) {
-        // media_type only lands in this SELECT once migrate.php has added the column.
-        // Otherwise we fall back to a derived 'image'/'video' from the file extension.
-        $mediaTypeSel = hasMediaTypeColumn($pdo)
-            ? ', media_type'
-            : ", '' AS media_type";
-        $imgStmt = $pdo->prepare("
-            SELECT id, image_url{$mediaTypeSel} FROM post_images
-            WHERE post_id = ?
-            ORDER BY sort_order ASC
-        ");
-        $imgStmt->execute([$editId]);
-        foreach ($imgStmt->fetchAll() as $img) {
-            $editImages[] = [
-                'id'   => (int)$img['id'],
-                'url'  => (string)$img['image_url'],
-                'type' => ($img['media_type'] ?? '') !== '' ? $img['media_type'] : mediaTypeFromUrl((string)$img['image_url']),
-            ];
-        }
-
-        $catStmt = $pdo->prepare("SELECT category_id FROM post_categories WHERE post_id = ?");
-        $catStmt->execute([$editId]);
-        $editPostCategories = array_map('intval', array_column($catStmt->fetchAll(), 'category_id'));
-    }
-}
-
-$isEdit = (bool)$editPost;
-$clientDefaultHashtags = trim((string)($client['default_hashtags'] ?? ''));
-
-// Re-populate from the failed POST so nothing typed is lost.
-$posted = ($_SERVER['REQUEST_METHOD'] === 'POST' && $errors) ? $_POST : null;
-$val = [
-    'id'         => $isEdit ? (int)$editPost['id'] : 0,
-    'name'       => $posted['name']     ?? ($isEdit ? (string)($editPost['name'] ?? '') : ''),
-    'caption'    => $posted['caption']  ?? ($isEdit ? (string)$editPost['caption'] : ''),
-    'hashtags'   => $posted['hashtags'] ?? ($isEdit ? (string)$editPost['hashtags'] : $clientDefaultHashtags),
-    'status'     => $posted['status']   ?? ($isEdit ? (string)$editPost['status'] : 'pending'),
-    'post_type'  => strtolower((string)($posted['post_type'] ?? ($isEdit ? ($editPost['post_type'] ?? 'post') : 'post'))),
-    'scheduled'  => $posted['scheduled_date'] ?? ($isEdit ? date('Y-m-d\TH:i', strtotime($editPost['scheduled_date'])) : date('Y-m-d\TH:i')),
-    'categories' => isset($posted['categories']) ? array_map('intval', (array)$posted['categories']) : $editPostCategories,
-];
-if (!in_array($val['post_type'], allowedPostTypes(), true)) { $val['post_type'] = 'post'; }
-$selectedKeys = $posted ? array_column(studioParsePicks($posted['assets'] ?? [], $maxImages), 'key') : [];
-
-// Short large title; the post's reference name goes in the eyebrow so it never truncates on phones.
-$formTitle = $isEdit ? 'Edit post' : 'Compose';
-$editLabel = $isEdit ? (!empty($editPost['name']) ? $editPost['name'] : 'Post #' . (int)$editPost['id']) : '';
-
-$composerHtml = studioComposerHtml([
-    'client'          => $client,
-    'pool'            => $pool,
-    'action'          => clientUrl('add-post.php'),
-    'isEdit'          => $isEdit,
-    'post'            => $val,
-    'editImages'      => $editImages,
-    'categories'      => $allCategories,
-    'supportsType'    => hasPostTypeColumn($pdo),
-    'maxImages'       => $maxImages,
-    'hasDraft'        => $hasDraft,
-    'maxImageMb'      => $maxImageMb,
-    'maxVideoGb'      => $maxVideoGb,
-    'submitText'      => $isEdit ? 'Save changes' : 'Create post',
-    'cancelUrl'       => clientUrl('studio.php'),
-    'assetsUrl'       => clientUrl('assets.php', ['view' => 'library', 'filter' => 'approved']),
-    'selected'        => $selectedKeys,
-    'errors'          => $errors,
-    'defaultHashtags' => $clientDefaultHashtags,
-    'formId'          => 'composer',
-]);
-
-$studioConfig = [
-    'base'      => basePath(),
-    'endpoint'  => basePath() . '/status.php',
-    'batch'     => basePath() . '/batch-process.php',
-    'upload'    => basePath() . '/upload-chunk.php?client=' . rawurlencode($client['slug']),   // purpose=post: files go up as they are picked (in pieces when large) and come back as claimed[] tokens
-    'client'    => $client['slug'],
-    'brand'     => ['name' => $client['name'], 'logo' => brandLogoUrl($client['logo_url'] ?? '')],
-    'maxImages' => $maxImages,
-    'maxImageMb' => $maxImageMb,
-    'maxVideoMb' => $maxVideoGb * 1024,
-];
-
-// -------------------------------------------------------------
-// Render
-// -------------------------------------------------------------
-$pageTitle   = $formTitle;
-$navSubtitle = 'Studio · ' . ($isEdit ? $editLabel : $client['name']);
-$activeTab   = 'studio';
-$pageWide    = true;
-$navWide     = true;
-$navBack     = ['href' => clientUrl('studio.php'), 'label' => 'Studio'];
-$bodyClass   = 'page-studio page-composer';
-$headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">' . "\n"
-             . '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">';
-$footExtra   = '<script>window.StudioConfig = ' . json_encode($studioConfig, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n"
-             . '<script src="' . h(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n"   // App.chunkUpload (one-offs: large files in pieces, resumable)
-             . '<script src="' . h(staticUrl('js/studio.js')) . '" defer></script>';
-
-include __DIR__ . '/partials/layout-top.php';
-?>
-
-<?php if ($flash): ?>
-  <div class="studio-alert studio-alert--ok" role="status"><?= h($flash) ?></div>
-<?php endif; ?>
-
-<?= $composerHtml ?>
-
-<?php if ($isEdit): ?>
-  <section class="studio-thread ui-card" data-thread-card>
-    <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Comments</h3>
-      <p class="ui-card-subtitle">The same thread the client sees on this post.</p></div></div>
-    <div class="ui-card-body">
-      <?= commentThreadHtml(hasActivityLog($pdo) ? commentThread($pdo, 'post', (int)$editPost['id']) : [], ['empty' => 'No messages yet — start the thread below.']) ?>
-      <form class="studio-reply" data-studio-reply data-id="<?= (int)$editPost['id'] ?>" autocomplete="off">
-        <label class="ui-visually-hidden" for="studioReply">Reply</label>
-        <textarea class="ui-textarea" id="studioReply" rows="2" maxlength="2000" placeholder="Reply as Joust…" data-reply-input></textarea>
-        <div class="studio-reply-row">
-          <label class="studio-chip"><input type="radio" name="reply_actor" value="admin" checked> As Joust</label>
-          <label class="studio-chip"><input type="radio" name="reply_actor" value="client"> As <?= h($client['name']) ?></label>
-          <span class="ui-spacer"></span>
-          <button type="submit" class="ui-btn ui-btn--filled ui-btn--sm" data-reply-send>Send</button>
-        </div>
-      </form>
-    </div>
-  </section>
-  <form class="studio-danger" method="POST" action="<?= h(clientUrl('add-post.php')) ?>" data-confirm-submit="Delete this post and all its media? This cannot be undone.">
-    <input type="hidden" name="action" value="delete">
-    <input type="hidden" name="id" value="<?= (int)$editPost['id'] ?>">
-    <button type="submit" class="ui-btn ui-btn--plain ui-btn--sm studio-danger-btn">Delete this post</button>
-  </form>
-<?php endif; ?>
-
-<?php include __DIR__ . '/partials/layout-bottom.php'; ?>
+$editId = (int)($_GET['edit'] ?? ($_POST['id'] ?? 0));
+$dest   = $editId > 0 ? ['post' => $editId, 'newpost' => 'edit'] : ['newpost' => 1];
+if ($errors) { $dest['msg'] = implode(' ', $errors); }
+elseif ($flash !== '') { $dest['msg'] = $flash; }
+header('Location: ' . clientUrl('posts.php', $dest), true, 302);
+exit;

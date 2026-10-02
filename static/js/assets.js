@@ -99,7 +99,7 @@
         noteHint: $('[data-viewer-note-hint]', root), noteSend: $('[data-viewer-note-send]', root), noteCancel: $('[data-viewer-note-cancel]', root),
         download: $('[data-viewer-download]', root), downloadLink: $('[data-viewer-download-link]', root), original: $('[data-viewer-original]', root),
         replace: $('[data-viewer-replace]', root), replaceInput: $('[data-viewer-replace-input]', root), manage: $('[data-viewer-manage]', root),
-        setRef: $('[data-viewer-set-reference]', root), del: $('[data-viewer-delete]', root),
+        setRef: $('[data-viewer-set-reference]', root), del: $('[data-viewer-delete]', root), useInPost: $('[data-viewer-use-in-post]', root),
         comments: $('[data-viewer-comments]', root), commentsToggle: $('[data-viewer-comments-toggle]', root),
         commentsCount: $('[data-viewer-comments-count]', root), commentsPanel: $('[data-viewer-comments-panel]', root),
         thread: $('[data-viewer-thread]', root), commentForm: $('[data-viewer-comment-form]', root),
@@ -148,6 +148,14 @@
       if (r.manage) r.manage.addEventListener('click', function () { self.closeMenu(); });
       if (r.setRef) r.setRef.addEventListener('click', function () { self.closeMenu(); self.setReference(); });
       if (r.del) r.del.addEventListener('click', function () { self.closeMenu(); self.deleteImage(); });
+      // admin: "Use in post" (approved items) → the New post pop-up (newpost.js) with this image as slide 1
+      if (r.useInPost) r.useInPost.addEventListener('click', function () {
+        var it = self.current(); self.closeMenu();
+        if (!it || !App.newPost) return;
+        var ref = it.kind + ':' + it.id;
+        self.close();
+        setTimeout(function () { App.newPost.open({ preselect: [ref] }); }, 60);
+      });
       document.addEventListener('click', function (e) { if (self.isOpen && !r.menu.hidden && !e.target.closest('[data-viewer-menu]')) self.closeMenu(); });
 
       this._bindGestures();
@@ -324,6 +332,7 @@
       if (r.prev) r.prev.disabled = !this.hasPrev();
       if (r.next) r.next.disabled = !this.hasNext();
       $$('[data-tire-only]', r.menu).forEach(function (el) { el.hidden = item.kind !== 'tire'; });
+      if (r.useInPost) r.useInPost.hidden = !(item.status === 'approved' && (item.kind === 'tire' || item.kind === 'library') && App.newPost);
       // Download: images go through the blob save (download()), videos through a direct <a download> link
       if (r.downloadLink) {
         var isVideo = item.type === 'video';
@@ -921,6 +930,8 @@
       if (selBtn) selBtn.addEventListener('click', function () { self.setSelecting(!self.selecting); });
       var approveBtn = $('[data-select-approve]');
       if (approveBtn) approveBtn.addEventListener('click', function () { self.approveSelected(); });
+      var postBtn = $('[data-select-post]');   // admin only (assets.php)
+      if (postBtn) postBtn.addEventListener('click', function () { self.postSelected(); });
       document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && self.selecting && !viewer.isOpen) self.setSelecting(false); });
 
       // Video tiles: posters + duration badges are filled by App.video (video.js) from its probe/cache.
@@ -1284,7 +1295,7 @@
       }
     },
 
-    /* ---------------- multi-select: batch Approve only ---------------- */
+    /* ---------------- multi-select: batch Approve (pending / needs changes) + admin "Create post with N" (approved) ---------------- */
     setSelecting: function (on) {
       if (this._busyBatch) return;
       this.selecting = !!on;
@@ -1299,19 +1310,33 @@
       this.updateSelection();
     },
     toggleTile: function (tile) {
-      if (tile.dataset.status === 'approved') return;   // nothing to approve
+      // Approved tiles are selectable only where "Create post with N" exists (admin); the client seat selects to approve.
+      if (tile.dataset.status === 'approved' && !$('[data-select-post]')) return;
       tile.setAttribute('aria-pressed', tile.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
       this.updateSelection();
     },
     selectedTiles: function () { return this.tiles().filter(function (t) { return t.getAttribute('aria-pressed') === 'true'; }); },
+    /** Selected tiles that can still be approved (To Review / Needs changes) and the approved ones (post material). */
+    selectedToApprove: function () { return this.selectedTiles().filter(function (t) { return t.dataset.status !== 'approved'; }); },
+    selectedApproved: function () { return this.selectedTiles().filter(function (t) { return t.dataset.status === 'approved'; }); },
     updateSelection: function () {
-      var n = this.selectedTiles().length, count = $('[data-select-count]'), btn = $('[data-select-approve]');
+      var n = this.selectedTiles().length, count = $('[data-select-count]'), btn = $('[data-select-approve]'), post = $('[data-select-post]');
+      var k = this.selectedToApprove().length, m = this.selectedApproved().length;
       if (count) count.textContent = n === 1 ? '1 selected' : n + ' selected';
-      if (btn && !this._busyBatch) { btn.disabled = n === 0; btn.textContent = n > 0 ? 'Approve ' + n : 'Approve'; }
+      if (btn && !this._busyBatch) { btn.disabled = k === 0; btn.textContent = k > 0 ? 'Approve ' + k : 'Approve'; }
+      if (post) { post.disabled = m === 0 || this._busyBatch; post.textContent = m > 0 ? 'Create post with ' + m : 'Create post'; post.title = m === 0 ? 'Select approved images to build a post' : ''; }
+    },
+    /** Admin: the approved selection → the New post pop-up (newpost.js), in tap order of the grid. */
+    postSelected: function () {
+      var refs = this.selectedApproved().map(function (t) { return t.dataset.kind + ':' + t.dataset.id; });
+      if (!refs.length || !App.newPost) return;
+      this.setSelecting(false);
+      App.newPost.open({ preselect: refs.slice(0, 20) });
+      if (refs.length > 20) toast('Up to 20 slides per post — the first 20 were added', { kind: 'error' });
     },
     /** One request per item, sequentially, with progress; optimistic per tile with rollback. */
     approveSelected: function () {
-      var self = this, tiles = this.selectedTiles(), btn = $('[data-select-approve]');
+      var self = this, tiles = this.selectedToApprove(), btn = $('[data-select-approve]');
       if (!tiles.length || this._busyBatch) return;
       this._busyBatch = true;
       if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }
