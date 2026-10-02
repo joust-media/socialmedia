@@ -215,6 +215,10 @@ if ($directPage) {
 $filtered = $hasTable ? pagesForCompany($pdo, $cid, ['q' => $q, 'visibleTo' => $visibleTo]) : [];
 $counts   = ['draft' => 0, 'pending' => 0, 'approved' => 0, 'live' => 0, 'denied' => 0, 'all' => 0];
 foreach ($filtered as $r) { $counts[pageStatusKey($r)]++; $counts['all']++; }
+// Admin with no explicit segment: open on Joust's own queue (Needs changes) when it has items — the tab badge counts it too.
+if ($admin && !$directPage && trim((string)($_GET['status'] ?? '')) === '' && $counts['denied'] > 0) {
+    $segment = 'denied';
+}
 
 $pages = $segment === 'all' ? $filtered : array_values(array_filter($filtered, static function ($r) use ($segment) {
     return pageStatusKey($r) === $segment;

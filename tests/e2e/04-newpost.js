@@ -126,7 +126,8 @@ async function load(page, url, id) {
       await test('T2: 5-slide carousel across two series in ≤ 8 clicks → Send for review, the row appears in To Review (no reload)', async (page) => {
         let clicks = 0;
         const tap = async (s) => { clicks++; await page.click(s); };
-        await page.goto(url('posts.php?client=kenda&month=all'));
+        // status=pending: the admin opens on Needs changes when it has items (round 4); this test watches To Review
+        await page.goto(url('posts.php?client=kenda&month=all&status=pending'));
         await mark(page);
         const before = { pending: await segCount(page, 'pending'), draft: await segCount(page, 'draft') };
         await tap('[data-new-menu-toggle]'); await tap('[data-new-action="post"]');   // "+ New → New post" (Posts has no second button)

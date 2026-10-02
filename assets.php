@@ -920,8 +920,9 @@ include __DIR__ . '/partials/layout-top.php';
             <a class="ui-btn ui-btn--sm ui-btn--tinted as-series-drive" href="<?= esc($headDrive) ?>" target="_blank" rel="noopener noreferrer"
                data-series-drive title="<?= esc('Open ' . $seriesActive['name'] . ' in Google Drive (new tab)') ?>"><?= icon('drive') ?><span>Open in Google Drive</span></a>
           <?php endif; ?>
-          <?php if ($seriesActive && $typePending > 0): // client + admin: approve every remaining pending render of this series (of the type shown) ?>
-            <button type="button" class="ui-btn ui-btn--sm ui-btn--approve ui-btn--tinted as-series-approve"
+          <?php if ($seriesActive && $typePending > 0): // client + admin: approve every remaining pending render of this series (of the type shown).
+                // The client's primary (green tint). For Joust it decides on the client's behalf — a secondary (gray) after Upload. ?>
+            <button type="button" class="ui-btn ui-btn--sm <?= $isAdmin ? 'ui-btn--gray as-series-approve--admin' : 'ui-btn--approve ui-btn--tinted' ?> as-series-approve"
                     data-action="approve_series" data-endpoint="<?= esc(basePath() . '/tire-status.php') ?>"
                     data-param-action="approve_series" data-series-id="<?= (int)$seriesActive['id'] ?>"<?= $typeEff !== 'all' ? ' data-param-type="' . esc($typeEff) . '"' : '' ?>
                     data-confirm="<?= esc('Approve all ' . $typePending . ' remaining ' . $typeNoun . ($typePending === 1 ? '' : 's') . ' in ' . $seriesActive['name'] . '?') ?>"

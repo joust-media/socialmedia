@@ -1282,19 +1282,18 @@
         });
       }
       var delta = (to === 'pending' ? 1 : 0) - (from === 'pending' ? 1 : 0);
-      if (!delta) return;
-      if (key) {
+      if (delta && key) {
         var approveAll = $('[data-action="approve_series"]');
         if (approveAll && (parseInt(($('[data-count="pending"]') || {}).textContent, 10) || 0) === 0) approveAll.hidden = true;
       }
       // (No Library · Tires segment any more — Library and Tires are separate tabs — so only the tab badge below moves.)
-      // Tab-bar badge: the Tires tab (data-tab="tires", collections view) when the company has one, else Assets
+      // Tab-bar badge = the viewer's own queue (client: To Review · admin: Needs changes; partials/tabbar.php):
+      // the Tires tab (data-tab="tires", collections view) when the company has one, else Assets
+      var q = App.queueStatus ? App.queueStatus() : 'pending';
+      var qd = (to === q ? 1 : 0) - (from === q ? 1 : 0);
+      if (!qd) return;
       var tab = (this.cfg.view === 'collections' && $('.ui-tab[data-tab="tires"]')) || $('.ui-tab[data-tab="assets"]') || $('.ui-tab--assets');
-      if (tab) {
-        var badge = $('.ui-badge', tab), n = Math.max(0, (badge ? (parseInt(badge.textContent, 10) || 0) : 0) + delta);
-        if (n > 0) { if (!badge) { badge = document.createElement('span'); badge.className = 'ui-badge ui-tab-badge'; tab.appendChild(badge); } badge.textContent = n > 99 ? '99+' : String(n); badge.setAttribute('aria-label', n + ' to review'); }
-        else if (badge) badge.remove();
-      }
+      if (tab && App.bumpTabBadge) App.bumpTabBadge(tab, qd);
     },
 
     /* ---------------- multi-select: batch Approve (pending / needs changes) + admin "Create post with N" (approved) ---------------- */

@@ -244,7 +244,11 @@
     if (App.lockScroll) App.lockScroll();
     bind();
     requestAnimationFrame(function () { requestAnimationFrame(function () { if (R) R.classList.add('is-visible'); }); });
-    setTimeout(function () { var p = $('.np-panel', R); if (p) try { p.focus({ preventScroll: true }); } catch (e) { p.focus(); } }, 40);
+    // Focus into the dialog right away — unless preselected slides already handed the focus to the caption
+    setTimeout(function () {
+      if (!R || (S && S.slides.length && document.activeElement === field('caption'))) return;
+      var p = $('.np-panel', R); if (p) try { p.focus({ preventScroll: true }); } catch (e) { p.focus(); }
+    }, 40);
     var slug = opts.client || cfg.client || (document.body && document.body.dataset.client) || '';
     if (!slug) return chooseClient();
     return start(slug);
@@ -291,6 +295,9 @@
       renderAll();
       var focusEl = window.matchMedia && window.matchMedia('(min-width: 900px)').matches && S.pane === 'approved' ? $('[data-np-q]', R) : $('[data-np-close]', R);
       if (focusEl) try { focusEl.focus({ preventScroll: true }); } catch (e) {}
+      // "Upload & make post" / Assets "Create post with N": the slides are in, so the caption is the next thing to do
+      // (two panes; captionNext() is a no-op otherwise). Runs last, after the panel / search box focus above.
+      if (S.mode !== 'edit' && S.slides.length) captionNext();
       document.dispatchEvent(new CustomEvent('newpost:open', { detail: { client: slug, mode: S.mode, postId: S.postId } }));
       return R;
     });

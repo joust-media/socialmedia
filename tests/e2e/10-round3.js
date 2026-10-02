@@ -41,7 +41,7 @@ function jpeg(name) {
       expect.eq((await page.$$eval('#email-status option', (o) => o.map((x) => x.textContent.trim()))).join(','), 'Draft,To Review', 'draft W1');
       expect(await page.isDisabled('[data-email-live]'), 'Live is off for a draft');
       await page.goto(url('add-email.php?client=privacybee&edit=3'));
-      expect.eq((await page.$$eval('#email-status option', (o) => o.map((x) => x.textContent.trim()))).join(','), 'Approved (keep),Draft,To Review', 'approved W3');
+      expect.eq((await page.$$eval('#email-status option', (o) => o.map((x) => x.textContent.trim()))).join(','), 'Approved — unchanged,Draft,To Review', 'approved W3');
       expect(!(await page.isDisabled('[data-email-live]')), 'Live can be ticked while it stays approved');
       await page.selectOption('#email-status', 'pending');
       expect(await page.isDisabled('[data-email-live]'), 'routing it back turns Live off');
@@ -181,10 +181,10 @@ function jpeg(name) {
       expect.eq(JSON.stringify(await bubbles(page)), JSON.stringify([['client', 'mine', 'You', true]]));
     });
 
-    await test('#5 the Slide picker follows the carousel (open = slide 1, then the slide on screen); the comment is tagged', async (page) => {
+    await test('#5 the Slide picker follows the carousel (open = All slides, then the slide on screen); the comment is tagged', async (page) => {
       await page.goto(url('posts.php?client=kenda&post=2'));
       await page.waitForSelector('#uiSheet.is-open [data-carousel]');
-      expect.eq(await page.inputValue('#uiSheet [data-comment-slide]'), '1', 'slide 1 on open');
+      expect.eq(await page.inputValue('#uiSheet [data-comment-slide]'), '', 'All slides on open (round 4)');
       await page.evaluate(() => { const car = document.querySelector('#uiSheet [data-carousel]'); App.carousel.go(car, 1, false); });
       await page.waitForFunction(() => document.querySelector('#uiSheet [data-comment-slide]').value === '2', null, { timeout: 3000 });
       await page.evaluate(() => { const car = document.querySelector('#uiSheet [data-carousel]'); App.carousel.go(car, 2, false); });

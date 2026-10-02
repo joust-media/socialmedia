@@ -20,5 +20,5 @@ require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/auth.php';
 requireAdmin();
 
-header('Location: ' . legacyAdminTarget(['client' => $clientSlug] + $_GET), true, 301);   // the resolved scope (an unknown slug → unscoped)
+header('Location: ' . (legacyAdminModuleTarget($pdo, $client ?? null, $_GET) ?? legacyAdminTarget(['client' => $clientSlug] + $_GET)), true, 301);   // the resolved scope (an unknown slug → unscoped)
 exit;

@@ -194,6 +194,30 @@ if (!function_exists('legacyAdminTarget')) {
     }
 }
 
+if (!function_exists('legacyAdminModuleTarget')) {
+    /** admin.php / studio.php ?tab=emails|pages for a client without that module (and no rows): straight to
+     *  Manage → Clients with the "turn it on here" flash — the one hop emails.php / pages.php would add. null otherwise. */
+    function legacyAdminModuleTarget(PDO $pdo, ?array $client, array $q): ?string {
+        $tab = strtolower(trim(is_string($q['tab'] ?? null) ? $q['tab'] : ''));
+        if (empty($client['id']) || !in_array($tab, ['emails', 'pages'], true) || !empty($q['upload']) || !empty($q['newpost'])) return null;
+        try {
+            $cid = (int)$client['id'];
+            if ($tab === 'emails') {
+                if (!hasEmailsTable($pdo) || companyHasEmails($client, $pdo) || (int)(emailCounts($pdo, $cid)['total'] ?? 0) > 0) return null;
+                $what = 'Emails';
+            } else {
+                require_once __DIR__ . '/pages-lib.php';
+                if (!hasPagesTable($pdo) || companyHasPages($client, $pdo) || (int)(pageCounts($pdo, $cid)['total'] ?? 0) > 0) return null;
+                $what = 'Pages';
+            }
+        } catch (Throwable $e) {
+            error_log('legacyAdminModuleTarget: ' . $e->getMessage());
+            return null;
+        }
+        return manageUrl('clients', ['edit' => $cid, 'msg' => $client['name'] . ' doesn’t use ' . $what . ' yet — turn it on here.']);
+    }
+}
+
 /** Return "client=hmf" or "" for building URLs */
 function clientQs() {
     global $clientSlug;
@@ -531,9 +555,21 @@ if (!function_exists('postsClientVisibleSql')) {
 if (!function_exists('reviewFormStatusOptions')) {
     function reviewFormStatusOptions(string $current = ''): array {
         $keep = [];
-        if ($current === 'approved') $keep['approved'] = 'Approved (keep)';
-        elseif ($current === 'denied') $keep['denied'] = 'Needs changes (keep)';
+        if ($current === 'approved') $keep['approved'] = 'Approved — unchanged';
+        elseif ($current === 'denied') $keep['denied'] = 'Needs changes — unchanged';
         return $keep + ['draft' => 'Draft', 'pending' => 'To Review'];
+    }
+}
+if (!function_exists('reviewFormStatusHelp')) {
+    /** The help line under the form's Status select, for the row's current status ('' = new). Points at
+     *  "Approve for client…" only where the sheet's ⋯ menu has it (To Review / Needs changes). */
+    function reviewFormStatusHelp(string $current, string $noun): string {
+        switch ($current) {
+            case 'pending':  return "The client approves. If they approved this {$noun} outside the portal, Approve for client… is in the {$noun}’s ⋯ menu.";
+            case 'denied':   return "The client asked for changes. Pick To Review to send it back to them once it’s fixed.";
+            case 'approved': return "The client approved this {$noun}. Saving keeps it approved; To Review sends it back to them.";
+            default:         return "The client approves. Send it for review when it’s ready.";
+        }
     }
 }
 if (!function_exists('reviewFormStatusError')) {

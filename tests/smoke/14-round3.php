@@ -64,8 +64,8 @@ test('#1 add-email: Status offers Draft / To Review (+ keep for a decided email)
     is(r3Options(status(get('add-email.php?client=privacybee&edit=2'), 200)['body'], 'email-status'), ['draft', 'pending'], 'pending W2');
     $b = status(get('add-email.php?client=privacybee&edit=3'), 200)['body'];
     is(r3Options($b, 'email-status'), ['approved', 'draft', 'pending'], 'approved W3: keep first');
-    has($b, '<option value="approved" selected>Approved (keep)</option>');
-    has($b, 'Approve for client… is in the email’s ⋯ menu');
+    has($b, '<option value="approved" selected>Approved — unchanged</option>');
+    has($b, 'Saving keeps it approved');
     is(r3Options(status(get('add-email.php?client=privacybee&edit=4'), 200)['body'], 'email-status'), ['denied', 'draft', 'pending'], 'denied R1: keep first');
 });
 test('#1 add-email: a draft cannot be saved as Approved / Needs changes / live (server)', function () {
@@ -168,9 +168,9 @@ test('#4 rows never say "0 comments"', function () {
 });
 
 // ---- #5 slide picker default ---------------------------------------------------------------------------------------
-test('#5 the comment Slide picker starts on slide 1 (All slides is still an option)', function () {
+test('#5 the comment Slide picker starts on All slides (round 4: a general comment is never tagged Slide 1)', function () {
     $b = status(get('posts.php?client=kenda&post=2&partial=1', 'client'), 200)['body'];
-    has($b, '<option value="">All slides</option><option value="1" selected>Slide 1</option><option value="2">Slide 2</option>');
+    has($b, '<option value="">All slides</option><option value="1">Slide 1</option><option value="2">Slide 2</option>');
 });
 
 // ---- #6 Delete tire behind ⋯ ----------------------------------------------------------------------------------------

@@ -305,8 +305,8 @@ $thread     = $isEdit && hasActivityLog($pdo) ? commentThread($pdo, 'email', (in
 $pageTitle   = $formTitle;
 $navSubtitle = $client['name'] . ' · Emails';
 $activeTab   = 'emails';
-$pageWide    = true;
-$navWide     = true;
+$pageWide    = false;   // the shared 720 px column, like every other top-level page
+$navWide     = false;
 $navBack     = ['href' => $studioUrl, 'label' => 'Emails'];
 $navLinks    = [];
 if ($isEdit) $navLinks[] = ['label' => 'Open in Emails', 'href' => emailUrl($email)];
@@ -352,7 +352,7 @@ include __DIR__ . '/partials/layout-top.php';
               <option value="<?= h($k) ?>"<?= $vals['status'] === $k ? ' selected' : '' ?>><?= h($label) ?></option>
             <?php endforeach; ?>
           </select>
-          <p class="studio-help" data-status-help>The client approves. <?= $isEdit ? 'Approve for client… is in the email’s ⋯ menu.' : 'Send it for review when it’s ready.' ?></p>
+          <p class="studio-help" data-status-help><?= h(reviewFormStatusHelp($isEdit ? (string)$email['status'] : '', 'email')) ?></p>
         </div>
         <div class="studio-field">
           <span class="studio-label">Live</span>

@@ -441,6 +441,27 @@ if (!function_exists('renderPostHiddenNotice')) {
                   . '<blockquote>' . ((int)$note['slide'] > 0 ? '<span class="pd-note-slide">On slide ' . (int)$note['slide'] . ':</span> ' : '') . nl2br(pdEsc($note['text'])) . '</blockquote>'
                   . '</figure>';
         }
+        // Joust's replies since the client's latest comment (read-only): the Home "Joust commented on …" link lands
+        // here, so the reply it announces is on screen. The newest three, oldest first.
+        $comments = is_array($post['comments'] ?? null) ? array_values($post['comments']) : [];
+        $from = 0;
+        foreach ($comments as $k => $c) {
+            if (strtolower(trim((string)($c['actor'] ?? ''))) === 'client') $from = $k + 1;
+        }
+        $replies = [];
+        foreach (array_slice($comments, $from) as $c) {
+            if (strtolower(trim((string)($c['actor'] ?? ''))) !== 'admin' || trim((string)($c['detail'] ?? '')) === '') continue;
+            $replies[] = $c;
+        }
+        foreach (array_slice($replies, -3) as $c) {
+            [$slide, $text] = function_exists('commentSlideSplit') ? commentSlideSplit(trim((string)$c['detail'])) : [0, trim((string)$c['detail'])];
+            $at   = (string)($c['created_at'] ?? '');
+            $when = $at !== '' && function_exists('relativeTime') ? relativeTime($at) : '';
+            $out .= '<figure class="pd-hidden-note pd-hidden-note--joust" data-hidden-reply>'
+                  . '<figcaption class="pd-hidden-note-head">Joust replied' . ($when !== '' ? ' · ' . pdEsc($when) : '') . '</figcaption>'
+                  . '<blockquote>' . ((int)$slide > 0 ? '<span class="pd-note-slide">On slide ' . (int)$slide . ':</span> ' : '') . nl2br(pdEsc(trim((string)$text))) . '</blockquote>'
+                  . '</figure>';
+        }
         $out  .= '</section></div>';
         $out  .= '<div class="pd-footer" data-pd-footer><div class="pd-actions"><button type="button" class="ui-btn ui-btn--large ui-btn--gray" data-sheet-close>Back to posts</button></div></div>';
         return $out . '</article>';

@@ -1,5 +1,5 @@
 /* Admin-first review sheets in the browser: the visible primary per status (post + email), the client's decisions
-   only through ⋯ (Approve for client… asks first; Needs changes… pins the note on top), the client's own
+   only through ⋯ (Approve for client… asks first, in the sheet; Needs changes… pins the note on top), the client's own
    Needs changes · Approve, and the list moving without a reload. Screens: $PORTAL_TEST_ROOT/shots/sheet-*.png */
 'use strict';
 const path = require('path');
@@ -39,8 +39,18 @@ async function segCount(page, seg) { return parseInt((await page.textContent(`.u
       await page.click('#uiSheet [data-menu-toggle]');
       expect(await page.isVisible('#uiSheet [data-approve-for-client]'), 'in ⋯');
       await page.click('#uiSheet [data-approve-for-client]');
+      // round 4: the in-sheet confirm (no browser dialog); Cancel keeps it To Review
+      await page.waitForSelector('#uiSheet [data-confirm-inline="approve"]');
+      expect(/Approve this post for Kenda Tires\?/.test(await page.textContent('#uiSheet [data-confirm-inline]')), 'asks first');
+      await page.click('#uiSheet [data-confirm-inline] [data-confirm-cancel]');
+      await page.waitForSelector('#uiSheet [data-confirm-inline]', { state: 'detached' });
+      expect.eq(await page.getAttribute('#uiSheet .pd', 'data-status'), 'pending', 'Cancel changes nothing');
+      await page.click('#uiSheet [data-menu-toggle]');
+      await page.click('#uiSheet [data-approve-for-client]');
+      expect.eq((await page.textContent('#uiSheet [data-confirm-inline] [data-confirm-ok]')).trim(), 'Approve for Kenda Tires');
+      await page.click('#uiSheet [data-confirm-inline] [data-confirm-ok]');
       await page.waitForSelector('#uiSheet .pd[data-status="approved"]');
-      expect(asked.length === 1 && /Approve this post for Kenda Tires\?/.test(asked[0]), 'confirm first: ' + asked.join(' / '));
+      expect.eq(asked.length, 0, 'no browser confirm: ' + asked.join(' / '));
       expect.eq((await primaries(page)).join(' | '), 'Edit post… | Mark scheduled');
       expect.eq(await segCount(page, 'pending'), p0 - 1); expect.eq(await segCount(page, 'approved'), a0 + 1);
       await page.waitForSelector('[data-posts-items] [data-post-item="1"]', { state: 'detached' });
@@ -87,8 +97,11 @@ async function segCount(page, seg) { return parseInt((await page.textContent(`.u
       await page.waitForSelector('#uiSheet.is-open .ed[data-status="pending"]');
       await page.click('#uiSheet [data-asg-menu-toggle]');
       await page.click('#uiSheet [data-approve-for-client]');
+      await page.waitForSelector('#uiSheet [data-confirm-inline="approve"]');
+      expect(/Approve this email for Privacy Bee\?/.test(await page.textContent('#uiSheet [data-confirm-inline]')), 'asks first');
+      await page.click('#uiSheet [data-confirm-inline] [data-confirm-ok]');
       await page.waitForSelector('#uiSheet .ed[data-status="approved"]');
-      expect(asked.length === 1 && /Approve this email for Privacy Bee\?/.test(asked[0]), 'confirm first');
+      expect.eq(asked.length, 0, 'no browser confirm');
       expect(await page.isHidden('#uiSheet [data-asg-menu]'), 'menu closed');
       expect.eq((await primaries(page)).join(' | '), 'Edit | Mark live');
     });

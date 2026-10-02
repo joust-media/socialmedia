@@ -140,7 +140,8 @@ test('vehicle form: create with an image → listed → delete', function () {
 $termPages = ['', '?client=kenda', '?client=privacybee', 'assets.php', 'assets.php?view=collections', 'assets.php?client=kenda',
               'assets.php?client=kenda&view=collections', 'assets.php?client=kenda&view=collections&item=1',
               'assets.php?client=kenda&view=collections&item=1&series=1', 'assets.php?client=kenda&view=collections&item=3',
-              'posts.php?client=kenda', 'manage.php?client=kenda', 'manage.php?client=kenda&section=tools', 'manage.php?client=kenda&section=export',
+              // (status=pending: the admin now opens on Needs changes, whose seed note reads "darker render" — content, not UI)
+              'posts.php?client=kenda&status=pending', 'manage.php?client=kenda', 'manage.php?client=kenda&section=tools', 'manage.php?client=kenda&section=export',
               'manage.php?client=hmf', 'build.php?client=kenda', 'add-feature.php?client=kenda&module=tires&edit_item=1'];
 foreach ($termPages as $p) {
     test("no Collections / Renders in what the admin reads: /{$p}", function () use ($p) {

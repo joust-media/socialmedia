@@ -165,10 +165,8 @@
     if (item) item.textContent = n;
     if (seg === E.segment) { var hdr = $('[data-segment-count]'); if (hdr) hdr.textContent = n; }
     if (E.segment === 'all') { var h2 = $('[data-segment-count]'); if (h2) h2.textContent = E.counts.all; }
-    if (seg === 'pending') {
-      var badge = $('.ui-tab--emails .ui-badge');
-      if (badge) { badge.textContent = n > 99 ? '99+' : n; badge.hidden = n === 0; }
-    }
+    // The tab badge counts the viewer's own queue (client: To Review · admin: Needs changes)
+    if (seg === App.queueStatus() && App.bumpTabBadge) App.bumpTabBadge('emails', delta);
   }
   function maybeEmpty() {
     var list = $('[data-emails-items]');
@@ -335,6 +333,7 @@
       'menu-approve':   !live && (status === 'pending' || status === 'denied'),
       'menu-deny':      !live && (status === 'pending' || status === 'approved'),
       'menu-draft':     !live && status !== 'draft',
+      'menu-edit':      live,   // ⋯ Edit …: only when the footer has no Edit (Unmark live only)
       'admin-draft':    key === 'draft',
       'admin-approved': key === 'approved',
       'admin-denied':   key === 'denied',
@@ -629,7 +628,12 @@
       }
       if (t.closest('[data-approve-for-client]')) {
         var who = cfg.clientName || 'the client';
-        if (window.confirm('Approve this email for ' + who + '?\n\nOnly do this when ' + who + ' has approved it outside the portal — they won\'t be asked.')) E.decide(id, 'approved', null, { toast: 'Approved for ' + who });
+        // The in-sheet confirm (the Needs changes… note's place), not the browser's confirm()
+        App.confirmInline($('[data-deny-form]', root), {
+          name: 'approve', kind: 'approve', title: 'Approve this email for ' + who + '?',
+          text: 'Only do this when ' + who + ' has approved it outside the portal — they won’t be asked.',
+          ok: 'Approve for ' + who
+        }).then(function (ok) { if (ok) E.decide(id, 'approved', null, { toast: 'Approved for ' + who }); });
         return;
       }
       if (t.closest('[data-set-draft]')) { E.decide(id, 'draft', null, { toast: 'Moved to Draft — the client can\'t see it now' }); return; }

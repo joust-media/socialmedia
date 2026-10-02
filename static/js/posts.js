@@ -175,13 +175,10 @@
     var n = P.counts[seg];
     var item = $('.ui-segmented-item[data-segment="' + seg + '"] .ui-segmented-count');
     if (item) item.textContent = n;
-    if (seg === P.segment) {
-      var hdr = $('[data-segment-count]'); if (hdr) hdr.textContent = n;
-      var badge = $('.ui-tab--posts .ui-badge');
-      if (seg === 'pending' && badge) { badge.textContent = n > 99 ? '99+' : n; badge.hidden = n === 0; }
-    } else if (seg === 'pending') {
-      var b = $('.ui-tab--posts .ui-badge'); if (b) { b.textContent = n > 99 ? '99+' : n; b.hidden = n === 0; }
-    }
+    if (seg === P.segment) { var hdr = $('[data-segment-count]'); if (hdr) hdr.textContent = n; }
+    // The tab badge counts the viewer's own queue (client: To Review · admin: Needs changes) over every month,
+    // so it moves by delta rather than copying the (month-scoped) segment count.
+    if (seg === App.queueStatus() && App.bumpTabBadge) App.bumpTabBadge('posts', delta);
   }
   function maybeEmpty() {
     var list = $('[data-posts-items]');
@@ -517,9 +514,17 @@
   P.approveForClient = function (id) {
     id = String(id);
     var who = cfg.clientName || 'the client';
-    if (!window.confirm('Approve this post for ' + who + '?\n\nOnly do this when ' + who + ' has approved it outside the portal — they won\'t be asked.')) return Promise.resolve(null);
-    return P.decide(id, 'approved', null, { toast: 'Approved for ' + who });
+    var root = sheetRoot(), anchor = root && $('[data-deny-form]', root);
+    return App.confirmInline(anchor, approveCopy('post', who)).then(function (ok) {
+      return ok ? P.decide(id, 'approved', null, { toast: 'Approved for ' + who }) : null;
+    });
   };
+  /** The in-sheet confirm for ⋯ → Approve for client… (the client's decision, made on their behalf). */
+  function approveCopy(noun, who) {
+    return { name: 'approve', kind: 'approve', title: 'Approve this ' + noun + ' for ' + who + '?',
+             text: 'Only do this when ' + who + ' has approved it outside the portal — they won’t be asked.',
+             ok: 'Approve for ' + who };
+  }
 
   /* ---- refresh one row after a save elsewhere (New post pop-up) ------- */
   function rowDate(li) { var t = li && $('.pl-date', li); return (t && t.getAttribute('datetime')) || ''; }
@@ -698,12 +703,18 @@
   /* ---- carousel ----------------------------------------------------- */
   /* App.carousel (carousel.js) when loaded: swipe, dots, "2 / 7", arrows, ←/→, only the visible video plays.
      The fallback below is the pre-carousel.js behaviour (dots + counter). */
-  /* The comment "Slide" picker follows the slide on screen: slide 1 on open, then every swipe / arrow / dot /
-     slide chip (carousel:change). "All slides" stays one tap away in the picker. */
+  /* The comment "Slide" picker: "All slides" on open (a general comment is never silently tagged "Slide 1"), then —
+     once the user moves the carousel off the cover (swipe / arrow / dot / slide chip → carousel:change) — it follows
+     the slide on screen, back to slide 1 included. "All slides" stays one tap away in the picker. */
   function syncSlidePick(root, index) {
     var pick = $('[data-comment-slide]', root); if (!pick) return;
+    var moved = index != null;
     if (index == null) { var car = $('[data-carousel]', root); index = car && App.carousel && App.carousel.index ? App.carousel.index(car) : 0; }
-    var v = String((parseInt(index, 10) || 0) + 1);
+    index = parseInt(index, 10) || 0;
+    // carousel:change also fires for slide 1 on init / resize: only a move off the cover starts the following
+    if (moved && index > 0) pick.__follow = true;
+    if (!pick.__follow) { pick.value = ''; return; }
+    var v = String(index + 1);
     if ($('option[value="' + v + '"]', pick)) pick.value = v;
   }
   function initCarousel(root) {

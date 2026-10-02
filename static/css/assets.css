@@ -157,6 +157,10 @@
 .as-series-upload .ui-icon, .as-library-upload .ui-icon, [data-ref-upload] .ui-icon { width: 16px; height: 16px; }
 
 .as-series-approve .ui-icon { width: 16px; height: 16px; stroke-width: 2.6; }
+/* Admin: Upload is the row's primary; "Approve all remaining" (on the client's behalf) is a gray secondary after it */
+.as-series-approve--admin { order: 2; }
+.as-series-approve--admin .ui-icon { color: var(--approve); }
+.as-series-actions .as-menu { order: 3; }
 /* "Open in Google Drive" — the client's alternative way into the series (tire_series.drive_url); a secondary CTA in the accent tint */
 .as-series-drive { gap: 7px; font-weight: 600; box-shadow: inset 0 0 0 1px rgba(0,122,255,.22); }
 .as-series-drive:hover, .as-series-drive:focus-visible { background: rgba(0,122,255,.2); }
@@ -175,7 +179,7 @@
   .as-series-head { flex-wrap: wrap; }
   .as-series-actions { width: 100%; flex-wrap: wrap; justify-content: flex-end; }
   .as-series-approve { flex: 1 1 auto; }
-  .as-series-actions:has(.as-series-upload) .as-series-approve { flex-basis: 100%; }   /* admin: Upload + ⋯ share the next row */
+  .as-series-actions:has(.as-series-upload) .as-series-approve { flex-basis: 100%; order: 9; }   /* admin: Upload + ⋯ first, the gray Approve all under them */
   .as-series-drive { flex: 1 1 100%; justify-content: center; min-height: 40px; font-size: var(--text-subhead); }   /* full width under the counts line */
 }
 

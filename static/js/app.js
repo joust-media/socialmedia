@@ -49,6 +49,80 @@
   App.$ = $; App.$$ = $$;
 
   /* ---------------------------------------------------------------- */
+  /* Tab-bar badges: the viewer's own queue (partials/tabbar.php)      */
+  /* ---------------------------------------------------------------- */
+  /** The status the viewer's tab badges count: the client's To Review ('pending'), Joust's Needs changes ('denied'). */
+  App.queueStatus = function () { return App.role === 'admin' ? 'denied' : 'pending'; };
+  /** Set the badge of a tab (data-tab key or a .ui-tab element) to n — created when missing, removed at 0. */
+  App.tabBadge = function (tab, n) {
+    var el = typeof tab === 'string' ? ($('.ui-tab[data-tab="' + tab + '"]') || $('.ui-tab--' + tab)) : tab;
+    if (!el) return;
+    n = Math.max(0, parseInt(n, 10) || 0);
+    var badge = $('.ui-badge', el);
+    if (!n) { if (badge) badge.remove(); return; }
+    if (!badge) { badge = document.createElement('span'); badge.className = 'ui-badge ui-tab-badge'; el.appendChild(badge); }
+    badge.hidden = false;
+    badge.textContent = n > 99 ? '99+' : String(n);
+    badge.setAttribute('aria-label', n + (App.queueStatus() === 'denied' ? ' need changes' : ' to review'));
+    badge.setAttribute('data-queue', App.queueStatus());
+  };
+  /** Move a tab badge by delta (its current number + delta). */
+  App.bumpTabBadge = function (tab, delta) {
+    var el = typeof tab === 'string' ? ($('.ui-tab[data-tab="' + tab + '"]') || $('.ui-tab--' + tab)) : tab;
+    if (!el || !delta) return;
+    var badge = $('.ui-badge', el), cur = badge && !badge.hidden ? (parseInt(badge.textContent, 10) || 0) : 0;
+    App.tabBadge(el, cur + delta);
+  };
+
+  /* ---------------------------------------------------------------- */
+  /* Inline confirm: the in-sheet panel the Needs changes… note uses   */
+  /* (.pd-deny), for a decision that needs a second look — instead of  */
+  /* the browser's confirm(). Resolves true (confirmed) / false.       */
+  /*   App.confirmInline(beforeEl, {title, text, ok, kind: 'approve'}) */
+  /* ---------------------------------------------------------------- */
+  var confirmSeq = 0;
+  App.confirmInline = function (before, opts) {
+    opts = opts || {};
+    var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+    return new Promise(function (resolve) {
+      if (!before || !before.parentNode) { resolve(window.confirm((opts.title || '') + '\n\n' + (opts.text || ''))); return; }
+      var prev = before.parentNode.querySelector('[data-confirm-inline]');
+      if (prev && prev.__done) prev.__done(false);
+      var n = ++confirmSeq, back = document.activeElement;
+      var box = document.createElement('section');
+      box.className = 'pd-deny pd-confirm';
+      box.setAttribute('data-confirm-inline', opts.name || '');
+      box.setAttribute('role', 'alertdialog');
+      box.setAttribute('aria-labelledby', 'uiConfirmTitle' + n);
+      box.setAttribute('aria-describedby', 'uiConfirmText' + n);
+      var kind = opts.kind === 'deny' ? 'ui-btn--deny' : (opts.kind === 'approve' ? 'ui-btn--approve' : 'ui-btn--filled');
+      box.innerHTML = '<p class="pd-editor-label pd-confirm-title" id="uiConfirmTitle' + n + '">' + esc(opts.title) + '</p>'
+        + (opts.text ? '<p class="pd-editor-hint" id="uiConfirmText' + n + '">' + esc(opts.text) + '</p>' : '')
+        + '<div class="ui-btn-group"><button type="button" class="ui-btn ui-btn--gray" data-confirm-cancel>Cancel</button>'
+        + '<button type="button" class="ui-btn ui-btn--primary ' + kind + '" data-confirm-ok>' + esc(opts.ok || 'OK') + '</button></div>';
+      before.parentNode.insertBefore(box, before);
+      var settled = false;
+      function done(v) {
+        if (settled) return; settled = true;
+        if (box.parentNode) box.parentNode.removeChild(box);
+        if (!v && back && back.focus && document.contains(back)) try { back.focus({ preventScroll: true }); } catch (e) {}
+        resolve(v);
+      }
+      box.__done = done;
+      box.addEventListener('click', function (e) {
+        if (e.target.closest('[data-confirm-ok]')) done(true);
+        else if (e.target.closest('[data-confirm-cancel]')) done(false);
+      });
+      box.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); }
+      });
+      var ok = box.querySelector('[data-confirm-ok]');
+      try { box.scrollIntoView({ block: 'nearest', behavior: App.reducedMotion() ? 'auto' : 'smooth' }); } catch (e) {}
+      if (ok) try { ok.focus({ preventScroll: true }); } catch (e) { ok.focus(); }
+    });
+  };
+
+  /* ---------------------------------------------------------------- */
   /* Toast                                                             */
   /* ---------------------------------------------------------------- */
   var toastTimer = null;

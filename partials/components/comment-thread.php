@@ -138,8 +138,8 @@ if (!function_exists('commentComposer')) {
             $slidePick = '<label class="ui-visually-hidden" for="' . $esc($inputId) . '-slide">About slide</label>'
                        . '<select class="pd-composer-slide" id="' . $esc($inputId) . '-slide" data-comment-slide title="Comment on one slide">'
                        . '<option value="">All slides</option>';
-            // Slide 1 (the one on screen when the sheet opens) is preselected; posts.js follows the carousel from there
-            for ($i = 1; $i <= $nSlides; $i++) $slidePick .= '<option value="' . $i . '"' . ($i === 1 ? ' selected' : '') . '>Slide ' . $i . '</option>';
+            // "All slides" until the user moves the carousel; posts.js then follows the slide on screen
+            for ($i = 1; $i <= $nSlides; $i++) $slidePick .= '<option value="' . $i . '">Slide ' . $i . '</option>';
             $slidePick .= '</select>';
         }
         return '<form class="pd-composer' . ($slidePick !== '' ? ' pd-composer--slides' : '') . '" data-comment-form data-id="' . (int)$postId . '" data-endpoint="' . $esc($endpoint) . '" autocomplete="off">'

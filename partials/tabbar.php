@@ -116,38 +116,41 @@ if ($uiActive === 'tires' && !$uiHasTires) { $uiActive = 'assets'; }   // no Tir
 if ($uiActive === 'pages' && $uiMergeMail) { $uiActive = 'emails'; }   // Pages share the Emails/Pages tab
 if ($uiActive === 'projects' && $uiIsAdmin) { $uiActive = 'manage'; }  // the admin's Projects live under Manage
 
-// Badge counts — pending items only, scoped to the client, never fatal.
+// Badge counts — the viewer's own queue, scoped to the client, never fatal: the client's is To Review ('pending'),
+// Joust's is Needs changes ('denied'). The JS that moves a badge after a decision (App.tabBadge, app.js) follows the same rule.
 $uiBadges = ['assets' => 0, 'tires' => 0, 'posts' => 0, 'emails' => 0, 'pages' => 0];
+$uiQueue  = $uiIsAdmin ? 'denied' : 'pending';
+$uiBadgeLabel = $uiIsAdmin ? ' need changes' : ' to review';
 if (!empty($client['id']) && isset($pdo) && $pdo instanceof PDO) {
     try {
         $uiCid = (int)$client['id'];
 
-        $uiSt = $pdo->prepare("SELECT COUNT(*) FROM posts WHERE company_id = ? AND status = 'pending'");
-        $uiSt->execute([$uiCid]);
+        $uiSt = $pdo->prepare("SELECT COUNT(*) FROM posts WHERE company_id = ? AND status = ?");
+        $uiSt->execute([$uiCid, $uiQueue]);
         $uiBadges['posts'] = (int)$uiSt->fetchColumn();
 
         if ($uiHasEmails) {
-            $uiSt = $pdo->prepare("SELECT COUNT(*) FROM emails WHERE company_id = ? AND status = 'pending' AND live = 0");
-            $uiSt->execute([$uiCid]);
+            $uiSt = $pdo->prepare("SELECT COUNT(*) FROM emails WHERE company_id = ? AND status = ? AND live = 0");
+            $uiSt->execute([$uiCid, $uiQueue]);
             $uiBadges['emails'] = (int)$uiSt->fetchColumn();
         }
         if ($uiHasPages) {
-            $uiSt = $pdo->prepare("SELECT COUNT(*) FROM pages WHERE company_id = ? AND status = 'pending' AND live = 0");
-            $uiSt->execute([$uiCid]);
+            $uiSt = $pdo->prepare("SELECT COUNT(*) FROM pages WHERE company_id = ? AND status = ? AND live = 0");
+            $uiSt->execute([$uiCid, $uiQueue]);
             $uiBadges['pages'] = (int)$uiSt->fetchColumn();
         }
 
         $uiSt = $pdo->prepare("
             SELECT COUNT(*) FROM tire_images ti
             INNER JOIN tires t ON t.id = ti.tire_id
-            WHERE t.company_id = ? AND ti.status = 'pending'
+            WHERE t.company_id = ? AND ti.status = ?
         ");
-        $uiSt->execute([$uiCid]);
+        $uiSt->execute([$uiCid, $uiQueue]);
         $uiBadges[$uiHasTires ? 'tires' : 'assets'] = (int)$uiSt->fetchColumn();
 
         if (function_exists('hasLibraryImagesTable') && hasLibraryImagesTable($pdo)) {
-            $uiSt = $pdo->prepare("SELECT COUNT(*) FROM library_images WHERE company_id = ? AND status = 'pending'");
-            $uiSt->execute([$uiCid]);
+            $uiSt = $pdo->prepare("SELECT COUNT(*) FROM library_images WHERE company_id = ? AND status = ?");
+            $uiSt->execute([$uiCid, $uiQueue]);
             $uiBadges['assets'] += (int)$uiSt->fetchColumn();
         }
     } catch (Throwable $uiErr) {
@@ -183,7 +186,7 @@ $uiBrandHref = clientUrl('index.php');
             <span class="ui-tab-label"><?= esc($uiTab['label']) ?></span>
           <?php endif; ?>
           <?php if ($uiCount > 0): ?>
-            <span class="ui-badge ui-tab-badge" aria-label="<?= esc($uiCount . ' to review') ?>"><?= $uiCount > 99 ? '99+' : (int)$uiCount ?></span>
+            <span class="ui-badge ui-tab-badge" aria-label="<?= esc($uiCount . $uiBadgeLabel) ?>" data-queue="<?= esc($uiQueue) ?>"><?= $uiCount > 99 ? '99+' : (int)$uiCount ?></span>
           <?php endif; ?>
         </a>
       </li>
@@ -193,4 +196,4 @@ $uiBrandHref = clientUrl('index.php');
     <div class="ui-tabbar-footer">Signed in as Joust · <a href="<?= esc(pagePath('logout')) ?>">Sign out</a></div>
   <?php endif; ?>
 </nav>
-<?php unset($uiMergeMail, $uiCountTabs, $uiTabs, $uiTiresLabel, $uiIsAdmin, $uiHasEmails, $uiHasTires, $uiHasPages, $uiModules, $uiActive, $uiScript, $uiKey, $uiTab, $uiBadges, $uiCid, $uiSt, $uiErr, $uiBrandName, $uiBrandHref, $uiIsActive, $uiCount, $uiCls); ?>
+<?php unset($uiMergeMail, $uiCountTabs, $uiTabs, $uiTiresLabel, $uiIsAdmin, $uiHasEmails, $uiHasTires, $uiHasPages, $uiModules, $uiActive, $uiScript, $uiKey, $uiTab, $uiBadges, $uiQueue, $uiBadgeLabel, $uiCid, $uiSt, $uiErr, $uiBrandName, $uiBrandHref, $uiIsActive, $uiCount, $uiCls); ?>

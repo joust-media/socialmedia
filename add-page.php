@@ -262,8 +262,8 @@ $viewUrl    = $isEdit ? pageViewUrl($page, $client) : '';
 $pageTitle   = $formTitle;
 $navSubtitle = $client['name'] . ' · Pages';
 $activeTab   = 'pages';
-$pageWide    = true;
-$navWide     = true;
+$pageWide    = false;   // the shared 720 px column, like every other top-level page
+$navWide     = false;
 $navBack     = ['href' => $studioUrl, 'label' => 'Pages'];
 $navLinks    = [];
 if ($isEdit) $navLinks[] = ['label' => 'Open in Pages', 'href' => pageUrl($page)];
@@ -327,7 +327,7 @@ include __DIR__ . '/partials/layout-top.php';
               <option value="<?= h($k) ?>"<?= $vals['status'] === $k ? ' selected' : '' ?>><?= h($label) ?></option>
             <?php endforeach; ?>
           </select>
-          <p class="studio-help" data-status-help>The client approves. <?= $isEdit ? 'Approve for client… is in the page’s ⋯ menu.' : 'Send it for review when it’s ready.' ?></p>
+          <p class="studio-help" data-status-help><?= h(reviewFormStatusHelp($isEdit ? (string)$page['status'] : '', 'page')) ?></p>
         </div>
         <div class="studio-field">
           <span class="studio-label">Live</span>

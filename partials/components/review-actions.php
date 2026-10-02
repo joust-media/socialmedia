@@ -19,7 +19,8 @@
  *       [data-state="admin-…"] rows; the page JS toggles them from data-status / data-live.
  *
  *   reviewMenuItemsHtml(string $kind, string $key, string $editUrl, string $deleteAttr): string   (emails / pages)
- *       The ⋯ items after Move / Add to flow / Audiences: Edit …, then "For the client" (Approve for client… —
+ *       The ⋯ items after Move / Add to flow / Audiences: Edit … (live only — every other state has Edit in the
+ *       footer), then "For the client" (Approve for client… —
  *       asks first —, Needs changes…), Move to Draft, Delete. There is no direct status override:
  *       Joust approves on the client's behalf only through Approve for client…, like posts.
  */
@@ -91,8 +92,10 @@ if (!function_exists('reviewMenuItemsHtml')) {
         $noun = $kind === 'page' ? 'page' : 'email';
         $live = $key === 'live';
         $vis  = static function (bool $on) { return $on ? '' : ' hidden'; };
-        $out  = '<div class="pd-menu-sep" role="separator"></div>'
-              . '<a role="menuitem" class="pd-menu-link" href="' . reviewEsc($editUrl) . '">Edit ' . $noun . '…</a>';
+        // Edit …: only while the footer has no Edit button (a live item: Unmark live only) — one entry per editor
+        $out  = '<div class="pd-menu-group" role="group" data-state="menu-edit"' . $vis($live) . '>'
+              . '<div class="pd-menu-sep" role="separator"></div>'
+              . '<a role="menuitem" class="pd-menu-link" href="' . reviewEsc($editUrl) . '">Edit ' . $noun . '…</a></div>';
         $out .= '<div class="pd-menu-group" role="group" aria-label="For the client" data-state="menu-decide"' . $vis(!$live && $key !== 'draft') . '>'
               . '<div class="pd-menu-sep" role="separator"></div>'
               . '<button type="button" role="menuitem" data-approve-for-client data-state="menu-approve"' . $vis(in_array($key, ['pending', 'denied'], true)) . '>Approve for client…</button>'

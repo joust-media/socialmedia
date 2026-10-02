@@ -273,8 +273,16 @@
       window.location.href = sum.url;
       return;
     }
+    // Home: its "Waiting on …" cards and the tab badges count what was just uploaded — reload them in place,
+    // and toast (with the link) after the reload.
+    if (onHome()) {
+      try { sessionStorage.setItem('us.toast', JSON.stringify({ m: sum.message, k: kind, h: sum.url || '', l: sum.linkLabel || '' })); } catch (e) {}
+      window.location.reload();
+      return;
+    }
     toast(sum.message, kind, 7000, sum.url ? { href: sum.url, label: sum.linkLabel } : null);
   }
+  function onHome() { return !!$('.ui-tab[data-tab="home"][aria-current="page"]'); }
   /** Is the destination URL the page we are on (same script, client, view and tire)? */
   function landsHere(u) {
     var a, b;
@@ -899,7 +907,7 @@
   function boot() {
     ensureCss();
     hookMenu();
-    try { var t = JSON.parse(sessionStorage.getItem('us.toast') || 'null'); if (t) { sessionStorage.removeItem('us.toast'); setTimeout(function () { toast(t.m, t.k, 6000); }, 300); } } catch (e) {}
+    try { var t = JSON.parse(sessionStorage.getItem('us.toast') || 'null'); if (t) { sessionStorage.removeItem('us.toast'); setTimeout(function () { toast(t.m, t.k, t.h ? 7000 : 6000, t.h ? { href: t.h, label: t.l || 'View' } : null); }, 300); } } catch (e) {}
     var u; try { u = new URL(window.location.href); } catch (e) { return; }
     if (u.searchParams.get('upload') !== '1') return;
     var o = { dest: u.searchParams.get('dest') || undefined, tire: u.searchParams.get('tire') || undefined, series: u.searchParams.get('series') || undefined, each: u.searchParams.get('each') === '1' };

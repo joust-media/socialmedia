@@ -308,6 +308,10 @@ foreach ($st->fetchAll() as $row) {
     if (!empty($row['posted'])) { $counts['scheduled'] += $n; }
     elseif (isset($counts[$row['status']])) { $counts[$row['status']] += $n; }
 }
+// Admin with no explicit segment: open on Joust's own queue (Needs changes) when it has items — the tab badge counts it too.
+if ($admin && !$directPost && trim((string)($_GET['status'] ?? '')) === '' && $counts['denied'] > 0) {
+    $segment = 'denied';
+}
 
 // ---------------------------------------------------------------------
 // The list

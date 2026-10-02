@@ -51,9 +51,14 @@ li + li > .pgl-card::before { left: 84px; }
 /* ---------------------------------------------------------------------
    Detail — preview frame
    --------------------------------------------------------------------- */
-.pg-head { flex-wrap: wrap; row-gap: 4px; }
-.pg-head .pd-type, .pg-head .pd-edited { white-space: nowrap; }
-.pg-head .pd-edited { margin-left: auto; }
+/* One row, ⋯ always on it (390 / 320 px too): the code and the "edited" stamp give way (ellipsis) before anything wraps */
+.pg-head { flex-wrap: nowrap; min-width: 0; }
+.pg-head > * { flex: none; }
+.pg-head .pd-type, .pg-head .pd-edited { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.pg-head .pd-type { flex: 0 1 auto; }
+.pg-head .pd-edited { flex: 0 1 auto; margin-left: auto; }
+/* Phones: the "edited" stamp steps aside so the code, the pill and ⋯ share one row */
+@media (max-width: 559px) { .pg-head { gap: 6px; } .pg-head .pd-edited { display: none; } .pg-head .pd-more { margin-left: auto; } }
 .pg-preview { margin: 0 -16px; padding: 0 16px 4px; }
 .pg-preview-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 .pg-preview-toggle .ui-segmented-item { min-height: 28px; padding: 3px 12px; }
