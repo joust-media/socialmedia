@@ -207,7 +207,8 @@ function note(line) { fs.appendFileSync(CLICKS, line + '\n'); }
       expect(/^upload:[a-f0-9]{32}$/.test(await page.evaluate(() => App.newPost._state().slides[0].ref)), 'the parked upload is slide 1');
       if (viewport === 'phone') { await page.click('[data-np-steps] [data-value="details"]'); clicks++; }
       await page.fill('[data-np-field="caption"]', 'Made from an upload');
-      await Promise.all([page.waitForNavigation(), page.click('[data-np-save="draft"]')]); clicks++;
+      await page.click('[data-np-save="draft"]'); clicks++;   // on Posts: refreshed in place (no reload), the draft's sheet opens
+      await page.waitForFunction(() => /[?&]post=\d+/.test(location.search) && document.querySelector('#uiSheet.is-open .pd[data-status="draft"]'));
       note(`${viewport}: upload an image and make a post from it (+ New → Upload → New post → Save draft, typing aside): ${clicks} clicks`);
       expect(/posts\.php\?client=kenda&post=\d+/.test(page.url()), page.url());
       const id = page.url().match(/post=(\d+)/)[1];

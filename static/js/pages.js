@@ -307,6 +307,16 @@
     fitPreview(root);
   }
 
+  /* "Kenda Tires asked for changes · just now" + the note, after an in-place Needs changes (admin ⋯). */
+  function fillNote(art, text, actor) {
+    var root = art.closest('.ui-sheet-root') || document;
+    var box = $('[data-pd-note]', root); if (!box) return;
+    var who = actor === 'client' ? (cfg.clientName || 'The client') : 'Joust';
+    var w = $('[data-pd-note-who]', box); if (w) w.textContent = who + ' asked for changes';
+    var when = $('[data-pd-note-when]', box); if (when) when.textContent = ' · just now';
+    var p = $('[data-pd-note-text]', box); if (p) p.textContent = text;
+  }
+
   /* ---- state sync (which footer rows show) ------------------------- */
   function syncState(root) {
     var art = pg(root); if (!art) return;
@@ -320,7 +330,14 @@
       'live':           live,
       'denied':         key === 'denied',
       'draft':          key === 'draft',
-      'admin-status':   !live,
+      'admin-pending':  key === 'pending',
+      'admin-waiting':  key === 'pending',
+      'note':           key === 'denied',
+      // ⋯ "For the client" (admin): the client's decisions, on purpose only — no direct status override
+      'menu-decide':    !live && status !== 'draft',
+      'menu-approve':   !live && (status === 'pending' || status === 'denied'),
+      'menu-deny':      !live && (status === 'pending' || status === 'approved'),
+      'menu-draft':     !live && status !== 'draft',
       'admin-draft':    key === 'draft',
       'admin-approved': key === 'approved',
       'admin-denied':   key === 'denied',
@@ -428,12 +445,13 @@
             if (line) line.textContent = 'Approved ' + fmtDay(new Date()) + ' · Joust will make it live';
           }
           if (note) appendComment(art, note, App.actor);
+          if (note && status === 'denied') fillNote(art, note, App.actor);
           var form = $('[data-deny-form]', sheetRoot()); if (form) { form.hidden = true; var ta = $('[data-deny-note]', form); if (ta) ta.value = ''; }
         }
         if (opts.toast) toast(opts.toast, 'success');
         else if (status === 'approved') toast('Approved', 'success');
         else if (status === 'denied') toast(App.role === 'admin' ? 'Marked as needs changes' : 'Sent to Joust', 'success');
-        else if (status === 'pending') toast(before.status === 'draft' ? 'Sent for review' : 'Back in To Review');
+        else if (status === 'pending') toast(before.status === 'draft' ? 'Sent for review' : 'Sent for review — back in To Review', 'success');
         else toast('Moved to Draft');
         if (status === 'denied' && App.role !== 'admin' && P.current && P.current.id === id) setTimeout(P.close, 700);
       }
@@ -449,7 +467,7 @@
     var btns = item ? $$('[data-resubmit]', item) : [];
     btns.forEach(function (b) { b.disabled = true; });
     if (P.current && P.current.id === id && P.segment === 'denied') P.close();
-    return P.decide(id, 'pending', null, { toast: 'Resubmitted — back in To Review' }).then(function (res) {
+    return P.decide(id, 'pending', null, { toast: 'Sent for review — back in To Review' }).then(function (res) {
       if (!res || !res.ok) btns.forEach(function (b) { b.disabled = false; });
       return res;
     });
@@ -645,7 +663,7 @@
       P.open(opener.getAttribute('data-page-open'));
     });
 
-    // work queue: Resubmit for review (admin-only markup; page-status.php enforces the role)
+    // work queue: Send for review (admin-only markup; page-status.php enforces the role)
     document.addEventListener('click', function (e) {
       var btn = e.target.closest('[data-resubmit]');
       if (!btn || btn.disabled) return;
@@ -670,6 +688,12 @@
         if (st === 'denied') openDeny(root); else P.decide(id, st);
         return;
       }
+      if (t.closest('[data-approve-for-client]')) {
+        var who = cfg.clientName || 'the client';
+        if (window.confirm('Approve this page for ' + who + '?\n\nOnly do this when ' + who + ' has approved it outside the portal — they won\'t be asked.')) P.decide(id, 'approved', null, { toast: 'Approved for ' + who });
+        return;
+      }
+      if (t.closest('[data-set-draft]')) { P.decide(id, 'draft', null, { toast: 'Moved to Draft — the client can\'t see it now' }); return; }
       var setSt = t.closest('[data-set-status]');
       if (setSt) {
         var to = setSt.getAttribute('data-set-status');
@@ -678,7 +702,7 @@
         return;
       }
       if (t.closest('[data-deny-cancel]')) { var f = $('[data-deny-form]', root); if (f) f.hidden = true; return; }
-      if (t.closest('[data-resubmit-detail]')) { P.decide(id, 'pending', null, { toast: 'Resubmitted — back in To Review' }); return; }
+      if (t.closest('[data-resubmit-detail]')) { P.decide(id, 'pending', null, { toast: 'Sent for review — back in To Review' }); return; }
       if (t.closest('[data-submit]')) { P.submit(id); return; }
 
       var tl = t.closest('[data-toggle-live]');

@@ -16,8 +16,13 @@
      [data-newpost-edit="ID"]     edit an existing post (Posts detail ⋯ → Edit post…)
      ?newpost=1 | upload | edit (&post=ID) [&newpost_assets=tire:1,…]   opens on load (the param is
                                   removed from the address bar); retired routes redirect here.
-   After a save the sheet closes and the post's detail opens (App.posts.open on Posts, else
-   posts.php?post=ID) with a toast.
+   After a save the sheet closes and the post's detail opens with a toast. On Posts (same client) nothing
+   reloads: App.posts.refresh() swaps / inserts / removes the row and moves the segment counts, then
+   App.posts.open(); anywhere else the page goes to posts.php?post=ID (its segment + month).
+   Needs changes posts open with the client's latest note pinned above the tray; the primary is Send for review.
+   Fewer clicks: the caption takes focus after a pointer pick while it is empty (tiles never steal focus), and
+   on entering Details on a phone; with two panes, series chips show directly while there are few of them
+   (a series chip also narrows to its tire).
 
    Layout: header · tray (selected slides: numbered, Cover badge, drag / keyboard reorder, ×,
    "N / 20", shape warning) · body (Media: Approved | Upload; Details: caption, hashtags, type,
@@ -114,7 +119,7 @@
       opts: opts, slug: '', client: null, init: null,
       mode: opts.postId ? 'edit' : 'create', postId: opts.postId ? parseInt(opts.postId, 10) : 0, post: null,
       slides: [], pane: opts.pane === 'upload' ? 'upload' : 'approved', step: 'media',
-      f: { tires: [], lib: false, series: [], media: 'all', q: '' },
+      f: { tires: [], lib: false, series: [], media: 'all', q: '' },   // tires = explicit tire chips; a series chip adds its tire (effTires)
       items: [], next: null, total: 0, loading: false, reqId: 0,
       replaceAt: null, menuAt: null, dirty: false, saving: false, confirming: false,
       uploads: [], busyUpload: false, lastFocus: document.activeElement, previewKey: ''
@@ -138,6 +143,10 @@
           '<button type="button" class="np-close" data-np-close aria-label="Close">' + I.x + '</button>' +
         '</header>' +
         '<section class="np-tray" aria-label="Selected slides" data-np-tray>' +
+          '<div class="pd-note np-note" data-np-note role="note" aria-label="What should change" hidden>' +
+            '<div class="pd-note-head"><span data-np-note-who></span><span class="pd-note-when text-tertiary" data-np-note-when></span></div>' +
+            '<p class="pd-note-text" data-np-note-text></p>' +
+          '</div>' +
           '<div class="np-tray-head"><span class="np-tray-title">Slides</span><span class="np-tray-count" data-np-count>0 / ' + MAX + '</span>' +
             '<span class="np-tray-hint text-tertiary" data-np-tray-hint>Drag to reorder · slide 1 is the cover</span></div>' +
           '<ol class="np-tray-list" role="listbox" aria-label="Slides in carousel order" aria-orientation="horizontal" data-np-tray-list></ol>' +
@@ -324,8 +333,21 @@
       field('name').value = p.name || '';
       setType(p.post_type || 'post');
       S.slides = res.data.slides.map(function (s) { return Object.assign({ uid: ++uid, existing: true }, s); });
+      S.note = res.data.note || null;
+      renderNote();
       S.dirty = false;
     });
+  }
+
+  /** Needs changes: "Kenda Tires asked for changes · 2h ago" + the note, above the tray (what to fix, while fixing it). */
+  function renderNote() {
+    var box = $('[data-np-note]', R); if (!box) return;
+    var n = S && S.post && S.post.status === 'denied' ? S.note : null;
+    box.hidden = !n;
+    if (!n) return;
+    $('[data-np-note-who]', box).textContent = (n.who || 'The client') + ' asked for changes';
+    $('[data-np-note-when]', box).textContent = n.when ? ' · ' + n.when : '';
+    $('[data-np-note-text]', box).innerHTML = (n.slide ? '<span class="pd-note-slide">On slide ' + n.slide + ':</span> ' : '') + (n.text ? esc(n.text) : '<span class="text-tertiary">No note left — see the comments on the post.</span>');
   }
 
   function requestClose() {
@@ -386,6 +408,8 @@
     drop.addEventListener('drop', function (e) { var f = e.dataTransfer && e.dataTransfer.files; if (f && f.length) addFiles(Array.prototype.slice.call(f)); });
     input.addEventListener('change', function () { addFiles(Array.prototype.slice.call(input.files || [])); input.value = ''; });
     var grid = $('[data-np-grid]', R);
+    // A pointer pick keeps the focus where it is (the caption, once it has it) — keyboard users still Tab to tiles.
+    grid.addEventListener('mousedown', function (e) { if (e.target.closest('[data-np-ref]')) e.preventDefault(); });
     grid.addEventListener('load', function (e) { if (e.target.tagName === 'IMG') e.target.closest('.np-tile') && e.target.closest('.np-tile').classList.add('is-loaded'); }, true);
   }
 
@@ -426,7 +450,7 @@
     if (S && S.menuAt !== null && !t.closest('[data-np-menu]') && !t.closest('[data-np-slide]')) closeMenu(false);
 
     var tile = t.closest('[data-np-ref]');
-    if (tile && tile.closest('[data-np-grid]')) { toggleItem(tile.getAttribute('data-np-ref')); return; }
+    if (tile && tile.closest('[data-np-grid]')) { toggleItem(tile.getAttribute('data-np-ref')); if (e.detail > 0) captionNext(); return; }
     var rm = t.closest('[data-np-remove]');
     if (rm) { e.stopPropagation(); removeSlide(parseInt(rm.closest('[data-np-slide]').getAttribute('data-index'), 10)); return; }
     var mi = t.closest('[data-np-menu-act]'); if (mi) { menuAction(mi.getAttribute('data-np-menu-act')); return; }
@@ -462,6 +486,21 @@
     $$('[data-np-steps] .ui-segmented-item', R).forEach(function (b) { var on = b.getAttribute('data-value') === S.step; b.classList.toggle('is-active', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
     var body = $('[data-np-body]', R); if (body) body.scrollTop = 0;
     renderFooter();
+    // Phones: entering Details with slides and no caption yet → the caption is the next thing to do
+    if (S.step === 'details' && S.slides.length && !val('caption').trim() && !twoPane()) focusCaption();
+  }
+  function twoPane() { return !!(window.matchMedia && window.matchMedia('(min-width: 900px)').matches); }
+  function focusCaption() {
+    var c = field('caption'); if (!c || c.offsetParent === null) return;
+    try { c.focus({ preventScroll: true }); } catch (e) { c.focus(); }
+  }
+  /** After a pointer pick (two panes): the caption takes the focus while it is still empty — unless the search box
+   *  holds a query the user is still working with. Typing then goes straight into the caption (no extra click). */
+  function captionNext() {
+    if (!S || S.replaceAt !== null || !S.slides.length || !twoPane() || val('caption').trim()) return;
+    var a = document.activeElement, q = $('[data-np-q]', R);
+    if (a === q && q.value.trim()) return;
+    focusCaption();
   }
   function setType(v) {
     var tg = $('[data-np-type]', R); if (!tg) return;
@@ -480,25 +519,36 @@
   /* ------------------------------------------------------------------ */
   /* Picker (Approved)                                                   */
   /* ------------------------------------------------------------------ */
+  var DIRECT_SERIES = 8;   // up to this many series chips (every tire together) show without picking a tire first
+  function tiresOfSeries() { var out = []; S.f.series.forEach(function (k) { var t = parseInt(k.split(':')[0], 10); if (out.indexOf(t) === -1) out.push(t); }); return out; }
+  /** Tires the grid is narrowed to: the tire chips plus the tire of every picked series chip. */
+  function effTires() { var out = S.f.tires.slice(); tiresOfSeries().forEach(function (t) { if (out.indexOf(t) === -1) out.push(t); }); return out; }
+  function seriesTires(fc) { return fc.tires.filter(function (t) { return t.series && t.series.length >= 2; }); }
+  function directSeries(fc) {   // two panes only: on a phone the chip rows would push the grid off the first screen
+    var n = 0; seriesTires(fc).forEach(function (t) { n += t.series.length; });
+    return n > 0 && n <= DIRECT_SERIES && twoPane();
+  }
   function renderGroups() {
     var fc = S.init.facets || { tires: [], library: 0, media: { image: 0, video: 0 } };
     var g = $('[data-np-groups]', R), html = '';
-    var allOn = !S.f.tires.length && !S.f.lib;
+    var eff = effTires();
+    var allOn = !eff.length && !S.f.lib;
     html += '<button type="button" class="np-chip" data-np-chip="all" aria-pressed="' + allOn + '">All</button>';
     fc.tires.forEach(function (t) {
-      var on = S.f.tires.indexOf(t.id) !== -1;
+      var on = eff.indexOf(t.id) !== -1;
       html += '<button type="button" class="np-chip" data-np-chip="tire" data-id="' + t.id + '" aria-pressed="' + on + '">' + esc(t.name) + ' <span class="np-chip-n">' + t.count + '</span></button>';
     });
     if (fc.library) html += '<button type="button" class="np-chip" data-np-chip="library" aria-pressed="' + S.f.lib + '">Library <span class="np-chip-n">' + fc.library + '</span></button>';
     g.innerHTML = html;
-    // Series chips for the selected tires (key "<tire>:<ref|series id>")
-    var sbox = $('[data-np-series]', R), sh = '';
-    fc.tires.forEach(function (t) {
-      if (S.f.tires.indexOf(t.id) === -1 || !t.series || t.series.length < 2) return;
+    // Series chips (key "<tire>:<ref|series id>"): every tire's when there are few (direct — one tap narrows to
+    // that tire + series), else the selected tires' only.
+    var sbox = $('[data-np-series]', R), sh = '', direct = directSeries(fc);
+    var shown = seriesTires(fc).filter(function (t) { return direct || eff.indexOf(t.id) !== -1; });
+    shown.forEach(function (t) {
       t.series.forEach(function (s) {
         var key = t.id + ':' + s.key, on = S.f.series.indexOf(key) !== -1;
         sh += '<button type="button" class="np-chip np-chip--sm" data-np-chip="series" data-key="' + esc(key) + '" aria-pressed="' + on + '">'
-            + (S.f.tires.length > 1 ? '<span class="np-chip-pre">' + esc(t.name) + ' · </span>' : '') + esc(s.name) + ' <span class="np-chip-n">' + s.count + '</span></button>';
+            + (shown.length > 1 ? '<span class="np-chip-pre">' + esc(t.name) + ' · </span>' : '') + esc(s.name) + ' <span class="np-chip-n">' + s.count + '</span></button>';
       });
     });
     sbox.innerHTML = sh; sbox.hidden = !sh;
@@ -514,8 +564,10 @@
     var kind = chip.getAttribute('data-np-chip');
     if (kind === 'all') { S.f.tires = []; S.f.lib = false; S.f.series = []; }
     else if (kind === 'tire') {
+      // pressed (by its chip or one of its series) → off, with its series; else on
       var id = parseInt(chip.getAttribute('data-id'), 10), i = S.f.tires.indexOf(id);
-      if (i === -1) S.f.tires.push(id); else { S.f.tires.splice(i, 1); S.f.series = S.f.series.filter(function (k) { return k.split(':')[0] !== String(id); }); }
+      if (effTires().indexOf(id) === -1) S.f.tires.push(id);
+      else { if (i !== -1) S.f.tires.splice(i, 1); S.f.series = S.f.series.filter(function (k) { return k.split(':')[0] !== String(id); }); }
     } else if (kind === 'library') S.f.lib = !S.f.lib;
     else if (kind === 'series') { var k = chip.getAttribute('data-key'), j = S.f.series.indexOf(k); if (j === -1) S.f.series.push(k); else S.f.series.splice(j, 1); }
     else if (kind === 'media') S.f.media = chip.getAttribute('data-v');
@@ -527,7 +579,7 @@
   function fetchItems(more) {
     if (!S || !S.slug) return Promise.resolve();
     var id = ++S.reqId;
-    var params = { tires: S.f.tires, library: S.f.lib ? 1 : '', series: S.f.series, media: S.f.media === 'all' ? '' : S.f.media, q: S.f.q, offset: more ? (S.next || 0) : 0 };
+    var params = { tires: effTires(), library: S.f.lib ? 1 : '', series: S.f.series, media: S.f.media === 'all' ? '' : S.f.media, q: S.f.q, offset: more ? (S.next || 0) : 0 };
     S.loading = true;
     var grid = $('[data-np-grid]', R), btn = $('[data-np-more-btn]', R);
     if (!more) grid.setAttribute('aria-busy', 'true');
@@ -545,7 +597,7 @@
       if (App.video && App.video.enhance) App.video.enhance(grid);
       var empty = $('[data-np-empty]', R);
       empty.hidden = S.items.length > 0;
-      empty.textContent = S.f.q || S.f.tires.length || S.f.lib || S.f.media !== 'all' ? 'Nothing approved matches — clear a filter or try another name.' : 'No approved images yet. Approve images in Assets, or switch to Upload.';
+      empty.textContent = S.f.q || effTires().length || S.f.lib || S.f.media !== 'all' ? 'Nothing approved matches — clear a filter or try another name.' : 'No approved images yet. Approve images in Assets, or switch to Upload.';
       var moreBox = $('[data-np-more]', R); moreBox.hidden = S.next === null || S.next === undefined;
       var n = $('[data-np-more-n]', R); if (n) n.textContent = (S.total - S.items.length) + ' more';
       syncTiles();
@@ -978,7 +1030,7 @@
   function renderFooter() {
     if (!R) return;
     var n = S.slides.length;
-    $('[data-np-foot-count]', R).textContent = n + ' selected';
+    $('[data-np-foot-count]', R).textContent = n ? n + (n === 1 ? ' slide' : ' slides') : 'No slides yet';
     var busy = uploadsBusy(), acts = $('[data-np-actions]', R);
     var st = S.post ? S.post.status : null, draftOk = S.init && S.init.draft;
     var html = '';
@@ -988,7 +1040,7 @@
       html += '<button type="button" class="ui-btn ui-btn--filled" data-np-save="review"' + (busy || S.saving ? ' disabled' : '') + '>' + (busy ? 'Uploading…' : 'Send for review') + '</button>';
     } else if (st === 'denied') {
       html += '<button type="button" class="ui-btn ui-btn--tinted" data-np-save="keep"' + (busy || S.saving ? ' disabled' : '') + '>Save</button>';
-      html += '<button type="button" class="ui-btn ui-btn--filled" data-np-save="review"' + (busy || S.saving ? ' disabled' : '') + '>' + (busy ? 'Uploading…' : 'Save & resubmit') + '</button>';
+      html += '<button type="button" class="ui-btn ui-btn--filled" data-np-save="review"' + (busy || S.saving ? ' disabled' : '') + '>' + (busy ? 'Uploading…' : 'Send for review') + '</button>';
     } else {
       html += '<button type="button" class="ui-btn ui-btn--filled" data-np-save="keep"' + (busy || S.saving ? ' disabled' : '') + '>' + (busy ? 'Uploading…' : 'Save changes') + '</button>';
     }
@@ -1071,22 +1123,24 @@
       S.dirty = false;
       S.uploads.forEach(function (u) { u.token = null; });   // claimed now — never discard
       var url = d.url, mode = S.mode;
-      forceClose(function () { afterSave(d.post_id, url, msg, mode, d.slides); });
+      forceClose(function () { afterSave(d.post_id, url, msg, mode, slug); });
     });
   }
-  /* Edit on Posts: the open detail / list row refresh in place (App.posts.open + the row thumb). Everything else —
-     and every new post — lands on posts.php?post=ID, so the list's segment / month follow the post (Drafts first). */
-  function afterSave(id, url, msg, mode, slides) {
+  /* On Posts for the same client — every save (create, draft, send for review, edit, Edit & resubmit): the row is
+     refreshed in place (App.posts.refresh: swapped, inserted, or it leaves this segment) with the segment counts,
+     then the post's detail opens; the toast names the segment when the post is not in this one (+ a View link).
+     Anywhere else — or if the refresh fails — the page goes to posts.php?post=ID (segment / month follow the post). */
+  function afterSave(id, url, msg, mode, slug) {
     document.dispatchEvent(new CustomEvent('newpost:saved', { detail: { id: id, url: url, mode: mode } }));
-    var onPosts = !!(App.posts && App.posts.open && $('.page-posts'));
-    if (onPosts && mode === 'edit' && $('[data-post-item="' + id + '"]')) {
-      var tpl = $('template[data-post-template="' + id + '"]'); if (tpl && tpl.parentNode) tpl.parentNode.removeChild(tpl);   // stale inline detail → fetch the partial
-      var row = $('[data-post-item="' + id + '"]'), first = slides && slides[0], img = row && $('.pl-thumb img', row);
-      if (img && first && first.media === 'image') { img.removeAttribute('srcset'); img.removeAttribute('sizes'); img.src = first.thumb; }
-      App.posts.open(id); toast(msg, 'success'); return;
-    }
-    try { sessionStorage.setItem('np.toast', msg); } catch (e) {}
-    window.location.href = url;
+    var onPosts = !!(App.posts && App.posts.refresh && App.posts.open && $('.page-posts [data-posts-list]'))
+               && (document.body.getAttribute('data-client') || '') === (slug || '');
+    var go = function () { try { sessionStorage.setItem('np.toast', msg); } catch (e) {} window.location.href = url; };
+    if (!onPosts) { go(); return; }
+    App.posts.refresh(id).then(function (r) {
+      App.posts.open(id);
+      if (r && !r.inView && App.toast) App.toast(msg + ' · in ' + r.label, { kind: 'success', link: { href: url, label: 'View' } });
+      else toast(msg, 'success');
+    }, go);
   }
 
   /* ------------------------------------------------------------------ */

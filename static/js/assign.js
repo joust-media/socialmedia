@@ -675,7 +675,7 @@
     var item = t.closest('[data-assign]');
     if (item) { e.preventDefault(); closeMenus(); run(item); return; }
     if (!t.closest('[data-asg-menu]')) closeMenus();
-    else if (t.closest('a[role="menuitem"]')) closeMenus();
+    else if (t.closest('a[role="menuitem"], button[role="menuitem"]')) closeMenus();   // the detail sheets' review items act in emails.js / pages.js
 
     var s = t.closest('[data-asg-select]');
     if (s) { e.preventDefault(); select(s.getAttribute('data-asg-select')); return; }

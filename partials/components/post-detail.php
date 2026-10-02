@@ -12,8 +12,13 @@
  *            last_edit (optional ['actor','created_at'] of the newest edited_caption / edited_hashtags
  *                       row → "Edited by <client> · 5m ago" under the caption when actor = client)
  *     $opts: 'admin'     bool  — default isAdmin(). Admin-only markup (⋯ menu, date editor, Replace,
- *                        Mark / Unmark Scheduled, Needs-changes row) is NEVER emitted otherwise. The
- *                        caption / hashtags editor is shared by both seats (hidden once Scheduled).
+ *                        the admin footer rows, the Needs changes note banner) is NEVER emitted otherwise.
+ *                        The caption / hashtags editor is shared by both seats (hidden once Scheduled).
+ *     Footer, one primary per state — client: To Review → Needs changes · Approve. Admin (Joust's own next step):
+ *       Draft → Edit post… · Send for review   To Review → Edit post…   Needs changes → Edit & resubmit
+ *       Approved → Edit post… · Mark scheduled   Scheduled → Unmark scheduled
+ *     The client's decisions reach the admin only through ⋯ (Approve for client… asks first, Needs changes…,
+ *     Send for review on Needs changes). Needs changes pins the client's latest note above the media.
  *            'hasPosted' bool  — posts.posted exists (default true) → Mark Scheduled is offered
  *            'endpoint'  string — status endpoint (default 'status.php', resolved against basePath())
  *     Output: <article class="pd" data-post-detail="ID" data-status data-posted>
@@ -205,6 +210,8 @@ if (!function_exists('renderPostMedia')) {
     }
 }
 
+require_once __DIR__ . '/review-actions.php';   // reviewLatestNote() / reviewNoteBanner(): the Needs changes note on top
+
 if (!function_exists('renderPostDetail')) {
     function renderPostDetail(array $post, array $opts = []): string
     {
@@ -232,6 +239,13 @@ if (!function_exists('renderPostDetail')) {
         $approvedAt = !empty($post['approved_at']) ? strtotime((string)$post['approved_at']) : false;
         $approvedLine = 'Approved' . ($approvedAt ? ' ' . date('M j', $approvedAt) : '') . ' · Joust will schedule this';
 
+        // Admin ⋯ "For the client" group (posts.js syncState re-evaluates the same rules after every change)
+        $isDenied   = $status === 'denied' && !$posted;
+        $canApprove = !$posted && in_array($status, ['pending', 'denied'], true);
+        $canDeny    = !$posted && in_array($status, ['pending', 'approved'], true);
+        $menuDecide = $canApprove || $canDeny || $isDenied;
+        $clientName = trim((string)($post['company_name'] ?? '')) !== '' ? (string)$post['company_name'] : 'the client';
+
         $out  = '<article class="pd" data-post-detail="' . $id . '" data-id="' . $id . '" data-status="' . pdEsc($status) . '" data-posted="' . ($posted ? '1' : '0') . '" data-past="' . ($datePast ? '1' : '0') . '" data-endpoint="' . pdEsc($endpoint) . '">';
         $out .= '<div class="pd-body" data-pd-body>';
 
@@ -253,10 +267,24 @@ if (!function_exists('renderPostDetail')) {
                   . '<button type="button" role="menuitem" data-replace-image' . ($images ? '' : ' disabled') . '>Replace image</button>'
                   // Every file of the post, saved one by one (posts.js) — what Classic admin's "Save" button did
                   . '<button type="button" role="menuitem" data-download-media' . ($images ? '' : ' disabled') . '>Download media</button>'
+                  // The client's decisions, taken on their behalf only on purpose (never a footer button for the admin):
+                  // Approve for client… asks first; Needs changes… opens the note; Send for review resubmits as is.
+                  . '<div class="pd-menu-group" role="group" aria-label="For the client" data-state="menu-decide"' . ($menuDecide ? '' : ' hidden') . '>'
+                  . '<div class="pd-menu-sep" role="separator"></div>'
+                  . '<button type="button" role="menuitem" data-approve-for-client data-state="menu-approve"' . ($canApprove ? '' : ' hidden') . '>Approve for client…</button>'
+                  . '<button type="button" role="menuitem" data-decide="denied" data-state="menu-deny"' . ($canDeny ? '' : ' hidden') . '>Needs changes…</button>'
+                  . '<button type="button" role="menuitem" data-decide="pending" data-state="menu-resubmit"' . ($isDenied ? '' : ' hidden') . '>Send for review</button>'
+                  . '</div>'
+                  . '<div class="pd-menu-sep" role="separator"></div>'
                   . '<button type="button" role="menuitem" class="is-destructive" data-delete-post>Delete</button>'
                   . '</div></div>';
         }
         $out .= '</div>';
+
+        // ---- 0. Needs changes (admin): the client's note first, above the media ----------------
+        if ($admin) {
+            $out .= reviewNoteBanner(reviewLatestNote($comments, (string)$brand['name']), $isDenied);
+        }
 
         // ---- 1. Media carousel -------------------------------------------
         $out .= renderPostMedia($images, ['admin' => $admin, 'label' => (string)$brand['name'] . ' post']);
@@ -331,13 +359,13 @@ if (!function_exists('renderPostDetail')) {
         $out .= '<div class="pd-footer" data-pd-footer>';
         $out .= commentComposer($id, ['endpoint' => $endpoint, 'slides' => count(array_slice($images, 0, defined('POST_MAX_MEDIA') ? POST_MAX_MEDIA : 20))]);   // ≥ 2 slides → the "Slide" picker
 
-        // Deny note (required, min 3) — the same form for client and admin
+        // Needs changes note (required, min 3) — the client's button; the admin reaches it from ⋯ → Needs changes…
         $out .= '<form class="pd-deny" data-deny-form hidden>'
               . '<label class="pd-editor-label" for="pd-deny-' . $id . '">What should change?</label>'
               . '<textarea class="ui-textarea" id="pd-deny-' . $id . '" data-deny-note placeholder="What should change?" minlength="3" maxlength="2000" rows="2" required></textarea>'
               . '<p class="pd-editor-hint" data-deny-hint>A short note is required so Joust knows what to fix.</p>'
               . '<div class="ui-btn-group"><button type="button" class="ui-btn ui-btn--gray" data-deny-cancel>Cancel</button>'
-              . '<button type="submit" class="ui-btn ui-btn--deny ui-btn--primary" data-deny-submit disabled>Send &amp; deny</button></div>'
+              . '<button type="submit" class="ui-btn ui-btn--deny ui-btn--primary" data-deny-submit disabled>Send</button></div>'
               . '</form>';
 
         // State rows (all rendered; posts.js toggles [data-state] by data-status/data-posted)
@@ -348,36 +376,43 @@ if (!function_exists('renderPostDetail')) {
         if ($admin) {
             $out .= '<div class="pd-state pd-state--draft" data-state="draft"' . ($status === 'draft' ? '' : ' hidden') . '>'
                   . '<span>Draft — the client can\'t see this yet</span></div>';
-            $out .= '<div class="pd-state pd-state--denied" data-state="denied"' . (($status === 'denied' && !$posted) ? '' : ' hidden') . '>'
-                  . (function_exists('icon') ? icon('xmark') : '') . '<span>Needs changes</span></div>';
+            $out .= '<div class="pd-state pd-state--pending" data-state="admin-waiting"' . (($status === 'pending' && !$posted) ? '' : ' hidden') . '>'
+                  . '<span>Waiting on ' . pdEsc($clientName) . ' to review</span></div>';
         }
 
-        // Action bar
+        // Action bar — one primary per state.
+        //   Client: To Review → Needs changes · Approve.
+        //   Admin (Joust's own next step; the client's decisions live in ⋯):
+        //     Draft → Edit post… · Send for review      To Review → Edit post…
+        //     Needs changes → Edit & resubmit (the New post pop-up in edit mode; its primary resubmits)
+        //     Approved → Edit post… · Mark scheduled     Scheduled → Unmark scheduled
         $out .= '<div class="pd-actions" data-actions>';
-        // Deny · Approve — for pending (client + admin); admin also gets them on approved/denied to re-route work
-        $out .= '<div class="ui-btn-group pd-decide" data-state="decide"' . (($status === 'pending' && !$posted) ? '' : ' hidden') . '>'
-              . '<button type="button" class="ui-btn ui-btn--large ui-btn--deny ui-btn--tinted" data-decide="denied">Deny</button>'
-              . '<button type="button" class="ui-btn ui-btn--large ui-btn--approve ui-btn--primary" data-decide="approved">Approve</button>'
-              . '</div>';
-        if ($admin) {
-            // Approved + not scheduled: Needs changes · Mark Scheduled (primary)
-            $out .= '<div class="ui-btn-group pd-admin-approved" data-state="admin-approved"' . (($status === 'approved' && !$posted) ? '' : ' hidden') . '>'
+        if (!$admin) {
+            $out .= '<div class="ui-btn-group pd-decide" data-state="decide"' . (($status === 'pending' && !$posted) ? '' : ' hidden') . '>'
                   . '<button type="button" class="ui-btn ui-btn--large ui-btn--deny ui-btn--tinted" data-decide="denied">Needs changes</button>'
-                  . ($hasPosted ? '<button type="button" class="ui-btn ui-btn--large ui-btn--filled ui-btn--primary" data-toggle-posted="1">Mark Scheduled</button>' : '')
-                  . '</div>';
-            // Draft: Send for review (status.php action=submit; 422 until the caption is filled in)
-            $out .= '<div class="ui-btn-group pd-admin-draft" data-state="admin-draft"' . ($status === 'draft' ? '' : ' hidden') . '>'
-                  . '<button type="button" class="ui-btn ui-btn--large ui-btn--filled ui-btn--primary" data-submit-post="' . $id . '">Send for review</button>'
-                  . '</div>';
-            // Denied: back to review · Approve
-            $out .= '<div class="ui-btn-group pd-admin-denied" data-state="admin-denied"' . (($status === 'denied' && !$posted) ? '' : ' hidden') . '>'
-                  . '<button type="button" class="ui-btn ui-btn--large ui-btn--gray" data-decide="pending">Back to review</button>'
                   . '<button type="button" class="ui-btn ui-btn--large ui-btn--approve ui-btn--primary" data-decide="approved">Approve</button>'
                   . '</div>';
-            // Scheduled: Unmark
+        } else {
+            $editBtn = static function (string $cls, string $label = 'Edit post…', string $extra = '') use ($id) {
+                return '<button type="button" class="ui-btn ui-btn--large ' . $cls . '" data-newpost-edit="' . $id . '"' . $extra . '>' . $label . '</button>';
+            };
+            $out .= '<div class="ui-btn-group pd-admin-draft" data-state="admin-draft"' . ($status === 'draft' ? '' : ' hidden') . '>'
+                  . $editBtn('ui-btn--gray')
+                  . '<button type="button" class="ui-btn ui-btn--large ui-btn--filled ui-btn--primary" data-submit-post="' . $id . '">Send for review</button>'
+                  . '</div>';
+            $out .= '<div class="ui-btn-group pd-admin-pending" data-state="admin-pending"' . (($status === 'pending' && !$posted) ? '' : ' hidden') . '>'
+                  . $editBtn('ui-btn--filled ui-btn--primary')
+                  . '</div>';
+            $out .= '<div class="ui-btn-group pd-admin-denied" data-state="admin-denied"' . ($isDenied ? '' : ' hidden') . '>'
+                  . $editBtn('ui-btn--filled ui-btn--primary', 'Edit &amp; resubmit', ' data-newpost-resubmit')
+                  . '</div>';
+            $out .= '<div class="ui-btn-group pd-admin-approved" data-state="admin-approved"' . (($status === 'approved' && !$posted) ? '' : ' hidden') . '>'
+                  . $editBtn($hasPosted ? 'ui-btn--gray' : 'ui-btn--filled ui-btn--primary')
+                  . ($hasPosted ? '<button type="button" class="ui-btn ui-btn--large ui-btn--filled ui-btn--primary" data-toggle-posted="1">Mark scheduled</button>' : '')
+                  . '</div>';
             if ($hasPosted) {
                 $out .= '<div class="ui-btn-group pd-admin-scheduled" data-state="admin-scheduled"' . ($posted ? '' : ' hidden') . '>'
-                      . '<button type="button" class="ui-btn ui-btn--gray" data-toggle-posted="0">Unmark Scheduled</button>'
+                      . '<button type="button" class="ui-btn ui-btn--large ui-btn--gray" data-toggle-posted="0">Unmark scheduled</button>'
                       . '</div>';
             }
         }

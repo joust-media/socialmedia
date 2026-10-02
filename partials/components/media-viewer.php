@@ -14,14 +14,14 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
  *   Events (bubble from the viewer root): 'viewer:decision' {item, status, prev,
  *   ok, rolledBack, error}, 'viewer:navigate' {item, index}, 'viewer:close'.
  *
- * Toolbar = exactly three controls: Deny (red, secondary) · Approve (green,
+ * Toolbar = exactly three controls: Needs changes (red, secondary) · Approve (green,
  * primary, ~60% width) · More (Download for everyone — a blob save for images,
  * a direct `download` link for videos; Replace, "Set as
  * reference", "Manage in Studio" and "Delete image…" for admin — rendered here
  * only when the server says so; the two tire-only actions post set_reference /
  * delete_image to tire-status.php, which gates them again).
  *
- * Deny opens the inline note ("What should change?", required, >= 3 chars); the
+ * Needs changes opens the inline note ("What should change?", required, >= 3 chars); the
  * note is sent in the SAME request as status=denied to tire-status.php /
  * library-status.php, which enforce the minimum server-side too.
  *
@@ -78,7 +78,7 @@ $viewerCommentsEndpoint = isset($viewerCommentsEndpoint) ? (string)$viewerCommen
   <div class="ui-viewer-bar" data-viewer-bar>
     <div class="ui-viewer-actions" data-viewer-actions>
       <button type="button" class="ui-btn ui-btn--large ui-btn--deny ui-btn--tinted ui-viewer-deny" data-viewer-deny>
-        <?= icon('xmark') ?><span data-viewer-deny-label>Deny</span>
+        <?= icon('xmark') ?><span data-viewer-deny-label>Needs changes</span>
       </button>
       <button type="button" class="ui-btn ui-btn--large ui-btn--approve ui-btn--primary ui-viewer-approve" data-viewer-approve>
         <?= icon('checkmark') ?><span data-viewer-approve-label>Approve</span>
@@ -95,7 +95,7 @@ $viewerCommentsEndpoint = isset($viewerCommentsEndpoint) ? (string)$viewerCommen
       <div class="ui-viewer-note-row">
         <p class="ui-viewer-note-hint" data-viewer-note-hint>A short note is required (at least 3 characters).</p>
         <button type="button" class="ui-btn ui-btn--gray" data-viewer-note-cancel>Cancel</button>
-        <button type="submit" class="ui-btn ui-btn--deny" data-viewer-note-send disabled>Send &amp; deny</button>
+        <button type="submit" class="ui-btn ui-btn--deny" data-viewer-note-send disabled>Send</button>
       </div>
     </form>
 

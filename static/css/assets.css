@@ -431,13 +431,19 @@ video.ui-viewer-media { width: 100%; background: #000; touch-action: auto; }
   box-shadow: inset 0 0.5px 0 var(--glass-highlight);
 }
 .ui-viewer-actions {
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2.4fr) 50px; gap: 8px;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 50px; gap: 8px;   /* "Needs changes" · "Approve", equal weight */
   max-width: 640px; margin: 0 auto;
 }
 .ui-viewer-actions .ui-btn { min-width: 0; }
 .ui-viewer-more { width: 50px; padding: 0; border-radius: 14px; }
 .ui-viewer-more .ui-icon { width: 22px; height: 22px; }
 .ui-viewer-deny .ui-icon { stroke-width: 2.6; }
+/* Phones: no icons, subhead type; at 320 "Needs changes" wraps onto two lines inside the 50px button */
+@media (max-width: 479.98px) {
+  .ui-viewer-deny .ui-icon, .ui-viewer-approve .ui-icon { display: none; }
+  .ui-viewer-deny, .ui-viewer-approve { padding-inline: 8px; font-size: var(--text-subhead); }
+  .ui-viewer-deny > span { white-space: normal; line-height: 1.1; text-align: center; }
+}
 .ui-viewer-approve.is-done { background: rgba(52,199,89,.2); color: var(--approve); }
 .ui-viewer-deny.is-done { background: var(--deny); color: #fff; }
 .ui-viewer-actions[hidden], .ui-viewer-note[hidden], .ui-viewer-menu[hidden], .ui-viewer-done[hidden] { display: none; }

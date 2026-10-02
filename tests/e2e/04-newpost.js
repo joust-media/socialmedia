@@ -1,5 +1,8 @@
 /* New post pop-up (static/js/newpost.js): every entry point, a 5-slide carousel across two series in ≤ 8
-   clicks (the audit's T2 target; the Posts header's own "New post" button is gone — "+ New → New post" is 2 clicks), drag + keyboard reorder, the shape warning, Save draft → the post, edit → reorder → saved order,
+   clicks and a single image in ≤ 4 (the audit's T2 / T1 targets, counted like the rescore: every click or tap,
+   focusing the caption included unless it happens on its own — the test asserts it does), the list refreshing in
+   place after every save (no reload: row, status, segment counts, the open sheet), Edit & resubmit from Needs
+   changes, drag + keyboard reorder, the shape warning, edit → reorder → saved order,
    validation, the unsaved-changes guard, the phone layout, and the client's swipeable carousel + slide
    comment chip. Screenshots of the pop-up: $PORTAL_TEST_ROOT/shots/newpost-1440-dark.png, -390-light.png. */
 'use strict';
@@ -36,6 +39,12 @@ async function seriesRefs(page) {
     return { s1: by('1'), s2: by('2'), ref: by('ref') };
   });
 }
+/** A marker on window: still there after the save = the page never reloaded. */
+async function mark(page) { await page.evaluate(() => { window.__noReload = 1; }); }
+async function stillSamePage(page) { return page.evaluate(() => window.__noReload === 1); }
+async function segCount(page, seg) { return parseInt((await page.textContent(`.ui-segmented-item[data-segment="${seg}"] .ui-segmented-count`)).trim(), 10); }
+/** The caption has the focus without a click (the rubric counts a focusing click). */
+async function captionFocused(page) { return page.evaluate(() => document.activeElement && document.activeElement.id === 'npCaption'); }
 async function trayRefs(page) { return page.evaluate(() => App.newPost._state().slides.map((s) => s.ref)); }
 async function load(page, url, id) {
   return page.evaluate(async (u) => (await fetch(u, { credentials: 'same-origin' })).json(), url('post-compose.php?client=kenda&action=load&id=' + id));
@@ -112,10 +121,12 @@ async function load(page, url, id) {
         expect((await page.textContent('[data-np-client]')).indexOf('Kenda') !== -1, 'scoped to Kenda');
       });
 
-      await test('5-slide carousel across two series in ≤ 8 clicks → Save draft lands on the post', async (page) => {
+      await test('T2: 5-slide carousel across two series in ≤ 8 clicks → Send for review, the row appears in To Review (no reload)', async (page) => {
         let clicks = 0;
         const tap = async (s) => { clicks++; await page.click(s); };
-        await page.goto(url('posts.php?client=kenda'));
+        await page.goto(url('posts.php?client=kenda&month=all'));
+        await mark(page);
+        const before = { pending: await segCount(page, 'pending'), draft: await segCount(page, 'draft') };
         await tap('[data-new-menu-toggle]'); await tap('[data-new-action="post"]');   // "+ New → New post" (Posts has no second button)
         await page.waitForSelector(sel.tile);
         const r = await seriesRefs(page);
@@ -123,51 +134,97 @@ async function load(page, url, id) {
         for (const ref of picks) await tap(`[data-np-grid] [data-np-ref="${ref}"]`);
         expect.eq((await trayRefs(page)).join(','), picks.join(','), 'tap order = slide order');
         expect.eq(await page.textContent('[data-np-count]'), '5 / 20');
-        expect.eq(await page.textContent('[data-np-foot-count]'), '5 selected');
+        expect.eq(await page.textContent('[data-np-foot-count]'), '5 slides');
         expect.eq(await page.textContent(sel.slide + ':first-child .np-slide-badge'), 'Cover');
         expect.eq(await page.$$eval('[data-np-preview-media] .pd-slide', (e) => e.length), 5, 'live preview carousel');
         expect((await page.textContent('[data-np-format]')).indexOf('Carousel') === 0, 'auto type Carousel');
+        expect(await captionFocused(page), 'the caption took the focus after the picks (no click)');
+        await page.keyboard.type('Five angles of the Klever AT2.');
         await page.waitForTimeout(400);
         await page.screenshot({ path: path.join(SHOTS, 'newpost-1440-light.png') });
-        await Promise.all([page.waitForNavigation(), tap('[data-np-save="draft"]')]);
+        await tap('[data-np-save="review"]');
+        await page.waitForSelector('.np-root', { state: 'detached' });
         expect(clicks <= 8, 'clicks: ' + clicks);
         fs.appendFileSync(CLICKS, `carousel5 ${clicks}\n`);
-        const id = parseInt(new URL(page.url()).searchParams.get('post') || '0', 10);
-        expect(id > 0, 'landed on posts.php?post=ID: ' + page.url());
+        await page.waitForFunction(() => /[?&]post=\d+/.test(location.search));   // the list refreshed, then the sheet opened
+        const id = await page.evaluate(() => parseInt(new URL(location.href).searchParams.get('post') || '0', 10));
+        expect(id > 0, 'the sheet is on the new post: ' + page.url());
         await page.waitForSelector('#uiSheet.is-open .pd[data-post-detail="' + id + '"]');
+        expect(await stillSamePage(page), 'no reload');
         expect.eq(await page.$$eval('#uiSheet .pd-slide', (e) => e.length), 5);
-        expect.eq(await page.getAttribute('#uiSheet .pd[data-post-detail]', 'data-status'), 'draft');
+        expect.eq(await page.getAttribute('#uiSheet .pd[data-post-detail]', 'data-status'), 'pending');
+        await page.waitForSelector(`[data-posts-items] [data-post-item="${id}"]`);
+        expect.eq(await segCount(page, 'pending'), before.pending + 1, 'To Review count');
+        expect.eq(await segCount(page, 'draft'), before.draft, 'Draft count');
         const saved = await load(page, url, id);
         expect.eq(saved.slides.length, 5);
-        expect.eq(saved.post.status, 'draft');
+        expect.eq(saved.post.status, 'pending');
       });
 
-      await test('1-image post and a post from a fresh upload (click counts)', async (page) => {
+      await test('T1: 1-image post in ≤ 4 clicks; a fresh-upload draft lands in Draft (counts, toast, no reload)', async (page) => {
         let clicks = 0;
         const tap = async (s) => { clicks++; await page.click(s); };
-        await page.goto(url('posts.php?client=kenda'));
+        await page.goto(url('posts.php?client=kenda&month=all'));
+        await mark(page);
+        const pending0 = await segCount(page, 'pending'), draft0 = await segCount(page, 'draft');
         await tap('[data-new-menu-toggle]'); await tap('[data-new-action="post"]');   // "+ New → New post" (Posts has no second button)
         await page.waitForSelector(sel.tile);
         const r = await seriesRefs(page);
         await tap(`[data-np-grid] [data-np-ref="${r.s1[0]}"]`);
-        await page.fill('#npCaption', 'One render');
-        await Promise.all([page.waitForNavigation(), tap('[data-np-save="review"]')]);
+        expect(await captionFocused(page), 'the caption took the focus after the first pick (no click)');
+        await page.keyboard.type('One render');
+        await tap('[data-np-save="review"]');
+        await page.waitForSelector('.np-root', { state: 'detached' });
         fs.appendFileSync(CLICKS, `single ${clicks}\n`);
         expect(clicks <= 4, 'single: ' + clicks);   // the audit's T1 target
+        await page.waitForSelector('#uiSheet.is-open .pd[data-status="pending"]');
         expect.eq(await page.getAttribute('#uiSheet .pd[data-post-detail]', 'data-status'), 'pending', 'sent for review');
+        expect(await stillSamePage(page), 'no reload');
+        expect.eq(await segCount(page, 'pending'), pending0 + 1, 'To Review +1');
 
         clicks = 0;
-        await page.goto(url('posts.php?client=kenda'));
-        await tap('[data-new-menu-toggle]'); await tap('[data-new-action="post"]');   // "+ New → New post" (Posts has no second button)
+        await page.keyboard.press('Escape');
+        await tap('[data-new-menu-toggle]'); await tap('[data-new-action="post"]');
         await page.waitForSelector(sel.root);
         await tap('[data-np-source] [data-value="upload"]');
         const [chooser] = await Promise.all([page.waitForEvent('filechooser'), tap('[data-np-drop]')]);
         await chooser.setFiles(square);
         await page.waitForFunction(() => App.newPost._state().slides.length === 1 && /^upload:/.test(App.newPost._state().slides[0].ref || ''));
-        await Promise.all([page.waitForNavigation(), tap('[data-np-save="draft"]')]);
+        await tap('[data-np-save="draft"]');
+        await page.waitForSelector('.np-root', { state: 'detached' });
         fs.appendFileSync(CLICKS, `upload ${clicks}\n`);
         expect(clicks <= 5, 'upload: ' + clicks);
+        await page.waitForSelector('#uiSheet.is-open .pd[data-status="draft"]');
         expect.eq(await page.$$eval('#uiSheet .pd-slide', (e) => e.length), 1);
+        expect(await stillSamePage(page), 'still no reload');
+        expect.eq(await segCount(page, 'draft'), draft0 + 1, 'Draft +1 (the list shows To Review)');
+        await page.waitForFunction(() => /in Draft/.test((document.querySelector('.ui-toast') || {}).textContent || ''));
+        expect((await page.getAttribute('.ui-toast .ui-toast-link', 'href')).indexOf('post=') !== -1, 'toast links to the post in Draft');
+      });
+
+      await test('T2 with filters: series chips show directly (one tap = tire + series) — ≤ 10 clicks', async (page) => {
+        let clicks = 0;
+        const tap = async (s) => { clicks++; await page.click(s); };
+        await page.goto(url('posts.php?client=kenda&month=all'));
+        await tap('[data-new-menu-toggle]'); await tap('[data-new-action="post"]');
+        await page.waitForSelector(sel.tile);
+        expect(await page.isVisible('[data-np-series] [data-key="1:1"]'), 'series chips without picking a tire first');
+        await tap('[data-np-series] [data-key="1:1"]');
+        await page.waitForFunction(() => App.newPost._state().items.length && App.newPost._state().items.every((i) => i.group === 'tire:1' && i.series === '1'));
+        expect.eq(await page.getAttribute('[data-np-groups] [data-np-chip="tire"][data-id="1"]', 'aria-pressed'), 'true', 'its tire chip reads pressed');
+        const s1 = await page.evaluate(() => App.newPost._state().items.map((i) => i.ref));
+        for (const ref of s1.slice(0, 3)) await tap(`[data-np-grid] [data-np-ref="${ref}"]`);
+        await tap('[data-np-series] [data-key="1:2"]');
+        await page.waitForFunction(() => App.newPost._state().items.some((i) => i.series === '2'));
+        const s2 = await page.evaluate(() => App.newPost._state().items.filter((i) => i.series === '2').map((i) => i.ref));
+        for (const ref of s2.slice(0, 2)) await tap(`[data-np-grid] [data-np-ref="${ref}"]`);
+        expect.eq((await trayRefs(page)).length, 5);
+        expect(await captionFocused(page), 'caption focused after chips + picks');
+        await page.keyboard.type('Two series, chips on.');
+        await tap('[data-np-save="review"]');
+        await page.waitForSelector('#uiSheet.is-open .pd[data-status="pending"]');
+        fs.appendFileSync(CLICKS, `carousel5-chips ${clicks}\n`);
+        expect(clicks <= 10, 'with chips: ' + clicks);
       });
 
       await test('drag to reorder, keyboard reorder, slide menu, shape warning from an upload', async (page) => {
@@ -240,12 +297,13 @@ async function load(page, url, id) {
         await page.waitForSelector('.np-root', { state: 'detached' });
       });
 
-      await test('edit: ⋯ → Edit post… → reorder + add → Save changes → saved order', async (page) => {
+      await test('edit: Edit post… → reorder + add → Save changes → saved order, the row refreshes in place', async (page) => {
         await page.goto(url('posts.php?client=kenda&post=2'));
         await page.waitForSelector('#uiSheet.is-open [data-menu-toggle]');
+        await mark(page);
         const before = await load(page, url, 2);
-        await page.click('#uiSheet [data-menu-toggle]');
-        await page.click('#uiSheet [data-newpost-edit="2"]');
+        const pending0 = await segCount(page, 'pending');
+        await page.click('#uiSheet [data-actions] [data-newpost-edit="2"]:visible');   // the To Review primary
         await page.waitForSelector(sel.root);
         await page.waitForFunction(() => App.newPost._state().slides.length === 3);
         expect.eq(await page.textContent('[data-np-title]'), 'Edit post');
@@ -258,10 +316,44 @@ async function load(page, url, id) {
         await page.click('[data-np-save="keep"]');
         await page.waitForSelector('.np-root', { state: 'detached' });
         await page.waitForFunction(() => document.querySelectorAll('#uiSheet .pd-slide').length === 4);
+        expect(await stillSamePage(page), 'no reload');
+        expect.eq((await page.textContent('[data-post-item="2"] .pl-meta')).replace(/\s+/g, ' ').indexOf('4 media') !== -1, true, 'row says 4 media');
+        expect.eq(await segCount(page, 'pending'), pending0, 'counts unchanged');
         const after = await load(page, url, 2);
         const ids = (x) => x.slides.map((s) => s.ref);
         expect.eq(ids(after).slice(0, 3).join(','), [ids(before)[2], ids(before)[0], ids(before)[1]].join(','), 'saved order');
         expect.eq(after.slides.length, 4);
+      });
+
+      await test('Needs changes: note on top → Edit & resubmit → Send for review — row leaves the queue, counts move, no reload', async (page) => {
+        await page.goto(url('posts.php?client=kenda&post=4'));
+        await page.waitForSelector('#uiSheet.is-open .pd[data-status="denied"]');
+        await mark(page);
+        const q0 = await segCount(page, 'denied'), p0 = await segCount(page, 'pending');
+        const noteY = await page.$eval('#uiSheet [data-pd-note]', (e) => e.getBoundingClientRect().top);
+        const mediaY = await page.$eval('#uiSheet [data-carousel]', (e) => e.getBoundingClientRect().top);
+        expect(noteY < mediaY, 'the client note sits above the media');
+        expect((await page.textContent('#uiSheet [data-pd-note]')).indexOf('Please use the darker render') !== -1, 'the note');
+        expect.eq((await page.textContent('#uiSheet [data-actions] [data-newpost-resubmit]')).trim(), 'Edit & resubmit');
+        await page.click('#uiSheet [data-actions] [data-newpost-resubmit]');
+        await page.waitForSelector(sel.root);
+        await page.waitForSelector('[data-np-note]:not([hidden])');
+        expect((await page.textContent('[data-np-note]')).indexOf('Please use the darker render') !== -1, 'the note above the tray');
+        expect.eq((await page.textContent('[data-np-save="review"]')).trim(), 'Send for review');
+        await page.waitForSelector(sel.tile);
+        const r = await seriesRefs(page);
+        await page.click(sel.slide + ':first-child [data-np-remove]');
+        await page.click(`[data-np-grid] [data-np-ref="${r.s1[3]}"]`);
+        await page.click('[data-np-save="review"]');
+        await page.waitForSelector('.np-root', { state: 'detached' });
+        await page.waitForSelector('#uiSheet.is-open .pd[data-post-detail="4"][data-status="pending"]');
+        expect(await stillSamePage(page), 'no reload');
+        await page.waitForSelector('[data-post-item="4"]', { state: 'detached' });
+        expect.eq(await segCount(page, 'denied'), q0 - 1, 'Needs changes −1');
+        expect.eq(await segCount(page, 'pending'), p0 + 1, 'To Review +1');
+        expect(await page.isVisible('#uiSheet [data-state="admin-pending"]'), 'sheet: the To Review primary');
+        expect(!(await page.isVisible('#uiSheet [data-pd-note]')), 'note folded away');
+        expect.eq((await load(page, url, 4)).post.status, 'pending');
       });
 
       await test('Assets: select approved → "Create post with 2"; viewer "Use in post"', async (page) => {
@@ -304,13 +396,33 @@ async function load(page, url, id) {
         expect(Math.abs(foot - 844) < 2, 'footer pinned to the bottom: ' + foot);
         await page.click('[data-np-steps] [data-value="details"]');
         expect(await page.isVisible('[data-np-pane="details"]') && !(await page.isVisible('[data-np-pane="media"]')), 'Details');
-        await page.fill('#npCaption', 'Two angles, one tire.');
+        expect(await captionFocused(page), 'Details on a phone: the caption has the focus (no tap)');
+        await page.keyboard.type('Two angles, one tire.');
         await page.evaluate(() => { document.documentElement.setAttribute('data-theme', 'light'); });
         await page.waitForTimeout(300);
         await page.screenshot({ path: path.join(SHOTS, 'newpost-390-light.png') });
         await page.click('[data-np-steps] [data-value="media"]');
         await page.waitForTimeout(200);
         await page.screenshot({ path: path.join(SHOTS, 'newpost-390-light-media.png') });
+      });
+
+      await test('phone T1: + New → New post → tile → Details → (caption focused) → Send for review = 5 taps, no reload', async (page) => {
+        let clicks = 0;
+        const tap = async (s) => { clicks++; await page.click(s); };
+        await page.goto(url('posts.php?client=kenda&month=all'));
+        await mark(page);
+        await tap('[data-new-menu-toggle]'); await tap('[data-new-action="post"]');
+        await page.waitForSelector(sel.tile);
+        const r = await seriesRefs(page);
+        await tap(`[data-np-grid] [data-np-ref="${r.s1[0]}"]`);
+        await tap('[data-np-steps] [data-value="details"]');
+        expect(await captionFocused(page), 'caption focused on Details');
+        await page.keyboard.type('One render, phone');
+        await tap('[data-np-save="review"]');
+        await page.waitForSelector('#uiSheet.is-open .pd[data-status="pending"]');
+        fs.appendFileSync(CLICKS, `phone-single ${clicks}\n`);
+        expect(clicks <= 5, 'phone single: ' + clicks);
+        expect(await stillSamePage(page), 'no reload');
       });
     }
   }, { role: 'admin', viewports: ['desktop', 'phone'], reseed: 'test' });

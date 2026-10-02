@@ -47,7 +47,8 @@ async function pick(page, n) {
       expect.eq(await page.$$eval('[data-np-preview-media] .pd-slide', (els) => els.length), 3, 'preview slides');
       if (await page.isVisible('[data-np-steps]')) await page.click('[data-np-steps] [data-value="details"]');
       await page.fill('#npCaption', 'Three looks, one tire.');
-      await Promise.all([page.waitForURL(/posts\.php\?client=kenda&post=\d+/), page.click('[data-np-save="review"]')]);
+      await page.click('[data-np-save="review"]');   // on Posts already: the list refreshes in place, the sheet opens (no reload)
+      await page.waitForFunction(() => /[?&]post=\d+/.test(location.search) && document.querySelector('#uiSheet.is-open .pd[data-status="pending"]'));
       await page.waitForSelector('#uiSheet .pd-slide');
       expect.eq(await page.$$eval('#uiSheet .pd-slide', (els) => els.length), 3, 'sheet slides');
       expect.eq((await page.textContent('#uiSheet [data-carousel-counter]')).trim(), '1 / 3');

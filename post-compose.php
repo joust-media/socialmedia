@@ -15,7 +15,8 @@
  *        item = {ref:'tire:12'|'library:3', kind, id, label, group, group_label, series ('ref'|id|''), series_label,
  *                media, thumb (sm preview), large (lg preview), src (original), w, h}
  *   GET  action=load&id=N                     → {ok, post:{id,name,caption,hashtags,scheduled,status,post_type,posted},
- *                                                slides:[{ref:'image:<post_images.id>', media, thumb, large, src, w, h}]}
+ *                                                slides:[{ref:'image:<post_images.id>', media, thumb, large, src, w, h}],
+ *                                                note: {who, text, slide, at, when} | null (Needs changes: the client's latest note)}
  *   POST action=create                        slides[] (order = carousel order; "tire:<id>" | "library:<id>" |
  *                                                "upload:<token>" (or "claim:<token>") from upload-chunk.php purpose=post), caption,
  *                                                hashtags, scheduled_date, post_type ('' = auto), name,
@@ -412,6 +413,18 @@ function npRows(PDO $pdo, int $postId): array {
     return $st->fetchAll();
 }
 
+/** Needs changes: the client's latest note (else anyone's) → {who, text, slide, at}; null otherwise. Pinned above the tray. */
+function npLatestNote(PDO $pdo, array $p, string $clientName): ?array {
+    if ((string)$p['status'] !== 'denied' || !function_exists('hasActivityLog') || !hasActivityLog($pdo)) return null;
+    require_once __DIR__ . '/partials/components/review-actions.php';
+    $st = $pdo->prepare("SELECT actor, detail, created_at FROM activity_log WHERE entity_type = 'post' AND action = 'commented' AND entity_id = ?
+                         AND detail IS NOT NULL AND detail <> '' ORDER BY created_at ASC, id ASC");
+    $st->execute([(int)$p['id']]);
+    $n = reviewLatestNote($st->fetchAll(), $clientName);
+    if ($n && function_exists('relativeTime') && $n['at'] !== '') $n['when'] = relativeTime($n['at']);
+    return $n;
+}
+
 if ($action === 'load') {
     $p = npPostOr404($pdo, (int)($_GET['id'] ?? 0), $cid);
     $ts = !empty($p['scheduled_date']) ? strtotime((string)$p['scheduled_date']) : false;
@@ -419,7 +432,7 @@ if ($action === 'load') {
         'id' => (int)$p['id'], 'name' => (string)($p['name'] ?? ''), 'caption' => (string)($p['caption'] ?? ''), 'hashtags' => (string)($p['hashtags'] ?? ''),
         'scheduled' => $ts ? date('Y-m-d\TH:i', $ts) : '', 'status' => (string)$p['status'], 'post_type' => (string)($p['post_type'] ?? 'post'),
         'posted' => !empty($p['posted']),
-    ], 'slides' => array_map('npSlideFromRow', npRows($pdo, (int)$p['id']))]);
+    ], 'slides' => array_map('npSlideFromRow', npRows($pdo, (int)$p['id'])), 'note' => npLatestNote($pdo, $p, (string)($client['name'] ?? ''))]);
 }
 
 // ---------------------------------------------------------------------

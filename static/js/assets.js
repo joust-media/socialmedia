@@ -327,7 +327,7 @@
       r.approveLabel.textContent = approved ? 'Approved' : 'Approve';
       r.approve.setAttribute('aria-pressed', approved ? 'true' : 'false');
       r.deny.classList.toggle('is-done', denied);
-      r.denyLabel.textContent = denied ? 'Needs changes' : 'Deny';
+      r.denyLabel.textContent = 'Needs changes';   // the button and the state read the same (is-done fills it)
       r.deny.setAttribute('aria-pressed', denied ? 'true' : 'false');
       if (r.prev) r.prev.disabled = !this.hasPrev();
       if (r.next) r.next.disabled = !this.hasNext();

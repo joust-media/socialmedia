@@ -17,7 +17,7 @@
  *   assignMenuHtml(string $kind, int $id, string $label, array $opts = []): string
  *       A ⋯ button ([data-asg-menu-toggle]) + its menu ([data-asg-menu], .pd-menu look). $opts:
  *       'class' extra wrapper class ('asg-row-more' on list rows), 'editUrl' adds an "Edit …" link,
- *       'admin' (default isAdmin()).
+ *       'extra' trusted menu markup appended last (the detail sheets' review items), 'admin' (default isAdmin()).
  *
  *   assignSelectButtonHtml(string $kind): string
  *       The list header's "Select" toggle (multi-select → bulk bar: Move · Add to flow · Audiences).
@@ -77,6 +77,7 @@ if (!function_exists('assignMenuHtml')) {
         if (!empty($opts['editUrl'])) {
             $out .= '<a role="menuitem" class="asg-menu-link" href="' . $e($opts['editUrl']) . '">Edit ' . $kind . '…</a>';
         }
+        if (!empty($opts['extra'])) $out .= (string)$opts['extra'];   // trusted markup from the caller (review-actions.php)
         $out .= '</div></div>';
         return $out;
     }
