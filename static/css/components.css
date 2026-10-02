@@ -294,7 +294,7 @@ a.ui-row:active, button.ui-row:active { background: var(--fill-tertiary); }
   .ui-segmented--dense .ui-segmented-item { padding-inline: 4px; font-size: var(--text-caption); letter-spacing: 0; gap: 3px; }
   .ui-segmented--dense .ui-segmented-count { display: none; }
 }
-/* Scrollable variant (segmented(…, ['scroll' => true]) — admin Posts' five segments). On phones the
+/* Scrollable variant (segmented(…, ['scroll' => true]) — admin Posts / Emails / Pages' five segments). On phones the
    items keep their natural width (labels + counts never overlap) and the control scrolls sideways;
    app.js sets .is-overflow-start / .is-overflow-end so a fade marks the side with more segments. */
 @media (max-width: 600px) {

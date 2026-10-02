@@ -349,7 +349,7 @@ include __DIR__ . '/partials/layout-top.php';
 <?= emailsPagesSwitchHtml('pages', $client, $pdo) // admin, merged Emails/Pages tab only ?>
 
 <div class="posts-toolbar pages-toolbar">
-  <?= segmented($segItems, ['label' => 'Page status']) ?>
+  <?= segmented($segItems, ['label' => 'Page status', 'scroll' => true]) ?>
 </div>
 
 <?php if ($q !== '' || count($filtered) > 6): ?>

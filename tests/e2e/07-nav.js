@@ -90,6 +90,41 @@ function checkLayout(L, expect, where) {
           sql("DELETE cm FROM company_modules cm JOIN modules m ON m.id = cm.module_id WHERE cm.company_id = 2 AND m.slug = 'tires'");
         }
       });
+      await test('Emails / Pages / Posts status segments: no label clipped or overlapping, active in view', async (page) => {
+        for (const [p, label] of [['emails.php?client=privacybee&status=denied', 'Email status'], ['emails.php?client=privacybee', 'Email status'],
+                                  ['pages.php?client=privacybee&status=denied', 'Page status'], ['pages.php?client=privacybee', 'Page status'],
+                                  ['posts.php?client=kenda&status=denied&month=all', 'Post status']]) {
+          await page.goto(url(p));
+          const m = await page.$eval(`.ui-segmented[aria-label="${label}"]`, (s) => {
+            const items = [...s.querySelectorAll('.ui-segmented-item')];
+            const boxes = items.map((i) => i.getBoundingClientRect());
+            const sr = s.getBoundingClientRect();
+            const overlaps = [];
+            for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+              if (Math.min(boxes[i].right, boxes[j].right) - Math.max(boxes[i].left, boxes[j].left) > 0.5) overlaps.push(items[i].textContent.trim() + ' / ' + items[j].textContent.trim());
+            }
+            // a label's own text must fit its segment (range rect = the rendered glyphs)
+            const textOverflow = items.filter((i) => { const rg = document.createRange(); rg.selectNodeContents(i); const t = rg.getBoundingClientRect(), b = i.getBoundingClientRect(); return t.left < b.left - 0.5 || t.right > b.right + 0.5; }).map((i) => i.textContent.trim());
+            const a = s.querySelector('.is-active').getBoundingClientRect();
+            return {
+              n: items.length,
+              clipped: items.filter((i) => i.scrollWidth > i.clientWidth + 1).map((i) => i.textContent.trim()),
+              textOverflow, overlaps,
+              doc: document.documentElement.scrollWidth, vw: window.innerWidth,
+              inside: sr.left >= -0.5 && sr.right <= window.innerWidth + 0.5,
+              active: a.left >= sr.left - 1 && a.right <= sr.right + 1,
+            };
+          });
+          const where = `${viewport} ${p}`;
+          expect.eq(m.n, 5, `${where}: five admin segments`);
+          expect.eq(m.clipped.length, 0, `${where}: clipped labels ${JSON.stringify(m.clipped)}`);
+          expect.eq(m.textOverflow.length, 0, `${where}: labels run past their segment ${JSON.stringify(m.textOverflow)}`);
+          expect.eq(m.overlaps.length, 0, `${where}: overlapping segments ${JSON.stringify(m.overlaps)}`);
+          expect(m.doc <= m.vw, `${where}: no horizontal page scroll (${m.doc} > ${m.vw})`);
+          expect(m.inside, `${where}: the control stays inside the viewport`);
+          expect(m.active, `${where}: the active segment is in view`);
+        }
+      });
       await test('Posts header: one "+ New", the title is never truncated (All months)', async (page) => {
         await page.goto(url('posts.php?client=kenda&month=all'));
         expect.eq(await page.$$eval('.ui-nav [data-new-menu-toggle]', (e) => e.length), 1, 'the global + New');

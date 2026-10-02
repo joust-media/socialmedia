@@ -376,7 +376,7 @@ include __DIR__ . '/partials/layout-top.php';
 <?= emailsPagesSwitchHtml('emails', $client, $pdo) // admin, merged Emails/Pages tab only ?>
 
 <div class="posts-toolbar emails-toolbar">
-  <?= segmented($segItems, ['label' => 'Email status']) ?>
+  <?= segmented($segItems, ['label' => 'Email status', 'scroll' => true]) ?>
 </div>
 
 <?php if ($allGroups || $q !== ''): ?>
