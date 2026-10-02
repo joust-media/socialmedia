@@ -1,6 +1,12 @@
 <?php
 /**
- * Studio → Composer (spec §4.5). Admin only.
+ * Posts → the old composer endpoint (spec §4.5). Admin only. The composer PAGE is retired — the New post pop-up
+ * (static/js/newpost.js → post-compose.php) creates and edits posts now:
+ *   GET add-post.php?client=…            → 302 posts.php?client=…&newpost=1            (pop-up open)
+ *   GET add-post.php?client=…&edit=<id>  → 302 posts.php?client=…&post=<id>&newpost=edit (detail + pop-up in edit mode)
+ * The POST handler below stays: it is the documented format=json posting API (README "media[]" — scripts and
+ * the test suite post here; the retired Classic admin's Delete did too); a non-JSON POST lands on the post
+ * (or back on Posts with its errors as the flash). The portal UI itself saves through post-compose.php.
  *
  * Creates / edits a post + its post_images. Media can come from:
  *   1. the Approved Pool — assets[] = "library:<id>" | "tire:<id>" in carousel order.
@@ -19,9 +25,21 @@
  *
  * Form POST actions (unchanged): delete (id) · create / update (name, caption*,
  * hashtags, scheduled_date*, status, post_type, categories[], remove_images[],
- * images[], claimed[], assets[]) · batch_create (spacing_days, batch_images[]).
+ * images[], claimed[], assets[], media[]) · batch_create (spacing_days, batch_images[]).
+ *
+ * media[] (optional) — ONE ordered list for the whole carousel, so approved images, new uploads and
+ * (on update) the post's current media can be interleaved and reordered freely:
+ *     image:<post_images.id>   keep this current media item (update only; must belong to the post)
+ *     library:<id> | tire:<id> an Approved Pool pick (validated + copied like assets[])
+ *     claim:<token>            a file already sent to upload-chunk.php (purpose=post), like claimed[]
+ * When media[] is sent it is authoritative: assets[] / claimed[] / remove_images[] are ignored, every
+ * current item NOT listed is removed, and sort_order = the list order (1…n). More than POST_MAX_MEDIA
+ * items, an unknown image id or a bad token → 422 / 400 and nothing is saved. images[] (no-JS
+ * direct files) still append after the list.
  * Add format=json to any action for a JSON reply instead of the redirect.
- * Successful saves redirect to studio?client=…&msg=….
+ * Successful saves land on the post itself: posts.php?client=…&post=<id>&msg=… (a delete → the Posts list).
+ * status may be 'draft' once migrate.php step 35 ran (postsHaveDraft()): a draft may be saved without a
+ * caption; every other status needs one. Up to POST_MAX_MEDIA media per post (helpers.php).
  */
 
 require __DIR__ . '/db.php';
@@ -54,7 +72,12 @@ function composerDone(bool $ok, string $msg, array $extra = [], int $code = 200)
         exit;
     }
     if ($ok) {
-        header('Location: ' . clientUrl('studio.php', array_merge(['tab' => 'posts', 'msg' => $msg], $extra['redirect'] ?? [])));
+        // Land on the post that was just saved (its sheet opens on load); a delete goes to the list.
+        $pid = (int)($extra['post_id'] ?? 0);
+        $to  = !empty($extra['deleted']) || $pid <= 0
+            ? clientUrl('posts.php', ['msg' => $msg])
+            : clientUrl('posts.php', ['post' => $pid, 'msg' => $msg]);
+        header('Location: ' . $to);
         exit;
     }
 }
@@ -64,7 +87,19 @@ function composerDone(bool $ok, string $msg, array $extra = [], int $code = 200)
 // -------------------------------------------------------------
 if (!$client) {
     if ($wantsJson) { composerDone(false, 'Pick a client first.', [], 400); }
-    header('Location: ' . clientUrl('studio.php', ['msg' => 'Pick a client first.']));
+    // ?edit=<id> knows its client: that post's sheet with the pop-up in edit mode.
+    $unscopedEdit = (int)($_GET['edit'] ?? 0);
+    if ($unscopedEdit > 0) {
+        $st = $pdo->prepare("SELECT c.slug FROM posts p INNER JOIN companies c ON c.id = p.company_id WHERE p.id = ?");
+        $st->execute([$unscopedEdit]);
+        $slug = (string)($st->fetchColumn() ?: '');
+        if ($slug !== '') {
+            header('Location: ' . clientUrl('posts.php', ['client' => $slug, 'post' => $unscopedEdit, 'newpost' => 'edit']), true, 302);
+            exit;
+        }
+    }
+    // Otherwise the New post pop-up, which asks "Which client is this post for?" first (newpost.js).
+    header('Location: ' . pagePath('posts') . '?newpost=1', true, 302);
     exit;
 }
 $clientQs = 'client=' . urlencode($client['slug']);
@@ -78,10 +113,42 @@ $allowedExt  = array_merge(imageExts(), videoExts()); // jpg/png/gif/webp + mp4/
 $rejectedExt = ['m4v', 'avi', 'mkv'];        // common but unsupported by web browsers
 $maxImageMb  = (int)(uploadMaxBytes('image') / (1024 * 1024));          // 50 MB (upload-lib.php)
 $maxVideoGb  = (int)(uploadMaxBytes('video') / (1024 * 1024 * 1024));   // 4 GB — large files arrive through upload-chunk.php in pieces
-$maxImages   = 10;               // applies to combined images + videos + pool picks per post
+$maxImages   = POST_MAX_MEDIA;   // applies to combined images + videos + pool picks per post (helpers.php)
+$hasDraft    = postsHaveDraft($pdo);
 
 /** The size cap for a direct (single-request) upload of this type — the same numbers upload-chunk.php enforces. */
 function composerMaxBytes(bool $isVideo): int { return uploadMaxBytes($isVideo ? 'video' : 'image'); }
+
+/**
+ * media[] → normalised tokens in order (image:<id> | library:<id> | tire:<id> | claim:<token>), duplicates
+ * dropped. Accepts an array or a JSON array string. Returns [$tokens, $error].
+ */
+function composerMediaOrder($raw, int $cap): array {
+    if (is_string($raw)) {
+        $raw = trim($raw);
+        $decoded = $raw !== '' && $raw[0] === '[' ? json_decode($raw, true) : null;
+        $raw = is_array($decoded) ? $decoded : ($raw === '' ? [] : preg_split('/[\s,]+/', $raw));
+    }
+    if (!is_array($raw)) return [[], 'media[] must be a list.'];
+    $out = []; $seen = [];
+    foreach ($raw as $item) {
+        if (!is_string($item)) return [[], 'media[] must be a list of strings.'];
+        $item = trim($item);
+        if ($item === '') continue;
+        if (preg_match('/^(image|library|tire):(\d+)$/i', $item, $m) && (int)$m[2] > 0) {
+            $tok = strtolower($m[1]) . ':' . (int)$m[2];
+        } elseif (preg_match('/^claim:([A-Za-z0-9_\-]{8,128})$/', $item, $m)) {
+            $tok = 'claim:' . $m[1];
+        } else {
+            return [[], 'Unknown media item "' . mb_substr($item, 0, 40) . '".'];
+        }
+        if (isset($seen[$tok])) continue;
+        $seen[$tok] = true;
+        $out[] = $tok;
+    }
+    if (count($out) > $cap) return [[], "Up to {$cap} media per post — remove " . (count($out) - $cap) . '.'];
+    return [$out, ''];
+}
 
 /**
  * claimed[] tokens → validated claims (upload-lib.php) in posted order. Any bad token (wrong format,
@@ -127,13 +194,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $imgs->execute([$postId]);
                 foreach ($imgs->fetchAll() as $row) {
                     $path = uploadsPathOrNull((string)$row['image_url']);   // realpath-contained in uploads/
-                    if ($path !== null) { @unlink($path); }
+                    if ($path !== null) { if (function_exists('previewDelete')) previewDelete($path); @unlink($path); }
                 }
                 $pdo->prepare("DELETE FROM posts WHERE id = ?")->execute([$postId]);
                 logActivity($pdo, (int)$client['id'], 'post', $postId,
                     'deleted', 'admin', "Deleted post #{$postId}");
                 $pdo->commit();
-                composerDone(true, 'Post deleted.', ['post_id' => $postId]);
+                composerDone(true, 'Post deleted.', ['post_id' => $postId, 'deleted' => true]);
             } catch (Exception $e) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
                 error_log('add-post delete: ' . $e->getMessage());
@@ -157,11 +224,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         [$claims, $claimErr] = composerClaims($_POST['claimed'] ?? [], (string)$client['slug'], $maxImages);
         if ($claimErr !== '') { $errors[] = $claimErr; $errorCode = 400; }
 
-        if ($caption === '')       { $errors[] = 'Caption is required.'; }
-        if ($scheduled_date === ''){ $errors[] = 'Scheduled date is required.'; }
-        if (!in_array($status, ['pending', 'approved', 'denied'], true)) {
+        // media[]: one ordered list (see the header) — it replaces assets[] / claimed[] / remove_images[].
+        $mediaOrder = null;
+        if (array_key_exists('media', $_POST)) {
+            [$mediaOrder, $mediaErr] = composerMediaOrder($_POST['media'], $maxImages);
+            $errors = array_values(array_filter($errors, static fn($e) => $e !== $claimErr));   // claimed[] is not used
+            if ($mediaErr !== '') {
+                $errors[] = $mediaErr; $errorCode = 422; $mediaOrder = [];
+            }
+            $picks = studioParsePicks(array_values(array_filter($mediaOrder, static fn($t) => strpos($t, 'library:') === 0 || strpos($t, 'tire:') === 0)), $maxImages);
+            $claimTokens = array_map(static fn($t) => substr($t, 6), array_values(array_filter($mediaOrder, static fn($t) => strpos($t, 'claim:') === 0)));
+            [$claims, $claimErr] = composerClaims($claimTokens, (string)$client['slug'], $maxImages);
+            if ($claimErr !== '') { $errors[] = $claimErr; $errorCode = 400; }
+            if ($action === 'create' && array_filter($mediaOrder, static fn($t) => strpos($t, 'image:') === 0)) {
+                $errors[] = 'A new post has no current media to keep.'; $errorCode = 422;
+            }
+        }
+
+        $allowedStatus = $hasDraft ? ['draft', 'pending', 'approved', 'denied'] : ['pending', 'approved', 'denied'];
+        if (!in_array($status, $allowedStatus, true)) {
             $status = 'pending';
         }
+        // A draft may wait for its caption; anything the client can see needs one.
+        if ($caption === '' && $status !== 'draft') {
+            $errors[] = $hasDraft ? 'Add a caption first (or save it as a Draft).' : 'Caption is required.';
+            $errorCode = 422;
+        }
+        if ($scheduled_date === ''){ $errors[] = 'Scheduled date is required.'; }
         if (!in_array($postType, allowedPostTypes(), true)) {
             $postType = 'post';
         }
@@ -175,6 +264,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if (!$errors) {
             $postId = 0;
+            $previewQueue = [];   // stored image paths → previewAfterStore() after the commit
+            $mediaIds = [];       // media[] token → post_images.id (for the final ordering)
+            $unlinkAfter = [];    // removed media files — unlinked only once the transaction has committed
             try {
                 $pdo->beginTransaction();
                 $supportsName = hasPostsNameColumn($pdo);
@@ -197,8 +289,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt->execute($vals);
                     $postId = (int)$pdo->lastInsertId();
                     $createdLabel = $postName !== '' ? $postName : mb_substr($caption, 0, 200);
-                    logActivity($pdo, $company_id, 'post', $postId, 'created', 'admin',
-                        "Created post #{$postId}: " . $createdLabel);
+                    logActivity($pdo, $company_id, 'post', $postId, $status === 'draft' ? 'drafted' : 'created', 'admin',
+                        ($status === 'draft' ? "Started draft post #{$postId}" : "Created post #{$postId}") . ($createdLabel !== '' ? ': ' . $createdLabel : ''));
                 } else {
                     $postId = (int)($_POST['id'] ?? 0);
                     if ($postId <= 0) { throw new Exception('Invalid post id.'); }
@@ -263,7 +355,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                         if ($prev['status'] !== $status) {
                             $stAction = ($status === 'approved') ? 'approved'
-                                      : (($status === 'denied')  ? 'denied' : 'reset_pending');
+                                      : (($status === 'denied')  ? 'denied'
+                                      : (($status === 'draft')   ? 'moved_to_draft'
+                                      : ($prev['status'] === 'draft' ? 'submitted' : 'reset_pending')));
                             logActivity($pdo, $company_id, 'post', $postId,
                                 $stAction, 'admin',
                                 "Post #{$postId} " . actionLabel($stAction),
@@ -290,8 +384,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 if ($action === 'update') {
-                    if (!empty($_POST['remove_images']) && is_array($_POST['remove_images'])) {
-                        $toRemove = array_values(array_filter(array_map('intval', $_POST['remove_images'])));
+                    $removeIds = !empty($_POST['remove_images']) && is_array($_POST['remove_images']) ? $_POST['remove_images'] : [];
+                    if ($mediaOrder !== null) {
+                        // media[] is authoritative: keep exactly the listed current items, remove the rest.
+                        $cur = $pdo->prepare("SELECT id FROM post_images WHERE post_id = ?");
+                        $cur->execute([$postId]);
+                        $currentIds = array_map('intval', $cur->fetchAll(PDO::FETCH_COLUMN));
+                        $keepIds = array_map(static fn($t) => (int)substr($t, 6), array_values(array_filter($mediaOrder, static fn($t) => strpos($t, 'image:') === 0)));
+                        $unknown = array_diff($keepIds, $currentIds);
+                        if ($unknown) {
+                            throw new StudioAssetException('Media item #' . reset($unknown) . ' is not part of this post.', 422);
+                        }
+                        $removeIds = array_values(array_diff($currentIds, $keepIds));
+                    }
+                    if ($removeIds) {
+                        $toRemove = array_values(array_filter(array_map('intval', $removeIds)));
                         if ($toRemove) {
                             $ph  = implode(',', array_fill(0, count($toRemove), '?'));
                             $sel = $pdo->prepare("
@@ -301,7 +408,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $sel->execute(array_merge([$postId], $toRemove));
                             foreach ($sel->fetchAll() as $row) {
                                 $path = uploadsPathOrNull((string)$row['image_url']);   // realpath-contained in uploads/
-                                if ($path !== null) { @unlink($path); }
+                                if ($path !== null) { $unlinkAfter[] = $path; }   // deleted after the commit (a rollback keeps the files)
                             }
                             $del = $pdo->prepare("
                                 DELETE FROM post_images WHERE post_id = ? AND id IN ($ph)
@@ -323,6 +430,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $errors[] = "Max {$maxImages} media per post — only the first {$slots} picked assets were added.";
                     }
                     $attached = studioAttachAssetsToPost($pdo, $client, $postId, $picks, ['slots' => $slots, 'uploadsDir' => $uploadsDir]);
+                    foreach ($attached as $att) { $mediaIds[(string)$att['key']] = (int)$att['id']; }
+                    foreach ($attached as $att) {   // copies whose source had no fresh previews yet
+                        $attPath = uploadsPathOrNull((string)($att['image_url'] ?? ''));
+                        if ($attPath !== null) $previewQueue[] = $attPath;
+                    }
                     $slots -= count($attached);
                 }
 
@@ -353,9 +465,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $ins = $pdo->prepare("INSERT INTO post_images (post_id, image_url, sort_order) VALUES (?, ?, ?)");
                             $ins->execute([$postId, $uploadsUrl . '/' . $newName, $sortOrder]);
                         }
+                        $mediaIds['claim:' . (string)($claim['token'] ?? '')] = (int)$pdo->lastInsertId();
+                        if (!$isVideo) $previewQueue[] = $dest;   // sm + lg previews, made after the commit
                         $claimedCount++;
                     }
                     $slots -= $claimedCount;
+                }
+
+                // ---- media[]: the final order of everything (current items, picks, uploads) ----
+                if ($mediaOrder) {
+                    $setSort = $pdo->prepare("UPDATE post_images SET sort_order = ? WHERE id = ? AND post_id = ?");
+                    $pos = 0;
+                    foreach ($mediaOrder as $tok) {
+                        $imgId = strpos($tok, 'image:') === 0 ? (int)substr($tok, 6) : (int)($mediaIds[$tok] ?? 0);
+                        if ($imgId > 0) { $setSort->execute([++$pos, $imgId, $postId]); }
+                    }
                 }
 
                 // ---- Direct uploads (one-offs; the no-JS path) ---------------------
@@ -443,6 +567,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     $sortOrder,
                                 ]);
                             }
+                            if (!$isVideo) $previewQueue[] = $dest;   // sm + lg previews, made after the commit
                             $uploadedCount++;
                         } else {
                             $errors[] = "Failed to save '{$origName}'. Check uploads/ permissions.";
@@ -451,11 +576,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 $pdo->commit();
-                $msg = $action === 'create' ? 'Post created.' : 'Post updated.';
+                foreach ($unlinkAfter as $gone) { if (function_exists('previewDelete')) previewDelete($gone); @unlink($gone); }
+                // Previews outside the transaction: sm + lg within the request budget (preview-lib.php), the rest lazily.
+                if (function_exists('previewAfterStore')) { foreach ($previewQueue as $pq) previewAfterStore($pq); }
+                $msg = $action === 'create' ? ($status === 'draft' ? 'Draft saved — only you can see it.' : 'Post created.') : 'Post updated.';
                 if ($errors) {
                     $msg .= ' (Some warnings: ' . implode(' ', $errors) . ')';
                 }
-                composerDone(true, $msg, ['post_id' => $postId, 'warnings' => $errors]);
+                // JSON callers get the saved carousel in order (id / url / type) and the post's link.
+                $mediaOut = [];
+                if ($wantsJson) {
+                    $mt = hasMediaTypeColumn($pdo) ? 'media_type' : "'' AS media_type";
+                    $ms = $pdo->prepare("SELECT id, image_url, {$mt} FROM post_images WHERE post_id = ? ORDER BY sort_order ASC, id ASC");
+                    $ms->execute([$postId]);
+                    foreach ($ms->fetchAll() as $m) {
+                        $mediaOut[] = ['id' => (int)$m['id'], 'url' => (string)$m['image_url'],
+                                       'type' => ($m['media_type'] ?? '') !== '' ? (string)$m['media_type'] : mediaTypeFromUrl((string)$m['image_url'])];
+                    }
+                }
+                composerDone(true, $msg, ['post_id' => $postId, 'status' => $status, 'warnings' => $errors,
+                                          'media' => $mediaOut, 'post_url' => clientUrl('posts.php', ['post' => $postId])]);
             } catch (StudioAssetException $e) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
                 $errorCode = $e->getCode() >= 400 ? (int)$e->getCode() : 400;
@@ -572,14 +712,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 try {
                     $pdo->beginTransaction();
                     $defaultHashtags = trim((string)($client['default_hashtags'] ?? ''));
+                    // Draft with no caption once posts have Draft (migrate.php step 35); before that the old
+                    // client-visible placeholder.
                     $ins = $pdo->prepare("
                         INSERT INTO posts (company_id, caption, hashtags, scheduled_date, status)
-                        VALUES (?, 'Please insert caption here', ?, ?, 'pending')
+                        VALUES (?, ?, ?, ?, ?)
                     ");
-                    $ins->execute([$company_id, $defaultHashtags, $scheduledDate]);
+                    $ins->execute([$company_id, $hasDraft ? '' : 'Please insert caption here', $defaultHashtags, $scheduledDate, $hasDraft ? 'draft' : 'pending']);
                     $postId = (int)$pdo->lastInsertId();
-                    logActivity($pdo, $company_id, 'post', $postId, 'created', 'admin',
-                        "Created post #{$postId} via batch upload");
+                    logActivity($pdo, $company_id, 'post', $postId, $hasDraft ? 'drafted' : 'created', 'admin',
+                        ($hasDraft ? 'Started draft post #' : 'Created post #') . $postId . ' via batch upload');
 
                     if (hasMediaTypeColumn($pdo)) {
                         $imgIns = $pdo->prepare("
@@ -610,6 +752,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
 
                     $pdo->commit();
+                    if (!$isVideo && function_exists('previewAfterStore')) previewAfterStore($dest);   // sm + lg previews (per-request budget; the rest lazily)
                     $createdCount++;
                 } catch (Exception $e) {
                     if ($pdo->inTransaction()) $pdo->rollBack();
@@ -631,148 +774,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // -------------------------------------------------------------
-// Fetch for display
+// The composer page is retired: create / edit happen in the New post pop-up (static/js/newpost.js →
+// post-compose.php). Every GET — and a non-JSON POST that did not finish above — lands on Posts with the
+// pop-up open (edit mode for ?edit=<id>); a failed form POST carries its errors as the flash.
 // -------------------------------------------------------------
-$allCategories = $pdo->query("SELECT id, name FROM categories ORDER BY sort_order, name")->fetchAll();
-$pool          = studioApprovedPool($pdo, $client);
-
-$editPost   = null;
-$editImages = [];
-$editPostCategories = [];
-$editId = (int)($_GET['edit'] ?? 0);
-if ($editId > 0) {
-    $stmt = $pdo->prepare("SELECT * FROM posts WHERE id = ? AND company_id = ?");
-    $stmt->execute([$editId, $client['id']]);
-    $editPost = $stmt->fetch();
-    if ($editPost) {
-        // media_type only lands in this SELECT once migrate.php has added the column.
-        // Otherwise we fall back to a derived 'image'/'video' from the file extension.
-        $mediaTypeSel = hasMediaTypeColumn($pdo)
-            ? ', media_type'
-            : ", '' AS media_type";
-        $imgStmt = $pdo->prepare("
-            SELECT id, image_url{$mediaTypeSel} FROM post_images
-            WHERE post_id = ?
-            ORDER BY sort_order ASC
-        ");
-        $imgStmt->execute([$editId]);
-        foreach ($imgStmt->fetchAll() as $img) {
-            $editImages[] = [
-                'id'   => (int)$img['id'],
-                'url'  => (string)$img['image_url'],
-                'type' => ($img['media_type'] ?? '') !== '' ? $img['media_type'] : mediaTypeFromUrl((string)$img['image_url']),
-            ];
-        }
-
-        $catStmt = $pdo->prepare("SELECT category_id FROM post_categories WHERE post_id = ?");
-        $catStmt->execute([$editId]);
-        $editPostCategories = array_map('intval', array_column($catStmt->fetchAll(), 'category_id'));
-    }
-}
-
-$isEdit = (bool)$editPost;
-$clientDefaultHashtags = trim((string)($client['default_hashtags'] ?? ''));
-
-// Re-populate from the failed POST so nothing typed is lost.
-$posted = ($_SERVER['REQUEST_METHOD'] === 'POST' && $errors) ? $_POST : null;
-$val = [
-    'id'         => $isEdit ? (int)$editPost['id'] : 0,
-    'name'       => $posted['name']     ?? ($isEdit ? (string)($editPost['name'] ?? '') : ''),
-    'caption'    => $posted['caption']  ?? ($isEdit ? (string)$editPost['caption'] : ''),
-    'hashtags'   => $posted['hashtags'] ?? ($isEdit ? (string)$editPost['hashtags'] : $clientDefaultHashtags),
-    'status'     => $posted['status']   ?? ($isEdit ? (string)$editPost['status'] : 'pending'),
-    'post_type'  => strtolower((string)($posted['post_type'] ?? ($isEdit ? ($editPost['post_type'] ?? 'post') : 'post'))),
-    'scheduled'  => $posted['scheduled_date'] ?? ($isEdit ? date('Y-m-d\TH:i', strtotime($editPost['scheduled_date'])) : date('Y-m-d\TH:i')),
-    'categories' => isset($posted['categories']) ? array_map('intval', (array)$posted['categories']) : $editPostCategories,
-];
-if (!in_array($val['post_type'], allowedPostTypes(), true)) { $val['post_type'] = 'post'; }
-$selectedKeys = $posted ? array_column(studioParsePicks($posted['assets'] ?? [], $maxImages), 'key') : [];
-
-// Short large title; the post's reference name goes in the eyebrow so it never truncates on phones.
-$formTitle = $isEdit ? 'Edit post' : 'Compose';
-$editLabel = $isEdit ? (!empty($editPost['name']) ? $editPost['name'] : 'Post #' . (int)$editPost['id']) : '';
-
-$composerHtml = studioComposerHtml([
-    'client'          => $client,
-    'pool'            => $pool,
-    'action'          => clientUrl('add-post.php'),
-    'isEdit'          => $isEdit,
-    'post'            => $val,
-    'editImages'      => $editImages,
-    'categories'      => $allCategories,
-    'supportsType'    => hasPostTypeColumn($pdo),
-    'maxImages'       => $maxImages,
-    'maxImageMb'      => $maxImageMb,
-    'maxVideoGb'      => $maxVideoGb,
-    'submitText'      => $isEdit ? 'Save changes' : 'Create post',
-    'cancelUrl'       => clientUrl('studio.php'),
-    'assetsUrl'       => clientUrl('assets.php', ['view' => 'library', 'filter' => 'approved']),
-    'selected'        => $selectedKeys,
-    'errors'          => $errors,
-    'defaultHashtags' => $clientDefaultHashtags,
-    'formId'          => 'composer',
-]);
-
-$studioConfig = [
-    'base'      => basePath(),
-    'endpoint'  => basePath() . '/status.php',
-    'batch'     => basePath() . '/batch-process.php',
-    'upload'    => basePath() . '/upload-chunk.php?client=' . rawurlencode($client['slug']),   // purpose=post: files go up as they are picked (in pieces when large) and come back as claimed[] tokens
-    'client'    => $client['slug'],
-    'brand'     => ['name' => $client['name'], 'logo' => brandLogoUrl($client['logo_url'] ?? '')],
-    'maxImages' => $maxImages,
-    'maxImageMb' => $maxImageMb,
-    'maxVideoMb' => $maxVideoGb * 1024,
-];
-
-// -------------------------------------------------------------
-// Render
-// -------------------------------------------------------------
-$pageTitle   = $formTitle;
-$navSubtitle = 'Studio · ' . ($isEdit ? $editLabel : $client['name']);
-$activeTab   = 'studio';
-$pageWide    = true;
-$navWide     = true;
-$navBack     = ['href' => clientUrl('studio.php'), 'label' => 'Studio'];
-$bodyClass   = 'page-studio page-composer';
-$headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">' . "\n"
-             . '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">';
-$footExtra   = '<script>window.StudioConfig = ' . json_encode($studioConfig, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n"
-             . '<script src="' . h(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n"   // App.chunkUpload (one-offs: large files in pieces, resumable)
-             . '<script src="' . h(staticUrl('js/studio.js')) . '" defer></script>';
-
-include __DIR__ . '/partials/layout-top.php';
-?>
-
-<?php if ($flash): ?>
-  <div class="studio-alert studio-alert--ok" role="status"><?= h($flash) ?></div>
-<?php endif; ?>
-
-<?= $composerHtml ?>
-
-<?php if ($isEdit): ?>
-  <section class="studio-thread ui-card" data-thread-card>
-    <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Comments</h3>
-      <p class="ui-card-subtitle">The same thread the client sees on this post.</p></div></div>
-    <div class="ui-card-body">
-      <?= commentThreadHtml(hasActivityLog($pdo) ? commentThread($pdo, 'post', (int)$editPost['id']) : [], ['empty' => 'No messages yet — start the thread below.']) ?>
-      <form class="studio-reply" data-studio-reply data-id="<?= (int)$editPost['id'] ?>" autocomplete="off">
-        <label class="ui-visually-hidden" for="studioReply">Reply</label>
-        <textarea class="ui-textarea" id="studioReply" rows="2" maxlength="2000" placeholder="Reply as Joust…" data-reply-input></textarea>
-        <div class="studio-reply-row">
-          <label class="studio-chip"><input type="radio" name="reply_actor" value="admin" checked> As Joust</label>
-          <label class="studio-chip"><input type="radio" name="reply_actor" value="client"> As <?= h($client['name']) ?></label>
-          <span class="ui-spacer"></span>
-          <button type="submit" class="ui-btn ui-btn--filled ui-btn--sm" data-reply-send>Send</button>
-        </div>
-      </form>
-    </div>
-  </section>
-  <form class="studio-danger" method="POST" action="<?= h(clientUrl('add-post.php')) ?>" data-confirm-submit="Delete this post and all its media? This cannot be undone.">
-    <input type="hidden" name="action" value="delete">
-    <input type="hidden" name="id" value="<?= (int)$editPost['id'] ?>">
-    <button type="submit" class="ui-btn ui-btn--plain ui-btn--sm studio-danger-btn">Delete this post</button>
-  </form>
-<?php endif; ?>
-
-<?php include __DIR__ . '/partials/layout-bottom.php'; ?>
+$editId = (int)($_GET['edit'] ?? ($_POST['id'] ?? 0));
+$dest   = $editId > 0 ? ['post' => $editId, 'newpost' => 'edit'] : ['newpost' => 1];
+if ($errors) { $dest['msg'] = implode(' ', $errors); }
+elseif ($flash !== '') { $dest['msg'] = $flash; }
+header('Location: ' . clientUrl('posts.php', $dest), true, 302);
+exit;

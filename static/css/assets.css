@@ -1,6 +1,6 @@
 /* =====================================================================
    Joust client portal — Assets (spec §4.2)
-   Library grid / Collections list / full-screen media viewer.
+   Library grid (Assets tab) / Tires list + a tire's grid (Tires tab) / full-screen media viewer.
    Builds on tokens.css + components.css; class prefixes: .as-* (page),
    .ui-viewer* (viewer, shared by later phases). Animates transform/opacity only.
    ===================================================================== */
@@ -9,7 +9,8 @@
    Controls under the large title
    --------------------------------------------------------------------- */
 .as-controls { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 16px; }
-.as-controls .ui-segmented { max-width: 560px; }   /* same cap as Studio's control */
+.as-controls:empty { display: none; }
+.as-empty .ui-btn { margin-top: 14px; }
 .as-filters {
   display: flex; gap: 6px; flex-wrap: nowrap;
   overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
@@ -82,6 +83,44 @@
   .as-reference-admin { grid-column: auto; padding-top: 0; }
 }
 
+/* Reference card with its strip (tire series on) — the tire's approved reference images, always on top of an
+   open tire (above the series switcher): label + name + hint, admin buttons, then a row of sm tiles; tap → viewer. */
+.as-reference--strip { grid-template-columns: minmax(0, 1fr); row-gap: 10px; }
+.as-reference--strip .as-reference-admin { grid-column: 1 / -1; padding-top: 0; order: 3; }   /* phone: under the strip */
+.as-reference--strip .as-reference-label { font-variant-numeric: tabular-nums; }
+.as-refstrip--pending .as-refstrip-label { color: var(--pending); }
+.as-refstrip-link { color: var(--accent); text-decoration: none; font-weight: 600; white-space: nowrap; }
+.as-refstrip-link:hover { text-decoration: underline; }
+.as-refstrip-row {
+  grid-column: 1 / -1;
+  display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity; padding: 2px; margin: -2px;
+}
+.as-refstrip-row::-webkit-scrollbar { display: none; }
+.as-refstrip-tile {
+  position: relative; flex: 0 0 auto; width: 88px; height: 88px; padding: 0; border: 0;
+  border-radius: var(--radius-thumb); overflow: hidden; background: var(--fill-tertiary);
+  box-shadow: inset 0 0 0 0.5px var(--separator);
+  scroll-snap-align: start; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.as-refstrip-tile:active { transform: scale(0.97); }
+.as-refstrip-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.as-refstrip-tile img, .as-refstrip-tile .ui-video-tile { display: block; width: 100%; height: 100%; object-fit: cover; }
+.as-refstrip--pending .as-refstrip-tile::after {   /* "to review" tiles: a small pending dot */
+  content: ""; position: absolute; left: 6px; bottom: 6px; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--pending); box-shadow: 0 0 0 1.5px rgba(255,255,255,.9);
+}
+.as-refstrip-empty { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
+.as-refstrip-empty p { margin: 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote); color: var(--label-secondary); }
+.as-refstrip-empty .ui-btn { gap: 6px; }
+.as-refstrip-empty .ui-icon { width: 16px; height: 16px; }
+@media (min-width: 560px) {
+  .as-reference--strip { grid-template-columns: minmax(0, 1fr) auto; }
+  .as-reference--strip .as-reference-admin { grid-row: 1; grid-column: 2; align-self: start; order: 0; }
+}
+@media (min-width: 768px) { .as-refstrip-tile { width: 112px; height: 112px; } }
+
 /* ---------------------------------------------------------------------
    Series (tire-series-lib.php): switcher chips, header row, admin menu,
    "Load more" paging, Rename / Delete sheet forms
@@ -114,7 +153,14 @@
 .as-chip.is-active .as-chip-videos { color: inherit; opacity: .7; }
 .as-series-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .as-series-approve[hidden] { display: none; }
+/* Admin "Upload" (series head, Reference card, Library): opens the Upload sheet with the destination preselected */
+.as-series-upload .ui-icon, .as-library-upload .ui-icon, [data-ref-upload] .ui-icon { width: 16px; height: 16px; }
+
 .as-series-approve .ui-icon { width: 16px; height: 16px; stroke-width: 2.6; }
+/* Admin: Upload is the row's primary; "Approve all remaining" (on the client's behalf) is a gray secondary after it */
+.as-series-approve--admin { order: 2; }
+.as-series-approve--admin .ui-icon { color: var(--approve); }
+.as-series-actions .as-menu { order: 3; }
 /* "Open in Google Drive" — the client's alternative way into the series (tire_series.drive_url); a secondary CTA in the accent tint */
 .as-series-drive { gap: 7px; font-weight: 600; box-shadow: inset 0 0 0 1px rgba(0,122,255,.22); }
 .as-series-drive:hover, .as-series-drive:focus-visible { background: rgba(0,122,255,.2); }
@@ -133,6 +179,7 @@
   .as-series-head { flex-wrap: wrap; }
   .as-series-actions { width: 100%; flex-wrap: wrap; justify-content: flex-end; }
   .as-series-approve { flex: 1 1 auto; }
+  .as-series-actions:has(.as-series-upload) .as-series-approve { flex-basis: 100%; order: 9; }   /* admin: Upload + ⋯ first, the gray Approve all under them */
   .as-series-drive { flex: 1 1 100%; justify-content: center; min-height: 40px; font-size: var(--text-subhead); }   /* full width under the counts line */
 }
 
@@ -186,6 +233,9 @@
    12px radius, square object-fit: cover)
    --------------------------------------------------------------------- */
 .as-grid { padding-bottom: 8px; }
+/* Assets / Tires sit in the same 720px frame as every top-level page: 3-up on phones, 4-up from 600px
+   (components.css .ui-grid goes 5–6-up on a wide window, which would make ~130px tiles in this column). */
+@media (min-width: 600px) { .as-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .as-thumb {
   padding: 0; margin: 0; border: 0; cursor: pointer;
   background: var(--fill-tertiary); color: inherit;
@@ -253,7 +303,18 @@
 .as-selectbar[hidden] { display: none; }
 .as-selectbar.is-visible { transform: none; opacity: 1; }
 .as-selectbar-count { font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead); color: var(--label-secondary); font-variant-numeric: tabular-nums; }
-.as-selectbar .ui-btn { min-width: 140px; }
+.as-selectbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; min-width: 0; }
+.as-selectbar .ui-btn { min-width: 120px; }
+.as-selectbar .ui-btn .ui-icon { width: 16px; height: 16px; }
+/* Admin: approved tiles are selectable too — Create post with N · Download (zip) · Export (CSV) */
+body[data-role="admin"] .as-grid.is-selecting .as-thumb[data-status="approved"] { opacity: 1; cursor: pointer; }
+@media (max-width: 599.98px) {
+  .as-selectbar { flex-wrap: wrap; gap: 8px; }
+  .as-selectbar-count { flex: 1 1 100%; }
+  .as-selectbar-actions { flex: 1 1 100%; margin-left: 0; }
+  .as-selectbar-actions .ui-btn { flex: 1 1 0; min-width: 0; padding-inline: 8px; }
+  .as-sel-n { display: none; }   /* "Create post" — the count is in "N selected" */
+}
 @media (min-width: 1024px) {
   .as-selectbar { left: var(--sidebar-w); bottom: 0; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
 }
@@ -378,13 +439,19 @@ video.ui-viewer-media { width: 100%; background: #000; touch-action: auto; }
   box-shadow: inset 0 0.5px 0 var(--glass-highlight);
 }
 .ui-viewer-actions {
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2.4fr) 50px; gap: 8px;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 50px; gap: 8px;   /* "Needs changes" · "Approve", equal weight */
   max-width: 640px; margin: 0 auto;
 }
 .ui-viewer-actions .ui-btn { min-width: 0; }
 .ui-viewer-more { width: 50px; padding: 0; border-radius: 14px; }
 .ui-viewer-more .ui-icon { width: 22px; height: 22px; }
 .ui-viewer-deny .ui-icon { stroke-width: 2.6; }
+/* Phones: no icons, subhead type; at 320 "Needs changes" wraps onto two lines inside the 50px button */
+@media (max-width: 479.98px) {
+  .ui-viewer-deny .ui-icon, .ui-viewer-approve .ui-icon { display: none; }
+  .ui-viewer-deny, .ui-viewer-approve { padding-inline: 8px; font-size: var(--text-subhead); }
+  .ui-viewer-deny > span { white-space: normal; line-height: 1.1; text-align: center; }
+}
 .ui-viewer-approve.is-done { background: rgba(52,199,89,.2); color: var(--approve); }
 .ui-viewer-deny.is-done { background: var(--deny); color: #fff; }
 .ui-viewer-actions[hidden], .ui-viewer-note[hidden], .ui-viewer-menu[hidden], .ui-viewer-done[hidden] { display: none; }
@@ -427,10 +494,10 @@ video.ui-viewer-media { width: 100%; background: #000; touch-action: auto; }
 }
 .ui-viewer-thread .ui-thread { gap: 8px; }
 .ui-viewer-thread .pd-msg { display: flex; flex-direction: column; }
-.ui-viewer-thread .pd-msg--client { align-items: flex-end; }
-.ui-viewer-thread .pd-msg--joust  { align-items: flex-start; }
+.ui-viewer-thread .pd-msg--mine   { align-items: flex-end; }
+.ui-viewer-thread .pd-msg--theirs { align-items: flex-start; }
 .ui-viewer-thread .ui-bubble { white-space: pre-wrap; overflow-wrap: anywhere; }
-.ui-viewer-thread .ui-bubble--joust { background: rgba(118,118,128,.34); color: #fff; }
+.ui-viewer-thread .ui-bubble--theirs { background: rgba(118,118,128,.34); color: #fff; }
 .ui-viewer-thread .ui-bubble-meta { padding: 0 6px; color: var(--label-secondary); }
 .ui-viewer-thread .pd-thread-empty, .ui-viewer-thread-loading, .ui-viewer-thread-error {
   margin: 6px 0 8px; text-align: center;
@@ -518,3 +585,32 @@ video.ui-viewer-media { width: 100%; background: #000; touch-action: auto; }
   .as-thumb:active, .as-chip:active, .ui-viewer-arrow:active { transform: none; }
   .ui-viewer-arrow:active { transform: translateY(-50%); }
 }
+
+/* ---------------------------------------------------------------------
+   Manage series sheet (admin; #seriesManageSheet, static/js/series-manage.js)
+   --------------------------------------------------------------------- */
+.sm { display: flex; flex-direction: column; gap: 14px; }
+.sm-intro { margin: 0; font-size: var(--text-subhead); line-height: var(--lh-subhead); }
+.sm .as-series-label { margin-top: 4px; }
+.sm-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.sm-row { display: flex; flex-direction: column; gap: 6px; padding: 12px 0; }
+.sm-row + .sm-row { box-shadow: 0 -0.5px 0 var(--separator); }
+.sm-main, .sm-drive { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sm-main .ui-input, .sm-drive .ui-input { flex: 1 1 140px; min-width: 0; min-height: 36px; padding: 6px 10px; font-size: var(--text-subhead); }
+.sm-drive .ui-input { font-size: var(--text-footnote); min-height: 32px; }
+.sm .ui-input[aria-invalid="true"] { box-shadow: inset 0 0 0 1.5px var(--deny); }
+.sm-meta { font-size: var(--text-footnote); line-height: var(--lh-footnote); }
+.sm-meta code, .sm-folder code, .sm-help code { font-family: var(--font-mono); font-size: var(--text-caption); word-break: break-all; }
+.sm-ctl { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.sm-ctl .ui-btn[disabled] { opacity: .35; }
+.sm-ctl .ui-icon { width: 14px; height: 14px; }
+.sm-danger { color: var(--deny); margin-left: auto; }
+.sm-empty { margin: 0; font-size: var(--text-subhead); }
+.sm-empty[hidden] { display: none; }
+.sm-add { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; box-shadow: inset 0 0.5px 0 var(--separator); }
+.sm-add .ui-btn { align-self: flex-start; }
+.sm-ftp { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; box-shadow: inset 0 0.5px 0 var(--separator); }
+.sm-folder { margin: 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sm-help { margin: 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); }
+.sm-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.as-series-hint .ui-btn { margin-left: 6px; vertical-align: middle; }

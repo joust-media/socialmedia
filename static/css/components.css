@@ -60,7 +60,11 @@
 .ui-tab .ui-icon { width: 26px; height: 26px; }
 .ui-tab-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .ui-tab.is-active, .ui-tab[aria-current="page"] { color: var(--accent); }
-.ui-tab--studio.is-active, .ui-tab--studio[aria-current="page"] { color: var(--joust); }
+.ui-tab--manage.is-active, .ui-tab--manage[aria-current="page"] { color: var(--joust); }
+.ui-tab-label--long { display: none; }   /* merged Emails/Pages tab: short label in the phone bar, long one in the sidebar */
+@media (max-width: 359.98px) {   /* six tabs on a 320px phone: "Collections" / "Manage" still fit (≈ 48px each) */
+  .ui-tab { font-size: 9px; letter-spacing: -0.2px; }
+}
 .ui-tab-badge {
   position: absolute; top: 3px; left: calc(50% + 6px);
 }
@@ -95,7 +99,9 @@
   .ui-tab:hover { background: var(--fill-tertiary); }
   .ui-tab.is-active, .ui-tab[aria-current="page"] { background: var(--fill-tertiary); color: var(--label); }
   .ui-tab.is-active .ui-icon, .ui-tab[aria-current="page"] .ui-icon { color: var(--accent); }
-  .ui-tab--studio.is-active .ui-icon, .ui-tab--studio[aria-current="page"] .ui-icon { color: var(--joust); }
+  .ui-tab--manage.is-active .ui-icon, .ui-tab--manage[aria-current="page"] .ui-icon { color: var(--joust); }
+  .ui-tab-label--long { display: inline; }
+  .ui-tab-label--short { display: none; }
   .ui-tab-badge { position: static; margin-left: auto; }
   .ui-tabbar-footer {
     margin-top: auto; padding: 8px 12px 0;
@@ -288,6 +294,33 @@ a.ui-row:active, button.ui-row:active { background: var(--fill-tertiary); }
   .ui-segmented--dense .ui-segmented-item { padding-inline: 4px; font-size: var(--text-caption); letter-spacing: 0; gap: 3px; }
   .ui-segmented--dense .ui-segmented-count { display: none; }
 }
+/* Scrollable variant (segmented(…, ['scroll' => true]) — admin Posts / Emails / Pages' five segments). On phones the
+   items keep their natural width (labels + counts never overlap) and the control scrolls sideways;
+   app.js sets .is-overflow-start / .is-overflow-end so a fade marks the side with more segments. */
+@media (max-width: 600px) {
+  .ui-segmented--scroll {
+    overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .ui-segmented--scroll::-webkit-scrollbar { display: none; }
+  .ui-segmented--scroll .ui-segmented-item,
+  .ui-segmented--scroll.ui-segmented--dense .ui-segmented-item {
+    flex: 1 0 auto; padding-inline: 10px; font-size: var(--text-footnote); letter-spacing: var(--ls-footnote); gap: 5px;
+  }
+  .ui-segmented--scroll.ui-segmented--dense .ui-segmented-count { display: inline; }
+  .ui-segmented--scroll.is-overflow-end {
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+            mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+  }
+  .ui-segmented--scroll.is-overflow-start {
+    -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent);
+            mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent);
+  }
+  .ui-segmented--scroll.is-overflow-start.is-overflow-end {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+            mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+  }
+}
 
 /* ---------------------------------------------------------------------
    Buttons
@@ -448,6 +481,8 @@ html[data-theme="dark"]  .ui-theme-control [data-theme-value="dark"] {
   box-shadow: 0 8px 24px rgba(0,0,0,.2);
 }
 .ui-toast.is-visible { opacity: 1; transform: translate(-50%, 0); }
+.ui-toast.has-link.is-visible { pointer-events: auto; }
+.ui-toast-link { margin-left: 6px; color: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
 .ui-toast--error { background: var(--deny); color: #fff; }
 .ui-toast--success { background: var(--approve); color: #fff; }
 html:not(:has(.ui-tabbar)) .ui-toast { bottom: calc(24px + env(safe-area-inset-bottom)); }
@@ -551,7 +586,68 @@ html:not(:has(.ui-tabbar)) .ui-toast { bottom: calc(24px + env(safe-area-inset-b
   background: var(--fill-tertiary); color: var(--label);
   align-self: flex-start; border-bottom-left-radius: 6px;
 }
-.ui-bubble--client { background: var(--accent); color: #fff; align-self: flex-end; border-bottom-left-radius: 18px; border-bottom-right-radius: 6px; }
-.ui-bubble--joust  { background: var(--fill-tertiary); }
+/* --mine = the viewer's own message (right, accent, "You"); --theirs = the other party (left, gray, named) */
+.ui-bubble--mine   { background: var(--accent); color: #fff; align-self: flex-end; border-bottom-left-radius: 18px; border-bottom-right-radius: 6px; }
+.ui-bubble--theirs { background: var(--fill-tertiary); }
 .ui-bubble-meta { margin-top: 3px; font-size: var(--text-caption); line-height: var(--lh-caption); color: var(--label-tertiary); }
 .ui-thread { display: flex; flex-direction: column; gap: 6px; }
+
+/* A [hidden] button stays hidden: .ui-btn's display would otherwise win over the UA rule
+   (Studio's "Clear" showed with nothing selected). */
+.ui-btn[hidden] { display: none !important; }
+
+/* ---------------------------------------------------------------------
+   "+ New" — admin create menu in the nav bar (partials/components/new-menu.php, App.newMenu)
+   --------------------------------------------------------------------- */
+.ui-newmenu { position: relative; display: inline-flex; }
+.ui-newmenu-btn { gap: 4px; padding-left: 10px; padding-right: 12px; }
+.ui-newmenu-btn .ui-icon { width: 18px; height: 18px; }
+.ui-newmenu-panel {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 850;
+  width: min(360px, calc(100vw - 24px));
+  padding: 6px;
+  background: var(--bg-elevated); border-radius: 14px;
+  box-shadow: var(--shadow-card), 0 0 0 0.5px var(--separator);
+  transform-origin: top right;
+}
+.ui-newmenu-panel[hidden] { display: none; }
+.ui-newmenu-panel.is-open { animation: ui-newmenu-in var(--dur-base, 200ms) var(--ease-out, ease-out); }
+@keyframes ui-newmenu-in { from { opacity: 0; transform: scale(.96) translateY(-4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .ui-newmenu-panel.is-open { animation: none; } }
+.ui-newmenu-item {
+  display: flex; align-items: center; gap: 12px;
+  min-height: 52px; padding: 8px 10px; border-radius: 10px;
+  color: var(--label); text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.ui-newmenu-item:hover, .ui-newmenu-item:focus-visible { background: var(--fill-tertiary); outline: none; }
+.ui-newmenu-item:active { opacity: .6; }
+.ui-newmenu-icon {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  width: 32px; height: 32px; border-radius: 8px;
+  background: rgba(0,122,255,.12); color: var(--accent);
+}
+.ui-newmenu-icon .ui-icon { width: 18px; height: 18px; }
+.ui-newmenu-text { display: flex; flex-direction: column; min-width: 0; }
+.ui-newmenu-title { font-size: var(--text-body); line-height: var(--lh-body); font-weight: 600; }
+.ui-newmenu-sub {
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Phones: icon-only button (the nav row is tight); the panel spans the screen under the nav bar
+   (the button is not at the right edge, so a right-aligned dropdown would run off the left side) */
+@media (max-width: 599px) {
+  .ui-newmenu-label { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .ui-newmenu-btn { width: 36px; padding: 0; }
+  .ui-newmenu-panel {
+    position: fixed; top: calc(env(safe-area-inset-top) + 60px); left: 12px; right: 12px;
+    width: auto; transform-origin: top center;
+  }
+  .ui-newmenu-sub { white-space: normal; }
+}
+
+/* ---------------------------------------------------------------------
+   Manage section switch (manageNavHtml(): manage.php + drive.php)
+   --------------------------------------------------------------------- */
+.manage-toolbar { margin: 4px 0 18px; }
+.manage-toolbar .ui-segmented { max-width: 480px; }

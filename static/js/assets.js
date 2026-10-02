@@ -41,6 +41,12 @@
      (data-video-noprobe) and the viewer unloads a video the moment you leave
      it, so one <video> at most streams from the server.
 
+     Previews: tiles carry data-src = the lg preview (what the viewer shows),
+     data-original = the file (Download, the viewer's "View original" row) and
+     data-thumb = the sm preview; Replace swaps to the reply's large / thumb.
+     Reference strip (open tire, [data-ref-strip]): tap a tile → the viewer over
+     the strip's own tiles (opts.source 'strip': no grid paging / counts).
+
    Loads with `defer` before app.js, so nothing here touches App.* until
    'app:ready' (or immediately if App has already initialised).
    ===================================================================== */
@@ -61,6 +67,10 @@
   function afterMs(ms, fn) { return setTimeout(fn, reduced() ? Math.min(ms, 160) : ms); }
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function finePointer() { return !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches); }
+  /** Cache-bust a URL that may already carry a query (preview URLs can). */
+  function bust(url) { return url ? url + (url.indexOf('?') < 0 ? '?' : '&') + 't=' + Date.now() : url; }
+  /** Point an <img> at one URL: drop srcset/sizes first, or the browser keeps picking from the old candidates. */
+  function swapImg(img, url) { if (!img || !url) return; img.removeAttribute('srcset'); img.removeAttribute('sizes'); img.src = url; }
 
   /* ================================================================ */
   /* Viewer                                                            */
@@ -87,9 +97,9 @@
         more: $('[data-viewer-more]', root), menu: $('[data-viewer-menu]', root),
         note: $('[data-viewer-note]', root), noteInput: $('[data-viewer-note-input]', root),
         noteHint: $('[data-viewer-note-hint]', root), noteSend: $('[data-viewer-note-send]', root), noteCancel: $('[data-viewer-note-cancel]', root),
-        download: $('[data-viewer-download]', root), downloadLink: $('[data-viewer-download-link]', root),
+        download: $('[data-viewer-download]', root), downloadLink: $('[data-viewer-download-link]', root), original: $('[data-viewer-original]', root),
         replace: $('[data-viewer-replace]', root), replaceInput: $('[data-viewer-replace-input]', root), manage: $('[data-viewer-manage]', root),
-        setRef: $('[data-viewer-set-reference]', root), del: $('[data-viewer-delete]', root),
+        setRef: $('[data-viewer-set-reference]', root), del: $('[data-viewer-delete]', root), useInPost: $('[data-viewer-use-in-post]', root),
         comments: $('[data-viewer-comments]', root), commentsToggle: $('[data-viewer-comments-toggle]', root),
         commentsCount: $('[data-viewer-comments-count]', root), commentsPanel: $('[data-viewer-comments-panel]', root),
         thread: $('[data-viewer-thread]', root), commentForm: $('[data-viewer-comment-form]', root),
@@ -130,6 +140,7 @@
       // More menu
       $$('[data-viewer-download]', root).forEach(function (b) { b.addEventListener('click', function () { self.closeMenu(); self.download(); }); });
       if (r.downloadLink) r.downloadLink.addEventListener('click', function () { self.closeMenu(); });   // videos: a plain <a download> — the browser streams the file
+      if (r.original) r.original.addEventListener('click', function () { self.closeMenu(); });           // images: the untouched file in a new tab (the slide shows the lg preview)
       if (r.replace && r.replaceInput) {
         r.replace.addEventListener('click', function () { self.closeMenu(); r.replaceInput.value = ''; r.replaceInput.click(); });
         r.replaceInput.addEventListener('change', function () { if (r.replaceInput.files && r.replaceInput.files[0]) self.replace(r.replaceInput.files[0]); });
@@ -137,6 +148,14 @@
       if (r.manage) r.manage.addEventListener('click', function () { self.closeMenu(); });
       if (r.setRef) r.setRef.addEventListener('click', function () { self.closeMenu(); self.setReference(); });
       if (r.del) r.del.addEventListener('click', function () { self.closeMenu(); self.deleteImage(); });
+      // admin: "Use in post" (approved items) → the New post pop-up (newpost.js) with this image as slide 1
+      if (r.useInPost) r.useInPost.addEventListener('click', function () {
+        var it = self.current(); self.closeMenu();
+        if (!it || !App.newPost) return;
+        var ref = it.kind + ':' + it.id;
+        self.close();
+        setTimeout(function () { App.newPost.open({ preselect: [ref] }); }, 60);
+      });
       document.addEventListener('click', function (e) { if (self.isOpen && !r.menu.hidden && !e.target.closest('[data-viewer-menu]')) self.closeMenu(); });
 
       this._bindGestures();
@@ -308,17 +327,23 @@
       r.approveLabel.textContent = approved ? 'Approved' : 'Approve';
       r.approve.setAttribute('aria-pressed', approved ? 'true' : 'false');
       r.deny.classList.toggle('is-done', denied);
-      r.denyLabel.textContent = denied ? 'Needs changes' : 'Deny';
+      r.denyLabel.textContent = 'Needs changes';   // the button and the state read the same (is-done fills it)
       r.deny.setAttribute('aria-pressed', denied ? 'true' : 'false');
       if (r.prev) r.prev.disabled = !this.hasPrev();
       if (r.next) r.next.disabled = !this.hasNext();
       $$('[data-tire-only]', r.menu).forEach(function (el) { el.hidden = item.kind !== 'tire'; });
+      if (r.useInPost) r.useInPost.hidden = !(item.status === 'approved' && (item.kind === 'tire' || item.kind === 'library') && App.newPost);
       // Download: images go through the blob save (download()), videos through a direct <a download> link
       if (r.downloadLink) {
         var isVideo = item.type === 'video';
         r.downloadLink.hidden = !isVideo;
         if (isVideo) { r.downloadLink.href = item.src; r.downloadLink.setAttribute('download', item.download || 'video'); }
         if (r.download) r.download.hidden = isVideo;
+      }
+      if (r.original) {
+        var orig = item.original || item.src;
+        r.original.hidden = item.type === 'video' || !orig;
+        if (!r.original.hidden) r.original.href = orig;
       }
       if (r.manage) { r.manage.href = item.manage || '#'; if (!item.manage) r.manage.hidden = true; }
       if (r.setRef && item.kind === 'tire') r.setRef.hidden = item.type === 'video' || item.isReference === true;   // the reference header is an <img>
@@ -408,8 +433,8 @@
         r.thread.innerHTML = '<div class="ui-thread pd-thread ui-viewer-thread-list" data-thread data-count="0"></div>';
         list = $('[data-thread]', r.thread);
       }
-      var side = actor === 'client' ? 'client' : 'joust';
-      var who  = actor === 'client' ? 'You' : (actor === 'admin' ? 'Joust' : 'Note');
+      var bw = App.bubbleWho ? App.bubbleWho(actor) : { side: 'mine', who: 'You' };   // drawn from the viewer's seat
+      var side = bw.side, who = escapeHtml(bw.who);
       var msg  = document.createElement('div');
       msg.className = 'pd-msg pd-msg--' + side + ' ui-enter';
       msg.setAttribute('data-actor', actor);
@@ -490,10 +515,11 @@
         item._busy = false;
         if (!res.ok) { toast(res.error || 'Could not set the reference', { kind: 'error' }); return; }
         var ref = $('.as-reference-media img');
-        if (ref) ref.src = item.src;
+        if (ref) swapImg(ref, (res.data && res.data.thumb) || item.thumb || item.src);   // the 96 px header shows the sm preview
+        assets.promoteRef(item, res.data || {});                                         // …and the Reference strip leads with it
         toast('Set as reference image', { kind: 'success' });
         var grid = $('#assetsGrid'), key = grid ? grid.dataset.series : '';
-        if (key && key !== 'ref') self.removeCurrent('moved');   // it left this series for the Reference set
+        if (!item.strip && key && key !== 'ref') self.removeCurrent('moved');   // it left this series for the Reference set
         else { item.isReference = true; self.updateChrome(); }
       });
     },
@@ -618,8 +644,8 @@
     download: function () {
       var item = this.current();
       if (!item) return;
-      var name = item.download || 'image';
-      fetch(item.src, { credentials: 'same-origin' })
+      var name = item.download || 'image', url0 = item.original || item.src;   // always the original file, never the preview on screen
+      fetch(url0, { credentials: 'same-origin' })
         .then(function (res) { if (!res.ok) throw new Error('fetch'); return res.blob(); })
         .then(function (blob) {
           var url = URL.createObjectURL(blob), a = document.createElement('a');
@@ -628,7 +654,7 @@
           setTimeout(function () { URL.revokeObjectURL(url); }, 3000);
           toast('Saved to downloads', { kind: 'success' });
         })
-        .catch(function () { window.open(item.src, '_blank', 'noopener'); });
+        .catch(function () { window.open(url0, '_blank', 'noopener'); });
     },
 
     /** Admin only (the input exists only when the server rendered it). With chunk-upload.js the file goes to
@@ -642,13 +668,18 @@
       var chunk = App.chunkUpload && App.chunkUpload.upload ? App.chunkUpload : null;
       var done = function (res) {
         if (!res.ok) throw new Error((res.data && res.data.error) || ('Replace failed (' + res.status + ')'));
-        var base = item.src.indexOf('/uploads/') > 0 ? item.src.slice(0, item.src.indexOf('/uploads/')) : '';
-        var url = (res.data.src || (base + '/' + res.data.image_url)) + '?t=' + Date.now();   // src: ready-to-use (series renders live under /media/tires/)
+        var o = item.original || item.src;
+        var base = o.indexOf('/uploads/') > 0 ? o.slice(0, o.indexOf('/uploads/')) : '';
+        var url = bust(res.data.src || (base + '/' + res.data.image_url));   // src: ready-to-use (series renders live under /media/tires/)
         var meta = /\.(mp4|webm|mov|m4v)(\?|$)/i.test(res.data.image_url);
-        item.src = url; item.type = (res.data.media_type === 'video' || meta) ? 'video' : 'image';
+        item.type = (res.data.media_type === 'video' || meta) ? 'video' : 'image';
+        // Previews of the new file (reply thumb / large, preview-ui.php pvReplyFields); a video has only its one URL
+        item.original = url;
+        item.src = item.type === 'image' && res.data.large ? bust(res.data.large) : url;
+        item.thumb = item.type === 'image' && res.data.thumb ? bust(res.data.thumb) : url;
         item._preloaded = false;
         if (self.current() === item) self.goTo(self.index);
-        emit(root, 'viewer:replaced', { item: item, src: url });
+        emit(root, 'viewer:replaced', { item: item, src: item.src, thumb: item.thumb, original: url });
         toast(item.type === 'video' ? 'Video replaced' : 'Image replaced', { kind: 'success' });
       };
       var fail = function (err) { toast((err && (err.error || err.message)) || 'Replace failed', { kind: 'error' }); };
@@ -857,6 +888,7 @@
       this.grid = $('#assetsGrid');
       var self = this, cfg = this.cfg;
       if (cfg.notice) toast(cfg.notice);
+      this.initRefStrip();   // the Reference strip works with or without a grid under it
       if (!this.grid) return;
 
       // Tap → viewer (or toggle selection in select mode)
@@ -870,8 +902,12 @@
       // Viewer decisions → tiles, counts, removal
       document.addEventListener('viewer:decision', function (e) { self.onDecision(e.detail); });
       document.addEventListener('viewer:replaced', function (e) {
-        var tile = e.detail.item.tile || self.findTile(e.detail.item.kind, e.detail.item.id);
-        var img = tile && tile.querySelector('img'); if (img) img.src = e.detail.src;
+        var d = e.detail, tiles = [d.item.tile || self.findTile(d.item.kind, d.item.id)].concat(self.stripTiles(d.item.id));
+        tiles.forEach(function (tile) {
+          if (!tile) return;
+          tile.dataset.src = d.src; tile.dataset.original = d.original || d.src; tile.dataset.thumb = d.thumb || d.src;
+          var img = tile.querySelector('img:not([data-video-poster])'); if (img) swapImg(img, d.thumb || d.src);   // the tile keeps showing the sm preview
+        });
       });
       // Comment count (thread loaded / comment sent / deny note / rollback) → the tile's bubble
       document.addEventListener('viewer:comments', function (e) {
@@ -880,7 +916,9 @@
       });
       // Admin deleted the image (or moved it to the Reference set): the tile leaves and the counts drop by one.
       document.addEventListener('viewer:removed', function (e) {
-        var it = e.detail.item, tile = it.tile || self.findTile(it.kind, it.id);
+        var it = e.detail.item;
+        if (it.strip) return;   // opened from the Reference strip: initRefStrip() drops its tile; the grid counts are another list
+        var tile = it.tile || self.findTile(it.kind, it.id);
         self.adjustCounts(it.status, null);
         if (self.cfg.page && self.cfg.page.total > 0) self.cfg.page.total--;
         if (tile) self.leaveTile(tile);
@@ -892,6 +930,11 @@
       if (selBtn) selBtn.addEventListener('click', function () { self.setSelecting(!self.selecting); });
       var approveBtn = $('[data-select-approve]');
       if (approveBtn) approveBtn.addEventListener('click', function () { self.approveSelected(); });
+      var postBtn = $('[data-select-post]');   // admin only (assets.php)
+      if (postBtn) postBtn.addEventListener('click', function () { self.postSelected(); });
+      var dlBtn = $('[data-select-download]'), exBtn = $('[data-select-export]');   // admin only: zip / manifest CSV of the approved selection
+      if (dlBtn) dlBtn.addEventListener('click', function () { self.downloadSelected(dlBtn); });
+      if (exBtn) exBtn.addEventListener('click', function () { self.exportSelected(exBtn); });
       document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && self.selecting && !viewer.isOpen) self.setSelecting(false); });
 
       // Video tiles: posters + duration badges are filled by App.video (video.js) from its probe/cache.
@@ -901,6 +944,7 @@
       if (moreBtn) moreBtn.addEventListener('click', function () { self.loadMore(); });
       // The viewer walks past the loaded page → fetch the next one so "next" never runs dry mid-series.
       document.addEventListener('viewer:navigate', function (e) {
+        if (viewer.opts.source === 'strip') return;   // the Reference strip is its own list
         if (self.hasMore() && e.detail.index >= viewer.items.length - 3) self.loadMore();
       });
       this.initSeries();
@@ -922,7 +966,7 @@
     findTile: function (kind, id) { return this.grid ? $('[data-asset][data-kind="' + kind + '"][data-id="' + id + '"]', this.grid) : null; },
     tileToItem: function (tile) {
       var d = tile.dataset;
-      return { id: parseInt(d.id, 10), kind: d.kind, status: d.status, src: d.src, type: d.type || 'image', mime: d.mime || '',
+      return { id: parseInt(d.id, 10), kind: d.kind, status: d.status, src: d.src, original: d.original || d.src, thumb: d.thumb || '', type: d.type || 'image', mime: d.mime || '',
                label: d.label || '', download: d.download || '', endpoint: d.endpoint, manage: d.manage || '', twin: d.twin || '',
                comments: parseInt(d.comments, 10) || 0, tile: tile };
     },
@@ -930,7 +974,50 @@
       var self = this, items = this.tiles().map(function (t) { return self.tileToItem(t); });
       var idx = items.findIndex(function (it) { return it.tile === tile; });
       var page = this.cfg.page || {};
-      viewer.open(items, idx < 0 ? 0 : idx, { mode: this.cfg.mode || 'review', context: this.cfg.context || '', total: page.total || items.length });
+      viewer.open(items, idx < 0 ? 0 : idx, { mode: this.cfg.mode || 'review', context: this.cfg.context || '', total: page.total || items.length, source: 'grid' });
+    },
+
+    /* ---------------- Reference strip (open tire): tap → the viewer over the strip's own tiles ---------------- */
+    /** After "Set as reference": the image leads the strip (moved when it is there, added when it is approved and the strip shows approved ones). */
+    promoteRef: function (item, data) {
+      var row = $('[data-ref-row]'), strip = $('[data-ref-strip]');
+      if (!row || !strip || item.type === 'video') return;
+      var tile = this.stripTiles(item.id)[0];
+      if (!tile && item.status === (strip.getAttribute('data-ref-strip') || '')) {
+        tile = document.createElement('button');
+        tile.type = 'button'; tile.className = 'as-refstrip-tile' + (item.status === 'approved' ? ' is-approved' : '');
+        tile.setAttribute('role', 'listitem'); tile.setAttribute('data-ref-tile', '');
+        var d = { id: item.id, kind: 'tire', status: item.status, src: item.src, original: item.original || item.src, thumb: data.thumb || item.thumb || item.src,
+                  type: 'image', label: item.label || '', download: item.download || '', endpoint: item.endpoint || '', series: 'ref' };
+        Object.keys(d).forEach(function (k) { tile.dataset[k] = String(d[k]); });
+        if (item.manage) tile.dataset.manage = item.manage;
+        tile.setAttribute('aria-label', 'Open reference image: ' + (item.label || ''));
+        var img = document.createElement('img'); img.alt = ''; img.decoding = 'async'; img.src = d.thumb; tile.appendChild(img);
+        var n = $('[data-ref-count]', strip); if (n && item.status === 'approved') n.textContent = String((parseInt(n.textContent, 10) || 0) + 1);
+      }
+      if (tile) { row.insertBefore(tile, row.firstChild); row.scrollLeft = 0; }
+    },
+    stripTiles: function (id) { return $$('[data-ref-tile]' + (id != null ? '[data-id="' + id + '"]' : '')); },
+    initRefStrip: function () {
+      var self = this, strip = $('[data-ref-strip]');
+      if (!strip) return;
+      strip.addEventListener('click', function (e) {
+        var tile = e.target.closest('[data-ref-tile]');
+        if (!tile || !strip.contains(tile)) return;
+        e.preventDefault();
+        var tiles = self.stripTiles(), items = tiles.map(function (t) { var it = self.tileToItem(t); it.tile = null; it.strip = t; return it; });
+        var s = self.cfg.series || {};
+        viewer.open(items, Math.max(0, tiles.indexOf(tile)), { mode: 'browse', context: (s.tire ? s.tire + ' · ' : '') + 'Reference', total: items.length, source: 'strip' });
+      });
+      // Decisions / comments / deletes made from either list keep the strip tiles honest
+      document.addEventListener('viewer:decision', function (e) {
+        self.stripTiles(e.detail.item.id).forEach(function (t) { t.dataset.status = e.detail.status; t.classList.toggle('is-approved', e.detail.status === 'approved'); });
+      });
+      document.addEventListener('viewer:removed', function (e) {
+        if (e.detail.reason !== 'deleted') return;
+        self.stripTiles(e.detail.item.id).forEach(function (t) { t.remove(); });
+        var n = $('[data-ref-count]', strip); if (n) n.textContent = String(self.stripTiles().filter(function (t) { return t.dataset.status === 'approved'; }).length);
+      });
     },
 
     /* ---------------- paging: "Load more" appends the next ASSETS_PAGE tiles (and extends an open viewer) ---------------- */
@@ -956,7 +1043,7 @@
           self.grid.appendChild(frag);
           if (App.video && App.video.enhance) App.video.enhance(self.grid);   // posters / durations for new video tiles
           if (!added.length) page.total = self.tiles().length + (page.offset || 0);   // the server ran dry: stop asking
-          viewer.append(added.map(function (t) { return self.tileToItem(t); }));
+          if (viewer.opts.source !== 'strip') viewer.append(added.map(function (t) { return self.tileToItem(t); }));
           self.syncMore();
           return added;
         })
@@ -972,7 +1059,7 @@
       var remaining = Math.max(0, (page.total || 0) - (page.offset || 0) - this.tiles().length);
       if (count) count.textContent = remaining + ' remaining';
       if (wrap) wrap.hidden = remaining <= 0;
-      if (viewer.isOpen) { viewer.opts.total = page.total || viewer.items.length; viewer.updateChrome(); }
+      if (viewer.isOpen && viewer.opts.source !== 'strip') { viewer.opts.total = page.total || viewer.items.length; viewer.updateChrome(); }
     },
 
     /* ---------------- series: admin menu, rename / delete sheets ---------------- */
@@ -1173,7 +1260,7 @@
       this.grid.parentNode.insertBefore(el, this.grid.nextSibling);
     },
 
-    /* ---------------- live counts (filter chips, segmented control, tab badge) ---------------- */
+    /* ---------------- live counts (filter chips, series switcher, tab badge) ---------------- */
     adjustCounts: function (from, to) {
       if (from === to) return;
       var bump = function (sel, delta) {
@@ -1181,37 +1268,35 @@
       };
       if (from) bump('[data-count="' + from + '"]', -1);
       if (to)   bump('[data-count="' + to + '"]', 1);
-      var delta = (to === 'pending' ? 1 : 0) - (from === 'pending' ? 1 : 0);
-      if (!delta) return;
-      // Photos · Videos control: its counts follow the status filter, so the active type moves with the filter chip
+      // Counts that follow the active status filter (Photos · Videos, the series chips) move by "in / out of this filter"
       var type = this.grid && this.grid.dataset.type, filter = this.grid && this.grid.dataset.filter;
-      if (type === 'photos' || type === 'videos') {
-        var td = (to === filter ? 1 : 0) - (from === filter ? 1 : 0);
-        if (td) bump('[data-type-count="' + type + '"]', td);
-      }
-      // Series switcher: the pending badge of the series the grid shows (hidden at 0)
+      var td = (to === filter ? 1 : 0) - (from === filter ? 1 : 0);
+      if (td && (type === 'photos' || type === 'videos')) bump('[data-type-count="' + type + '"]', td);
+      // Series switcher: the chip of the series the grid shows counts its images in the active filter
       var key = this.grid && this.grid.dataset.series;
-      if (key) {
-        $$('[data-series-pending="' + key + '"]').forEach(function (el) {
-          var v = Math.max(0, (parseInt(el.textContent, 10) || 0) + delta);
-          el.textContent = String(v); el.hidden = v === 0;
+      if (key && td) {
+        $$('[data-series-count="' + key + '"]').forEach(function (el) {
+          var v = Math.max(0, (parseInt(el.textContent, 10) || 0) + td);
+          el.textContent = String(v);
+          el.classList.toggle('as-chip-count--pending', filter === 'pending' && v > 0);
         });
+      }
+      var delta = (to === 'pending' ? 1 : 0) - (from === 'pending' ? 1 : 0);
+      if (delta && key) {
         var approveAll = $('[data-action="approve_series"]');
         if (approveAll && (parseInt(($('[data-count="pending"]') || {}).textContent, 10) || 0) === 0) approveAll.hidden = true;
       }
-      var seg = $('.ui-segmented-item.is-active .ui-segmented-count');
-      if (seg) { var v = Math.max(0, (parseInt(seg.textContent, 10) || 0) + delta); if (v > 0) seg.textContent = String(v); else seg.remove(); }
-      else if (delta > 0) { var act = $('.ui-segmented-item.is-active'); if (act) act.insertAdjacentHTML('beforeend', ' <span class="ui-segmented-count">1</span>'); }
-      // Tab-bar badge: the Tires tab (data-tab="tires", collections view) when the company has one, else Assets
+      // (No Library · Tires segment any more — Library and Tires are separate tabs — so only the tab badge below moves.)
+      // Tab-bar badge = the viewer's own queue (client: To Review · admin: Needs changes; partials/tabbar.php):
+      // the Tires tab (data-tab="tires", collections view) when the company has one, else Assets
+      var q = App.queueStatus ? App.queueStatus() : 'pending';
+      var qd = (to === q ? 1 : 0) - (from === q ? 1 : 0);
+      if (!qd) return;
       var tab = (this.cfg.view === 'collections' && $('.ui-tab[data-tab="tires"]')) || $('.ui-tab[data-tab="assets"]') || $('.ui-tab--assets');
-      if (tab) {
-        var badge = $('.ui-badge', tab), n = Math.max(0, (badge ? (parseInt(badge.textContent, 10) || 0) : 0) + delta);
-        if (n > 0) { if (!badge) { badge = document.createElement('span'); badge.className = 'ui-badge ui-tab-badge'; tab.appendChild(badge); } badge.textContent = n > 99 ? '99+' : String(n); badge.setAttribute('aria-label', n + ' to review'); }
-        else if (badge) badge.remove();
-      }
+      if (tab && App.bumpTabBadge) App.bumpTabBadge(tab, qd);
     },
 
-    /* ---------------- multi-select: batch Approve only ---------------- */
+    /* ---------------- multi-select: batch Approve (pending / needs changes) + admin "Create post with N" (approved) ---------------- */
     setSelecting: function (on) {
       if (this._busyBatch) return;
       this.selecting = !!on;
@@ -1226,19 +1311,80 @@
       this.updateSelection();
     },
     toggleTile: function (tile) {
-      if (tile.dataset.status === 'approved') return;   // nothing to approve
+      // Approved tiles are selectable only where "Create post with N" exists (admin); the client seat selects to approve.
+      if (tile.dataset.status === 'approved' && !$('[data-select-post]')) return;
       tile.setAttribute('aria-pressed', tile.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
       this.updateSelection();
     },
     selectedTiles: function () { return this.tiles().filter(function (t) { return t.getAttribute('aria-pressed') === 'true'; }); },
+    /** Selected tiles that can still be approved (To Review / Needs changes) and the approved ones (post material). */
+    selectedToApprove: function () { return this.selectedTiles().filter(function (t) { return t.dataset.status !== 'approved'; }); },
+    selectedApproved: function () { return this.selectedTiles().filter(function (t) { return t.dataset.status === 'approved'; }); },
     updateSelection: function () {
-      var n = this.selectedTiles().length, count = $('[data-select-count]'), btn = $('[data-select-approve]');
+      var n = this.selectedTiles().length, count = $('[data-select-count]'), btn = $('[data-select-approve]'), post = $('[data-select-post]');
+      var dl = $('[data-select-download]'), ex = $('[data-select-export]');
+      var k = this.selectedToApprove().length, m = this.selectedApproved().length;
       if (count) count.textContent = n === 1 ? '1 selected' : n + ' selected';
-      if (btn && !this._busyBatch) { btn.disabled = n === 0; btn.textContent = n > 0 ? 'Approve ' + n : 'Approve'; }
+      if (btn && !this._busyBatch) { btn.disabled = k === 0; btn.textContent = k > 0 ? 'Approve ' + k : 'Approve'; }
+      if (post) { post.disabled = m === 0 || this._busyBatch; post.innerHTML = 'Create post' + (m > 0 ? '<span class="as-sel-n"> with ' + m + '</span>' : ''); post.title = m === 0 ? 'Select approved images to build a post' : ''; }
+      if (dl && !this._busyZip) { dl.disabled = m === 0 || dl.getAttribute('data-zip') === '0'; if (dl.getAttribute('data-zip') === '0') dl.title = 'This server can only export the CSV list (32-bit PHP)'; }
+      if (ex) ex.disabled = m === 0;
+      // One bar, the actions the grid can use: approved grids offer post / Download / Export, the others Approve
+      // (both when the selection mixes them). The client seat only ever has Approve.
+      if (post) {
+        var approvedGrid = this.grid && this.grid.dataset.filter === 'approved';
+        [post, dl, ex].forEach(function (b) { if (b) b.hidden = !(approvedGrid || m > 0); });
+        if (btn) btn.hidden = approvedGrid && k === 0;
+      }
+    },
+    /** The approved selection as export refs (tire:<id> / library:<id>), grid order. */
+    selectedRefs: function () { return this.selectedApproved().map(function (t) { return t.dataset.kind + ':' + t.dataset.id; }); },
+    /** Admin "Download": a zip of the approved selection — export.php scope=selection (start, step until done, then the download). */
+    downloadSelected: function (btn) {
+      var self = this, refs = this.selectedRefs(), ep = btn.getAttribute('data-endpoint');
+      if (!refs.length || this._busyZip || !ep) return;
+      this._busyZip = true; btn.disabled = true; btn.setAttribute('aria-busy', 'true');
+      var label = $('span', btn), was = label ? label.textContent : '';
+      var say = function (t) { if (label) label.textContent = t; };
+      var done = function (msg, kind) {
+        self._busyZip = false; btn.removeAttribute('aria-busy'); say(was); self.updateSelection();
+        if (msg) toast(msg, { kind: kind || 'success', duration: 4000 });
+      };
+      say('Zipping…');
+      App.post(ep, { action: 'start', scope: 'selection', items: refs.join(',') }).then(function (res) {
+        if (!res.ok) { done(res.error || 'Could not start the zip', 'error'); return; }
+        var job = res.data.job, tries = 0;
+        var step = function () {
+          App.post(ep, { action: 'step', job: job }).then(function (r) {
+            if (!r.ok) { if (r.status === 409 && tries++ < 5) { afterMs(800, step); return; } done(r.error || 'The zip failed', 'error'); return; }
+            var d = r.data || {};
+            if (d.bytes) say('Zipping… ' + Math.min(99, Math.floor((d.bytes_done || 0) / d.bytes * 100)) + '%');
+            if (!d.done) { step(); return; }
+            window.location.href = ep + '&action=download&job=' + encodeURIComponent(job);
+            done(refs.length === 1 ? 'Downloading 1 file' : 'Downloading ' + refs.length + ' files as one zip');
+          });
+        };
+        step();
+      });
+    },
+    /** Admin "Export": the selection's manifest CSV (tire, series, file name, approval date, comments, Drive link). */
+    exportSelected: function (btn) {
+      var refs = this.selectedRefs(), ep = btn.getAttribute('data-endpoint');
+      if (!refs.length || !ep) return;
+      window.location.href = ep + '&action=manifest&scope=selection&items=' + encodeURIComponent(refs.join(','));
+      toast('Exporting the list of ' + refs.length + (refs.length === 1 ? ' file' : ' files') + ' (CSV)', { kind: 'success' });
+    },
+    /** Admin: the approved selection → the New post pop-up (newpost.js), in tap order of the grid. */
+    postSelected: function () {
+      var refs = this.selectedApproved().map(function (t) { return t.dataset.kind + ':' + t.dataset.id; });
+      if (!refs.length || !App.newPost) return;
+      this.setSelecting(false);
+      App.newPost.open({ preselect: refs.slice(0, 20) });
+      if (refs.length > 20) toast('Up to 20 slides per post — the first 20 were added', { kind: 'error' });
     },
     /** One request per item, sequentially, with progress; optimistic per tile with rollback. */
     approveSelected: function () {
-      var self = this, tiles = this.selectedTiles(), btn = $('[data-select-approve]');
+      var self = this, tiles = this.selectedToApprove(), btn = $('[data-select-approve]');
       if (!tiles.length || this._busyBatch) return;
       this._busyBatch = true;
       if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }

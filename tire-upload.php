@@ -6,13 +6,15 @@
  *   client      company slug (the tire must belong to it)
  *   tire_id     tires.id
  *   series_id   tire_series.id   — or —   new_series  a name (created on first use, folder = slug)
+ *               [+ new_series_drive  an optional Google Drive share link for the new series (migrate.php 29;
+ *                 400 when it is not a Drive link) — ignored when the series already exists]
  *   file        the image / video
  *   batch       optional batch token shared by one drop (one activity line for the whole drop);
  *               16-hex is used as is, any other [A-Za-z0-9_-]{4,40} token is hashed to 16-hex
  *
  * Chunked, resumable (large files; chunk-upload-lib.php) — `action=`:
  *   probe         GET or POST → {ok, chunk_size, max_file_bytes:{image, video}, ini_max, exts}
- *   chunk_init    client, tire_id, series_id | new_series, name, size, type, batch
+ *   chunk_init    client, tire_id, series_id | new_series [+ new_series_drive], name, size, type, batch
  *                 → {ok, upload_id, chunk_size, received: 0, series}
  *   chunk_put     upload_id, index, offset + `file` = the piece → {ok, received}
  *                 409 {received} when offset ≠ received (resume from there); an already-received
@@ -41,6 +43,7 @@
 require __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/chunk-upload-lib.php';
+require_once __DIR__ . '/upload-lib.php';   // uploadMaxBytes(): the one image / video cap every upload path shares
 if (!function_exists('currentAdmin')) { require_once __DIR__ . '/auth.php'; }
 
 header('Content-Type: application/json');
@@ -78,9 +81,9 @@ if ($action === 'repair_media') {
     exit;
 }
 
-if (!hasTireSeries($pdo)) { tireUploadFail(409, 'Render series are not set up yet — run migrate.php.'); }
+if (!hasTireSeries($pdo)) { tireUploadFail(409, 'Tire series are not set up yet — run migrate.php.'); }
 
-$maxImageBytes   = 10 * 1024 * 1024;          // matches add-feature.php
+$maxImageBytes   = uploadMaxBytes('image');   // 50 MB — the same cap as upload-chunk.php (the Upload sheet sends every destination's files)
 $maxVideoBytes   = 200 * 1024 * 1024;         // single request — bounded by upload_max_filesize / post_max_size anyway
 $maxChunkedVideo = 4 * 1024 * 1024 * 1024;    // chunked — the total size cap
 $iniMax          = (string)(ini_get('upload_max_filesize') ?: '?');
@@ -144,20 +147,34 @@ function tireUploadResolveTire(PDO $pdo, int $tireId, string $slug): array {
     return [$tire, $company];
 }
 
-/** series_id (must belong to the tire) or new_series (created on first use, logged) → the series row. */
-function tireUploadResolveSeries(PDO $pdo, array $tire, int $seriesId, string $newSeries, string $batchId): array {
+/** The posted new_series_drive: '' when absent; 400 when it is not a Google Drive share link or the column is missing. */
+function tireUploadNewSeriesDrive(PDO $pdo): string {
+    $url = trim((string)($_POST['new_series_drive'] ?? ''));
+    if ($url === '') return '';
+    if (mb_strlen($url, 'UTF-8') > 512) { tireUploadFail(400, 'That link is too long (max 512 characters)'); }
+    if (!tireSeriesValidDriveUrl($url)) { tireUploadFail(400, tireSeriesDriveUrlError()); }
+    if (!tireSeriesHasDriveUrl($pdo)) { tireUploadFail(409, 'Google Drive links are not set up yet — run migrate.php.'); }
+    return $url;
+}
+
+/** series_id (must belong to the tire) or new_series (created on first use with the optional Drive link, logged) → the series row. */
+function tireUploadResolveSeries(PDO $pdo, array $tire, int $seriesId, string $newSeries, string $batchId, string $newDrive = ''): array {
     try {
         if ($seriesId > 0) {
             $series = tireSeriesById($pdo, $seriesId);
             if (!$series || (int)$series['tire_id'] !== (int)$tire['id']) { tireUploadFail(404, 'Series not found on this tire'); }
             return $series;
         }
-        $created = createTireSeries($pdo, (int)$tire['id'], $newSeries);
+        $created = createTireSeries($pdo, (int)$tire['id'], $newSeries, $newDrive !== '' ? $newDrive : null);
         $isNew   = !empty($created['created']);
         unset($created['created']);
         if ($isNew) {
             logTireSeriesActivity($pdo, actorFromPost(), 'created', (int)$created['id'],
                 'Created series ' . (string)$tire['name'] . ' · ' . $created['name'], null, $batchId, (int)$tire['company_id']);
+            if ($newDrive !== '') {
+                logTireSeriesActivity($pdo, actorFromPost(), 'drive_linked', (int)$created['id'],
+                    'Linked a Google Drive folder to ' . (string)$tire['name'] . ' · ' . $created['name'], $newDrive, $batchId, (int)$tire['company_id']);
+            }
         }
         return $created;
     } catch (Throwable $e) {
@@ -242,7 +259,7 @@ function tireUploadStore(PDO $pdo, array $company, array $tire, array $series, s
 
     $row = ['id' => $imageId, 'tire_id' => $tireId, 'series_id' => (int)$series['id'], 'image_url' => $imageUrl,
             'display_name' => $displayName, 'caption' => '', 'status' => 'pending', 'sort_order' => $sortOrder];
-    if (!$isVideo) { ensureTireThumb($row); }
+    if (!$isVideo) { $stored = tireImagePath($row); if ($stored !== null) previewAfterStore($stored); }   // sm + lg previews (preview-lib.php)
     $meta = tireImageRowMeta($row, ['tire_name' => (string)$tire['name']]);
 
     echo json_encode([
@@ -294,6 +311,7 @@ if ($action === 'chunk_init') {
     $newSeries = trim((string)($_POST['new_series'] ?? ''));
     if ($seriesId <= 0 && $newSeries === '') { tireUploadFail(400, 'series_id or new_series is required'); }
     if ($newSeries !== '' && mb_strlen($newSeries, 'UTF-8') > 120) { tireUploadFail(400, 'Series name is too long (max 120 characters)'); }
+    $newDrive  = $seriesId <= 0 ? tireUploadNewSeriesDrive($pdo) : '';
     $origName = basename(str_replace('\\', '/', trim((string)($_POST['name'] ?? ''))));
     if ($origName === '') { tireUploadFail(400, 'File name is required'); }
     [$ext, $isVideo] = tireUploadCheckName($origName);
@@ -304,7 +322,7 @@ if ($action === 'chunk_init') {
         $mb = (int)round($limit / (1024 * 1024));
         tireUploadFail(413, ($isVideo ? 'Videos' : 'Images') . ' must be under ' . ($isVideo ? (int)round($limit / (1024 * 1024 * 1024)) . ' GB' : "{$mb} MB") . '.', ['limit_mb' => $mb, 'ini_max' => $iniMax]);
     }
-    $series = tireUploadResolveSeries($pdo, $tire, $seriesId, $newSeries, $batchId);
+    $series = tireUploadResolveSeries($pdo, $tire, $seriesId, $newSeries, $batchId, $newDrive);
     $root = tireUploadSpoolRoot();
     chunkSpoolCleanup($root);
     $meta = chunkUploadInit($root, [
@@ -396,6 +414,7 @@ $seriesId  = (int)($_POST['series_id'] ?? 0);
 $newSeries = trim((string)($_POST['new_series'] ?? ''));
 if ($seriesId <= 0 && $newSeries === '') { tireUploadFail(400, 'series_id or new_series is required'); }
 if ($newSeries !== '' && mb_strlen($newSeries, 'UTF-8') > 120) { tireUploadFail(400, 'Series name is too long (max 120 characters)'); }
+$newDrive  = $seriesId <= 0 ? tireUploadNewSeriesDrive($pdo) : '';
 
 // ---- the file ----
 if (empty($_FILES['file']) || ($_FILES['file']['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
@@ -418,5 +437,5 @@ if ($size > $limit) {
 }
 tireUploadCheckContent($tmpName, $ext, $isVideo);
 
-$series = tireUploadResolveSeries($pdo, $tire, $seriesId, $newSeries, $batchId);
+$series = tireUploadResolveSeries($pdo, $tire, $seriesId, $newSeries, $batchId, $newDrive);
 tireUploadStore($pdo, $company, $tire, $series, $tmpName, $origName, $ext, $isVideo, $batchId, true);

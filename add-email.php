@@ -1,8 +1,8 @@
 <?php
 /**
- * Studio → Emails: create / edit one email, plus the small admin actions the
- * Studio Emails tab posts here (groups, Emails-tab toggle, delete). Admin only —
- * requireAdmin() redirects a client session to login before any output.
+ * Emails → New / Edit email: create / edit one email, plus the small admin actions posted here
+ * (audiences from Manage → Tools, delete). Admin only — requireAdmin() redirects a client session
+ * to login before any output. (A client's Emails tab is turned on / off in Manage → Clients only.)
  *
  *   GET  add-email.php?client=<slug>             new email form
  *   GET  add-email.php?client=<slug>&edit=<id>   edit form (+ comment thread, delete)
@@ -10,15 +10,17 @@
  *   POST (requireSameSiteFetch on every action; hidden `action` + `id` like add-post.php)
  *     create | update   code*, title, html_url, subject, preview_text, trigger_text, send_at,
  *                       priority, status, live, groups[], new_groups, notes
- *                       → create: emails.php?client&email=<id> · update: studio?tab=emails&msg=
+ *                       → create: emails.php?client&email=<id> · update: emails.php?client&email=<id>&msg=
  *     delete            id → map rows + row removed, 'deleted' logged
- *     group_add         name            (ensureEmailGroup)
+ *     group_add         name            (ensureEmailGroup) — email_groups are "Audiences" in the UI
  *     group_rename      id, name
  *     group_delete      id              (removes email_group_map rows too)
- *     module_toggle     to=1|0          (company_modules row for the 'emails' module)
- *   Non-form actions always redirect to studio.php?client=…&tab=emails&msg=….
+ *     Audience actions redirect to manage.php?client=…&section=tools&msg=…#audiences, everything else to
+ *   emails.php?client=…&status=all&msg=… (the flash is toasted once).
  *
- * Rules mirrored from email-status.php: live=1 only when status=approved (the 409 rule);
+ * Rules mirrored from email-status.php: the form never decides for the client — a new email is Draft or
+ * To Review, an existing one keeps its status or goes back to Draft / To Review (reviewFormStatusOptions(),
+ * helpers.php; Approve for client… stays in the sheet's ⋯ menu); live=1 only when status=approved (the 409 rule);
  * the code is unique per company (case-insensitive, normalised via emailNormalizeCode()).
  * Activity: 'created' on create; one batch of edited_<field> rows per save
  * (+ marked_live / unmarked_live when the flag flips); 'deleted' on delete.
@@ -36,14 +38,20 @@ function h($s) {
 }
 
 if (!$client) {
-    header('Location: ' . clientUrl('studio.php', ['msg' => 'Pick a client first.']));
+    header('Location: ' . pagePath('emails'));   // the admin's client chooser
     exit;
 }
 $cid = (int)$client['id'];
 
-/** Back to the Studio Emails tab with a flash. */
+/** Back to the Emails list (every status) with a flash. */
 function emailsStudioRedirect(string $msg, array $extra = []): void {
-    header('Location: ' . clientUrl('studio.php', ['tab' => 'emails', 'msg' => $msg] + $extra));
+    header('Location: ' . clientUrl('emails.php', ['status' => 'all', 'msg' => $msg] + $extra));
+    exit;
+}
+
+/** Back to Manage → Tools (Audiences) with a flash. */
+function emailsToolsRedirect(string $msg): void {
+    header('Location: ' . manageUrl('tools', ['msg' => $msg]) . '#audiences');
     exit;
 }
 
@@ -59,7 +67,7 @@ $errors   = [];
 $flash    = trim((string)($_GET['msg'] ?? ''));
 $editId   = (int)($_GET['edit'] ?? 0);
 $email    = null;
-$statuses = ['draft' => 'Draft', 'pending' => 'To Review', 'approved' => 'Approved', 'denied' => 'Needs changes'];
+$statuses = ['draft' => 'Draft', 'pending' => 'To Review', 'approved' => 'Approved', 'denied' => 'Needs changes'];   // every stored value
 $priorities = ['' => '—', 'low' => 'Low', 'medium' => 'Medium', 'high' => 'High'];
 
 /** Form values (strings; groups = ids). */
@@ -81,31 +89,24 @@ function loadOwnEmail(PDO $pdo, int $id, int $cid): ?array {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = (string)($_POST['action'] ?? '');
 
-    // ---- Emails tab toggle ------------------------------------------
-    if ($action === 'module_toggle') {
-        $on = (int)($_POST['to'] ?? 0) === 1;
-        if (!setEmailsModuleEnabled($pdo, $cid, $on)) emailsStudioRedirect('The emails module row is missing — run migrate.php first.');
-        emailsStudioRedirect($on ? 'Emails tab enabled for ' . $client['name'] . '.' : 'Emails tab disabled for ' . $client['name'] . '.');
-    }
-
     // ---- Groups -------------------------------------------------------
     if ($action === 'group_add') {
         $name = trim(preg_replace('/\s+/', ' ', (string)($_POST['name'] ?? '')));
-        if ($name === '' || emailSlugify($name) === '') emailsStudioRedirect('Group name is required.');
+        if ($name === '' || emailSlugify($name) === '') emailsToolsRedirect('Audience name is required.');
         $before = count(emailGroupsForCompany($pdo, $cid));
         $gid = ensureEmailGroup($pdo, $cid, $name);
         $after = count(emailGroupsForCompany($pdo, $cid));
-        emailsStudioRedirect($gid && $after > $before ? 'Group "' . $name . '" added.' : 'Group "' . $name . '" already exists.');
+        emailsToolsRedirect($gid && $after > $before ? 'Audience "' . $name . '" added.' : 'Audience "' . $name . '" already exists.');
     }
     if ($action === 'group_rename') {
         $err = renameEmailGroup($pdo, $cid, (int)($_POST['id'] ?? 0), (string)($_POST['name'] ?? ''));
-        emailsStudioRedirect($err !== '' ? $err : 'Group renamed.');
+        emailsToolsRedirect($err !== '' ? $err : 'Audience renamed.');
     }
     if ($action === 'group_delete') {
         $gid = (int)($_POST['id'] ?? 0);
         $g   = emailGroupById($pdo, $cid, $gid);
-        if (!$g || !deleteEmailGroup($pdo, $cid, $gid)) emailsStudioRedirect('Group not found.');
-        emailsStudioRedirect('Group "' . $g['name'] . '" deleted.');
+        if (!$g || !deleteEmailGroup($pdo, $cid, $gid)) emailsToolsRedirect('Audience not found.');
+        emailsToolsRedirect('Audience "' . $g['name'] . '" deleted.');
     }
 
     // ---- Delete -------------------------------------------------------
@@ -147,7 +148,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $errors[] = 'ID "' . $code . '" is already used by ' . emailDisplayLabel($dup) . ' — pick another.';
             }
         }
-        if (!emailValidUrl($vals['html_url'])) $errors[] = 'HTML URL must be a full http:// or https:// address.';
+        if (!emailValidUrl($vals['html_url'])) $errors[] = 'HTML URL must be a full http:// or https:// address (or a portal-hosted /media/emails/… file).';
         if (mb_strlen($vals['html_url']) > 512) $errors[] = 'HTML URL is too long (512 characters max).';
         if (mb_strlen($vals['title']) > 255)    $errors[] = 'Title is too long (255 characters max).';
         if (mb_strlen($vals['subject']) > 255)  $errors[] = 'Subject line is too long (255 characters max).';
@@ -158,8 +159,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             else { $sendAt = date('Y-m-d', $ts); $vals['send_at'] = $sendAt; }
         }
         if (!array_key_exists($vals['priority'], $priorities)) $errors[] = 'Priority must be Low, Medium or High.';
-        if (!isset($statuses[$vals['status']])) { $errors[] = 'Unknown status.'; $vals['status'] = 'draft'; }
-        if ($vals['live'] && $vals['status'] !== 'approved') $errors[] = 'Only an approved email can be marked live — set the status to Approved first.';
+        // Same transitions as the sheet (email-status.php): the form keeps or routes (Draft / To Review), never approves.
+        $oldStatus = $action === 'update' ? (string)$email['status'] : '';
+        $statusErr = reviewFormStatusError($oldStatus, $vals['status'], (bool)$vals['live'], 'email');
+        if ($statusErr !== '') {
+            $errors[] = $statusErr;
+            if (!isset(reviewFormStatusOptions($oldStatus)[$vals['status']])) $vals['status'] = $oldStatus !== '' ? $oldStatus : 'draft';
+            if ($vals['status'] !== 'approved') $vals['live'] = 0;
+        }
 
         $known = [];
         foreach (emailGroupsForCompany($pdo, $cid) as $g) $known[(int)$g['id']] = $g;
@@ -257,7 +264,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
                 $pdo->commit();
-                emailsStudioRedirect(emailDisplayLabel(['code' => $code, 'title' => $vals['title']]) . ($changes ? ' saved (' . count($changes) . ' change' . (count($changes) === 1 ? '' : 's') . ').' : ' saved — no changes.'));
+                // Back to the email that was edited (its sheet opens, the flash is toasted once)
+                header('Location: ' . emailUrl(['id' => $editId], ['msg' => emailDisplayLabel(['code' => $code, 'title' => $vals['title']]) . ($changes ? ' saved (' . count($changes) . ' change' . (count($changes) === 1 ? '' : 's') . ').' : ' saved — no changes.')]));
+                exit;
             } catch (Throwable $ex) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
                 error_log('add-email save: ' . $ex->getMessage());
@@ -288,16 +297,17 @@ $isEdit     = $email !== null;
 $groups     = emailGroupsForCompany($pdo, $cid);
 $formAction = $isEdit ? 'update' : 'create';
 $formTitle  = $isEdit ? 'Edit ' . emailDisplayLabel($email) : 'New email';
+$statusOpts = reviewFormStatusOptions($isEdit ? (string)$email['status'] : '');   // Draft · To Review (+ keep Approved / Needs changes)
 $selfUrl    = clientUrl('add-email.php', $isEdit ? ['edit' => (int)$email['id']] : []);
-$studioUrl  = clientUrl('studio.php', ['tab' => 'emails']);
+$studioUrl  = $isEdit ? emailUrl($email) : clientUrl('emails.php', ['status' => 'all']);   // Back / Cancel
 $thread     = $isEdit && hasActivityLog($pdo) ? commentThread($pdo, 'email', (int)$email['id']) : [];
 
 $pageTitle   = $formTitle;
-$navSubtitle = 'Studio · ' . $client['name'] . ' · Emails';
-$activeTab   = 'studio';
-$pageWide    = true;
-$navWide     = true;
-$navBack     = ['href' => $studioUrl, 'label' => 'Studio'];
+$navSubtitle = $client['name'] . ' · Emails';
+$activeTab   = 'emails';
+$pageWide    = false;   // the shared 720 px column, like every other top-level page
+$navWide     = false;
+$navBack     = ['href' => $studioUrl, 'label' => 'Emails'];
 $navLinks    = [];
 if ($isEdit) $navLinks[] = ['label' => 'Open in Emails', 'href' => emailUrl($email)];
 if ($vals['html_url'] !== '' && emailValidUrl($vals['html_url'])) $navLinks[] = ['label' => 'Open HTML', 'href' => $vals['html_url'], 'attrs' => ['target' => '_blank', 'rel' => 'noopener']];
@@ -338,17 +348,18 @@ include __DIR__ . '/partials/layout-top.php';
         <div class="studio-field">
           <label class="studio-label" for="email-status">Status</label>
           <select class="ui-select" id="email-status" name="status" data-email-status>
-            <?php foreach ($statuses as $k => $label): ?>
+            <?php foreach ($statusOpts as $k => $label): ?>
               <option value="<?= h($k) ?>"<?= $vals['status'] === $k ? ' selected' : '' ?>><?= h($label) ?></option>
             <?php endforeach; ?>
           </select>
+          <p class="studio-help" data-status-help><?= h(reviewFormStatusHelp($isEdit ? (string)$email['status'] : '', 'email')) ?></p>
         </div>
         <div class="studio-field">
           <span class="studio-label">Live</span>
           <label class="studio-chip<?= $vals['live'] ? ' is-active' : '' ?>" data-email-live-chip title="Only an approved email can go live">
             <input type="checkbox" name="live" value="1" data-email-live<?= $vals['live'] ? ' checked' : '' ?><?= $vals['status'] === 'approved' ? '' : ' disabled' ?>> Live in production
           </label>
-          <p class="studio-help" data-email-live-help<?= $vals['status'] === 'approved' ? ' hidden' : '' ?>>Set the status to Approved to mark this email live.</p>
+          <p class="studio-help" data-email-live-help<?= $vals['status'] === 'approved' ? ' hidden' : '' ?>>Only an approved email can go live.</p>
         </div>
       </div>
 
@@ -358,7 +369,7 @@ include __DIR__ . '/partials/layout-top.php';
       </div>
       <div class="studio-field">
         <label class="studio-label" for="email-url">HTML URL <span class="text-tertiary">— the hosted email the client reviews</span></label>
-        <input class="ui-input" type="url" id="email-url" name="html_url" maxlength="512" value="<?= h($vals['html_url']) ?>" placeholder="https://assets.privacybee.com/emails/c1.html" pattern="https?://.*">
+        <input class="ui-input" type="text" inputmode="url" id="email-url" name="html_url" maxlength="512" value="<?= h($vals['html_url']) ?>" placeholder="https://assets.privacybee.com/emails/c1.html" pattern="(https?://|/media/emails/).*">
       </div>
       <div class="studio-field">
         <label class="studio-label" for="email-subject">Subject line</label>
@@ -389,14 +400,14 @@ include __DIR__ . '/partials/layout-top.php';
       </div>
 
       <div class="studio-field">
-        <span class="studio-label">Groups <span class="text-tertiary">— sequences the client can filter by</span></span>
+        <span class="studio-label">Audiences <span class="text-tertiary">— who it is for; the client can filter by them</span></span>
         <div class="studio-chips studio-chips--wrap" data-email-groups>
           <?php foreach ($groups as $g): $on = in_array((int)$g['id'], $vals['groups'], true); ?>
             <label class="studio-chip<?= $on ? ' is-active' : '' ?>" data-email-group-chip><input type="checkbox" name="groups[]" value="<?= (int)$g['id'] ?>"<?= $on ? ' checked' : '' ?>><?= h($g['name']) ?></label>
           <?php endforeach; ?>
-          <?php if (!$groups): ?><span class="studio-chip studio-chip--static">No groups yet</span><?php endif; ?>
+          <?php if (!$groups): ?><span class="studio-chip studio-chip--static">No audiences yet</span><?php endif; ?>
         </div>
-        <input class="ui-input" type="text" name="new_groups" maxlength="400" value="<?= h($vals['new_groups']) ?>" placeholder="New group — comma-separate several (e.g. Leads, Renewal)" aria-label="New group">
+        <input class="ui-input" type="text" name="new_groups" maxlength="400" value="<?= h($vals['new_groups']) ?>" placeholder="New audience — comma-separate several (e.g. Leads, Renewal)" aria-label="New audience">
       </div>
 
       <div class="studio-field">

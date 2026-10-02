@@ -14,6 +14,11 @@
 .posts-toolbar { margin: 2px 0 16px; }
 .posts-month-pill { gap: 4px; padding-right: 10px; }
 .posts-month-pill .ui-icon { width: 14px; height: 14px; stroke-width: 2.4; }
+.posts-month-short { display: none; }
+@media (max-width: 599.98px) {   /* phones: "All ⌄" / "Oct ⌄" so the large title never truncates (320–430px) */
+  .posts-month-long { display: none; }
+  .posts-month-short { display: inline; }
+}
 .posts-empty { padding-top: 56px; }
 .posts-empty-sub { margin-top: 6px; color: var(--label-tertiary); }
 .posts-hint { text-align: center; }
@@ -82,6 +87,7 @@ li + li > .pl-card::before { left: 100px; }
   color: var(--label-secondary);
 }
 .pl-meta-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }   /* "·" wraps with its item */
+.pl-meta-item[hidden] { display: none; }   /* "0 comments" is not said at all (it showed as an orphan "· 0 comments" line) */
 .pl-meta-sep { color: var(--label-tertiary); }
 .pl-card .ui-row-chevron { align-self: center; }
 .pl-when { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 6px; }
@@ -151,6 +157,10 @@ li + li > .pl-card::before { left: 100px; }
 .pl-queue-actions .ui-btn { flex: 0 0 auto; }
 @media (max-width: 479px) { .pl-queue-actions { padding-left: 16px; } }
 .pl-item--queue.is-busy .pl-queue-actions { opacity: .6; pointer-events: none; }
+/* Drafts (admin): Open · Send for review under the row; "No caption yet" leads when the caption is empty */
+.pl-draft-actions { align-items: center; }
+.pl-draft-hint { font-size: var(--text-caption); margin-right: auto; }
+[data-draft].is-busy .pl-draft-actions { opacity: .6; pointer-events: none; }
 
 /* ---------------------------------------------------------------------
    Post detail — sheet body
@@ -180,6 +190,34 @@ li + li > .pl-card::before { left: 100px; }
 .pd-menu button:hover, .pd-menu button:focus-visible { background: var(--fill-tertiary); outline: none; }
 .pd-menu button:disabled { opacity: .4; }
 .pd-menu button.is-destructive { color: var(--deny); }
+.pd-menu button[hidden], .pd-menu-group[hidden] { display: none; }
+.pd-menu-sep { height: 0.5px; margin: 5px 8px; background: var(--separator); }
+.pd-menu a.pd-menu-link, .asg-menu > a.pd-menu-link {
+  display: block; padding: 10px 12px; margin: 0; border: 0; border-radius: 8px;
+  color: var(--label); text-decoration: none;
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead);
+}
+.pd-menu a.pd-menu-link:hover, .pd-menu a.pd-menu-link:focus-visible { background: var(--fill-tertiary); outline: none; }
+
+/* Needs changes (admin): the client's note pinned above the media — the fix starts from it */
+.pd-note {
+  margin: 0 0 12px; padding: 12px 14px; border-radius: 12px;
+  background: rgba(255,59,48,.10);
+  box-shadow: inset 0 0 0 0.5px rgba(255,59,48,.28);
+}
+.pd-note[hidden] { display: none; }
+.pd-note-head {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  color: var(--deny); font-weight: 600;
+  font-size: var(--text-footnote); line-height: var(--lh-footnote);
+}
+.pd-note-head .ui-icon { width: 16px; height: 16px; stroke-width: 2.6; }
+.pd-note-when { font-weight: 400; }
+.pd-note-text {
+  margin: 6px 0 0; color: var(--label); white-space: pre-line; overflow-wrap: anywhere;
+  font-size: var(--text-body); line-height: var(--lh-body); letter-spacing: var(--ls-body);
+}
+.pd-note-slide { font-weight: 600; }
 
 /* 1. Media carousel */
 .pd-media {
@@ -228,7 +266,29 @@ li + li > .pl-card::before { left: 100px; }
   transition: transform var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
 }
 .pd-dot.is-active { background: #fff; transform: scale(1.25); }
-.pd-counter { position: absolute; top: 10px; right: 10px; }
+.pd-counter { position: absolute; top: 10px; right: 10px; font-variant-numeric: tabular-nums; }
+.pd-track:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.pd-dot:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+/* Prev / next arrows — only where a hover-capable pointer exists (touch swipes) */
+.pd-arrow {
+  position: absolute; top: 50%; z-index: 1;
+  width: 32px; height: 32px; margin-top: -16px; padding: 0;
+  display: none; align-items: center; justify-content: center;
+  border: 0; border-radius: 50%;
+  background: rgba(255,255,255,.86); color: #000;
+  box-shadow: 0 1px 4px rgba(0,0,0,.25);
+  cursor: pointer;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.pd-arrow .ui-icon { width: 16px; height: 16px; }
+.pd-arrow--prev { left: 10px; }
+.pd-arrow--next { right: 10px; }
+.pd-arrow:disabled { opacity: 0; pointer-events: none; }
+.pd-arrow:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .pd-arrow { display: inline-flex; opacity: 0; }
+  .pd-media:hover .pd-arrow:not(:disabled), .pd-media:focus-within .pd-arrow:not(:disabled) { opacity: 1; }
+}
 
 /* 2. Instagram-style caption preview (shared with Studio) */
 .ig { padding: 12px 0 2px; }
@@ -266,6 +326,9 @@ li + li > .pl-card::before { left: 100px; }
 }
 .pd-editor-hint { margin: 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary); }
 .pd-editor-hint.is-error { color: var(--deny); }
+/* In-sheet confirm (App.confirmInline, e.g. ⋯ → Approve for client…): a question, not a field label */
+.pd-confirm-title { margin: 0; text-transform: none; color: var(--label); font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead); }
+.pd-confirm .ui-btn-group > .ui-btn { flex: 1 1 auto; }
 
 /* 3. Scheduled date row */
 .pd-when { margin: 12px 0 4px; }
@@ -298,8 +361,8 @@ li + li > .pl-card::before { left: 100px; }
 .pd-comment-count { font-weight: 500; }
 .pd-thread { gap: 8px; }
 .pd-msg { display: flex; flex-direction: column; }
-.pd-msg--client { align-items: flex-end; }
-.pd-msg--joust  { align-items: flex-start; }
+.pd-msg--mine   { align-items: flex-end; }
+.pd-msg--theirs { align-items: flex-start; }
 .pd-msg .ui-bubble { white-space: pre-wrap; overflow-wrap: anywhere; }
 .pd-msg .ui-bubble-meta { padding: 0 6px; }
 .pd-thread-empty {
@@ -311,6 +374,30 @@ li + li > .pl-card::before { left: 100px; }
 
 /* 5. Sticky footer: composer + deny note + state rows + action bar */
 .pd-composer { display: flex; align-items: flex-end; gap: 8px; margin-bottom: 10px; }
+.pd-composer--slides { flex-wrap: wrap; }
+/* Optional "Slide" picker (≥ 2 slides) — a compact native select styled as a pill */
+.pd-composer-slide {
+  flex: 0 0 auto; align-self: center; max-width: 120px;
+  height: 30px; padding: 0 26px 0 10px;
+  border: 0; border-radius: var(--radius-pill);
+  background: var(--fill-tertiary) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 8px center / 12px;
+  color: var(--label); font: inherit; font-size: var(--text-footnote);
+  -webkit-appearance: none; appearance: none;
+}
+.pd-composer-slide:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pd-composer--slides .pd-composer-input { flex: 1 1 200px; }
+/* A comment about one slide: thumb + "Slide 3" chip on top of the bubble; tap → the carousel goes there */
+.pd-slide-chip {
+  display: flex; align-items: center; gap: 6px;
+  margin: -2px 0 6px; padding: 2px 8px 2px 2px;
+  border: 0; border-radius: var(--radius-pill);
+  background: rgba(0,0,0,.08); color: inherit;
+  font: inherit; font-size: var(--text-caption); line-height: var(--lh-caption); font-weight: 600;
+  cursor: pointer;
+}
+.ui-bubble--mine .pd-slide-chip { background: rgba(255,255,255,.22); }
+.pd-slide-chip img, .pd-slide-chip-blank { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; background: rgba(0,0,0,.25); flex: 0 0 auto; }
+.pd-slide-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* Timestamp chip (spec §6): shown by App.video when the sheet contains a video; inserts "m:ss — " */
 .pd-composer-stamp {
   flex: 0 0 auto; align-self: center; gap: 4px; padding: 4px 10px; min-height: 26px;
@@ -341,6 +428,8 @@ li + li > .pl-card::before { left: 100px; }
 .pd-state--approved  { color: var(--approve);   background: rgba(52,199,89,.15); }
 .pd-state--scheduled { color: var(--scheduled); background: rgba(88,86,214,.15); }
 .pd-state--denied    { color: var(--deny);      background: rgba(255,59,48,.14); }
+.pd-state--draft     { color: var(--label-secondary); background: var(--fill-tertiary); }
+.pd-state--pending   { color: var(--pending);   background: rgba(255,149,0,.13); }
 .pd-state:not([hidden]) ~ .pd-actions:has(> :not([hidden])) { margin-top: 8px; }
 .pd-actions > [hidden] { display: none; }
 .pd-actions .ui-btn-group > .ui-btn { min-width: 0; }
@@ -387,3 +476,28 @@ li + li > .pl-card::before { left: 100px; }
   .pl-swipe .ui-icon, .pd-dot { transition: none; }
   .pd-viewer { transition-duration: var(--dur-fast); }
 }
+
+/* "Load more" under the list (posts.php pages POSTS_PAGE rows; posts.js P.loadMore appends the next ones) */
+.posts-more { display: flex; justify-content: center; padding: 12px 0 8px; }
+.posts-more[hidden] { display: none; }
+.posts-more-btn { min-width: 200px; gap: 6px; }
+.posts-more-count { color: var(--label-secondary); font-weight: 500; font-variant-numeric: tabular-nums; }
+.posts-more noscript a { margin-left: 8px; }
+/* Full-screen image: "View original" opens the untouched file (the viewer shows the lg preview) */
+.pd-viewer-original {
+  position: absolute; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+  padding: 8px 14px; border-radius: var(--radius-pill); background: rgba(255,255,255,.14); color: #fff;
+  font-size: var(--text-footnote); font-weight: 600; text-decoration: none;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+}
+.pd-viewer-original:hover { background: rgba(255,255,255,.22); }
+
+/* Client seat: a post they marked Needs changes (renderPostHiddenNotice) — what is happening + their note, read-only */
+.pd-hidden { display: flex; flex-direction: column; gap: 8px; padding: 8px 0 4px; }
+.pd-hidden-lead { margin: 0; }
+.pd-hidden-title { margin: 0; font-size: var(--text-headline); line-height: var(--lh-headline); letter-spacing: var(--ls-headline); font-weight: 600; }
+.pd-hidden-text { margin: 0; color: var(--label-secondary); }
+.pd-hidden-note { margin: 8px 0 0; padding: 10px 12px; border-radius: 12px; background: var(--fill-tertiary); }
+.pd-hidden-note-head { font-size: var(--text-caption); line-height: var(--lh-caption); font-weight: 600; color: var(--label-secondary); text-transform: uppercase; letter-spacing: .02em; }
+.pd-hidden-note--joust { background: var(--bg-elevated); box-shadow: inset 0 0 0 0.5px var(--separator); }
+.pd-hidden-note blockquote { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }

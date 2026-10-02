@@ -53,7 +53,7 @@ if ($action === 'delete_tire') {
         $imgs->execute([$tireId]);
         foreach ($imgs->fetchAll() as $row) {
             $path = uploadsPathOrNull((string)$row['image_url']);   // realpath-contained in uploads/
-            if ($path !== null) { @unlink($path); }
+            if ($path !== null) { if (function_exists('previewDelete')) previewDelete($path); @unlink($path); }
         }
         // CASCADE deletes tire_images and tire_categories
         $pdo->prepare("DELETE FROM tires WHERE id = ?")->execute([$tireId]);
@@ -90,7 +90,7 @@ if (in_array($action, $seriesActions, true)) {
         echo json_encode(['ok' => false, 'error' => $msg]);
         exit;
     };
-    if (!hasTireSeries($pdo)) { $fail(409, 'Render series are not set up yet — run migrate.php.'); }
+    if (!hasTireSeries($pdo)) { $fail(409, 'Tire series are not set up yet — run migrate.php.'); }
     if ($action !== 'approve_series' && !currentAdmin()) { $fail(403, 'Admin sign-in required'); }
     $actor   = actorFromPost();
     $batchId = newBatchId();
@@ -144,7 +144,7 @@ if (in_array($action, $seriesActions, true)) {
                 $upd->execute([$sid]);
                 $n = (int)$upd->rowCount();
                 if ($n > 0) {
-                    $noun = $type === 'videos' ? 'video' : ($type === 'photos' ? 'photo' : 'render');
+                    $noun = $type === 'videos' ? 'video' : ($type === 'photos' ? 'photo' : 'image');
                     logTireSeriesActivity($pdo, $actor, 'approved', $sid,
                         "Approved {$n} {$noun}" . ($n === 1 ? '' : 's') . " in " . (string)$tire['name'] . " · " . $series['name'],
                         null, $batchId, (int)$tire['company_id']);
@@ -168,7 +168,7 @@ if (in_array($action, $seriesActions, true)) {
                 logActivity($pdo, (int)$tire['company_id'], 'tire_image', $imgId, 'deleted', $actor,
                     'Deleted ' . imageDisplayLabel($img) . ' from ' . (string)$tire['name'], null, $batchId);
                 $pdo->commit();
-                if ($path !== null) { @unlink($path); }
+                if ($path !== null) { if (function_exists('previewDelete')) previewDelete($path); @unlink($path); }
                 if ($thumb !== null && is_file($thumb)) { @unlink($thumb); }
                 echo json_encode(['ok' => true, 'id' => $imgId, 'series_id' => $img['series_id']]);
                 exit;
@@ -186,7 +186,9 @@ if (in_array($action, $seriesActions, true)) {
                 logActivity($pdo, (int)$tire['company_id'], 'tire_image', $imgId, 'set_reference', $actor,
                     imageDisplayLabel($img) . ' is now the reference image of ' . (string)$tire['name'], null, $batchId);
                 $pdo->commit();
-                echo json_encode(['ok' => true, 'id' => $imgId, 'tire_id' => (int)$tire['id']]);
+                $pv = function_exists('pvUrls') ? pvUrls(tireImageSrc($img)) : [];   // sm / lg previews for the reference header + strip swap
+                echo json_encode(['ok' => true, 'id' => $imgId, 'tire_id' => (int)$tire['id']]
+                    + ($pv ? ['thumb' => $pv['thumb'], 'large' => $pv['large'], 'original' => $pv['original']] : []), JSON_UNESCAPED_SLASHES);
                 exit;
             }
             case 'series_create': {
@@ -256,7 +258,7 @@ if (in_array($action, $seriesActions, true)) {
                 $pdo->beginTransaction();
                 $res = deleteTireSeries($pdo, $sid, $deleteFiles);
                 logTireSeriesActivity($pdo, $actor, 'deleted', $sid,
-                    'Deleted series ' . (string)$tire['name'] . ' · ' . $series['name'] . ' (' . (int)$res['images'] . ' renders' . ($deleteFiles ? ', files removed' : '') . ')',
+                    'Deleted series ' . (string)$tire['name'] . ' · ' . $series['name'] . ' (' . (int)$res['images'] . ' images' . ($deleteFiles ? ', files removed' : '') . ')',
                     null, $batchId, (int)$tire['company_id']);
                 $pdo->commit();
                 echo json_encode(['ok' => true, 'series_id' => $sid, 'images' => (int)$res['images'], 'files' => (int)$res['files']]);

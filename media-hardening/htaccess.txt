@@ -1,4 +1,4 @@
-# joust-portal-media v2
+# joust-portal-media v3
 # Written by the portal (media-lib.php): this folder only serves static files.
 # Re-created on the next upload / rescan (or Studio > Repair server rules) if removed.
 Options -Indexes
@@ -33,4 +33,21 @@ Options -Indexes
 </IfModule>
 <IfModule mod_headers.c>
     Header set X-Content-Type-Options nosniff
+</IfModule>
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType image/jpeg "access plus 7 days"
+    ExpiresByType image/png "access plus 7 days"
+    ExpiresByType image/gif "access plus 7 days"
+    ExpiresByType image/webp "access plus 7 days"
+    ExpiresByType image/avif "access plus 7 days"
+    ExpiresByType image/svg+xml "access plus 7 days"
+    ExpiresByType video/mp4 "access plus 7 days"
+    ExpiresByType video/webm "access plus 7 days"
+    ExpiresByType video/quicktime "access plus 7 days"
+</IfModule>
+<IfModule mod_headers.c>
+    <FilesMatch "\.(jpe?g|png|gif|webp|avif|svg|mp4|webm|mov)$">
+        Header set Cache-Control "public, max-age=604800"
+    </FilesMatch>
 </IfModule>

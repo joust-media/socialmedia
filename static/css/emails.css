@@ -155,37 +155,27 @@ li + li > .el-card::before { left: 84px; }
 .ed-notes-pill { margin-left: 6px; vertical-align: 1px; }
 
 /* ---------------------------------------------------------------------
-   Detail — footer: admin status control + tools
+   Detail — footer: one button row per state (review-actions.php)
    --------------------------------------------------------------------- */
-.ed-status-ctl { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px; }
-.ed-status-ctl[hidden] { display: none; }
-.ed-status-ctl-label {
-  font-size: var(--text-caption); line-height: var(--lh-caption); letter-spacing: 0.2px;
-  font-weight: 600; text-transform: uppercase; color: var(--label-secondary);
-}
-/* Four segments inside a 343–480px footer: caption type, tight padding, never overflow */
-.ed-status-ctl .ui-segmented-item {
-  flex: 1 1 auto; padding-inline: 6px; gap: 0;
-  font-size: var(--text-caption); letter-spacing: 0;
-  overflow: hidden; text-overflow: ellipsis;
-}
-/* Wide labels ("Needs changes", "Resubmit for review") share the row with a primary button.
+/* Wide labels ("Needs changes", "Send for review") share the row with a primary button.
    Scoped to the page, not .ed: emails.js moves [data-pd-footer] into the sheet's own footer. */
 .page-emails .pd-actions .ui-btn--large {
   padding-inline: 10px;
   font-size: var(--text-subhead); letter-spacing: var(--ls-subhead);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.page-emails .pd-decide > .ui-btn, .page-emails .pd-admin-denied > .ui-btn { flex: 1 1 0; }
+.page-emails .pd-actions .ui-btn-group > .ui-btn { flex: 1 1 0; }
 /* Top meta row: keep the code and "edited" stamp whole; wrap between items, not inside them */
-.ed-head { flex-wrap: wrap; row-gap: 4px; }
-.ed-head .pd-type, .ed-head .pd-edited { white-space: nowrap; }
-.ed-head .pd-edited { margin-left: auto; }
-.ed-admin-tools { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
-.ed-admin-tools .ui-btn .ui-icon { width: 14px; height: 14px; }
-.ed-delete { color: var(--deny); }
+/* One row, ⋯ always on it (390 / 320 px too): the code and the "edited" stamp give way (ellipsis) before anything wraps */
+.ed-head { flex-wrap: nowrap; min-width: 0; }
+.ed-head > * { flex: none; }
+.ed-head .pd-type, .ed-head .pd-edited { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ed-head .pd-type { flex: 0 1 auto; }
+.ed-head .pd-edited { flex: 0 1 auto; margin-left: auto; }
+/* Phones: the "edited" stamp steps aside so the code, the pill and ⋯ share one row */
+@media (max-width: 559px) { .ed-head { gap: 6px; } .ed-head .pd-edited { display: none; } .ed-head .pd-more { margin-left: auto; } }
 .pd-state--draft { color: var(--label-secondary); background: var(--fill-tertiary); }
-.pd-decide[hidden], .pd-admin-draft[hidden], .pd-admin-approved[hidden], .pd-admin-denied[hidden], .pd-admin-live[hidden] { display: none; }
+.pd-decide[hidden], .pd-admin-draft[hidden], .pd-admin-pending[hidden], .pd-admin-approved[hidden], .pd-admin-denied[hidden], .pd-admin-live[hidden] { display: none; }
 
 /* ---------------------------------------------------------------------
    Desktop: the detail is a right panel and the list stays usable (posts.css twin)

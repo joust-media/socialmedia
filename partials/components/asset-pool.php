@@ -1,7 +1,7 @@
 <?php
 /**
- * Studio — Approved Pool (spec §4.5). Shared by add-post.php, batch.php,
- * batch-process.php and studio.php. Every function is function_exists-guarded
+ * Studio — Approved Pool (spec §4.5). Shared by add-post.php, post-compose.php
+ * and batch-process.php. Every function is function_exists-guarded
  * and none of them produce output on include. NO schema changes: only the
  * columns catalogued in the analysis (§C) are read.
  *
@@ -16,7 +16,7 @@
  *       Tires    = tire_images JOIN tires ON tires.id = tire_images.tire_id
  *                  WHERE tires.company_id = ? AND tire_images.status = 'approved'
  *
- *   studioParsePicks($raw, int $max = 10): array
+ *   studioParsePicks($raw, int $max = POST_MAX_MEDIA): array
  *       Normalises the form value assets[] ("library:12", "tire:34") → [['kind','id'], …]
  *       in the order given, de-duplicated, capped at $max.
  *
@@ -34,17 +34,14 @@
  *       post's current MAX, media_type when the column exists). Throws
  *       StudioAssetException (code 400/403) on an invalid pick so the caller's
  *       transaction rolls back; files copied before the failure are unlinked.
- *       Returns the inserted rows [['image_url','sort_order','media_type','asset'], …].
+ *       Returns the inserted rows [['id','key','image_url','sort_order','media_type','asset'], …] (id = post_images.id).
  *
- * Rendering (markup only; wired by static/js/studio.js)
- *   studioPickerHtml(array $pool, array $opts = []): string
- *       Grouped: Library, then one <section data-pool-group="tire:<id>"> per collection with series chips
- *       (data-series-filter="all|ref|<id>") when tire-series-lib.php is present; tiles carry data-series and
- *       use tireImageThumb(); the assets[] values ("tire:<id>") are unchanged. When the pool holds a video:
- *       Photos / Videos chips (data-media-filter) + "Show N videos" (data-pool-videos-toggle) — video tiles
- *       start hidden (data-pool-collapsed, data-video-noprobe) so no poster / range request is made for them.
- *   studioPreviewHtml(array $post, array $brand, array $images = [], array $opts = []): string
- *   studioComposerHtml(array $ctx): string
+ * Grouping (the New post pop-up's Approved picker, post-compose.php)
+ *   studioPoolGroups(array $pool): array — Library, then one group per collection whose page units are
+ *       its Reference images first, then each series (chip order).
+ *
+ * The old Compose / Batch picker markup (studioPickerHtml, studioComposerHtml, studioPreviewHtml, pool tiles
+ * and studio.php?partial=pool paging) was retired with those screens; the pop-up renders its own picker.
  */
 
 if (!class_exists('StudioAssetException')) {
@@ -176,7 +173,7 @@ if (!function_exists('studioAssetFromTireRow')) {
             'dir'          => $dir,
             'label'        => $label,
             'group'        => 'tire:' . (int)$row['tire_id'],
-            'group_label'  => (string)($row['tire_name'] ?? 'Collection'),
+            'group_label'  => (string)($row['tire_name'] ?? 'Tire'),
             'series'       => !empty($row['series_id']) ? (string)(int)$row['series_id'] : 'ref',   // 'ref' = a reference image
             'series_label' => (string)($row['series_name'] ?? ''),
             'ext'          => $ext,
@@ -267,7 +264,7 @@ if (!function_exists('studioApprovedPool')) {
 }
 
 if (!function_exists('studioParsePicks')) {
-    function studioParsePicks($raw, int $max = 10): array
+    function studioParsePicks($raw, int $max = 0): array
     {
         if (is_string($raw)) {
             $raw = trim($raw);
@@ -277,6 +274,7 @@ if (!function_exists('studioParsePicks')) {
             $raw = is_array($decoded) ? $decoded : preg_split('/[\s,]+/', $raw);
         }
         if (!is_array($raw)) return [];
+        if ($max <= 0) $max = defined('POST_MAX_MEDIA') ? POST_MAX_MEDIA : 20;
         $out = []; $seen = [];
         foreach ($raw as $item) {
             if (is_array($item)) {
@@ -389,6 +387,8 @@ if (!function_exists('studioCopyAssetToUploads')) {
             if (file_exists($dest)) continue;
             if (@copy($src, $dest)) {
                 @chmod($dest, 0644);
+                // Reuse the source's fresh sm / lg previews (a byte copy) — no decode here; add-post.php makes any missing ones after its commit.
+                if (($asset['media'] ?? 'image') !== 'video' && function_exists('previewCopyDerivatives')) previewCopyDerivatives($src, $dest, false);
                 return 'uploads/' . $newName;
             }
             break;
@@ -400,7 +400,7 @@ if (!function_exists('studioCopyAssetToUploads')) {
 if (!function_exists('studioAttachAssetsToPost')) {
     function studioAttachAssetsToPost(PDO $pdo, array $client, int $postId, array $picks, array $opts = []): array
     {
-        $picks = studioParsePicks($picks, (int)($opts['max'] ?? 10));
+        $picks = studioParsePicks($picks, (int)($opts['max'] ?? (defined('POST_MAX_MEDIA') ? POST_MAX_MEDIA : 20)));
         if (!$picks) return [];
         $uploadsDir = (string)($opts['uploadsDir'] ?? studioUploadsDir());
         $slots      = array_key_exists('slots', $opts) ? (int)$opts['slots'] : count($picks);
@@ -414,7 +414,7 @@ if (!function_exists('studioAttachAssetsToPost')) {
             if (!$a) {
                 $isLibrary = $p['kind'] === 'library';
                 throw new StudioAssetException(
-                    ($isLibrary ? 'Library image' : 'Collection image') . ' #' . $p['id']
+                    ($isLibrary ? 'Library image' : 'Tire image') . ' #' . $p['id']
                     . ' is not an approved asset for ' . ($client['name'] ?? 'this client') . '.', 403);
             }
             $resolved[] = $a;
@@ -439,7 +439,7 @@ if (!function_exists('studioAttachAssetsToPost')) {
                     $ins = $pdo->prepare("INSERT INTO post_images (post_id, image_url, sort_order) VALUES (?, ?, ?)");
                     $ins->execute([$postId, $rel, $sortOrder]);
                 }
-                $rows[] = ['image_url' => $rel, 'sort_order' => $sortOrder, 'media_type' => $a['media'], 'asset' => $a];
+                $rows[] = ['id' => (int)$pdo->lastInsertId(), 'key' => (string)$a['key'], 'image_url' => $rel, 'sort_order' => $sortOrder, 'media_type' => $a['media'], 'asset' => $a];
             }
         } catch (Throwable $e) {
             foreach ($copied as $f) { if (is_file($f)) @unlink($f); }
@@ -453,311 +453,43 @@ if (!function_exists('studioAttachAssetsToPost')) {
 // Markup
 // ---------------------------------------------------------------------
 
-if (!function_exists('studioPickerHtml')) {
+if (!function_exists('studioPoolGroups')) {
     /**
-     * Approved Pool picker. $opts: 'max' (10), 'id', 'selected' (array of keys),
-     * 'name' (form field, default 'assets[]'), 'title', 'assetsUrl' (link when empty).
+     * The pool as rendered: Library, then one group per collection whose page units are its Reference images
+     * first, then each series (chip order). [['key','kind','label','count','series' (chips),'pages' => [
+     * ['key' => 'library' | 'tire:<id>|<ref|series id>', 'label', 'series', 'assets' => [...]], …]], …]
      */
-    function studioPickerHtml(array $pool, array $opts = []): string
+    function studioPoolGroups(array $pool): array
     {
-        $esc      = 'studioEsc';
-        $max      = (int)($opts['max'] ?? 10);
-        $id       = (string)($opts['id'] ?? 'studioPicker');
-        $name     = (string)($opts['name'] ?? 'assets[]');
-        $title    = (string)($opts['title'] ?? 'Approved Pool');
-        $selected = array_values(array_filter(array_map('strval', (array)($opts['selected'] ?? []))));
-        $assets   = $pool['assets'] ?? [];
-        $cols     = $pool['collections'] ?? [];
-        $counts   = $pool['counts'] ?? ['library' => 0, 'tire' => 0];
-        $total    = count($assets);
-
-        $out  = '<section class="studio-picker" id="' . $esc($id) . '" data-picker data-max="' . $max . '" data-name="' . $esc($name) . '" data-selected="' . $esc(json_encode($selected)) . '">';
-        $out .= '<header class="studio-picker-head">'
-              . '<div class="studio-picker-heading"><h2 class="studio-section-title">' . $esc($title) . '</h2>'
-              . '<p class="studio-picker-sub text-secondary">' . $total . ' approved · <span data-pick-count>0</span>/' . $max . ' selected</p></div>'
-              . '<button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-pick-clear hidden>Clear</button>'
-              . '</header>';
-
-        // Photos / Videos (client-side, studio.js Picker): videos are heavy, so they start collapsed behind
-        // "Show N videos" — their tiles are hidden + data-video-noprobe until asked for, and no poster is fetched.
-        $nVideos = 0;
-        foreach ($assets as $a) { if (($a['media'] ?? 'image') === 'video') $nVideos++; }
-        $nPhotos = $total - $nVideos;
-
-        if ($total > 0) {
-            $out .= '<div class="studio-chips" role="group" aria-label="Filter the pool">';
-            $out .= '<button type="button" class="studio-chip is-active" data-pool-filter="all" aria-pressed="true">All <span class="studio-chip-n">' . $total . '</span></button>';
-            if (($counts['library'] ?? 0) > 0) {
-                $out .= '<button type="button" class="studio-chip" data-pool-filter="library" aria-pressed="false">Library <span class="studio-chip-n">' . (int)$counts['library'] . '</span></button>';
+        $groups = [];
+        foreach (($pool['assets'] ?? []) as $a) {
+            $gk = (string)$a['group'];
+            if (!isset($groups[$gk])) {
+                $groups[$gk] = ['key' => $gk, 'kind' => $a['kind'], 'label' => (string)$a['group_label'], 'count' => 0, 'series' => [], 'pages' => []];
             }
-            foreach ($cols as $c) {
-                $out .= '<button type="button" class="studio-chip" data-pool-filter="tire:' . (int)$c['id'] . '" aria-pressed="false">' . $esc($c['name']) . ' <span class="studio-chip-n">' . (int)$c['count'] . '</span></button>';
+            $groups[$gk]['count']++;
+            $sk = $a['kind'] === 'tire' ? (string)($a['series'] ?? 'ref') : '';
+            $pk = $a['kind'] === 'tire' ? $gk . '|' . $sk : 'library';
+            if (!isset($groups[$gk]['pages'][$pk])) {
+                $label = $a['kind'] === 'tire' ? ($sk === 'ref' ? 'Reference' : ((string)($a['series_label'] ?? '') !== '' ? (string)$a['series_label'] : 'Series ' . $sk)) : '';
+                $groups[$gk]['pages'][$pk] = ['key' => $pk, 'label' => $label, 'series' => $sk, 'assets' => []];
             }
-            $out .= '</div>';
-            if ($nVideos > 0) {   // media chips + the collapse toggle only when the pool actually holds a video
-                $out .= '<div class="studio-chips studio-chips--media" role="group" aria-label="Media type" data-pool-media>'
-                      . '<button type="button" class="studio-chip studio-chip--sm" data-media-filter="image" aria-pressed="false">Photos <span class="studio-chip-n">' . $nPhotos . '</span></button>'
-                      . '<button type="button" class="studio-chip studio-chip--sm" data-media-filter="video" aria-pressed="false">Videos <span class="studio-chip-n">' . $nVideos . '</span></button>'
-                      . '<button type="button" class="ui-btn ui-btn--plain ui-btn--sm studio-pool-videos-toggle" data-pool-videos-toggle aria-pressed="false" data-count="' . $nVideos . '">Show ' . $nVideos . ($nVideos === 1 ? ' video' : ' videos') . '</button>'
-                      . '</div>';
-            }
-
-            // Grouped: Library first, then one section per collection (tire) with its series chips.
-            // Tiles keep data-asset-* (studio.js Picker) and add data-series ('ref' | '<id>') for the per-group chips.
-            $groups = [];
-            foreach ($assets as $a) {
-                $gk = $a['group'];
-                if (!isset($groups[$gk])) $groups[$gk] = ['key' => $gk, 'label' => $a['group_label'], 'assets' => [], 'series' => []];
-                $groups[$gk]['assets'][] = $a;
-            }
-            foreach ($cols as $c) { if (isset($groups['tire:' . (int)$c['id']])) $groups['tire:' . (int)$c['id']]['series'] = $c['series'] ?? []; }
-
-            $out .= '<div class="studio-pool-groups" data-pool-grid role="listbox" aria-multiselectable="true" aria-label="Approved assets">';
-            foreach ($groups as $g) {
-                $hasSeries = count($g['series']) > 1 || (count($g['series']) === 1 && ($g['series'][0]['key'] ?? 'ref') !== 'ref');
-                $out .= '<section class="studio-pool-group" data-pool-group="' . $esc($g['key']) . '" data-series-active="all">'
-                      . '<header class="studio-pool-group-head"><h3 class="studio-pool-group-title">' . $esc($g['label']) . ' <span class="studio-chip-n">' . count($g['assets']) . '</span></h3>';
-                if ($hasSeries) {
-                    $out .= '<div class="studio-chips studio-chips--series" role="group" aria-label="' . $esc('Series in ' . $g['label']) . '">'
-                          . '<button type="button" class="studio-chip studio-chip--sm is-active" data-series-filter="all" aria-pressed="true">All</button>';
-                    foreach ($g['series'] as $sr) {
-                        $out .= '<button type="button" class="studio-chip studio-chip--sm" data-series-filter="' . $esc($sr['key']) . '" aria-pressed="false">' . $esc($sr['name'] !== '' ? $sr['name'] : ($sr['key'] === 'ref' ? 'Reference' : 'Series ' . $sr['key'])) . ' <span class="studio-chip-n">' . (int)$sr['count'] . '</span></button>';
-                    }
-                    $out .= '</div>';
-                }
-                $out .= '</header><div class="ui-grid studio-pool">';
-                foreach ($g['assets'] as $a) {
-                    $on    = in_array($a['key'], $selected, true);
-                    $thumb = (string)($a['thumb'] ?? $a['src']);
-                    $pill  = (string)($a['series_label'] ?? '');
-                    $out .= '<button type="button" class="ui-thumb studio-asset' . ($on ? ' is-selected ui-thumb--selected' : '') . '" role="option"'
-                          . ' data-asset-key="' . $esc($a['key']) . '" data-asset-kind="' . $esc($a['kind']) . '" data-asset-id="' . (int)$a['id'] . '"'
-                          . ' data-asset-src="' . $esc($a['src']) . '" data-asset-label="' . $esc($a['label']) . '" data-asset-group="' . $esc($a['group']) . '"'
-                          . ' data-asset-group-label="' . $esc($a['group_label']) . '" data-asset-media="' . $esc($a['media']) . '"'
-                          . ($a['kind'] === 'tire' ? ' data-series="' . $esc($a['series'] ?? 'ref') . '"' : '')
-                          . ' aria-selected="' . ($on ? 'true' : 'false') . '" title="' . $esc($a['label'] . ' — ' . $a['group_label'] . ($pill !== '' ? ' · ' . $pill : '')) . '"'
-                          . ($a['media'] === 'video' && !$on ? ' hidden data-pool-collapsed' : '') . '>';   // collapsed until "Show N videos" (a selected one stays visible)
-                    if ($a['media'] === 'video') {
-                        $out .= videoTile($a['src'], ['badgeClass' => 'studio-asset-duration', 'poster' => $thumb !== $a['src'] ? $thumb : '', 'probe' => $on]);
-                    } else {
-                        $out .= '<img src="' . $esc($thumb) . '" alt="' . $esc($a['label']) . '" loading="lazy" decoding="async">';
-                    }
-                    $out .= '<span class="studio-asset-order" data-asset-order aria-hidden="true"></span>'
-                          . ($pill !== '' ? '<span class="ui-pill ui-pill--glass ui-pill--nodot ui-thumb-badge studio-asset-group">' . $esc($pill) . '</span>' : '')
-                          . '</button>';
-                }
-                $out .= '</div></section>';
-            }
-            $out .= '</div>';
-            $out .= '<p class="ui-empty studio-pool-empty" data-pool-empty hidden>Nothing approved in this collection yet.</p>';
-        } else {
-            $assetsUrl = (string)($opts['assetsUrl'] ?? '');
-            $out .= '<div class="ui-empty studio-pool-empty">No approved assets yet. Once the client approves images in Assets they show up here.'
-                  . ($assetsUrl !== '' ? ' <a href="' . $esc($assetsUrl) . '">Open Assets</a>' : '') . '</div>';
+            $groups[$gk]['pages'][$pk]['assets'][] = $a;
         }
-
-        // Selected strip: order = carousel order. Drag (Pointer Events) or use the arrows.
-        $out .= '<div class="studio-strip" data-pick-strip' . ($selected ? '' : ' hidden') . '>'
-              . '<div class="studio-strip-head"><span class="studio-strip-title">Selected — drag to reorder</span></div>'
-              . '<ol class="studio-strip-list" data-pick-list role="list"></ol>'
-              . '</div>';
-        $out .= '<div data-pick-inputs hidden></div>';
-        $out .= '</section>';
-        return $out;
-    }
-}
-
-if (!function_exists('studioPreviewHtml')) {
-    /**
-     * Live Instagram-style preview — the SAME partial the client sees in the
-     * Posts detail (renderCaptionPreview + renderPostMedia from post-detail.php),
-     * wrapped in a phone-ish frame. studio.js mirrors this markup as the form changes.
-     */
-    function studioPreviewHtml(array $post, array $brand, array $images = [], array $opts = []): string
-    {
-        $esc   = 'studioEsc';
-        $when  = trim((string)($post['scheduled_date'] ?? ''));
-        $ts    = $when !== '' ? strtotime($when) : false;
-        $type  = function_exists('postTypeLabel') ? postTypeLabel((string)($post['post_type'] ?? 'post')) : 'Post';
-        $media = function_exists('renderPostMedia')
-            ? renderPostMedia($images, ['label' => (string)($brand['name'] ?? '') . ' post'])
-            : '<div class="pd-media pd-media--empty"><span class="text-tertiary">No media yet</span></div>';
-        $caption = function_exists('renderCaptionPreview')
-            ? renderCaptionPreview($post, $brand, ['copy' => false])
-            : '';
-
-        $brandLogo = function_exists('brandLogoUrl') ? brandLogoUrl($brand['logo_url'] ?? '') : (string)($brand['logo_url'] ?? '');
-        $out  = '<aside class="studio-preview" data-preview data-brand-name="' . $esc($brand['name'] ?? '') . '" data-brand-logo="' . $esc($brandLogo) . '" aria-label="Preview — what the client sees">';
-        $out .= '<div class="studio-preview-head"><h2 class="studio-section-title">Preview</h2><p class="text-secondary studio-preview-sub">Exactly what ' . $esc($brand['name'] ?? 'the client') . ' will see</p></div>';
-        $out .= '<div class="studio-phone"><article class="pd studio-pd" data-post-detail="0">';
-        $out .= '<div class="pd-meta"><span class="pd-type" data-preview-type>' . $esc($type) . '</span>'
-              . (function_exists('statusPill') ? statusPill((string)($post['status'] ?? 'pending'), false, ['class' => 'pd-pill', 'attrs' => ['data-preview-status' => '1']]) : '')
-              . '</div>';
-        $out .= '<div data-preview-media>' . $media . '</div>';
-        $out .= $caption;
-        $out .= '<div class="pd-when"><div class="pd-when-row">'
-              . (function_exists('icon') ? icon('calendar', 'pd-when-icon') : '')
-              . '<span class="pd-when-body"><span class="pd-when-label">Planned for</span>'
-              . '<span class="pd-when-date" data-preview-date>' . $esc($ts && function_exists('pdFormatWhen') ? pdFormatWhen($when) : 'Date to be confirmed') . '</span></span>'
-              . '</div></div>';
-        $out .= '</article></div></aside>';
-        return $out;
-    }
-}
-
-if (!function_exists('studioComposerHtml')) {
-    /**
-     * The composer (spec §4.5): picker + post form + live preview.
-     * $ctx keys: client (array), pool (studioApprovedPool), action (form URL), isEdit (bool),
-     *   post (values: id, name, caption, hashtags, scheduled (Y-m-d\TH:i), status, post_type, categories[]),
-     *   editImages ([['id','url','type'], …]), categories ([['id','name'], …]), supportsType (bool),
-     *   maxImages (10), maxImageMb (50), maxVideoGb (4), submitText, cancelUrl, assetsUrl, selected (keys), errors ([]),
-     *   defaultHashtags (string), replaceEndpoint.
-     * One-offs: the file input keeps the images[] contract for the no-JS path; with JS (studio.js Composer +
-     * chunk-upload.js) every picked file goes straight to upload-chunk.php (purpose=post — in pieces when large)
-     * and comes back as a claimed[] token the form submits; the rows show progress / Cancel / Remove, and the
-     * "Resume unfinished uploads" banner appears after a reload.
-     */
-    function studioComposerHtml(array $ctx): string
-    {
-        $esc      = 'studioEsc';
-        $client   = $ctx['client'];
-        $pool     = $ctx['pool'] ?? ['assets' => [], 'collections' => [], 'counts' => []];
-        $isEdit   = !empty($ctx['isEdit']);
-        $post     = $ctx['post'] ?? [];
-        $cats     = $ctx['categories'] ?? [];
-        $postCats = array_map('intval', (array)($post['categories'] ?? []));
-        $editImgs = $ctx['editImages'] ?? [];
-        $max      = (int)($ctx['maxImages'] ?? 10);
-        $maxImgMb = (int)($ctx['maxImageMb'] ?? 50);
-        $maxVidGb = (int)($ctx['maxVideoGb'] ?? 4);
-        $selected = (array)($ctx['selected'] ?? []);
-        $supportsType = !empty($ctx['supportsType']);
-        $defaults = trim((string)($ctx['defaultHashtags'] ?? ''));
-        $types    = function_exists('allowedPostTypes') ? allowedPostTypes() : ['post', 'story', 'reel'];
-        $slots    = max(0, $max - count($editImgs));
-        $formId   = (string)($ctx['formId'] ?? 'studioComposer');
-
-        $brand = ['name' => (string)($client['name'] ?? ''), 'logo_url' => function_exists('brandLogoUrl') ? brandLogoUrl($client['logo_url'] ?? '') : (string)($client['logo_url'] ?? '')];
-        $previewPost = [
-            'caption'        => (string)($post['caption'] ?? ''),
-            'hashtags'       => (string)($post['hashtags'] ?? ''),
-            'scheduled_date' => !empty($post['scheduled']) ? str_replace('T', ' ', (string)$post['scheduled']) : '',
-            'post_type'      => (string)($post['post_type'] ?? 'post'),
-            'status'         => (string)($post['status'] ?? 'pending'),
-        ];
-
-        $out  = '<form class="studio-composer" id="' . $esc($formId) . '" method="POST" action="' . $esc($ctx['action']) . '" enctype="multipart/form-data" data-composer data-max="' . $max . '" data-slots="' . $slots . '">';
-        $out .= '<input type="hidden" name="action" value="' . ($isEdit ? 'update' : 'create') . '">';
-        if ($isEdit) $out .= '<input type="hidden" name="id" value="' . (int)$post['id'] . '">';
-
-        // ---- Left / top: Approved Pool picker --------------------------------
-        $out .= '<div class="studio-composer-pool">';
-        $out .= studioPickerHtml($pool, ['max' => $slots > 0 ? $slots : 0, 'selected' => $selected, 'assetsUrl' => (string)($ctx['assetsUrl'] ?? ''), 'id' => $formId . 'Picker']);
-
-        // Direct upload for one-offs (existing add-post contract: images[]; with JS the files go up right away
-        // through upload-chunk.php and the form submits claimed[] tokens instead — studio.js Composer)
-        $accept = 'image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov';
-        $out .= '<section class="studio-upload-oneoff" data-composer-uploads data-max-image-mb="' . $maxImgMb . '" data-max-video-mb="' . ($maxVidGb * 1024) . '">'
-              . '<h3 class="studio-section-title studio-section-title--sm">Or upload a one-off</h3>'
-              . '<label class="studio-dropzone studio-dropzone--sm" data-file-drop>'
-              . '<input type="file" name="images[]" data-composer-files accept="' . $accept . '" multiple' . ($slots <= 0 ? ' disabled' : '') . '>'
-              . '<span class="studio-dropzone-label">Choose files</span>'
-              . '<span class="studio-dropzone-hint">or drop them here · up to ' . $maxVidGb . ' GB per video, ' . $maxImgMb . ' MB per image · JPG, PNG, GIF, WebP, MP4, WebM, MOV · large files go up in pieces and can resume</span>'
-              . '</label>'
-              . '<div class="studio-resume" data-composer-resume hidden role="status">'
-              . '<span class="studio-resume-text" data-composer-resume-text>Resume unfinished uploads</span>'
-              . '<label class="ui-btn ui-btn--filled ui-btn--sm studio-resume-pick">Pick the files<input type="file" data-composer-resume-input accept="' . $accept . '" multiple hidden></label>'
-              . '<button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-composer-resume-discard>Discard</button>'
-              . '</div>'
-              . '<ul class="studio-uploadlist studio-filelist" data-composer-filelist role="list"></ul>'
-              . '<template data-composer-item-template>'
-              . '<li class="studio-upload-item" data-composer-item data-file-name="">'
-              . '<div class="studio-upload-thumb" data-upload-thumb></div>'
-              . '<div class="studio-upload-body">'
-              . '<div class="studio-upload-name" data-upload-name></div>'
-              . '<div class="studio-upload-meta text-secondary" data-upload-meta></div>'
-              . '<div class="studio-progress" data-upload-progress hidden><div class="studio-progress-bar"><div class="studio-progress-fill" data-upload-fill></div></div></div>'
-              . '<div class="studio-upload-status" data-upload-status></div>'
-              . '</div>'
-              . '<button type="button" class="ui-btn ui-btn--plain ui-btn--sm studio-upload-retry studio-upload-cancel" data-composer-cancel hidden>Cancel</button>'
-              . '<button type="button" class="ui-btn ui-btn--plain ui-btn--sm studio-upload-retry" data-file-remove aria-label="Remove">' . (function_exists('icon') ? icon('xmark') : 'Remove') . '</button>'
-              . '</li>'
-              . '</template>'
-              . '</section>';
-        $out .= '</div>';
-
-        // ---- Right / bottom: the post form + live preview -------------------
-        $out .= '<div class="studio-composer-side">';
-        $out .= studioPreviewHtml($previewPost, $brand, $editImgs);
-
-        $out .= '<section class="studio-fields">';
-        if (!empty($ctx['errors'])) {
-            $out .= '<div class="studio-alert studio-alert--error" role="alert"><ul>';
-            foreach ((array)$ctx['errors'] as $e) $out .= '<li>' . $esc($e) . '</li>';
-            $out .= '</ul></div>';
+        foreach (($pool['collections'] ?? []) as $c) {
+            $gk = 'tire:' . (int)$c['id'];
+            if (!isset($groups[$gk])) continue;
+            $groups[$gk]['series'] = $c['series'] ?? [];
+            // Page order = Reference first, then the series in chip order (studioApprovedPool orders the chips), then anything else.
+            $ordered = [];
+            foreach ($groups[$gk]['series'] as $chip) { $pk = $gk . '|' . $chip['key']; if (isset($groups[$gk]['pages'][$pk])) $ordered[$pk] = $groups[$gk]['pages'][$pk]; }
+            if (isset($groups[$gk]['pages'][$gk . '|ref'])) $ordered = [$gk . '|ref' => $groups[$gk]['pages'][$gk . '|ref']] + $ordered;
+            $groups[$gk]['pages'] = $ordered + $groups[$gk]['pages'];
         }
-        if ($isEdit && $editImgs) {
-            $out .= '<div class="studio-field"><span class="studio-label">Current media — tick to remove on save</span><div class="studio-existing" data-existing-media>';
-            foreach ($editImgs as $img) {
-                $isVid = ($img['type'] ?? '') === 'video';
-                $src   = studioRootUrl((string)$img['url']);
-                $out  .= '<label class="ui-thumb studio-existing-item" data-existing-item data-src="' . $esc($src) . '" data-media="' . ($isVid ? 'video' : 'image') . '">'
-                       . ($isVid ? videoTile($src, ['badge' => false]) : '<img src="' . $esc($src) . '" alt="">')
-                       . '<input type="checkbox" name="remove_images[]" value="' . (int)$img['id'] . '" data-remove-image data-image-id="' . (int)$img['id'] . '" aria-label="Remove this media">'
-                       . '<span class="studio-existing-x" aria-hidden="true">Remove</span>'
-                       . '</label>';
-            }
-            $out .= '</div></div>';
-        }
-
-        $out .= '<div class="studio-field"><label class="studio-label" for="' . $formId . '-caption">Caption</label>'
-              . '<textarea class="ui-textarea studio-caption" id="' . $formId . '-caption" name="caption" rows="5" maxlength="10000" required placeholder="What does the post say?" data-field="caption">' . $esc($post['caption'] ?? '') . '</textarea></div>';
-
-        $out .= '<div class="studio-field"><label class="studio-label" for="' . $formId . '-hashtags">Hashtags</label>'
-              . '<textarea class="ui-textarea studio-tags" id="' . $formId . '-hashtags" name="hashtags" rows="2" maxlength="2000" placeholder="#Brand #Campaign" data-field="hashtags">' . $esc($post['hashtags'] ?? '') . '</textarea>';
-        if ($defaults !== '') {
-            $out .= '<div class="studio-help"><button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-apply-defaults data-defaults="' . $esc($defaults) . '">Append client defaults</button>'
-                  . '<code class="studio-defaults" title="' . $esc($defaults) . '">' . $esc(mb_strimwidth($defaults, 0, 60, '…')) . '</code></div>';
-        }
-        $out .= '</div>';
-
-        $out .= '<div class="studio-field-row">';
-        $out .= '<div class="studio-field"><label class="studio-label" for="' . $formId . '-date">Scheduled for</label>'
-              . '<input class="ui-input" type="datetime-local" id="' . $formId . '-date" name="scheduled_date" value="' . $esc($post['scheduled'] ?? '') . '" required data-field="scheduled_date"></div>';
-        if ($supportsType) {
-            $out .= '<div class="studio-field"><label class="studio-label" for="' . $formId . '-type">Type</label><select class="ui-select" id="' . $formId . '-type" name="post_type" data-field="post_type">';
-            foreach ($types as $t) {
-                $out .= '<option value="' . $esc($t) . '"' . (($post['post_type'] ?? 'post') === $t ? ' selected' : '') . '>' . $esc(function_exists('postTypeLabel') ? postTypeLabel($t) : ucfirst($t)) . '</option>';
-            }
-            $out .= '</select></div>';
-        }
-        $out .= '<div class="studio-field"><label class="studio-label" for="' . $formId . '-status">Status</label><select class="ui-select" id="' . $formId . '-status" name="status" data-field="status">';
-        foreach (['pending' => 'To Review', 'approved' => 'Approved', 'denied' => 'Needs changes'] as $v => $l) {
-            $out .= '<option value="' . $v . '"' . (($post['status'] ?? 'pending') === $v ? ' selected' : '') . '>' . $l . '</option>';
-        }
-        $out .= '</select></div>';
-        $out .= '</div>';
-
-        $out .= '<div class="studio-field"><label class="studio-label" for="' . $formId . '-name">Reference name <span class="text-tertiary">— internal, for lists and activity</span></label>'
-              . '<input class="ui-input" type="text" id="' . $formId . '-name" name="name" maxlength="150" value="' . $esc($post['name'] ?? '') . '" placeholder="e.g. Spring launch — hero shot"></div>';
-
-        if ($cats) {
-            $out .= '<div class="studio-field"><span class="studio-label">Categories</span><div class="studio-chips studio-chips--wrap">';
-            foreach ($cats as $c) {
-                $on = in_array((int)$c['id'], $postCats, true);
-                $out .= '<label class="studio-chip' . ($on ? ' is-active' : '') . '" data-cat-chip><input type="checkbox" name="categories[]" value="' . (int)$c['id'] . '"' . ($on ? ' checked' : '') . '>' . $esc($c['name']) . '</label>';
-            }
-            $out .= '</div></div>';
-        }
-
-        $out .= '<div class="studio-actions">';
-        if (!empty($ctx['cancelUrl'])) $out .= '<a class="ui-btn ui-btn--gray" href="' . $esc($ctx['cancelUrl']) . '">Cancel</a>';
-        $out .= '<button type="submit" class="ui-btn ui-btn--filled" data-composer-submit>' . $esc($ctx['submitText'] ?? ($isEdit ? 'Save changes' : 'Create post')) . '</button>';
-        $out .= '</div>';
-        $out .= '</section>';
-        $out .= '</div>'; // /.studio-composer-side
-        $out .= '</form>';
-        return $out;
+        foreach ($groups as &$g) { $g['pages'] = array_values($g['pages']); }
+        unset($g);
+        // Library first, then the collections in pool order (tire name)
+        uasort($groups, static function ($x, $y) { return ($x['kind'] === 'library' ? 0 : 1) <=> ($y['kind'] === 'library' ? 0 : 1); });
+        return array_values($groups);
     }
 }

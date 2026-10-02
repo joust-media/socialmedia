@@ -3,22 +3,32 @@
  * Posts — Stage 3 review (spec §4.3). Replaces feed.php.
  *
  *   ?client=kenda                 scope (helpers.php)
- *   &status=pending|approved|scheduled   segment (admin also: denied) — default pending
+ *   &status=pending|approved|scheduled   segment (admin also: draft, denied) — default pending
  *   &month=YYYY-MM|all            default: current month if it has posts, else all (feed.php semantics)
  *   &post=<id>                    open that post's detail on load (segment/month follow the post)
+ *   &newpost=1|upload|edit        (admin) open the New post pop-up on load (newpost.js); edit needs &post=<id>
  *   &post=<id>&partial=1          return ONLY the detail partial HTML (for lists > 40 items)
+ *   &post=<id>&partial=row        ONE list row as it renders in the post's own segment / month (headers X-Post-Segment,
+ *                                 X-Post-Month) — posts.js App.posts.refresh() after a New post pop-up save, no reload
+ *   &partial=list&offset=<n>      the next POSTS_PAGE rows of the list (same status/month) as markup — "Load more";
+ *                                 headers X-Posts-Total / X-Posts-Next ('' when done). The page renders the first
+ *                                 POSTS_PAGE rows; a deep link past them still opens its sheet (standalone template).
+ *
+ * Images: list rows show the sm preview (pvImg(), preview-ui.php), the detail carousel the lg one.
  *
  * Segments (DB strings never change):
  *   To Review = status pending  AND posted = 0
  *   Approved  = status approved AND posted = 0
  *   Scheduled = posted = 1                      (label only; DB value stays `posted`)
  *   Needs changes (admin only) = status denied AND posted = 0
- * Clients never receive denied rows — filtered in SQL (AND p.status <> 'denied').
+ *   Drafts (admin only, first) = status draft (migrate.php step 35; postsHaveDraft())
+ * Clients never receive denied or draft rows — filtered in SQL (postsClientVisibleSql(): status
+ * IN pending / approved), so a deep link to a draft is a 404 partial / a plain list for them.
  *
  * The Needs changes segment is Joust's work queue: each row also carries the
  * client's latest note (deny note or newest comment — both are activity_log
- * 'commented' rows), a client-comment count, and Open / Resubmit for review
- * actions. Resubmit = status.php status=pending (admin only, existing rule).
+ * 'commented' rows), a client-comment count, and Open / Edit & resubmit
+ * actions (the New post pop-up in edit mode; its primary is Send for review).
  * Sorted by most recent client activity. No schema changes.
  */
 
@@ -35,13 +45,17 @@ function h($s) {
 // hasPostedColumn() (posts.posted is migration-gated) lives in helpers.php.
 
 $admin     = isAdmin();
-$isPartial = !empty($_GET['partial']);
+$isListPartial = (($_GET['partial'] ?? '') === 'list');                 // "Load more" rows
+$isRowPartial  = (($_GET['partial'] ?? '') === 'row');                  // one row (App.posts.refresh)
+$isPartial = !empty($_GET['partial']) && !$isListPartial && !$isRowPartial;   // one post's detail
+if (!defined('POSTS_PAGE')) { define('POSTS_PAGE', 30); }             // list rows per page
+$listOffset = max(0, (int)($_GET['offset'] ?? 0));
 $postParam = (int)($_GET['post'] ?? 0);
 
 // Posts only makes sense for one client. A client seat without a scope gets the
 // same "missing client" state assets.php uses (400); the admin picks a client.
 if (!$client) {
-    if ($isPartial) {
+    if ($isPartial || $isRowPartial) {
         http_response_code(404);
         header('Content-Type: text/html; charset=UTF-8');
         echo '<div class="ui-empty">This post is no longer available.</div>';
@@ -119,8 +133,9 @@ if ($client) {
     $scopeParams[] = (int)$client['id'];
 }
 if (!$admin) {
-    $scopeWhere[] = "p.status <> 'denied'";     // clients never see denied work (SQL, not CSS)
+    $scopeWhere[] = postsClientVisibleSql('p');   // clients never see denied work or drafts (SQL, not CSS)
 }
+$hasDraft = $admin && postsHaveDraft($pdo);
 
 /** Load images + comments + approved_at + the latest copy edit for a set of post rows (4 queries total). */
 function postsAttachRelations(PDO $pdo, array &$posts, bool $hasMedia, bool $hasLog): void {
@@ -198,9 +213,25 @@ if ($postParam > 0) {
     $directPost = $st->fetch() ?: null;
 }
 
+// A client following their own "You requested changes on …" link: the post left their view (it is Joust's
+// queue now). The sheet says so and shows their note (renderPostHiddenNotice) — never a silent 404 and never
+// the work in progress. Drafts and other clients' posts stay "not found".
+$hiddenPost = null;
+if (!$directPost && !$admin && $postParam > 0 && $client) {
+    $st = $pdo->prepare($selectSql . " WHERE p.id = ? AND p.company_id = ? AND p.status = 'denied' LIMIT 1");
+    $st->execute([$postParam, (int)$client['id']]);
+    $hiddenPost = $st->fetch() ?: null;
+}
+
 if ($isPartial) {
     header('Content-Type: text/html; charset=UTF-8');
     header('Cache-Control: no-store');
+    if (!$directPost && $hiddenPost) {
+        $one = [$hiddenPost];
+        postsAttachRelations($pdo, $one, $hasMedia, $hasLog);
+        echo renderPostHiddenNotice($one[0], reviewLatestNote($one[0]['comments'], (string)($client['name'] ?? '')));
+        exit;
+    }
     if (!$directPost) {
         http_response_code(404);
         echo '<div class="ui-empty">This post is no longer available.</div>';
@@ -239,8 +270,11 @@ if ($monthParam === 'all') {
 // ---------------------------------------------------------------------
 // Segment
 // ---------------------------------------------------------------------
-$segments = ['pending' => 'To Review', 'approved' => 'Approved', 'scheduled' => 'Scheduled'];
-if ($admin) { $segments['denied'] = 'Needs changes'; }
+// Admin: Joust's own work first — Draft · Needs changes — so the queue is on screen at 390 px (the
+// segmented control scrolls sideways on phones); then the client's To Review, Approved, Scheduled.
+$segments = ($hasDraft ? ['draft' => 'Draft'] : [])
+          + ($admin ? ['denied' => 'Needs changes'] : [])
+          + ['pending' => 'To Review', 'approved' => 'Approved', 'scheduled' => 'Scheduled'];
 
 $segment = strtolower(trim((string)($_GET['status'] ?? 'pending')));
 if ($directPost) {
@@ -249,6 +283,7 @@ if ($directPost) {
 if (!isset($segments[$segment])) { $segment = 'pending'; }
 
 $segmentWhere = [
+    'draft'     => "p.status = 'draft'",
     'pending'   => "p.status = 'pending' AND $postedExpr = 0",
     'approved'  => "p.status = 'approved' AND $postedExpr = 0",
     'scheduled' => "$postedExpr = 1",
@@ -264,7 +299,7 @@ if ($selectedMonth !== '') {
     $viewWhere[]  = "DATE_FORMAT(p.scheduled_date, '%Y-%m') = ?";
     $viewParams[] = $selectedMonth;
 }
-$counts = ['pending' => 0, 'approved' => 0, 'scheduled' => 0, 'denied' => 0];
+$counts = ['draft' => 0, 'pending' => 0, 'approved' => 0, 'scheduled' => 0, 'denied' => 0];
 $st = $pdo->prepare("SELECT p.status, ($postedExpr) AS posted, COUNT(*) AS n FROM posts p"
     . ($viewWhere ? ' WHERE ' . implode(' AND ', $viewWhere) : '') . ' GROUP BY p.status' . ($hasPosted ? ', p.posted' : ''));
 $st->execute($viewParams);
@@ -273,13 +308,22 @@ foreach ($st->fetchAll() as $row) {
     if (!empty($row['posted'])) { $counts['scheduled'] += $n; }
     elseif (isset($counts[$row['status']])) { $counts[$row['status']] += $n; }
 }
+// Admin with no explicit segment: open on Joust's own queue (Needs changes) when it has items — the tab badge counts it too.
+if ($admin && !$directPost && trim((string)($_GET['status'] ?? '')) === '' && $counts['denied'] > 0) {
+    $segment = 'denied';
+}
 
 // ---------------------------------------------------------------------
 // The list
 // ---------------------------------------------------------------------
 $listWhere  = $viewWhere;
 $listWhere[] = $segmentWhere[$segment];
-$st = $pdo->prepare($selectSql . ' WHERE ' . implode(' AND ', $listWhere) . ' ORDER BY p.scheduled_date ASC, p.id ASC');
+$isQueue = $admin && $segment === 'denied';
+// Paging: POSTS_PAGE rows from $listOffset. The Needs changes queue is sorted in PHP (latest client activity),
+// so it loads the (short, admin-only) segment whole and slices after sorting; every other segment pages in SQL.
+$listTotal = (int)$counts[$segment];
+$st = $pdo->prepare($selectSql . ' WHERE ' . implode(' AND ', $listWhere) . ' ORDER BY p.scheduled_date ASC, p.id ASC'
+    . ($isQueue ? '' : ' LIMIT ' . (int)POSTS_PAGE . ' OFFSET ' . (int)$listOffset));
 $st->execute($viewParams);
 $posts = $st->fetchAll();
 postsAttachRelations($pdo, $posts, $hasMedia, $hasLog);
@@ -290,7 +334,6 @@ postsAttachRelations($pdo, $posts, $hasMedia, $hasLog);
 // the comments already loaded above cover it), the client-comment count
 // and the time of the last client activity; newest activity first.
 // ---------------------------------------------------------------------
-$isQueue = $admin && $segment === 'denied';
 if ($isQueue && $posts) {
     $deniedAt = [];
     if ($hasLog) {
@@ -316,6 +359,11 @@ if ($isQueue && $posts) {
         return ($b['queue']['activity_ts'] <=> $a['queue']['activity_ts']) ?: ((int)$b['id'] <=> (int)$a['id']);
     });
 }
+if ($isQueue) {
+    $listTotal = count($posts);
+    $posts = array_slice($posts, $listOffset, POSTS_PAGE);
+}
+$listNext = ($listOffset + count($posts)) < $listTotal ? $listOffset + count($posts) : 0;   // 0 = nothing after this page
 
 /**
  * Queue facts for one denied post: latest client note (else the latest note of
@@ -340,7 +388,9 @@ function postsQueueInfo(array $post, ?string $deniedAt, ?array $client): array {
         if ($t) { $ts = max($ts, $t); }
     }
     return [
-        'note'         => $note ? trim((string)$note['detail']) : '',
+        // "[Slide 3] text" → note_slide 3 + the text (the raw prefix is never shown)
+        'note'         => $note ? trim(commentSlideSplit(trim((string)$note['detail']))[1]) : '',
+        'note_slide'   => $note ? commentSlideSplit(trim((string)$note['detail']))[0] : 0,
         'note_who'     => $who,
         'note_at'      => $note ? (string)$note['created_at'] : ($deniedAt ?? ''),
         'client_count' => count($clientRows),
@@ -362,7 +412,7 @@ if ($directPost && !$inList) {
 
 // Inline every detail when the list is small; otherwise posts.js fetches partials.
 $inlineLimit   = 40;
-$inlineDetails = count($posts) <= $inlineLimit;
+$inlineDetails = $isRowPartial || count($posts) <= $inlineLimit;
 
 // ---------------------------------------------------------------------
 // URL helpers
@@ -379,6 +429,8 @@ $monthUrl = function (string $ym) use ($segment) {
 };
 
 $monthLabel = $selectedMonth !== '' ? date('M Y', strtotime($selectedMonth . '-01')) : 'All months';
+// Phones: the pill shrinks to "All" / "Oct" (this year) / "Oct 25" so the large "Posts" title keeps its room.
+$monthShort = $selectedMonth === '' ? 'All' : date(substr($selectedMonth, 0, 4) === date('Y') ? 'M' : "M 'y", strtotime($selectedMonth . '-01'));
 $monthIdx   = $selectedMonth !== '' ? array_search($selectedMonth, $availableMonths, true) : false;
 $prevMonth  = ($monthIdx !== false && $monthIdx > 0) ? $availableMonths[$monthIdx - 1] : null;
 $nextMonth  = ($monthIdx !== false && $monthIdx < count($availableMonths) - 1) ? $availableMonths[$monthIdx + 1] : null;
@@ -396,6 +448,7 @@ foreach ($segments as $key => $label) {
 }
 
 $emptyCopy = [
+    'draft'     => 'No drafts. Uploads and posts you have not sent to the client yet wait here.',
     'pending'   => 'Nothing to review' . ($selectedMonth !== '' ? ' in ' . date('F', strtotime($selectedMonth . '-01')) : '') . '.',
     'approved'  => 'No approved posts waiting to be scheduled.',
     'scheduled' => $hasPosted ? 'Nothing scheduled yet.' : 'Scheduling is not enabled yet.',
@@ -407,8 +460,10 @@ $emptyCopy = [
 // ---------------------------------------------------------------------
 $pageTitle   = 'Posts';
 $activeTab   = 'posts';
+// Admin: new posts come from the global "+ New" menu in this bar (navbar.php) — no second "New post" button here.
 $navTrailing = '<button type="button" class="ui-btn ui-btn--tinted ui-btn--sm posts-month-pill" data-sheet-open="#postMonthSheet" aria-haspopup="dialog">'
-             . h($monthLabel) . icon('chevron-down', 'posts-month-chevron') . '</button>'
+             . '<span class="posts-month-long">' . h($monthLabel) . '</span><span class="posts-month-short" aria-hidden="true">' . h($monthShort) . '</span>'
+             . icon('chevron-down', 'posts-month-chevron') . '</button>'
              . (!empty($client) ? clientAvatar($client) : '');
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">';
 $bodyClass   = 'page-posts';
@@ -416,11 +471,12 @@ $bodyClass   = 'page-posts';
 $postsConfig = [
     'base'        => basePath(),
     'endpoint'    => basePath() . '/status.php',
-    'replace'     => basePath() . '/replace-image.php',
-    'upload'      => basePath() . '/upload-chunk.php',   // Replace image/video: purpose=replace, in pieces when large (chunk-upload.js)
-    'maxImageMb'  => 50,
-    'maxVideoMb'  => 4096,
     'partialUrl'  => postsUrl(['post' => '__ID__', 'partial' => 1]),
+    'rowUrl'      => postsUrl(['post' => '__ID__', 'partial' => 'row']),   // App.posts.refresh(): one row after a pop-up save
+    'month'       => $selectedMonth,                                        // '' = all months (refresh: is the row in this view?)
+    'clientName'  => (string)($client['name'] ?? ''),
+    'listUrl'     => postsUrl(['status' => $segment, 'month' => $monthUrlParam, 'partial' => 'list', 'offset' => '__OFFSET__']),   // "Load more" rows
+    'listTotal'   => $listTotal,
     'segment'     => $segment,
     'counts'      => $counts,
     'inline'      => $inlineDetails,
@@ -429,33 +485,18 @@ $postsConfig = [
     'openPost'    => $postParam > 0 ? $postParam : 0,
     'queue'       => $isQueue,
     'segmentUrls' => array_combine(array_keys($segments), array_map($segmentUrl, array_keys($segments))),
+    'maxMedia'    => POST_MAX_MEDIA,   // most media one post may carry (helpers.php)
+    // One-shot flash after a save elsewhere (add-post.php lands here with &msg=…): posts.js toasts it and drops it from the URL.
+    'flash'       => $admin && isset($_GET['msg']) && is_string($_GET['msg']) ? mb_substr(trim($_GET['msg']), 0, 300) : '',
 ];
 $footExtra = '<script>window.PostsConfig = ' . json_encode($postsConfig, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n"
-           . ($admin ? '<script src="' . h(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n" : '')   // App.chunkUpload for Replace (admin only)
+           . ($admin ? '<script src="' . h(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n" : '')   // App.chunkUpload for the New post pop-up's uploads (admin only)
+           . '<script src="' . h(staticUrl('js/carousel.js')) . '" defer></script>' . "\n"   // App.carousel: swipe, dots, "2 / 7", arrows, ←/→ (both seats)
            . '<script src="' . h(staticUrl('js/posts.js')) . '" defer></script>';
 
-include __DIR__ . '/partials/layout-top.php';
-?>
-
-<div class="posts-toolbar">
-  <?= segmented($segItems, ['label' => 'Post status']) ?>
-</div>
-
-<?php if (!$posts): ?>
-  <div class="ui-empty posts-empty" data-posts-empty>
-    <?= h($emptyCopy[$segment]) ?>
-    <?php if ($segment === 'pending' && $counts['approved'] + $counts['scheduled'] > 0): ?>
-      <div class="posts-empty-sub">You're caught up.</div>
-    <?php endif; ?>
-  </div>
-<?php endif; ?>
-
-<section class="ui-list-group posts-group" data-posts-list data-segment="<?= h($segment) ?>"<?= !$posts ? ' hidden' : '' ?>>
-  <h2 class="ui-list-header">
-    <?= h($monthLabel) ?> · <span data-segment-count><?= (int)$counts[$segment] ?></span> <?= h(strtolower($segments[$segment])) ?>
-  </h2>
-  <ul class="ui-list posts-list" role="list" data-posts-items>
-    <?php foreach ($posts as $post):
+/** One list row (the page and the "Load more" partial render the same markup). $rowIndex: position in the list (first rows load their thumb eagerly). */
+$renderRow = function (array $post, int $rowIndex = 0) use ($client, $segment, $monthUrlParam, $isQueue, $inlineDetails, $admin, $hasPosted): string {
+    ob_start();
         $pid      = (int)$post['id'];
         $posted   = !empty($post['posted']);
         $first    = $post['images'][0] ?? null;
@@ -478,18 +519,20 @@ include __DIR__ . '/partials/layout-top.php';
         $qWhen    = $queue && $queue['note_at'] !== '' ? relativeTime($queue['note_at']) : '';
         $qAbs     = $queue && $queue['note_at'] !== '' ? absoluteTime($queue['note_at']) : '';
         $qCount   = $queue ? (int)$queue['client_count'] : 0;
+        $isDraft  = $admin && $post['status'] === 'draft';   // admin-only rows: no swipe, Send for review
+        $noCaption = $isDraft && $caption === '';
     ?>
       <li class="pl-item<?= $queue ? ' pl-item--queue' : '' ?><?= $isPast ? ' pl-item--past' : '' ?>" id="post-<?= $pid ?>" data-post-item="<?= $pid ?>" data-id="<?= $pid ?>"
           data-status="<?= h($post['status']) ?>" data-posted="<?= $posted ? '1' : '0' ?>"<?= $isPast ? ' data-past="1"' : '' ?>
-          data-title="<?= h($title) ?>"<?= $queue ? ' data-queue' : ' data-swipe' ?>>
-        <?php if (!$queue): ?>
+          data-title="<?= h($title) ?>"<?= $queue ? ' data-queue' : ($isDraft ? ' data-draft' : ($admin ? '' : ' data-swipe')) ?>>
+        <?php if (!$queue && !$isDraft && !$admin): /* swipe = the client's decision; Joust decides for the client only via ⋯ → Approve for client… */ ?>
         <div class="pl-swipe pl-swipe--approve" aria-hidden="true"><?= icon('checkmark') ?><span>Approve</span></div>
-        <div class="pl-swipe pl-swipe--deny" aria-hidden="true"><?= icon('xmark') ?><span>Deny</span></div>
+        <div class="pl-swipe pl-swipe--deny" aria-hidden="true"><?= icon('xmark') ?><span>Needs changes</span></div>
         <?php endif; ?>
         <a class="ui-row ui-row--leading pl-card" href="<?= h($href) ?>" data-post-open="<?= $pid ?>">
           <div class="ui-row-leading pl-thumb<?= $isVid ? ' pl-thumb--video' : '' ?>">
             <?php if ($first && !$isVid): ?>
-              <img src="<?= h(pdMediaUrl($first['url'])) ?>" alt="" loading="lazy" decoding="async">
+              <?= pvImg(pdMediaUrl($first['url']), 'sm', ['sizes' => pvSizes('row'), 'eager' => $rowIndex < 8]) ?>
             <?php elseif ($first): ?>
               <?= videoTile(pdMediaUrl($first['url']), ['class' => 'pl-thumb-video', 'badgeClass' => 'pl-thumb-badge']) ?>
             <?php else: ?>
@@ -510,10 +553,10 @@ include __DIR__ . '/partials/layout-top.php';
             <?php if ($queue): ?>
               <div class="pl-note<?= $qNote === '' ? ' pl-note--empty' : '' ?>" data-queue-note>
                 <?php if ($qNote !== ''): ?>
-                  <q><?= h($qNote) ?></q>
+                  <?php if (!empty($queue['note_slide'])): ?>On slide <?= (int)$queue['note_slide'] ?>: <?php endif; ?><q><?= h($qNote) ?></q>
                   <span class="pl-note-meta"><?= h($queue['note_who']) ?><?php if ($qWhen !== ''): ?> · <time title="<?= h($qAbs) ?>"><?= h($qWhen) ?></time><?php endif; ?></span>
                 <?php else: ?>
-                  <span>No note left<?php if ($qWhen !== ''): ?> · denied <time title="<?= h($qAbs) ?>"><?= h($qWhen) ?></time><?php endif; ?></span>
+                  <span>No note left<?php if ($qWhen !== ''): ?> · changes requested <time title="<?= h($qAbs) ?>"><?= h($qWhen) ?></time><?php endif; ?></span>
                 <?php endif; ?>
               </div>
             <?php endif; ?>
@@ -523,28 +566,98 @@ include __DIR__ . '/partials/layout-top.php';
               <?php if ($queue): ?>
                 <span class="pl-meta-item"><span class="pl-meta-sep">·</span><span data-queue-count="<?= $pid ?>"><?= $qCount > 0 ? $qCount . ' client ' . ($qCount === 1 ? 'comment' : 'comments') : 'no client comments' ?></span></span>
               <?php else: ?>
-                <span class="pl-meta-item"><span class="pl-meta-sep">·</span><span data-comment-count-for="<?= $pid ?>"><?= $nCmt ?> <?= $nCmt === 1 ? 'comment' : 'comments' ?></span></span>
+                <span class="pl-meta-item"<?= $nCmt > 0 ? '' : ' hidden' ?>><span class="pl-meta-sep">·</span><span data-comment-count-for="<?= $pid ?>"><?= $nCmt ?> <?= $nCmt === 1 ? 'comment' : 'comments' ?></span></span>
               <?php endif; ?>
             </div>
           </div>
           <?= icon('chevron-right', 'ui-row-chevron') ?>
         </a>
+        <?php if ($isDraft): ?>
+          <div class="pl-queue-actions pl-draft-actions">
+            <?php if ($noCaption): ?><span class="pl-draft-hint text-tertiary">No caption yet</span><?php endif; ?>
+            <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-post-open="<?= $pid ?>">Open</button>
+            <button type="button" class="ui-btn ui-btn--tinted ui-btn--sm" data-submit-post="<?= $pid ?>" title="Send this draft to the client's To Review list">Send for review</button>
+          </div>
+        <?php endif; ?>
         <?php if ($queue): ?>
           <div class="pl-queue-actions">
             <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-post-open="<?= $pid ?>">Open</button>
-            <button type="button" class="ui-btn ui-btn--tinted ui-btn--sm" data-resubmit="<?= $pid ?>" title="Move this post back to the client's To Review list">Resubmit for review</button>
+            <button type="button" class="ui-btn ui-btn--tinted ui-btn--sm" data-newpost-edit="<?= $pid ?>" data-newpost-resubmit title="Fix it in the New post pop-up, then send it back to the client's To Review list">Edit &amp; resubmit</button>
           </div>
         <?php endif; ?>
         <?php if ($inlineDetails): ?>
           <template data-post-template="<?= $pid ?>"><?= renderPostDetail($post, ['admin' => $admin, 'hasPosted' => $hasPosted]) ?></template>
         <?php endif; ?>
       </li>
-    <?php endforeach; ?>
+<?php
+    return (string)ob_get_clean();
+};
+
+// One row (&partial=row&post=ID): the post as it renders in its own segment / month (both follow the post above).
+if ($isRowPartial) {
+    header('Content-Type: text/html; charset=UTF-8');
+    header('Cache-Control: no-store');
+    $rowPost = null;
+    foreach ($posts as $p) { if ((int)$p['id'] === $postParam) { $rowPost = $p; break; } }
+    if (!$rowPost && $directPost) {   // past the first page of its segment: relations are attached above
+        $rowPost = $directPost;
+        if ($isQueue) { $rowPost['queue'] = postsQueueInfo($rowPost, null, $client); }
+    }
+    if (!$rowPost) {
+        http_response_code(404);
+        exit;
+    }
+    header('X-Post-Segment: ' . $segment);
+    header('X-Post-Month: ' . (!empty($rowPost['scheduled_date']) && strtotime((string)$rowPost['scheduled_date']) ? date('Y-m', strtotime((string)$rowPost['scheduled_date'])) : ''));
+    echo $renderRow($rowPost, 0);
+    exit;
+}
+
+// "Load more" (&partial=list&offset=N): the next rows only.
+if ($isListPartial) {
+    header('Content-Type: text/html; charset=UTF-8');
+    header('Cache-Control: no-store');
+    header('X-Posts-Total: ' . $listTotal);
+    header('X-Posts-Next: ' . ($listNext > 0 ? (string)$listNext : ''));
+    foreach ($posts as $i => $post) { echo $renderRow($post, $listOffset + $i); }
+    exit;
+}
+
+include __DIR__ . '/partials/layout-top.php';
+?>
+
+<div class="posts-toolbar">
+  <?= segmented($segItems, ['label' => 'Post status', 'scroll' => true]) ?>
+</div>
+
+<?php if (!$posts): ?>
+  <div class="ui-empty posts-empty" data-posts-empty>
+    <?= h($emptyCopy[$segment]) ?>
+    <?php if ($segment === 'pending' && $counts['approved'] + $counts['scheduled'] > 0): ?>
+      <div class="posts-empty-sub">You're caught up.</div>
+    <?php endif; ?>
+  </div>
+<?php endif; ?>
+
+<section class="ui-list-group posts-group" data-posts-list data-segment="<?= h($segment) ?>"<?= !$posts ? ' hidden' : '' ?>>
+  <h2 class="ui-list-header">
+    <?= h($monthLabel) ?> · <span data-segment-count><?= (int)$counts[$segment] ?></span> <?= h(strtolower($segments[$segment])) ?>
+  </h2>
+  <ul class="ui-list posts-list" role="list" data-posts-items>
+    <?php foreach ($posts as $i => $post) { echo $renderRow($post, $i); } ?>
   </ul>
-  <?php if ($segment === 'pending'): ?>
-    <p class="ui-list-footer posts-hint">Swipe right to approve, left to deny. Tap a post for the full preview.</p>
+  <?php if ($listNext > 0): $remaining = $listTotal - $listNext; ?>
+    <div class="posts-more" data-posts-more-wrap>
+      <button type="button" class="ui-btn ui-btn--gray posts-more-btn" data-posts-more data-offset="<?= (int)$listNext ?>" data-total="<?= (int)$listTotal ?>">
+        Load more <span class="posts-more-count" data-posts-more-count><?= (int)$remaining ?> remaining</span>
+      </button>
+      <noscript><a class="ui-btn ui-btn--gray" href="<?= h(postsUrl(['status' => $segment, 'month' => $monthUrlParam, 'offset' => $listNext])) ?>">Next <?= (int)min(POSTS_PAGE, $remaining) ?></a></noscript>
+    </div>
+  <?php endif; ?>
+  <?php if ($segment === 'pending' && !$admin): ?>
+    <p class="ui-list-footer posts-hint">Swipe right to approve, left for needs changes. Tap a post for the full preview.</p>
   <?php elseif ($isQueue): ?>
-    <p class="ui-list-footer">Newest client activity first. Open a post for the full thread; Resubmit sends it back to the client's To Review list.</p>
+    <p class="ui-list-footer">Newest client activity first. Open a post for the full thread; Edit &amp; resubmit fixes it and sends it back to the client's To Review list.</p>
   <?php endif; ?>
 </section>
 

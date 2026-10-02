@@ -1,8 +1,8 @@
 <?php
 /**
- * Studio → Pages: create / edit one page, plus the small admin actions the
- * Studio Pages tab posts here (Pages-tab toggle, delete). Admin only —
+ * Pages → New / Edit page: create / edit one page, plus delete. Admin only —
  * requireAdmin() redirects a client session to login before any output.
+ * (A client's Pages tab is turned on / off in Manage → Clients only.)
  *
  *   GET  add-page.php?client=<slug>             new page form
  *   GET  add-page.php?client=<slug>&edit=<id>   edit form (+ file uploader for upload pages, comment thread, delete)
@@ -11,12 +11,13 @@
  *     create | update   title*, slug (auto from the title when blank), source upload|url, url,
  *                       entry, description, status, live, notes
  *                       → create: add-page.php?client&edit=<id> (so files can be uploaded right away)
- *                       · update: studio?tab=pages&msg=
+ *                       · update: pages.php?client&page=<id>&msg= (toasted once)
  *     delete            id → folder (contained) + page_files + row removed, 'deleted' logged
- *     module_toggle     to=1|0          (company_modules row for the 'pages' module)
- *   Files are uploaded / removed / promoted to entry through page-upload.php (static/js/pages.js).
+ * *   Files are uploaded / removed / promoted to entry through page-upload.php (static/js/pages.js).
  *
- * Rules mirrored from page-status.php: live=1 only when status=approved (the 409 rule);
+ * Rules mirrored from page-status.php: the form never decides for the client — a new page is Draft or
+ * To Review, an existing one keeps its status or goes back to Draft / To Review (reviewFormStatusOptions(),
+ * helpers.php; Approve for client… stays in the sheet's ⋯ menu); live=1 only when status=approved (the 409 rule);
  * the slug is unique per company ([a-z0-9-], pageSlugify()). Renaming the slug of an upload
  * page moves its media/pages/<client>/<slug>/ folder along (renamePageFolder()).
  * Activity: 'created' on create; one batch of edited_<field> rows per save
@@ -35,14 +36,14 @@ function h($s) {
 }
 
 if (!$client) {
-    header('Location: ' . clientUrl('studio.php', ['msg' => 'Pick a client first.']));
+    header('Location: ' . pagePath('pages'));   // the admin's client chooser
     exit;
 }
 $cid = (int)$client['id'];
 
 /** Back to the Studio Pages tab with a flash. */
 function pagesStudioRedirect(string $msg, array $extra = []): void {
-    header('Location: ' . clientUrl('studio.php', ['tab' => 'pages', 'msg' => $msg] + $extra));
+    header('Location: ' . clientUrl('pages.php', ['status' => 'all', 'msg' => $msg] + $extra));
     exit;
 }
 
@@ -59,7 +60,7 @@ $flash    = trim((string)($_GET['msg'] ?? ''));
 $editId   = (int)($_GET['edit'] ?? 0);
 $page     = null;
 $statuses = ['draft' => 'Draft', 'pending' => 'To Review', 'approved' => 'Approved', 'denied' => 'Needs changes'];
-$sources  = ['upload' => 'Upload — HTML + assets in the portal', 'url' => 'URL — hosted somewhere else'];
+$sources  = ['upload' => 'Upload files to the portal', 'url' => 'Link to a hosted URL'];
 
 /** Form values (strings). */
 $vals = [
@@ -79,13 +80,6 @@ function loadOwnPage(PDO $pdo, int $id, int $cid): ?array {
 // -------------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = (string)($_POST['action'] ?? '');
-
-    // ---- Pages tab toggle -------------------------------------------
-    if ($action === 'module_toggle') {
-        $on = (int)($_POST['to'] ?? 0) === 1;
-        if (!setPagesModuleEnabled($pdo, $cid, $on)) pagesStudioRedirect('The pages module row is missing — run migrate.php first.');
-        pagesStudioRedirect($on ? 'Pages tab enabled for ' . $client['name'] . '.' : 'Pages tab disabled for ' . $client['name'] . '.');
-    }
 
     // ---- Delete -------------------------------------------------------
     if ($action === 'delete') {
@@ -139,8 +133,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = 'Entry file must be an .html file name inside the page folder (e.g. index.html or pages/start.html).';
         }
         if (mb_strlen($vals['description']) > 4000) $errors[] = 'Description is too long (4000 characters max).';
-        if (!isset($statuses[$vals['status']])) { $errors[] = 'Unknown status.'; $vals['status'] = 'draft'; }
-        if ($vals['live'] && $vals['status'] !== 'approved') $errors[] = 'Only an approved page can be marked live — set the status to Approved first.';
+        // Same transitions as the sheet (page-status.php): the form keeps or routes (Draft / To Review), never approves.
+        $oldStatus = $action === 'update' ? (string)$page['status'] : '';
+        $statusErr = reviewFormStatusError($oldStatus, $vals['status'], (bool)$vals['live'], 'page');
+        if ($statusErr !== '') {
+            $errors[] = $statusErr;
+            if (!isset(reviewFormStatusOptions($oldStatus)[$vals['status']])) $vals['status'] = $oldStatus !== '' ? $oldStatus : 'draft';
+            if ($vals['status'] !== 'approved') $vals['live'] = 0;
+        }
 
         if (!$errors) {
             $now    = date('Y-m-d H:i:s');
@@ -219,7 +219,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
                 $pdo->commit();
-                pagesStudioRedirect(pageDisplayLabel(['title' => $vals['title'], 'slug' => $slug]) . ($changes ? ' saved (' . count($changes) . ' change' . (count($changes) === 1 ? '' : 's') . ').' : ' saved — no changes.'));
+                // Back to the page that was edited (its sheet opens, the flash is toasted once)
+                header('Location: ' . pageUrl(['id' => $editId], ['msg' => pageDisplayLabel(['title' => $vals['title'], 'slug' => $slug]) . ($changes ? ' saved (' . count($changes) . ' change' . (count($changes) === 1 ? '' : 's') . ').' : ' saved — no changes.')]));
+                exit;
             } catch (Throwable $ex) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
                 error_log('add-page save: ' . $ex->getMessage());
@@ -249,19 +251,20 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST' && $editId > 0) {
 $isEdit     = $page !== null;
 $formAction = $isEdit ? 'update' : 'create';
 $formTitle  = $isEdit ? 'Edit ' . pageDisplayLabel($page) : 'New page';
+$statusOpts = reviewFormStatusOptions($isEdit ? (string)$page['status'] : '');   // Draft · To Review (+ keep Approved / Needs changes)
 $selfUrl    = clientUrl('add-page.php', $isEdit ? ['edit' => (int)$page['id']] : []);
-$studioUrl  = clientUrl('studio.php', ['tab' => 'pages']);
+$studioUrl  = clientUrl('pages.php', ['status' => 'all']);   // Back / Cancel
 $thread     = $isEdit && hasActivityLog($pdo) ? commentThread($pdo, 'page', (int)$page['id']) : [];
 $files      = $isEdit ? pageFilesFor($pdo, (int)$page['id']) : [];
 $folderRel  = $isEdit ? pageFolderRel($client, $page) : 'media/pages/' . $client['slug'] . '/<slug>';
 $viewUrl    = $isEdit ? pageViewUrl($page, $client) : '';
 
 $pageTitle   = $formTitle;
-$navSubtitle = 'Studio · ' . $client['name'] . ' · Pages';
-$activeTab   = 'studio';
-$pageWide    = true;
-$navWide     = true;
-$navBack     = ['href' => $studioUrl, 'label' => 'Studio'];
+$navSubtitle = $client['name'] . ' · Pages';
+$activeTab   = 'pages';
+$pageWide    = false;   // the shared 720 px column, like every other top-level page
+$navWide     = false;
+$navBack     = ['href' => $studioUrl, 'label' => 'Pages'];
 $navLinks    = [];
 if ($isEdit) $navLinks[] = ['label' => 'Open in Pages', 'href' => pageUrl($page)];
 if ($viewUrl !== '') $navLinks[] = ['label' => 'Open page', 'href' => $viewUrl, 'attrs' => ['target' => '_blank', 'rel' => 'noopener']];
@@ -320,17 +323,18 @@ include __DIR__ . '/partials/layout-top.php';
         <div class="studio-field">
           <label class="studio-label" for="page-status">Status</label>
           <select class="ui-select" id="page-status" name="status" data-email-status data-page-status>
-            <?php foreach ($statuses as $k => $label): ?>
+            <?php foreach ($statusOpts as $k => $label): ?>
               <option value="<?= h($k) ?>"<?= $vals['status'] === $k ? ' selected' : '' ?>><?= h($label) ?></option>
             <?php endforeach; ?>
           </select>
+          <p class="studio-help" data-status-help><?= h(reviewFormStatusHelp($isEdit ? (string)$page['status'] : '', 'page')) ?></p>
         </div>
         <div class="studio-field">
           <span class="studio-label">Live</span>
           <label class="studio-chip<?= $vals['live'] ? ' is-active' : '' ?>" data-email-live-chip title="Only an approved page can go live">
             <input type="checkbox" name="live" value="1" data-email-live<?= $vals['live'] ? ' checked' : '' ?><?= $vals['status'] === 'approved' ? '' : ' disabled' ?>> Live in production
           </label>
-          <p class="studio-help" data-email-live-help<?= $vals['status'] === 'approved' ? ' hidden' : '' ?>>Set the status to Approved to mark this page live.</p>
+          <p class="studio-help" data-email-live-help<?= $vals['status'] === 'approved' ? ' hidden' : '' ?>>Only an approved page can go live.</p>
         </div>
       </div>
 

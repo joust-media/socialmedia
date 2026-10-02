@@ -245,271 +245,136 @@ $val_type = $postedBack ? ($_POST['vehicle_type'] ?? '')
 
 $formTitle      = $isEdit ? 'Edit vehicle' : 'New vehicle';
 $formSubmitText = $isEdit ? 'Save changes' : 'Create vehicle';
-?>
-<!DOCTYPE html>
-<html lang="en" data-theme="light">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title><?= $isEdit ? 'Edit vehicle' : 'Add a vehicle' ?> — Joust Admin</title>
-<?= renderAppHead() ?>
-<style>
-  :root {
-    --bg: #f0f2f5; --surface: #ffffff; --surface-2: #f7f8fa;
-    --border: #dadde1; --text: #050505; --text-muted: #65676b;
-    --accent: #1877f2; --accent-hover: #166fe5;
-    --danger: #dc2626; --success: #16a34a;
-    --shadow: 0 1px 2px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04);
-  }
-  [data-theme="dark"] {
-    --bg: #18191a; --surface: #242526; --surface-2: #3a3b3c;
-    --border: #3e4042; --text: #e4e6eb; --text-muted: #b0b3b8;
-    --accent: #2d88ff; --accent-hover: #4599ff;
-    --danger: #ef4444; --success: #16a34a;
-    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.3);
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text);
-         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-         font-size: 15px; line-height: 1.4; min-height: 100vh; }
-  .topbar { position: sticky; top: 0; z-index: 100;
-            background: var(--surface); border-bottom: 1px solid var(--border);
-            box-shadow: var(--shadow); }
-  .topbar-inner { max-width: 860px; margin: 0 auto; padding: 12px 20px;
-                  display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .brand { display: flex; align-items: center; gap: 10px;
-           font-weight: 700; font-size: 20px; color: var(--accent); letter-spacing: -0.5px; }
-  .brand-mark { width: 32px; height: 32px; border-radius: 8px;
-                background: var(--accent); color: #fff;
-                display: flex; align-items: center; justify-content: center; font-weight: 800; }
-  .brand-sub { font-size: 12px; font-weight: 600; color: var(--text-muted);
-               text-transform: uppercase; letter-spacing: 1px;
-               padding: 3px 8px; border-radius: 4px;
-               background: var(--surface-2); border: 1px solid var(--border); }
-  .top-actions { display: flex; gap: 8px; align-items: center; }
-  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-         padding: 8px 14px; border-radius: 8px; font-size: 14px; font-weight: 600;
-         cursor: pointer; border: 1px solid var(--border);
-         background: var(--surface-2); color: var(--text);
-         text-decoration: none; transition: background 0.15s, transform 0.1s; }
-  .btn:hover { background: var(--border); }
-  .btn:active { transform: scale(0.98); }
-  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .btn.primary:hover { background: var(--accent-hover); }
-  .btn.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
-  .btn.sm { padding: 6px 10px; font-size: 13px; }
 
-  .wrap { max-width: 860px; margin: 0 auto; padding: 24px 20px 80px; }
-  .flash, .errors { padding: 12px 16px; border-radius: 8px; margin-bottom: 20px;
-                    font-size: 14px; font-weight: 500; }
-  .flash  { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
-  .errors { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
-  [data-theme="dark"] .flash  { background: #14532d; color: #bbf7d0; border-color: #166534; }
-  [data-theme="dark"] .errors { background: #7f1d1d; color: #fecaca; border-color: #991b1b; }
-
-  .card { background: var(--surface); border: 1px solid var(--border);
-          border-radius: 12px; box-shadow: var(--shadow);
-          margin-bottom: 24px; overflow: hidden; }
-  .card-header { padding: 16px 20px; border-bottom: 1px solid var(--border);
-                 display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .card-title { font-size: 17px; font-weight: 700; margin: 0; }
-  .card-body { padding: 20px; }
-
-  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
-  .field label { font-size: 13px; font-weight: 600; color: var(--text-muted);
-                 text-transform: uppercase; letter-spacing: 0.5px; }
-  .field input[type="text"], .field input[type="number"] {
-    background: var(--surface-2); border: 1px solid var(--border);
-    color: var(--text); padding: 10px 12px; border-radius: 8px;
-    font: inherit; width: 100%; font-size: 15px;
-  }
-  .field input:focus { outline: none; border-color: var(--accent);
-                       box-shadow: 0 0 0 3px rgba(24,119,242,0.15); }
-  .field .help { font-size: 12px; color: var(--text-muted); }
-  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  @media (max-width: 640px) { .field-row { grid-template-columns: 1fr; } }
-
-  .existing-images { display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-top: 8px; }
-  .existing-img { position: relative; aspect-ratio: 1/1; border-radius: 8px; overflow: hidden;
-                  border: 2px solid var(--border); background: var(--surface-2); }
-  .existing-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .existing-img.marked { opacity: 0.35; border-color: var(--danger); }
-  .existing-img input[type="checkbox"] { position: absolute; top: 8px; right: 8px;
-                                         width: 20px; height: 20px; cursor: pointer; }
-
-  .file-drop { border: 2px dashed var(--border); border-radius: 8px; padding: 24px;
-               text-align: center; background: var(--surface-2); cursor: pointer;
-               transition: border-color 0.15s, background 0.15s; }
-  .file-drop:hover { border-color: var(--accent); background: var(--surface); }
-  .file-drop input[type="file"] { display: none; }
-  .file-drop-label { font-weight: 600; color: var(--accent); display: block; margin-bottom: 4px; }
-  .file-drop-hint { font-size: 12px; color: var(--text-muted); }
-  .file-list { margin-top: 10px; font-size: 13px; color: var(--text-muted); }
-  .file-list-item { padding: 2px 0; }
-
-  .form-actions { display: flex; gap: 10px; justify-content: flex-end;
-                  margin-top: 6px; padding-top: 20px; border-top: 1px solid var(--border); }
-</style>
-</head>
-<body>
-
-<?= renderAppChrome($isEdit ? 'Edit vehicle' : 'New vehicle', [
-      'subtitle' => 'Vehicle Library',
-      'active'   => 'studio',
-      'width'    => '860px',
-      'trailing' => '',
-      'back'     => ['href' => 'vehicles.php', 'label' => 'Vehicles'],
-      'links'    => [
-        ['label' => 'Sign out', 'href' => 'logout.php', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
-      ],
-    ]) ?>
-
-<div class="wrap">
-
-  <?php if ($flash): ?>
-    <div class="flash">✓ <?= h($flash) ?></div>
-  <?php endif; ?>
-  <?php if ($errors): ?>
-    <div class="errors">
-      <?php foreach ($errors as $err): ?><div>⚠ <?= h($err) ?></div><?php endforeach; ?>
-    </div>
-  <?php endif; ?>
-
-  <div class="card">
-    <div class="card-header">
-      <h2 class="card-title"><?= h($formTitle) ?></h2>
-      <?php if ($isEdit): ?>
-        <a class="btn sm" href="add-vehicle.php">+ New instead</a>
-      <?php endif; ?>
-    </div>
-    <div class="card-body">
-      <form method="POST" action="add-vehicle.php<?= $isEdit ? '?edit=' . (int)$editVehicle['id'] : '' ?>"
-            enctype="multipart/form-data" id="vehicleForm">
-        <input type="hidden" name="action" value="<?= h($formAction) ?>">
-        <?php if ($isEdit): ?>
-          <input type="hidden" name="id" value="<?= (int)$editVehicle['id'] ?>">
-        <?php endif; ?>
-
-        <div class="field-row">
-          <div class="field">
-            <label for="manufacturer">Manufacturer</label>
-            <input type="text" name="manufacturer" id="manufacturer" maxlength="120" required
-                   value="<?= h($val_make) ?>" placeholder="e.g. Yamaha">
-          </div>
-          <div class="field">
-            <label for="model">Model</label>
-            <input type="text" name="model" id="model" maxlength="120" required
-                   value="<?= h($val_model) ?>" placeholder="e.g. YXZ1000R">
-          </div>
-        </div>
-
-        <div class="field-row">
-          <div class="field">
-            <label for="model_year">Year</label>
-            <input type="number" name="model_year" id="model_year" min="1900" max="2100"
-                   value="<?= h($val_year) ?>" placeholder="e.g. 2024">
-            <span class="help">Optional. Fills <code>{{vehicle_year}}</code>.</span>
-          </div>
-          <div class="field">
-            <label for="vehicle_type">Vehicle type</label>
-            <input type="text" name="vehicle_type" id="vehicle_type" maxlength="80"
-                   value="<?= h($val_type) ?>" placeholder="e.g. UTV, ATV, dirt bike">
-            <span class="help">Optional. Fills <code>{{vehicle_type}}</code>.</span>
-          </div>
-        </div>
-
-        <?php if ($isEdit && $editImages): ?>
-          <div class="field">
-            <label>Existing images — tick to remove on save</label>
-            <div class="existing-images">
-              <?php foreach ($editImages as $img): ?>
-                <div class="existing-img" data-img-wrap>
-                  <img src="<?= h($img['image_url']) ?>" alt="">
-                  <input type="checkbox" name="remove_images[]" value="<?= (int)$img['id'] ?>"
-                         data-remove-checkbox title="Remove this image">
-                </div>
-              <?php endforeach; ?>
-            </div>
-            <span class="help"><?= count($editImages) ?> of <?= $maxImages ?> image slots used.</span>
-          </div>
-        <?php endif; ?>
-
-        <div class="field">
-          <label for="images"><?= $isEdit ? 'Add more images' : 'Vehicle images' ?></label>
-          <label class="file-drop">
-            <input type="file" name="images[]" id="images"
-                   accept="image/jpeg,image/png,image/gif,image/webp" multiple>
-            <span class="file-drop-label">Click to choose images</span>
-            <span class="file-drop-hint">
-              or drag &amp; drop — up to <?= $maxImages ?> per vehicle,
-              <?= (int)($maxFileSize / (1024*1024)) ?> MB each. JPG, PNG, GIF, WebP.
-            </span>
-          </label>
-          <div class="file-list" id="fileList"></div>
-        </div>
-
-        <div class="form-actions">
-          <a class="btn" href="vehicles.php">Cancel</a>
-          <button type="submit" class="btn primary"><?= h($formSubmitText) ?></button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <?php if ($isEdit): ?>
-    <form method="POST" action="add-vehicle.php"
-          onsubmit="return confirm('Delete this vehicle and all its images? This cannot be undone.');"
-          style="text-align:right;">
-      <input type="hidden" name="action" value="delete">
-      <input type="hidden" name="id" value="<?= (int)$editVehicle['id'] ?>">
-      <button type="submit" class="btn danger sm">🗑 Delete this vehicle</button>
-    </form>
-  <?php endif; ?>
-
-</div>
-
+// ---- Chrome: the shared shell (back to the Vehicle Library) ----
+$pageTitle   = $isEdit ? 'Edit vehicle' : 'New vehicle';
+$htmlTitle   = $pageTitle . ' — Vehicle Library';
+$navSubtitle = 'Vehicle Library';
+$navBack     = ['href' => pagePath('vehicles'), 'label' => 'Vehicles'];
+$navTrailing = '';
+$activeTab   = 'manage';
+$bodyClass   = 'page-studio page-tool page-vehicle-form';
+$headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">' . "\n"
+             . '<link rel="stylesheet" href="' . h(staticUrl('css/tools.css')) . '">' . "\n"
+             . '<style>.studio-dropzone { position: relative; } .tl-files { margin: 8px 0 0; padding: 0; list-style: none; font-size: var(--text-footnote); color: var(--label-secondary); } .tl-files li + li { margin-top: 2px; }</style>';
+$footExtra = <<<'JS'
 <script>
-  // File list preview
+  // Chosen files, listed under the drop zone
   const fileInput = document.getElementById('images');
   const fileList  = document.getElementById('fileList');
   if (fileInput) {
     fileInput.addEventListener('change', () => {
-      if (!fileInput.files.length) { fileList.innerHTML = ''; return; }
-      fileList.innerHTML = '<strong>Selected:</strong>';
+      fileList.innerHTML = '';
       [...fileInput.files].forEach(f => {
-        const div = document.createElement('div');
-        div.className = 'file-list-item';
-        div.textContent = '• ' + f.name + ' (' + (f.size / 1024 / 1024).toFixed(2) + ' MB)';
-        fileList.appendChild(div);
+        const li = document.createElement('li');
+        li.textContent = f.name + ' · ' + (f.size / 1024 / 1024).toFixed(2) + ' MB';
+        fileList.appendChild(li);
       });
     });
   }
-
-  // Drag & drop
-  document.querySelectorAll('.file-drop').forEach(drop => {
+  // Drag & drop onto the zone
+  document.querySelectorAll('[data-dropzone]').forEach(drop => {
     const input = drop.querySelector('input[type="file"]');
     if (!input) return;
-    ['dragenter','dragover'].forEach(ev =>
-      drop.addEventListener(ev, e => { e.preventDefault(); drop.style.borderColor = 'var(--accent)'; }));
-    ['dragleave','drop'].forEach(ev =>
-      drop.addEventListener(ev, e => { e.preventDefault(); drop.style.borderColor = ''; }));
+    ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('is-dragover'); }));
+    ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('is-dragover'); }));
     drop.addEventListener('drop', e => {
-      if (e.dataTransfer.files.length) {
-        input.files = e.dataTransfer.files;
-        input.dispatchEvent(new Event('change'));
-      }
+      if (e.dataTransfer.files.length) { input.files = e.dataTransfer.files; input.dispatchEvent(new Event('change')); }
     });
   });
-
-  // Visual feedback on remove checkboxes
+  // Tiles ticked for removal fade
   document.querySelectorAll('[data-remove-checkbox]').forEach(cb => {
-    cb.addEventListener('change', () => {
-      cb.closest('[data-img-wrap]').classList.toggle('marked', cb.checked);
-    });
+    cb.addEventListener('change', () => { cb.closest('[data-img-wrap]').classList.toggle('marked', cb.checked); });
   });
 </script>
+JS;
+include __DIR__ . '/partials/layout-top.php';
+?>
 
-</body>
-</html>
+<?php if ($flash): ?>
+  <div class="studio-alert studio-alert--ok" role="status"><?= h($flash) ?></div>
+<?php endif; ?>
+<?php if ($errors): ?>
+  <div class="studio-alert studio-alert--error" role="alert">
+    <?php foreach ($errors as $err): ?><div><?= h($err) ?></div><?php endforeach; ?>
+  </div>
+<?php endif; ?>
+
+<form method="POST" action="<?= h(pagePath('add-vehicle') . ($isEdit ? '?edit=' . (int)$editVehicle['id'] : '')) ?>"
+      enctype="multipart/form-data" id="vehicleForm" class="ui-card tl-card">
+  <input type="hidden" name="action" value="<?= h($formAction) ?>">
+  <?php if ($isEdit): ?>
+    <input type="hidden" name="id" value="<?= (int)$editVehicle['id'] ?>">
+  <?php endif; ?>
+  <div class="ui-card-header"><div class="ui-card-heading">
+    <h3 class="ui-card-title"><?= h($formTitle) ?></h3>
+    <p class="ui-card-subtitle">Picked in the AI Builder: its photos become reference images and its details fill the vehicle variables.</p>
+  </div>
+  <?php if ($isEdit): ?><div class="tl-card-actions"><a class="ui-btn ui-btn--gray ui-btn--sm" href="<?= h(pagePath('add-vehicle')) ?>">New vehicle instead</a></div><?php endif; ?>
+  </div>
+  <div class="ui-card-body tl-fields">
+    <div class="tl-grid">
+      <div class="studio-field">
+        <label class="studio-label" for="manufacturer">Manufacturer</label>
+        <input class="ui-input" type="text" name="manufacturer" id="manufacturer" maxlength="120" required value="<?= h($val_make) ?>" placeholder="e.g. Yamaha">
+      </div>
+      <div class="studio-field">
+        <label class="studio-label" for="model">Model</label>
+        <input class="ui-input" type="text" name="model" id="model" maxlength="120" required value="<?= h($val_model) ?>" placeholder="e.g. YXZ1000R">
+      </div>
+      <div class="studio-field">
+        <label class="studio-label" for="model_year">Year <span class="text-tertiary">optional</span></label>
+        <input class="ui-input" type="number" name="model_year" id="model_year" min="1900" max="2100" value="<?= h($val_year) ?>" placeholder="e.g. 2024">
+        <p class="studio-help">Fills <code class="tl-code">{{vehicle_year}}</code>.</p>
+      </div>
+      <div class="studio-field">
+        <label class="studio-label" for="vehicle_type">Vehicle type <span class="text-tertiary">optional</span></label>
+        <input class="ui-input" type="text" name="vehicle_type" id="vehicle_type" maxlength="80" value="<?= h($val_type) ?>" placeholder="e.g. UTV, ATV, dirt bike">
+        <p class="studio-help">Fills <code class="tl-code">{{vehicle_type}}</code>.</p>
+      </div>
+    </div>
+
+    <?php if ($isEdit && $editImages): ?>
+      <div class="studio-field">
+        <span class="studio-label">Images <span class="text-tertiary">— tick to remove on save</span></span>
+        <ul class="tl-thumbs" role="list">
+          <?php foreach ($editImages as $img): ?>
+            <li class="tl-thumb" data-img-wrap>
+              <?= pvImg(tireImageSrc((string)$img['image_url']), 'sm', ['sizes' => '120px', 'alt' => '']) ?>
+              <label class="tl-thumb-remove"><input type="checkbox" name="remove_images[]" value="<?= (int)$img['id'] ?>" data-remove-checkbox> Remove</label>
+            </li>
+          <?php endforeach; ?>
+        </ul>
+        <p class="studio-help"><?= count($editImages) ?> of <?= $maxImages ?> image slots used.</p>
+      </div>
+    <?php endif; ?>
+
+    <div class="studio-field">
+      <span class="studio-label"><?= $isEdit ? 'Add more images' : 'Vehicle images' ?></span>
+      <label class="studio-dropzone studio-dropzone--sm" data-dropzone>
+        <input type="file" name="images[]" id="images" accept="image/jpeg,image/png,image/gif,image/webp" multiple>
+        <span class="studio-dropzone-icon" aria-hidden="true"><?= icon('upload') ?></span>
+        <span class="studio-dropzone-label">Choose images</span>
+        <span class="studio-dropzone-hint">or drop them here — up to <?= $maxImages ?> per vehicle, <?= (int)($maxFileSize / (1024 * 1024)) ?> MB each. JPG, PNG, GIF, WebP.</span>
+      </label>
+      <ul class="tl-files" id="fileList" aria-live="polite"></ul>
+    </div>
+
+    <div class="tl-actions">
+      <a class="ui-btn ui-btn--gray" href="<?= h(pagePath('vehicles')) ?>">Cancel</a>
+      <button type="submit" class="ui-btn ui-btn--filled"><?= h($formSubmitText) ?></button>
+    </div>
+  </div>
+</form>
+
+<?php if ($isEdit): ?>
+  <div class="tl-danger-zone">
+    <form method="POST" action="<?= h(pagePath('add-vehicle')) ?>" onsubmit="return confirm('Delete this vehicle and all its images? This cannot be undone.');">
+      <input type="hidden" name="action" value="delete">
+      <input type="hidden" name="id" value="<?= (int)$editVehicle['id'] ?>">
+      <button type="submit" class="ui-btn ui-btn--plain studio-danger-btn">Delete this vehicle</button>
+    </form>
+  </div>
+<?php endif; ?>
+
+<?php include __DIR__ . '/partials/layout-bottom.php'; ?>

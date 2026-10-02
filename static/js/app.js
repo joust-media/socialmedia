@@ -1,7 +1,7 @@
 /* =====================================================================
    Joust client portal — app.js  (vanilla, no dependencies)
 
-   App.toast(message, {kind, duration})
+   App.toast(message, {kind, duration, link: {href, label}})
    App.sheet.open(target, {title, html, footer}) / .close() / .current
    App.post(endpoint, params) → {ok, status, data, error}
    App.actions  — delegated poster for [data-action][data-endpoint]
@@ -49,6 +49,80 @@
   App.$ = $; App.$$ = $$;
 
   /* ---------------------------------------------------------------- */
+  /* Tab-bar badges: the viewer's own queue (partials/tabbar.php)      */
+  /* ---------------------------------------------------------------- */
+  /** The status the viewer's tab badges count: the client's To Review ('pending'), Joust's Needs changes ('denied'). */
+  App.queueStatus = function () { return App.role === 'admin' ? 'denied' : 'pending'; };
+  /** Set the badge of a tab (data-tab key or a .ui-tab element) to n — created when missing, removed at 0. */
+  App.tabBadge = function (tab, n) {
+    var el = typeof tab === 'string' ? ($('.ui-tab[data-tab="' + tab + '"]') || $('.ui-tab--' + tab)) : tab;
+    if (!el) return;
+    n = Math.max(0, parseInt(n, 10) || 0);
+    var badge = $('.ui-badge', el);
+    if (!n) { if (badge) badge.remove(); return; }
+    if (!badge) { badge = document.createElement('span'); badge.className = 'ui-badge ui-tab-badge'; el.appendChild(badge); }
+    badge.hidden = false;
+    badge.textContent = n > 99 ? '99+' : String(n);
+    badge.setAttribute('aria-label', n + (App.queueStatus() === 'denied' ? ' need changes' : ' to review'));
+    badge.setAttribute('data-queue', App.queueStatus());
+  };
+  /** Move a tab badge by delta (its current number + delta). */
+  App.bumpTabBadge = function (tab, delta) {
+    var el = typeof tab === 'string' ? ($('.ui-tab[data-tab="' + tab + '"]') || $('.ui-tab--' + tab)) : tab;
+    if (!el || !delta) return;
+    var badge = $('.ui-badge', el), cur = badge && !badge.hidden ? (parseInt(badge.textContent, 10) || 0) : 0;
+    App.tabBadge(el, cur + delta);
+  };
+
+  /* ---------------------------------------------------------------- */
+  /* Inline confirm: the in-sheet panel the Needs changes… note uses   */
+  /* (.pd-deny), for a decision that needs a second look — instead of  */
+  /* the browser's confirm(). Resolves true (confirmed) / false.       */
+  /*   App.confirmInline(beforeEl, {title, text, ok, kind: 'approve'}) */
+  /* ---------------------------------------------------------------- */
+  var confirmSeq = 0;
+  App.confirmInline = function (before, opts) {
+    opts = opts || {};
+    var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+    return new Promise(function (resolve) {
+      if (!before || !before.parentNode) { resolve(window.confirm((opts.title || '') + '\n\n' + (opts.text || ''))); return; }
+      var prev = before.parentNode.querySelector('[data-confirm-inline]');
+      if (prev && prev.__done) prev.__done(false);
+      var n = ++confirmSeq, back = document.activeElement;
+      var box = document.createElement('section');
+      box.className = 'pd-deny pd-confirm';
+      box.setAttribute('data-confirm-inline', opts.name || '');
+      box.setAttribute('role', 'alertdialog');
+      box.setAttribute('aria-labelledby', 'uiConfirmTitle' + n);
+      box.setAttribute('aria-describedby', 'uiConfirmText' + n);
+      var kind = opts.kind === 'deny' ? 'ui-btn--deny' : (opts.kind === 'approve' ? 'ui-btn--approve' : 'ui-btn--filled');
+      box.innerHTML = '<p class="pd-editor-label pd-confirm-title" id="uiConfirmTitle' + n + '">' + esc(opts.title) + '</p>'
+        + (opts.text ? '<p class="pd-editor-hint" id="uiConfirmText' + n + '">' + esc(opts.text) + '</p>' : '')
+        + '<div class="ui-btn-group"><button type="button" class="ui-btn ui-btn--gray" data-confirm-cancel>Cancel</button>'
+        + '<button type="button" class="ui-btn ui-btn--primary ' + kind + '" data-confirm-ok>' + esc(opts.ok || 'OK') + '</button></div>';
+      before.parentNode.insertBefore(box, before);
+      var settled = false;
+      function done(v) {
+        if (settled) return; settled = true;
+        if (box.parentNode) box.parentNode.removeChild(box);
+        if (!v && back && back.focus && document.contains(back)) try { back.focus({ preventScroll: true }); } catch (e) {}
+        resolve(v);
+      }
+      box.__done = done;
+      box.addEventListener('click', function (e) {
+        if (e.target.closest('[data-confirm-ok]')) done(true);
+        else if (e.target.closest('[data-confirm-cancel]')) done(false);
+      });
+      box.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); }
+      });
+      var ok = box.querySelector('[data-confirm-ok]');
+      try { box.scrollIntoView({ block: 'nearest', behavior: App.reducedMotion() ? 'auto' : 'smooth' }); } catch (e) {}
+      if (ok) try { ok.focus({ preventScroll: true }); } catch (e) { ok.focus(); }
+    });
+  };
+
+  /* ---------------------------------------------------------------- */
   /* Toast                                                             */
   /* ---------------------------------------------------------------- */
   var toastTimer = null;
@@ -64,6 +138,13 @@
       document.body.appendChild(el);
     }
     el.textContent = message;
+    // opts.link = {href, label}: a tappable link after the message ("5 files uploaded · View") — the toast takes taps then
+    if (opts.link && opts.link.href) {
+      var a = document.createElement('a');
+      a.className = 'ui-toast-link'; a.href = opts.link.href; a.textContent = opts.link.label || 'View';
+      el.appendChild(document.createTextNode(' ')); el.appendChild(a);
+    }
+    el.classList.toggle('has-link', !!(opts.link && opts.link.href));
     el.classList.remove('ui-toast--error', 'ui-toast--success');
     if (opts.kind) el.classList.add('ui-toast--' + opts.kind);
     // restart the transition even when a toast is already showing
@@ -203,7 +284,7 @@
   /* Status language (DB value → client-facing label)                  */
   /* ---------------------------------------------------------------- */
   App.status = {
-    labels: { pending: 'To Review', approved: 'Approved', denied: 'Needs changes', posted: 'Scheduled', scheduled: 'Scheduled' },
+    labels: { draft: 'Draft', pending: 'To Review', approved: 'Approved', denied: 'Needs changes', posted: 'Scheduled', scheduled: 'Scheduled' },
     label: function (status, posted) {
       if (posted) return this.labels.posted;
       return this.labels[status] || (status ? status.charAt(0).toUpperCase() + status.slice(1) : '');
@@ -230,6 +311,14 @@
     if (actor === 'client') return a.client || '';
     if (actor === 'admin')  return a.admin  || '';
     return '';
+  };
+  /** Side + label of a bubble from the VIEWER's seat (= commentBubble() / commentActorLabel(), comment-thread.php):
+   *  the viewer's own message → {side: 'mine', who: 'You'}; the other party → {side: 'theirs', who: 'Joust' | client name}. */
+  App.bubbleWho = function (actor) {
+    var viewer = App.role === 'admin' ? 'admin' : 'client';
+    var names = (window.AppAvatars && window.AppAvatars.names) || {};
+    if ((actor === 'admin' || actor === 'client') && actor === viewer) return { side: 'mine', who: 'You' };
+    return { side: 'theirs', who: actor === 'admin' ? 'Joust' : (actor === 'client' ? (names.client || 'Client') : 'Note') };
   };
 
   /* ---------------------------------------------------------------- */
@@ -404,6 +493,36 @@
     if (!item || item.tagName === 'A') return;
     App.segmented.select(item);
   });
+  // Scrollable controls (.ui-segmented--scroll, phones): fade the side that has more segments,
+  // and bring the active segment into view on load.
+  function segEdges(control) {
+    var max = control.scrollWidth - control.clientWidth;
+    control.classList.toggle('is-overflow-start', max > 1 && control.scrollLeft > 1);
+    control.classList.toggle('is-overflow-end', max > 1 && control.scrollLeft < max - 1);
+  }
+  function initSegScroll() {
+    $$('.ui-segmented--scroll').forEach(function (control) {
+      if (control._segScroll) { segEdges(control); return; }
+      control._segScroll = true;
+      // Scroll just far enough to show the active segment (not centred): the leading segments — the admin's own
+      // Draft · Needs changes — stay on screen whenever the active one fits beside them.
+      var active = $('.ui-segmented-item.is-active', control);
+      if (active && control.scrollWidth > control.clientWidth) {
+        var cr = control.getBoundingClientRect(), ar = active.getBoundingClientRect();
+        var left = ar.left - cr.left + control.scrollLeft;                 // the active item's x inside the scroller
+        var over = left + ar.width + 12 - control.clientWidth;
+        control.scrollLeft = over > 0 ? Math.min(over, left) : 0;
+      }
+      control.addEventListener('scroll', function () { segEdges(control); }, { passive: true });
+      segEdges(control);
+    });
+  }
+  App.segmented.refresh = initSegScroll;
+  window.addEventListener('resize', function () { $$('.ui-segmented--scroll').forEach(segEdges); });
+  document.addEventListener('focusin', function (e) {
+    var item = e.target.closest && e.target.closest('.ui-segmented--scroll .ui-segmented-item');
+    if (item && item.scrollIntoView) item.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  });
   document.addEventListener('keydown', function (e) {
     var item = e.target.closest && e.target.closest('.ui-segmented-item');
     if (!item || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
@@ -517,6 +636,79 @@
   }
 
   /* ---------------------------------------------------------------- */
+  /* "+ New" create menu (admin; partials/components/new-menu.php)     */
+  /*   App.newMenu.open() / close() / toggle()                          */
+  /*   App.newMenu.handle(action, fn)  fn(detail) → true = handled      */
+  /*     (the item's href is then NOT followed). detail = {action, href, */
+  /*     item, client}. Every item click also dispatches a cancelable    */
+  /*     `app:new` event on document (preventDefault() = handled).      */
+  /*   Built-in: action "post" → App.newPost.open(detail) when defined. */
+  /* ---------------------------------------------------------------- */
+  App.newMenu = (function () {
+    var handlers = {};
+    function root() { return $('[data-new-menu]'); }
+    function panel() { var r = root(); return r ? $('[data-new-menu-panel]', r) : null; }
+    function btn() { var r = root(); return r ? $('[data-new-menu-toggle]', r) : null; }
+    function items() { var p = panel(); return p ? $$('[data-new-action]', p) : []; }
+    var api = {
+      isOpen: function () { var p = panel(); return !!(p && !p.hidden); },
+      open: function (focusFirst) {
+        var p = panel(), b = btn(); if (!p) return;
+        p.hidden = false; p.classList.add('is-open');
+        if (b) b.setAttribute('aria-expanded', 'true');
+        if (focusFirst) { var first = items()[0]; if (first) first.focus(); }
+      },
+      close: function (refocus) {
+        var p = panel(), b = btn(); if (!p || p.hidden) return;
+        p.hidden = true; p.classList.remove('is-open');
+        if (b) { b.setAttribute('aria-expanded', 'false'); if (refocus) b.focus(); }
+      },
+      toggle: function () { if (api.isOpen()) api.close(); else api.open(); },
+      handle: function (action, fn) { handlers[action] = fn; return api; },
+      /** Run an action as if its item was clicked (true = handled in-page, false = caller should navigate). */
+      run: function (action, item) {
+        item = item || $('[data-new-action="' + action + '"]', panel() || document);
+        var r = root();
+        var detail = { action: action, href: item ? item.getAttribute('href') : '', item: item || null, client: r ? (r.getAttribute('data-client') || '') : '' };
+        var ev = new CustomEvent('app:new', { detail: detail, cancelable: true });
+        var handled = !document.dispatchEvent(ev);
+        if (!handled && handlers[action]) handled = handlers[action](detail) === true;
+        if (!handled && action === 'post' && App.newPost && typeof App.newPost.open === 'function') { App.newPost.open(detail); handled = true; }
+        return handled;
+      }
+    };
+    document.addEventListener('click', function (e) {
+      var r = root(); if (!r) return;
+      if (e.target.closest('[data-new-menu-toggle]')) { e.preventDefault(); api.toggle(); return; }
+      var item = e.target.closest('[data-new-action]');
+      if (item && r.contains(item)) {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) { api.close(); return; }   // new tab: plain link
+        if (api.run(item.getAttribute('data-new-action'), item)) e.preventDefault();
+        api.close();
+        return;
+      }
+      if (api.isOpen() && !r.contains(e.target)) api.close();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (!api.isOpen()) {
+        var b = btn();
+        if (b && document.activeElement === b && (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); api.open(true); }
+        return;
+      }
+      if (e.key === 'Escape') { e.preventDefault(); api.close(true); return; }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        var list = items(), i = list.indexOf(document.activeElement);
+        if (!list.length) return;
+        e.preventDefault();
+        i = e.key === 'ArrowDown' ? (i + 1) % list.length : (i <= 0 ? list.length - 1 : i - 1);
+        list[i].focus();
+      }
+      if (e.key === 'Tab') api.close();
+    });
+    return api;
+  })();
+
+  /* ---------------------------------------------------------------- */
   /* Init                                                              */
   /* ---------------------------------------------------------------- */
   App.init = function () {
@@ -524,7 +716,15 @@
     App.role  = (document.body && document.body.dataset.role)  || App.role;
     App.actor = (document.body && document.body.dataset.actor) || App.role;
     initNav();
+    initSegScroll();
     App.theme.apply();
+    // One-shot flash from a save elsewhere (<body data-flash>, layout-top.php $pageFlash): toast it once, drop msg= from the URL.
+    var flash = document.body && document.body.getAttribute('data-flash');
+    if (flash) {
+      document.body.removeAttribute('data-flash');
+      try { var u = new URL(window.location.href); u.searchParams.delete('msg'); history.replaceState(history.state, '', u.pathname + u.search + u.hash); } catch (e) {}
+      setTimeout(function () { App.toast(flash, { kind: 'success' }); }, 0);
+    }
     document.dispatchEvent(new CustomEvent('app:ready', { detail: { App: App } }));
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', App.init);

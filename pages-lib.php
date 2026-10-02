@@ -105,31 +105,6 @@ if (!function_exists('pagesModuleId')) {
     }
 }
 
-if (!function_exists('pagesModuleEnabled')) {
-    /** Is the 'pages' module switched on for the company (company_modules row)? */
-    function pagesModuleEnabled(PDO $pdo, int $companyId): bool {
-        $mid = pagesModuleId($pdo);
-        if ($mid <= 0 || $companyId <= 0) return false;
-        $s = $pdo->prepare("SELECT 1 FROM company_modules WHERE company_id = ? AND module_id = ? LIMIT 1");
-        $s->execute([$companyId, $mid]);
-        return (bool)$s->fetchColumn();
-    }
-}
-
-if (!function_exists('setPagesModuleEnabled')) {
-    /** Enable / disable the Pages tab for a company. Returns false when the module row is missing. */
-    function setPagesModuleEnabled(PDO $pdo, int $companyId, bool $on): bool {
-        $mid = pagesModuleId($pdo);
-        if ($mid <= 0 || $companyId <= 0) return false;
-        if ($on) {
-            $pdo->prepare("INSERT IGNORE INTO company_modules (company_id, module_id, sort_order) VALUES (?, ?, ?)")->execute([$companyId, $mid, 98]);
-        } else {
-            $pdo->prepare("DELETE FROM company_modules WHERE company_id = ? AND module_id = ?")->execute([$companyId, $mid]);
-        }
-        return true;
-    }
-}
-
 // ---------------------------------------------------------------------
 // Status vocabulary (same five keys / labels / pills as emails)
 // ---------------------------------------------------------------------

@@ -74,7 +74,7 @@ function vehUrl($make = null, $type = null, $q = null) {
     if ($make !== '') { $qs['make'] = $make; }
     if ($type !== '') { $qs['type'] = $type; }
     if ($q    !== '') { $qs['q']    = $q; }
-    return 'vehicles.php' . ($qs ? '?' . http_build_query($qs) : '');
+    return pagePath('vehicles') . ($qs ? '?' . http_build_query($qs) : '');
 }
 
 /** "2024 Yamaha YXZ1000R" style label. */
@@ -85,217 +85,92 @@ function vehicleLabel($v) {
     $bits[] = $v['model'];
     return implode(' ', $bits);
 }
+
+// ---- Chrome: the shared shell (large title, back to Manage → Tools, tab bar, Appearance) ----
+$pageTitle   = 'Vehicle Library';
+$htmlTitle   = 'Vehicle Library — Joust Media';
+$navSubtitle = 'Manage · Tools';
+$navBack     = ['href' => adminToolsUrl(), 'label' => 'Manage'];
+$navTrailing = '';
+// Page buttons under the large title (the nav row stays: back · title · + New · Appearance — nothing overflows at 320px)
+$navLinks    = [['label' => 'New vehicle', 'href' => pagePath('add-vehicle'), 'tinted' => true, 'attrs' => ['data-new-vehicle' => '1']],
+                ['label' => 'Prompt Library', 'href' => pagePath('prompts')]];
+$activeTab   = 'manage';
+$bodyClass   = 'page-studio page-tool page-vehicles';
+$headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">' . "\n"
+             . '<link rel="stylesheet" href="' . h(staticUrl('css/tools.css')) . '">';
+$filtered    = $search !== '' || $filterMake !== '' || $filterType !== '';
+include __DIR__ . '/partials/layout-top.php';
 ?>
-<!DOCTYPE html>
-<html lang="en" data-theme="light">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Vehicle Library — Joust Admin</title>
-<?= renderAppHead() ?>
-<style>
-  :root {
-    --bg: #f0f2f5; --surface: #ffffff; --surface-2: #f7f8fa;
-    --border: #dadde1; --text: #050505; --text-muted: #65676b;
-    --accent: #1877f2; --accent-hover: #166fe5;
-    --shadow: 0 1px 2px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04);
-  }
-  [data-theme="dark"] {
-    --bg: #18191a; --surface: #242526; --surface-2: #3a3b3c;
-    --border: #3e4042; --text: #e4e6eb; --text-muted: #b0b3b8;
-    --accent: #2d88ff; --accent-hover: #4599ff;
-    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.3);
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text);
-         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-         font-size: 15px; line-height: 1.4; min-height: 100vh; }
-  .topbar { position: sticky; top: 0; z-index: 100;
-            background: var(--surface); border-bottom: 1px solid var(--border);
-            box-shadow: var(--shadow); }
-  .topbar-inner { max-width: 980px; margin: 0 auto; padding: 12px 20px;
-                  display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .brand { display: flex; align-items: center; gap: 10px;
-           font-weight: 700; font-size: 20px; color: var(--accent); letter-spacing: -0.5px; }
-  .brand-mark { width: 32px; height: 32px; border-radius: 8px;
-                background: var(--accent); color: #fff;
-                display: flex; align-items: center; justify-content: center; font-weight: 800; }
-  .top-actions { display: flex; gap: 8px; align-items: center; }
-  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-         padding: 8px 14px; border-radius: 8px; font-size: 14px; font-weight: 600;
-         cursor: pointer; border: 1px solid var(--border);
-         background: var(--surface-2); color: var(--text);
-         text-decoration: none; transition: background 0.15s, transform 0.1s; }
-  .btn:hover { background: var(--border); }
-  .btn:active { transform: scale(0.98); }
-  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .btn.primary:hover { background: var(--accent-hover); }
-  .btn.sm { padding: 6px 10px; font-size: 13px; }
 
-  .wrap { max-width: 980px; margin: 0 auto; padding: 24px 20px 80px; }
-  h1 { margin: 0 0 4px; font-size: 24px; letter-spacing: -0.3px; }
-  .subtitle { color: var(--text-muted); margin: 0 0 22px; }
-  .flash, .errors { padding: 12px 16px; border-radius: 8px; margin-bottom: 20px;
-                    font-size: 14px; font-weight: 500; }
-  .flash  { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
-  .errors { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
-  [data-theme="dark"] .flash  { background: #14532d; color: #bbf7d0; border-color: #166534; }
-  [data-theme="dark"] .errors { background: #7f1d1d; color: #fecaca; border-color: #991b1b; }
+<p class="tl-intro">Shared vehicle catalog. Pick a vehicle in the AI Builder to pull in its images and details.</p>
 
-  .card { background: var(--surface); border: 1px solid var(--border);
-          border-radius: 12px; box-shadow: var(--shadow); margin-bottom: 20px; overflow: hidden; }
-  .card-header { padding: 14px 18px; border-bottom: 1px solid var(--border);
-                 display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .card-title { font-size: 16px; font-weight: 700; margin: 0; }
+<?php if ($flash): ?>
+  <div class="studio-alert studio-alert--ok" role="status"><?= h($flash) ?></div>
+<?php endif; ?>
 
-  .filters { background: var(--surface); border: 1px solid var(--border);
-             border-radius: 12px; box-shadow: var(--shadow);
-             padding: 14px 16px; margin-bottom: 18px;
-             display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  .search-box { flex: 1; min-width: 220px; display: flex; gap: 8px; }
-  .search-box input { flex: 1; background: var(--surface-2); border: 1px solid var(--border);
-                      color: var(--text); padding: 9px 12px; border-radius: 8px; font: inherit; }
-  .search-box input:focus { outline: none; border-color: var(--accent);
-                            box-shadow: 0 0 0 3px rgba(24,119,242,0.15); }
-  .active-filter { font-size: 13px; color: var(--text-muted); }
-  .active-filter a { color: var(--accent); text-decoration: none; font-weight: 600; }
+<?php if (!$tableReady): ?>
+  <div class="studio-alert studio-alert--error" role="alert">
+    The <code>vehicles</code> table doesn't exist yet. Run <a href="<?= h(pagePath('migrate')) ?>">migrate</a> to create it, then come back.
+  </div>
+<?php else: ?>
 
-  .veh-row { display: grid; grid-template-columns: 96px 1fr auto;
-             gap: 14px; padding: 14px 18px; border-top: 1px solid var(--border);
-             align-items: center; }
-  .veh-row:first-child { border-top: none; }
-  .veh-thumb { width: 96px; height: 72px; border-radius: 8px; object-fit: cover;
-               background: var(--surface-2); border: 1px solid var(--border); display: block; }
-  .veh-thumb-empty { width: 96px; height: 72px; border-radius: 8px;
-                     background: var(--surface-2); border: 1px dashed var(--border);
-                     display: flex; align-items: center; justify-content: center;
-                     color: var(--text-muted); font-size: 22px; }
-  .veh-name { font-size: 16px; font-weight: 700; margin-bottom: 5px; }
-  .veh-meta { display: flex; flex-wrap: wrap; gap: 6px; }
-  .meta-chip { font-size: 11px; padding: 3px 9px; border-radius: 10px;
-               background: var(--surface-2); border: 1px solid var(--border);
-               color: var(--text-muted); text-decoration: none; }
-  .meta-chip:hover { border-color: var(--accent); color: var(--accent); }
-  .meta-chip.static { cursor: default; }
-  .meta-chip.static:hover { border-color: var(--border); color: var(--text-muted); }
-  .row-actions { display: flex; gap: 6px; }
-  .empty { padding: 40px 20px; text-align: center; color: var(--text-muted);
-           background: var(--surface); border: 1px dashed var(--border); border-radius: 12px; }
-</style>
-</head>
-<body>
+  <form class="tl-search" method="GET" action="<?= h(pagePath('vehicles')) ?>" role="search" data-tool-search>
+    <?php if ($filterMake !== ''): ?><input type="hidden" name="make" value="<?= h($filterMake) ?>"><?php endif; ?>
+    <?php if ($filterType !== ''): ?><input type="hidden" name="type" value="<?= h($filterType) ?>"><?php endif; ?>
+    <label class="ui-visually-hidden" for="vehicleSearch">Search vehicles</label>
+    <input class="ui-input" type="search" id="vehicleSearch" name="q" value="<?= h($search) ?>" placeholder="Make, model or type">
+    <button type="submit" class="ui-btn ui-btn--gray">Search</button>
+    <?php if ($search !== ''): ?>
+      <a class="ui-btn ui-btn--plain" href="<?= h(vehUrl(null, null, '')) ?>">Clear</a>
+    <?php endif; ?>
+  </form>
 
-<?= renderAppChrome('Vehicle Library', [
-      'active'   => 'studio',
-      'width'    => '980px',
-      'trailing' => '',
-      'back'     => ['href' => 'admin.php', 'label' => 'Studio'],
-      'links'    => [
-        ['label' => 'New vehicle', 'href' => 'add-vehicle.php', 'primary' => true],
-        ['label' => 'Prompts',     'href' => 'prompts.php'],
-        ['label' => 'Sign out',    'href' => 'logout.php', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
-      ],
-    ]) ?>
-
-<div class="wrap">
-
-  <h1>Vehicle Library</h1>
-  <p class="subtitle">Shared vehicle catalog. Pick a vehicle in the AI Builder to pull in its images and details.</p>
-
-  <?php if ($flash): ?>
-    <div class="flash">✓ <?= h($flash) ?></div>
-  <?php endif; ?>
-
-  <?php if (!$tableReady): ?>
-    <div class="errors">
-      ⚠ The <code>vehicles</code> table doesn't exist yet. Visit
-      <a href="migrate.php" style="color:inherit;text-decoration:underline;">migrate</a>
-      to create it, then come back.
-    </div>
-  <?php else: ?>
-
-    <div class="filters">
-      <form class="search-box" method="GET" action="vehicles.php">
-        <?php if ($filterMake !== ''): ?><input type="hidden" name="make" value="<?= h($filterMake) ?>"><?php endif; ?>
-        <?php if ($filterType !== ''): ?><input type="hidden" name="type" value="<?= h($filterType) ?>"><?php endif; ?>
-        <input type="text" name="q" value="<?= h($search) ?>" placeholder="Search manufacturer, model or type…">
-        <button type="submit" class="btn sm">Search</button>
-        <?php if ($search !== ''): ?>
-          <a class="btn sm" href="<?= h(vehUrl(null, null, '')) ?>">Clear</a>
-        <?php endif; ?>
-      </form>
+  <?php if ($filterMake !== '' || $filterType !== ''): ?>
+    <div class="tl-active">
       <?php if ($filterMake !== ''): ?>
-        <span class="active-filter">Make: <strong><?= h($filterMake) ?></strong> ·
-          <a href="<?= h(vehUrl('')) ?>">remove</a></span>
+        <a class="studio-chip is-active" href="<?= h(vehUrl('')) ?>" title="Remove this filter">Make: <?= h($filterMake) ?> <?= icon('xmark') ?></a>
       <?php endif; ?>
       <?php if ($filterType !== ''): ?>
-        <span class="active-filter">Type: <strong><?= h($filterType) ?></strong> ·
-          <a href="<?= h(vehUrl(null, '')) ?>">remove</a></span>
+        <a class="studio-chip is-active" href="<?= h(vehUrl(null, '')) ?>" title="Remove this filter">Type: <?= h($filterType) ?> <?= icon('xmark') ?></a>
       <?php endif; ?>
     </div>
-
-    <div class="card">
-      <div class="card-header">
-        <h2 class="card-title">
-          <?= count($vehicles) ?> <?= count($vehicles) === 1 ? 'vehicle' : 'vehicles' ?>
-          <?php if ($search !== '' || $filterMake !== '' || $filterType !== ''): ?>
-            <span style="font-weight:500;color:var(--text-muted);">(filtered)</span>
-          <?php endif; ?>
-        </h2>
-      </div>
-      <?php if (empty($vehicles)): ?>
-        <div style="padding:18px;">
-          <div class="empty">
-            <?php if ($search !== '' || $filterMake !== '' || $filterType !== ''): ?>
-              No vehicles match the current filters.
-            <?php else: ?>
-              No vehicles yet. Click <strong>+ New vehicle</strong> to add the first one.
-            <?php endif; ?>
-          </div>
-        </div>
-      <?php else: ?>
-        <?php foreach ($vehicles as $v):
-          $imgs  = $imagesByVeh[$v['id']] ?? [];
-          $first = $imgs[0] ?? null;
-        ?>
-          <div class="veh-row">
-            <div>
-              <?php if ($first): ?>
-                <img class="veh-thumb" src="<?= h($first) ?>" alt="" loading="lazy">
-              <?php else: ?>
-                <div class="veh-thumb-empty">🚗</div>
-              <?php endif; ?>
-            </div>
-            <div>
-              <div class="veh-name"><?= h(vehicleLabel($v)) ?></div>
-              <div class="veh-meta">
-                <a class="meta-chip" href="<?= h(vehUrl($v['manufacturer'])) ?>"><?= h($v['manufacturer']) ?></a>
-                <?php if (!empty($v['vehicle_type'])): ?>
-                  <a class="meta-chip" href="<?= h(vehUrl(null, $v['vehicle_type'])) ?>"><?= h($v['vehicle_type']) ?></a>
-                <?php endif; ?>
-                <span class="meta-chip static">
-                  <?= count($imgs) ?> image<?= count($imgs) === 1 ? '' : 's' ?>
-                </span>
-              </div>
-            </div>
-            <div class="row-actions">
-              <a class="btn sm" href="add-vehicle.php?edit=<?= (int)$v['id'] ?>">Edit</a>
-              <form method="POST" action="add-vehicle.php"
-                    onsubmit="return confirm('Delete this vehicle and all its images permanently?');">
-                <input type="hidden" name="action" value="delete">
-                <input type="hidden" name="id" value="<?= (int)$v['id'] ?>">
-                <button type="submit" class="btn sm" title="Delete">🗑</button>
-              </form>
-            </div>
-          </div>
-        <?php endforeach; ?>
-      <?php endif; ?>
-    </div>
-
   <?php endif; ?>
 
-</div>
+  <?= insetListOpen(count($vehicles) . ' ' . (count($vehicles) === 1 ? 'vehicle' : 'vehicles') . ($filtered ? ' · filtered' : ''), ['attrs' => ['data-vehicle-list' => '1']]) ?>
+    <?php if (!$vehicles): ?>
+      <li><div class="ui-row"><div class="ui-row-body"><div class="ui-row-subtitle" style="white-space:normal">
+        <?= $filtered ? 'No vehicles match the current filters.' : 'No vehicles yet. Use “New vehicle” to add the first one.' ?>
+      </div></div></div></li>
+    <?php endif; ?>
+    <?php foreach ($vehicles as $v):
+      $imgs  = $imagesByVeh[$v['id']] ?? [];
+      $first = $imgs[0] ?? null;
+    ?>
+      <li><div class="ui-row ui-row--leading tl-row tl-row--leading" data-vehicle="<?= (int)$v['id'] ?>">
+        <div class="ui-row-leading"><?= $first ? pvImg(tireImageSrc((string)$first), 'sm', ['sizes' => '56px', 'alt' => '']) : icon('photo') ?></div>
+        <div class="ui-row-body">
+          <div class="ui-row-title ui-row-title--wrap"><?= h(vehicleLabel($v)) ?></div>
+          <div class="tl-tags">
+            <a class="tl-tag" href="<?= h(vehUrl($v['manufacturer'])) ?>"><?= h($v['manufacturer']) ?></a>
+            <?php if (!empty($v['vehicle_type'])): ?>
+              <a class="tl-tag" href="<?= h(vehUrl(null, $v['vehicle_type'])) ?>"><?= h($v['vehicle_type']) ?></a>
+            <?php endif; ?>
+            <span class="tl-tag"><?= count($imgs) ?> image<?= count($imgs) === 1 ? '' : 's' ?></span>
+          </div>
+        </div>
+        <div class="ui-row-trailing">
+          <a class="ui-btn ui-btn--gray ui-btn--sm" href="<?= h(pagePath('add-vehicle') . '?edit=' . (int)$v['id']) ?>">Edit</a>
+          <form method="POST" action="<?= h(pagePath('add-vehicle')) ?>" onsubmit="return confirm('Delete this vehicle and all its images permanently?');">
+            <input type="hidden" name="action" value="delete">
+            <input type="hidden" name="id" value="<?= (int)$v['id'] ?>">
+            <button type="submit" class="ui-btn ui-btn--plain ui-btn--sm studio-danger-btn">Delete</button>
+          </form>
+        </div>
+      </div></li>
+    <?php endforeach; ?>
+  <?= insetListClose() ?>
 
-</body>
-</html>
+<?php endif; ?>
+
+<?php include __DIR__ . '/partials/layout-bottom.php'; ?>

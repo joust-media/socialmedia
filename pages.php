@@ -25,6 +25,7 @@ require __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/partials/components/comment-thread.php';
 require_once __DIR__ . '/partials/components/page-detail.php';
+require_once __DIR__ . '/partials/components/assign.php';
 
 /** Escape helper (page-local by convention; partials use esc()). */
 function h($s) {
@@ -76,7 +77,7 @@ if (!$client) {
     if (!$hasTable) {
         echo '<div class="ui-empty">Pages are not set up yet — run <code>migrate.php</code> first.</div>';
     } elseif (!$companies) {
-        echo '<div class="ui-empty">No client has the Pages module yet. Enable it in Studio or add the first page.</div>';
+        echo '<div class="ui-empty">No client has the Pages module yet. Turn it on in Manage → Clients, or add the first page.</div>';
     } else {
         echo insetListOpen('Clients');
         foreach ($companies as $c) {
@@ -100,13 +101,20 @@ if (!$client) {
 
 $cid       = (int)$client['id'];
 $visibleTo = $admin ? 'admin' : 'client';
+
+// A client without Pages (no module, no pages): old admin links land on the module switch in Manage → Clients,
+// not on an empty, tab-less Pages page.
+if ($admin && !$isPartial && $pageParam <= 0 && $hasTable && !companyHasPages($client, $pdo) && (int)(pageCounts($pdo, $cid)['total'] ?? 0) === 0) {
+    header('Location: ' . manageUrl('clients', ['edit' => $cid, 'msg' => $client['name'] . ' doesn’t use Pages yet — turn it on here.']));
+    exit;
+}
 $q = isset($_GET['q']) && is_string($_GET['q']) ? trim(mb_substr($_GET['q'], 0, 120)) : '';
 
 // ---------------------------------------------------------------------
 // Segments
 // ---------------------------------------------------------------------
-$segments = $admin
-    ? ['draft' => 'Draft', 'pending' => 'To Review', 'approved' => 'Approved', 'live' => 'Live', 'denied' => 'Needs changes']
+$segments = $admin   // admin: Joust's own work first (Draft · Needs changes) so the queue is on screen at 390 px
+    ? ['draft' => 'Draft', 'denied' => 'Needs changes', 'pending' => 'To Review', 'approved' => 'Approved', 'live' => 'Live']
     : ['pending' => 'To Review', 'approved' => 'Approved', 'live' => 'Live'];
 $segment = strtolower(trim((string)($_GET['status'] ?? 'pending')));
 if ($segment !== 'all' && !isset($segments[$segment])) { $segment = 'pending'; }
@@ -207,6 +215,10 @@ if ($directPage) {
 $filtered = $hasTable ? pagesForCompany($pdo, $cid, ['q' => $q, 'visibleTo' => $visibleTo]) : [];
 $counts   = ['draft' => 0, 'pending' => 0, 'approved' => 0, 'live' => 0, 'denied' => 0, 'all' => 0];
 foreach ($filtered as $r) { $counts[pageStatusKey($r)]++; $counts['all']++; }
+// Admin with no explicit segment: open on Joust's own queue (Needs changes) when it has items — the tab badge counts it too.
+if ($admin && !$directPage && trim((string)($_GET['status'] ?? '')) === '' && $counts['denied'] > 0) {
+    $segment = 'denied';
+}
 
 $pages = $segment === 'all' ? $filtered : array_values(array_filter($filtered, static function ($r) use ($segment) {
     return pageStatusKey($r) === $segment;
@@ -322,6 +334,7 @@ $segLabel = $segment === 'all' ? 'All' : $segments[$segment];
 // ---------------------------------------------------------------------
 $pageTitle   = 'Pages';
 $activeTab   = 'pages';
+$pageFlash   = $admin && is_string($_GET['msg'] ?? null) ? $_GET['msg'] : '';   // after a save in add-page.php (toasted once)
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">' . "\n"
              . '<link rel="stylesheet" href="' . h(staticUrl('css/pages.css')) . '">';
 $bodyClass   = 'page-pages';
@@ -329,6 +342,7 @@ $bodyClass   = 'page-pages';
 $pagesConfig = [
     'base'        => basePath(),
     'endpoint'    => basePath() . '/page-status.php',
+    'clientName'  => (string)($client['name'] ?? ''),   // ⋯ Approve for client… confirm
     'partialUrl'  => $pageUrlFn(['status' => $segment, 'page' => '__ID__', 'partial' => 1]),
     'segment'     => $segment,
     'counts'      => $counts,
@@ -344,8 +358,10 @@ $footExtra = '<script>window.PagesConfig = ' . json_encode($pagesConfig, JSON_UN
 include __DIR__ . '/partials/layout-top.php';
 ?>
 
+<?= emailsPagesSwitchHtml('pages', $client, $pdo) // admin, merged Emails/Pages tab only ?>
+
 <div class="posts-toolbar pages-toolbar">
-  <?= segmented($segItems, ['label' => 'Page status']) ?>
+  <?= segmented($segItems, ['label' => 'Page status', 'scroll' => true]) ?>
 </div>
 
 <?php if ($q !== '' || count($filtered) > 6): ?>
@@ -374,8 +390,9 @@ include __DIR__ . '/partials/layout-top.php';
 <?php endif; ?>
 
 <section class="ui-list-group posts-group pages-group" data-pages-list data-segment="<?= h($segment) ?>"<?= !$pages ? ' hidden' : '' ?>>
-  <h2 class="ui-list-header">
-    <span data-segment-count><?= (int)$counts[$segment] ?></span> <?= h(strtolower($segLabel)) ?><?= $segment === 'all' ? ' pages' : '' ?>
+  <h2 class="ui-list-header<?= $admin ? ' asg-list-header' : '' ?>">
+    <span<?= $admin ? ' class="asg-list-title"' : '' ?>><span data-segment-count><?= (int)$counts[$segment] ?></span> <?= h(strtolower($segLabel)) ?><?= $segment === 'all' ? ' pages' : '' ?></span>
+    <?php if ($admin): ?><?= assignSelectButtonHtml('page') ?><?php endif; ?>
   </h2>
   <ul class="ui-list posts-list pages-list" role="list" data-pages-items>
     <?php foreach ($pages as $page):
@@ -401,8 +418,8 @@ include __DIR__ . '/partials/layout-top.php';
     ?>
       <li class="pl-item pgl-item<?= $queue ? ' pl-item--queue' : '' ?>" id="page-<?= $pid ?>" data-page-item="<?= $pid ?>" data-id="<?= $pid ?>"
           data-status="<?= h($page['status']) ?>" data-live="<?= $live ? '1' : '0' ?>" data-key="<?= h($key) ?>"
-          data-title="<?= h($rowTitle) ?>"<?= $queue ? ' data-queue' : ' data-swipe' ?>>
-        <?php if (!$queue): ?>
+          data-title="<?= h($rowTitle) ?>"<?= $queue ? ' data-queue' : ($admin ? '' : ' data-swipe') ?>>
+        <?php if (!$queue && !$admin): /* swipe = the client's decision; Joust decides for the client only via ⋯ → Approve for client… */ ?>
         <div class="pl-swipe pl-swipe--approve" aria-hidden="true"><?= icon('checkmark') ?><span>Approve</span></div>
         <div class="pl-swipe pl-swipe--deny" aria-hidden="true"><?= icon('xmark') ?><span>Needs changes</span></div>
         <?php endif; ?>
@@ -435,16 +452,19 @@ include __DIR__ . '/partials/layout-top.php';
               <?php if ($queue): ?>
                 <span class="pl-meta-item"><span class="pl-meta-sep">·</span><span data-queue-count="<?= $pid ?>"><?= $qCount > 0 ? $qCount . ' client ' . ($qCount === 1 ? 'comment' : 'comments') : 'no client comments' ?></span></span>
               <?php else: ?>
-                <span class="pl-meta-item"><span class="pl-meta-sep">·</span><span data-comment-count-for="<?= $pid ?>"><?= $nCmt ?> <?= $nCmt === 1 ? 'comment' : 'comments' ?></span></span>
+                <span class="pl-meta-item"<?= $nCmt > 0 ? '' : ' hidden' ?>><span class="pl-meta-sep">·</span><span data-comment-count-for="<?= $pid ?>"><?= $nCmt ?> <?= $nCmt === 1 ? 'comment' : 'comments' ?></span></span>
               <?php endif; ?>
             </div>
           </div>
           <?= icon('chevron-right', 'ui-row-chevron') ?>
         </a>
+        <?php if ($admin): // ⋯ Move to client… (assign.js) ?>
+          <?= assignMenuHtml('page', $pid, $rowTitle, ['admin' => true, 'class' => 'asg-row-more', 'editUrl' => clientUrl('add-page.php', ['edit' => $pid])]) ?>
+        <?php endif; ?>
         <?php if ($queue): ?>
           <div class="pl-queue-actions">
             <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-page-open="<?= $pid ?>">Open</button>
-            <button type="button" class="ui-btn ui-btn--tinted ui-btn--sm" data-resubmit="<?= $pid ?>" title="Move this page back to the client's To Review list">Resubmit for review</button>
+            <button type="button" class="ui-btn ui-btn--tinted ui-btn--sm" data-resubmit="<?= $pid ?>" title="Move this page back to the client's To Review list">Send for review</button>
           </div>
         <?php endif; ?>
         <?php if ($inlineDetails): ?>
@@ -453,10 +473,10 @@ include __DIR__ . '/partials/layout-top.php';
       </li>
     <?php endforeach; ?>
   </ul>
-  <?php if ($segment === 'pending'): ?>
-    <p class="ui-list-footer posts-hint">Swipe right to approve, left to request changes. Tap a page for the full preview.</p>
+  <?php if ($segment === 'pending' && !$admin): ?>
+    <p class="ui-list-footer posts-hint">Swipe right to approve, left for needs changes. Tap a page for the full preview.</p>
   <?php elseif ($isQueue): ?>
-    <p class="ui-list-footer">Newest client activity first. Open a page for the full thread; Resubmit sends it back to the client's To Review list.</p>
+    <p class="ui-list-footer">Newest client activity first. Open a page for the full thread; Send for review puts it back on the client's To Review list.</p>
   <?php endif; ?>
 </section>
 

@@ -6,20 +6,22 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
  * page; static/js/assets.js drives it as App.viewer:
  *
  *   App.viewer.open(items, index, { mode: 'review'|'browse', onDecision, onClose })
- *     items[] = { id, kind: 'library'|'tire', status, src, type: 'image'|'video',
+ *     items[] = { id, kind: 'library'|'tire', status, src, original, thumb, type: 'image'|'video',
  *                 mime, label, download, endpoint, manage }
+ *     src = what the slide shows (the lg preview for images), original = the file itself
+ *     (Download + the "View original" menu row), thumb = the sm preview (tile swaps).
  *   App.viewer.close() / .next() / .prev() / .approve() / .deny(note) / .current()
  *   Events (bubble from the viewer root): 'viewer:decision' {item, status, prev,
  *   ok, rolledBack, error}, 'viewer:navigate' {item, index}, 'viewer:close'.
  *
- * Toolbar = exactly three controls: Deny (red, secondary) · Approve (green,
+ * Toolbar = exactly three controls: Needs changes (red, secondary) · Approve (green,
  * primary, ~60% width) · More (Download for everyone — a blob save for images,
  * a direct `download` link for videos; Replace, "Set as
  * reference", "Manage in Studio" and "Delete image…" for admin — rendered here
  * only when the server says so; the two tire-only actions post set_reference /
  * delete_image to tire-status.php, which gates them again).
  *
- * Deny opens the inline note ("What should change?", required, >= 3 chars); the
+ * Needs changes opens the inline note ("What should change?", required, >= 3 chars); the
  * note is sent in the SAME request as status=denied to tire-status.php /
  * library-status.php, which enforce the minimum server-side too.
  *
@@ -76,7 +78,7 @@ $viewerCommentsEndpoint = isset($viewerCommentsEndpoint) ? (string)$viewerCommen
   <div class="ui-viewer-bar" data-viewer-bar>
     <div class="ui-viewer-actions" data-viewer-actions>
       <button type="button" class="ui-btn ui-btn--large ui-btn--deny ui-btn--tinted ui-viewer-deny" data-viewer-deny>
-        <?= icon('xmark') ?><span data-viewer-deny-label>Deny</span>
+        <?= icon('xmark') ?><span data-viewer-deny-label>Needs changes</span>
       </button>
       <button type="button" class="ui-btn ui-btn--large ui-btn--approve ui-btn--primary ui-viewer-approve" data-viewer-approve>
         <?= icon('checkmark') ?><span data-viewer-approve-label>Approve</span>
@@ -93,7 +95,7 @@ $viewerCommentsEndpoint = isset($viewerCommentsEndpoint) ? (string)$viewerCommen
       <div class="ui-viewer-note-row">
         <p class="ui-viewer-note-hint" data-viewer-note-hint>A short note is required (at least 3 characters).</p>
         <button type="button" class="ui-btn ui-btn--gray" data-viewer-note-cancel>Cancel</button>
-        <button type="submit" class="ui-btn ui-btn--deny" data-viewer-note-send disabled>Send &amp; deny</button>
+        <button type="submit" class="ui-btn ui-btn--deny" data-viewer-note-send disabled>Send</button>
       </div>
     </form>
 
@@ -120,11 +122,15 @@ $viewerCommentsEndpoint = isset($viewerCommentsEndpoint) ? (string)$viewerCommen
     <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-download><?= icon('download') ?>Download</button>
     <?php // videos: a direct link (the browser streams it to disk — no blob copy of a multi-GB file in memory) ?>
     <a class="ui-viewer-menu-item" role="menuitem" data-viewer-download-link href="#" download hidden><?= icon('download') ?>Download video</a>
+    <?php // images: the viewer shows the lg preview; this opens the untouched file (item.original) in a new tab ?>
+    <a class="ui-viewer-menu-item" role="menuitem" data-viewer-original href="#" target="_blank" rel="noopener" hidden><?= icon('photo') ?>View original</a>
     <a class="ui-viewer-menu-item" role="menuitem" data-viewer-drive href="#" target="_blank" rel="noopener noreferrer" hidden><?= icon('drive') ?>Open series in Google Drive</a>
     <?php if ($viewerAdmin): // admin-only: never rendered for clients ?>
+      <?php // approved items only (assets.js shows / hides it): opens the New post pop-up with this image as slide 1 ?>
+      <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-use-in-post hidden><?= icon('plus') ?>Use in post</button>
       <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-replace data-tire-only><?= icon('photo') ?>Replace image…</button>
       <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-set-reference data-tire-only><?= icon('checkmark') ?>Set as reference</button>
-      <a class="ui-viewer-menu-item" role="menuitem" data-viewer-manage data-tire-only href="#"><?= icon('wand') ?>Manage in Studio</a>
+      <a class="ui-viewer-menu-item" role="menuitem" data-viewer-manage data-tire-only href="#"><?= icon('wand') ?>Edit tire…</a>
       <button type="button" class="ui-viewer-menu-item is-destructive" role="menuitem" data-viewer-delete data-tire-only><?= icon('xmark') ?>Delete image…</button>
     <?php endif; ?>
   </div>

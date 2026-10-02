@@ -4,12 +4,14 @@
  * (mirrors partials/components/post-detail.php; see scratchpad emails-design.md).
  *
  *   renderEmailDetail(array $email, array $opts = []): string
- *     $email: an emails row (+ 'groups' from emails-lib.php) with optional
+ *     $email: an emails row (+ 'groups' = its Audiences, from emails-lib.php) with optional
  *             comments    => activity_log 'commented' rows [['actor','detail','created_at'], …]
  *             approved_at => datetime for the "Approved Sep 5" line
  *     $opts:  'admin'     bool   — default isAdmin(). Admin-only markup is NEVER emitted otherwise.
  *             'endpoint'  string — status endpoint (default 'email-status.php', resolved against basePath())
  *             'editUrl'   string — admin Edit link (default add-email.php?client=…&edit=ID)
+ *     Admin: a ⋯ menu in the head row (partials/components/assign.php — Move to client…, Add to flow…,
+ *     Set audiences…); never emitted for the client seat.
  *     Output: <article class="pd ed" data-email-detail="ID" data-status data-live data-key data-past>
  *               <div class="pd-body" data-pd-body>…</div>       preview frame · meta list · thread
  *               <div class="pd-footer" data-pd-footer>…</div>   composer · deny note · state rows · actions
@@ -37,13 +39,17 @@ if (!function_exists('edUrl')) {
 }
 
 if (!function_exists('edSafeHttpUrl')) {
-    /** Only http(s) URLs may be framed / linked; anything else renders the empty placeholder. */
+    /** Only http(s) URLs and portal-hosted emails (/media/emails/<client>/<file>.html) may be framed / linked; anything else renders the empty placeholder. */
     function edSafeHttpUrl(string $url): string
     {
         $url = trim($url);
+        if (preg_match('#^/media/emails/[a-z0-9\-]+/[a-z0-9][a-z0-9_\-]*\.html$#', $url)) return $url;
         return preg_match('#^https?://[^\s"\'<>]+$#i', $url) ? $url : '';
     }
 }
+
+require_once __DIR__ . '/assign.php';
+require_once __DIR__ . '/review-actions.php';   // admin footer + ⋯ review items + the Needs changes note
 
 if (!function_exists('edFormatDate')) {
     /** "Saturday, Oct 25" for a DATE column; '' when empty / invalid. */
@@ -78,6 +84,8 @@ if (!function_exists('renderEmailDetail')) {
         $prioLbl  = function_exists('emailPriorityLabel') ? emailPriorityLabel($priority) : ucfirst($priority);
         $groups   = is_array($email['groups'] ?? null) ? $email['groups'] : [];
         $comments = is_array($opts['comments'] ?? null) ? $opts['comments'] : (is_array($email['comments'] ?? null) ? $email['comments'] : []);
+        $clientName = trim((string)($opts['clientName'] ?? ($GLOBALS['client']['name'] ?? '')));   // "Waiting on …" / the note banner
+        if ($clientName === '') $clientName = 'the client';
         $htmlUrl  = edSafeHttpUrl((string)($email['html_url'] ?? ''));
         $sendRaw  = trim((string)($email['send_at'] ?? ''));
         $sendTs   = ($sendRaw !== '' && $sendRaw !== '0000-00-00') ? strtotime($sendRaw) : false;
@@ -100,7 +108,17 @@ if (!function_exists('renderEmailDetail')) {
         if (!empty($email['updated_at']) && function_exists('relativeTime') && relativeTime($email['updated_at']) !== '') {
             $out .= '<span class="pd-edited text-tertiary" title="' . edEsc(absoluteTime($email['updated_at'])) . '">edited ' . edEsc(relativeTime($email['updated_at'])) . '</span>';
         }
+        // Admin ⋯: Move to client… · Add to flow… · Set audiences… (assign.js sheets → assign.php)
+        if ($admin && function_exists('assignMenuHtml')) {
+            $out .= assignMenuHtml('email', $id, function_exists('emailDisplayLabel') ? emailDisplayLabel($email) : ($code !== '' ? $code : 'Email'),
+                ['admin' => true, 'extra' => reviewMenuItemsHtml('email', $key, $editUrl, 'data-delete-email')]);
+        }
         $out .= '</div>';
+
+        // ---- 0. Needs changes (admin): the client's note first, above the preview ---------------
+        if ($admin) {
+            $out .= reviewNoteBanner(reviewLatestNote($comments, $clientName), $key === 'denied');
+        }
 
         // ---- 1. Preview frame -----------------------------------------------------------
         $out .= '<section class="ed-preview" data-preview' . ($htmlUrl === '' ? ' data-preview-empty' : '') . '>';
@@ -146,7 +164,7 @@ if (!function_exists('renderEmailDetail')) {
             foreach ($groups as $g) {
                 $chips .= '<span class="el-tag">' . edEsc((string)($g['name'] ?? '')) . '</span>';
             }
-            $out .= $row(count($groups) === 1 ? 'Group' : 'Groups', '<span class="el-groups">' . $chips . '</span>');
+            $out .= $row(count($groups) === 1 ? 'Audience' : 'Audiences', '<span class="el-groups" data-email-audiences>' . $chips . '</span>');
         }
         // In flows (flows.php): "Free · step 3 of 7" chips linking to the card in each flow — flows-lib.php may not be deployed yet.
         $flowsPdo = $GLOBALS['pdo'] ?? null;
@@ -186,7 +204,7 @@ if (!function_exists('renderEmailDetail')) {
               . '<textarea class="ui-textarea" id="ed-deny-' . $id . '" data-deny-note placeholder="What should change?" minlength="3" maxlength="2000" rows="2" required></textarea>'
               . '<p class="pd-editor-hint" data-deny-hint>A short note is required so Joust knows what to fix.</p>'
               . '<div class="ui-btn-group"><button type="button" class="ui-btn ui-btn--gray" data-deny-cancel>Cancel</button>'
-              . '<button type="submit" class="ui-btn ui-btn--deny ui-btn--primary" data-deny-submit disabled>Send &amp; request changes</button></div>'
+              . '<button type="submit" class="ui-btn ui-btn--deny ui-btn--primary" data-deny-submit disabled>Send</button></div>'
               . '</form>';
 
         // State rows (all rendered; emails.js toggles [data-state] from data-status / data-live)
@@ -195,50 +213,23 @@ if (!function_exists('renderEmailDetail')) {
         $out .= '<div class="pd-state pd-state--scheduled" data-state="live"' . ($live ? '' : ' hidden') . '>'
               . $ico('checkmark') . '<span>Live</span></div>';
         if ($admin) {
-            $out .= '<div class="pd-state pd-state--denied" data-state="denied"' . ($key === 'denied' ? '' : ' hidden') . '>'
-                  . $ico('xmark') . '<span>Needs changes</span></div>';
+            $out .= '<div class="pd-state pd-state--pending" data-state="admin-waiting"' . ($key === 'pending' ? '' : ' hidden') . '>'
+                  . '<span>Waiting on ' . edEsc($clientName) . ' to review</span></div>';
             $out .= '<div class="pd-state pd-state--draft" data-state="draft"' . ($key === 'draft' ? '' : ' hidden') . '>'
                   . $ico('mail') . '<span>Draft · not visible to the client</span></div>';
         }
 
-        // Action bar
+        // Action bar — one primary per state (the post sheet's shape, review-actions.php).
+        //   Client: To Review → Needs changes · Approve.   Admin: Joust's own next step; the client's decisions
+        //   (Approve for client…, Needs changes…) and Move to Draft / Delete live in the ⋯ menu — no status override.
         $out .= '<div class="pd-actions" data-actions>';
-        // Client + admin: decide while pending
-        $out .= '<div class="ui-btn-group pd-decide" data-state="decide"' . ($key === 'pending' ? '' : ' hidden') . '>'
-              . '<button type="button" class="ui-btn ui-btn--large ui-btn--deny ui-btn--tinted" data-decide="denied">Needs changes</button>'
-              . '<button type="button" class="ui-btn ui-btn--large ui-btn--approve ui-btn--primary" data-decide="approved">Approve</button>'
-              . '</div>';
-        if ($admin) {
-            // Status control (any non-live email): Draft · To Review · Approved · Needs changes
-            $out .= '<div class="ed-status-ctl" data-state="admin-status"' . ($live ? ' hidden' : '') . '>'
-                  . '<span class="ed-status-ctl-label">Status</span>'
-                  . '<div class="ui-segmented ui-segmented--dense" role="group" aria-label="Set status">';
-            foreach (['draft' => 'Draft', 'pending' => 'To Review', 'approved' => 'Approved', 'denied' => 'Needs changes'] as $k => $l) {
-                $out .= '<button type="button" class="ui-segmented-item' . ($status === $k ? ' is-active' : '') . '" data-set-status="' . $k . '" aria-pressed="' . ($status === $k ? 'true' : 'false') . '">' . $l . '</button>';
-            }
-            $out .= '</div></div>';
-            // Draft: Send for review (primary)
-            $out .= '<div class="ui-btn-group pd-admin-draft" data-state="admin-draft"' . ($key === 'draft' ? '' : ' hidden') . '>'
-                  . '<button type="button" class="ui-btn ui-btn--large ui-btn--filled ui-btn--primary" data-submit>Send for review</button>'
-                  . '</div>';
-            // Approved + not live: Mark live (primary)
-            $out .= '<div class="ui-btn-group pd-admin-approved" data-state="admin-approved"' . ($key === 'approved' ? '' : ' hidden') . '>'
-                  . '<button type="button" class="ui-btn ui-btn--large ui-btn--filled ui-btn--primary" data-toggle-live="1">Mark live</button>'
-                  . '</div>';
-            // Denied: Resubmit for review · Approve
-            $out .= '<div class="ui-btn-group pd-admin-denied" data-state="admin-denied"' . ($key === 'denied' ? '' : ' hidden') . '>'
-                  . '<button type="button" class="ui-btn ui-btn--large ui-btn--gray" data-resubmit-detail>Resubmit for review</button>'
+        if (!$admin) {
+            $out .= '<div class="ui-btn-group pd-decide" data-state="decide"' . ($key === 'pending' ? '' : ' hidden') . '>'
+                  . '<button type="button" class="ui-btn ui-btn--large ui-btn--deny ui-btn--tinted" data-decide="denied">Needs changes</button>'
                   . '<button type="button" class="ui-btn ui-btn--large ui-btn--approve ui-btn--primary" data-decide="approved">Approve</button>'
                   . '</div>';
-            // Live: Unmark live
-            $out .= '<div class="ui-btn-group pd-admin-live" data-state="admin-live"' . ($live ? '' : ' hidden') . '>'
-                  . '<button type="button" class="ui-btn ui-btn--gray" data-toggle-live="0">Unmark live</button>'
-                  . '</div>';
-            // Edit · Delete (always for admin)
-            $out .= '<div class="ed-admin-tools">'
-                  . '<a class="ui-btn ui-btn--gray ui-btn--sm" href="' . edEsc($editUrl) . '" data-edit-email>' . $ico('wand') . 'Edit</a>'
-                  . '<button type="button" class="ui-btn ui-btn--gray ui-btn--sm ed-delete" data-delete-email>' . $ico('xmark') . 'Delete</button>'
-                  . '</div>';
+        } else {
+            $out .= reviewAdminFooterHtml('email', $key, $editUrl);
         }
         $out .= '</div>'; // /.pd-actions
         $out .= '</div>'; // /.pd-footer

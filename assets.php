@@ -1,15 +1,18 @@
 <?php
 /**
- * Assets — Stage 1 review (spec §4.2). Replaces library.php and the tires
- * module of features.php under one tab.
+ * Assets + Tires — Stage 1 review (spec §4.2). Replaces library.php and the tires
+ * module of features.php. Two tabs, one home each (no Library · Tires switch any more):
  *
  *   assets.php?client=<slug>[&view=library|collections][&item=<tire id>]
  *              [&filter=pending|approved|denied][&asset=<id>&kind=library|tire]
  *
- *   view=library      the client's disk-synced library_images as a square grid
- *   view=collections  grouped list of the client's tires ("collections", labelled
- *                     with the company's own term when companies.feature_label is
- *                     set); item=<tire id> opens one collection as the same grid
+ *   view=library      the Assets tab: the client's disk-synced library_images as a square grid
+ *   view=collections  the Tires tab: the client's tires (titled with tiresLabel(), "Tires" unless
+ *                     companies.feature_label says otherwise; admin: a "New tire" button);
+ *                     item=<tire id> opens one tire as the same grid. A client without the Tires
+ *                     tab (companyHasTires()) is sent to the Library (302) — old links never dead-end.
+ *   (no client)       admin: a client chooser in place (view=collections: the clients with Tires);
+ *                     client seat: the "missing client" page (400)
  *   filter            pending (default) | approved | denied (admin only — the
  *                     client's SQL always adds AND status <> 'denied')
  *   asset + kind      deep link: open the full-screen viewer on that item
@@ -17,7 +20,11 @@
  * Tapping a thumbnail opens the media viewer (partials/components/media-viewer.php
  * + App.viewer in static/js/assets.js): Approve / Deny-with-note / more, swipe to
  * navigate, auto-advance after each decision. Multi-select ("Select" in the nav
- * bar) batch-approves only — denials always need a reason.
+ * bar) batch-approves (denials always need a reason); for the admin, approved
+ * tiles add "Create post with N" (the New post pop-up), "Download" (a zip of the
+ * selection — export.php scope=selection) and "Export" (its manifest CSV).
+ * Admin "Upload" buttons (Library controls, the series head, the Reference card)
+ * open the Upload sheet with the destination preselected (upload-sheet.js).
  *
  * Role is enforced here in PHP (isAdmin()): admin-only markup is never rendered
  * for a client, and client queries exclude denied rows in SQL.
@@ -28,6 +35,10 @@
  * upload order in add-feature.php.
  *
  * Tire series (tire-series-lib.php, feature-gated by hasTireSeries()):
+ *   Reference card (series on): always on top of an open tire, above the switcher — "Reference · N approved",
+ *                      the approved reference images as a strip of sm tiles (tap → viewer), "+ M to review" →
+ *                      series=ref; pending ones ("To Review") when none is approved; empty state (admin: "Add
+ *                      reference images"). The switcher's first chip reads "Reference · N" (N approved).
  *   &series=<id>|ref   which series of the open collection the grid shows
  *                      (ref = the reference images, i.e. rows without a series);
  *                      default = the first series with pending images, else Reference
@@ -39,19 +50,27 @@
  *                      series holds at least one video (the Photos · Videos control is
  *                      rendered only then), else all; the Reference view defaults to all.
  *                      Videos are heavy, so a series never puts them on the page unasked.
- *   &offset=<n>        paging: the grid renders ASSETS_PAGE tiles from that offset
+ *   &offset=<n>        paging: the grid (Library or a series) renders ASSETS_PAGE tiles from that offset
+ *                      (a Library deep link past page 1 renders the pages up to it)
  *   &partial=1         answer with the tile markup only (the "Load more" fetch)
+ *
+ * Images: tiles show the sm preview (pvImg(), preview-ui.php: srcset / sizes / width / height / lazy),
+ * data-src = the lg preview the viewer opens, data-original = the file itself (Download, "View original").
  *   &partial=comments&kind=tire|library&id=<image id>
  *                      JSON {ok, kind, id, count, html}: the image's comment thread
  *                      (commentThreadHtml() over commentThread(): deny notes and plain
  *                      comments, client vs Joust styling) for the viewer's Comments
  *                      panel, fetched lazily per image. Tenant-checked like the grid.
  *   &rescan=1          ask syncTireSeries() to rescan media/tires/<tire>/ now
+ *   &manage=series     (admin, an open tire) open the Manage series sheet on load — rename / reorder / delete
+ *                      series, their Google Drive links, add a series, the FTP folder, Rescan folders and
+ *                      Repair server rules (static/js/series-manage.js; the old Studio Renders tab lands here)
  */
 
 require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';
 require_once __DIR__ . '/partials/components/comment-thread.php';   // commentThreadHtml() for the viewer's Comments panel
+require_once __DIR__ . '/export-lib.php';                            // exportZipSupported(): the admin select bar's Download
 if (is_file(__DIR__ . '/tire-series-lib.php')) { require_once __DIR__ . '/tire-series-lib.php'; }
 
 $isAdmin  = isAdmin();
@@ -63,7 +82,45 @@ if (!defined('ASSETS_PAGE')) { define('ASSETS_PAGE', 60); }              // tile
 // ---------------------------------------------------------------------
 if (!$client) {
     if ($isAdmin) {
-        header('Location: ' . clientUrl('admin.php'), true, 302);   // pick a client first
+        // Unscoped admin (the sidebar Assets tab with no client): choose a client right here instead of bouncing to Home.
+        // view=collections (an old unscoped Tires link) lists only the clients that have Tires.
+        $wantTires = (($_GET['view'] ?? '') === 'collections');
+        $choose = []; $pend = [];
+        try {
+            $choose = $pdo->query("SELECT id, name, slug, logo_url, feature_label FROM companies ORDER BY name ASC")->fetchAll();
+            foreach ($pdo->query("SELECT t.company_id AS cid, COUNT(*) AS n FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id
+                                   WHERE ti.status = 'pending' GROUP BY t.company_id")->fetchAll() as $r) { $pend[(int)$r['cid']]['tire'] = (int)$r['n']; }
+            if (hasLibraryImagesTable($pdo)) {
+                foreach ($pdo->query("SELECT company_id AS cid, COUNT(*) AS n FROM library_images WHERE status = 'pending' GROUP BY company_id")->fetchAll() as $r) {
+                    $pend[(int)$r['cid']]['library'] = (int)$r['n'];
+                }
+            }
+        } catch (Throwable $e) { error_log('assets chooser query failed: ' . $e->getMessage()); }
+        $pageTitle   = $wantTires ? 'Tires' : 'Assets';
+        $htmlTitle   = $pageTitle . ' — Joust Media';
+        $navSubtitle = 'All clients';
+        $navTrailing = joustAvatar();
+        $activeTab   = 'assets';
+        include __DIR__ . '/partials/layout-top.php';
+        echo insetListOpen('Choose a client', ['attrs' => ['data-assets-clients' => $wantTires ? 'tires' : 'library']]);
+        $shown = 0;
+        foreach ($choose as $co) {
+            if ($wantTires && !companyHasTires($co, $pdo)) continue;
+            $n = (int)($pend[(int)$co['id']][$wantTires ? 'tire' : 'library'] ?? 0);
+            echo insetRow([
+                'href'     => clientUrl('assets.php', ['client' => $co['slug'], 'view' => $wantTires ? 'collections' : null]),
+                'leading'  => clientAvatar($co, 'ui-avatar--lg'),
+                'title'    => $co['name'],
+                'subtitle' => $wantTires ? tiresLabel($co) . ($n > 0 ? ' · ' . $n . ' to review' : '') : 'Library' . ($n > 0 ? ' · ' . $n . ' to review' : ''),
+                'trailing' => $n > 0 ? '<span class="ui-badge">' . ($n > 99 ? '99+' : $n) . '</span>' : '',
+                'chevron'  => true,
+                'attrs'    => ['data-client-row' => $co['slug']],
+            ]);
+            $shown++;
+        }
+        if (!$shown) echo '<li><div class="ui-row"><div class="ui-row-body"><div class="ui-row-subtitle">' . ($wantTires ? 'No client has Tires yet.' : 'No clients yet.') . '</div></div></div></li>';
+        echo insetListClose($wantTires ? 'Each client\'s tires, their series and reference images.' : 'Each client\'s Library: their own photos and videos to review.');
+        include __DIR__ . '/partials/layout-bottom.php';
         exit;
     }
     http_response_code(400);
@@ -190,20 +247,21 @@ if ($deepId > 0 && $deepKind !== '') {
 }
 
 // ---------------------------------------------------------------------
+// Tires tab only exists for companies with tires (module on or any rows — tabbar.php). Without it the
+// Tires view has no home in the nav, so an old view=collections link lands on the Library instead.
+// ---------------------------------------------------------------------
+$hasTiresTab = companyHasTires($client, $pdo);
+if ($view === 'collections' && !$hasTiresTab && !$partial) {
+    header('Location: ' . clientUrl('assets.php', ['filter' => $filter !== 'pending' ? $filter : null]), true, 302);
+    exit;
+}
+
+// ---------------------------------------------------------------------
 // Labels
 // ---------------------------------------------------------------------
-// "Collections" in the client's own words: companies.feature_label when set
-// (the only per-company term in the schema), else the tires module's plural
-// label, else the generic word.
-$collectionsLabel = trim((string)($client['feature_label'] ?? ''));
-if ($collectionsLabel === '') {
-    try {
-        $s = $pdo->prepare("SELECT plural_label FROM modules WHERE slug = 'tires'");
-        $s->execute();
-        $collectionsLabel = trim((string)($s->fetchColumn() ?: ''));
-    } catch (Throwable $e) { $collectionsLabel = ''; }
-}
-if ($collectionsLabel === '') { $collectionsLabel = 'Collections'; }
+// The tire content in the client's own words: companies.feature_label when set (the only per-company
+// term in the schema), else "Tires" — the same word as the tab (tiresLabel(), helpers.php).
+$collectionsLabel = tiresLabel($client);
 
 $filterLabels = ['pending' => 'To Review', 'approved' => 'Approved', 'denied' => 'Needs changes'];
 
@@ -246,11 +304,14 @@ if (!function_exists('assetsTileHtml')) {
     function assetsTileHtml(array $it, int $index, int $total): string {
         $endpoint = basePath() . ($it['kind'] === 'tire' ? '/tire-status.php' : '/library-status.php');
         $cls   = 'ui-thumb as-thumb' . ($it['status'] === 'approved' ? ' ui-thumb--approved' : '');
-        $thumb = ($it['thumb'] ?? '') !== '' ? (string)$it['thumb'] : (string)$it['src'];
+        // Previews: the tile shows the sm derivative (srcset), the viewer opens the lg one (data-src),
+        // Download / "View original" use the untouched file (data-original). Videos keep their one URL.
+        $pv    = $it['type'] === 'video' ? ['thumb' => $it['src'], 'large' => $it['src'], 'original' => $it['src']] : pvUrls((string)$it['src']);
         $out  = '<button type="button" class="' . esc($cls) . '" role="listitem"'
               . ' id="' . esc(($it['kind'] === 'tire' ? 'image-' : 'lib-') . $it['id']) . '"'
               . ' data-asset data-id="' . (int)$it['id'] . '" data-kind="' . esc($it['kind']) . '" data-status="' . esc($it['status']) . '"'
-              . ' data-src="' . esc($it['src']) . '" data-type="' . esc($it['type']) . '"' . ($it['mime'] !== '' ? ' data-mime="' . esc($it['mime']) . '"' : '')
+              . ' data-src="' . esc($pv['large']) . '" data-original="' . esc($pv['original']) . '" data-thumb="' . esc($pv['thumb']) . '"'
+              . ' data-type="' . esc($it['type']) . '"' . ($it['mime'] !== '' ? ' data-mime="' . esc($it['mime']) . '"' : '')
               . ' data-label="' . esc($it['label']) . '" data-download="' . esc($it['download']) . '"'
               . ' data-endpoint="' . esc($endpoint) . '"' . ($it['manage'] !== '' ? ' data-manage="' . esc($it['manage']) . '"' : '')
               . (!empty($it['twin']) ? ' data-twin="' . esc($it['twin']) . '"' : '')     // transcoded .mp4 next to a .mov → second <source> in the viewer
@@ -265,7 +326,8 @@ if (!function_exists('assetsTileHtml')) {
             $out .= videoTile($it['src'], ['badge' => false, 'poster' => ($it['thumb'] ?? '') !== '' && $it['thumb'] !== $it['src'] ? $it['thumb'] : '',
                                            'bytes' => (int)($it['bytes'] ?? 0), 'probe' => $it['kind'] !== 'tire']);
         } else {
-            $out .= '<img src="' . esc($thumb) . '" alt="" loading="lazy" decoding="async">';   // .ui-thumb is a fixed 1:1 box, so lazy tiles never reflow
+            // .ui-thumb is a fixed 1:1 box (width/height only reserve the ratio); the first row loads eagerly
+            $out .= pvImg((string)$it['src'], 'sm', ['sizes' => pvSizes('grid'), 'eager' => $index <= 6]);
         }
         $size = $it['type'] === 'video' ? assetsHumanBytes((int)($it['bytes'] ?? 0)) : '';   // file size from the one stat the page already did
         $out .= '<span class="ui-pill ui-pill--glass ui-pill--nodot ui-thumb-badge as-badge"><i class="ui-dot ui-dot--' . esc($it['status']) . '" data-status-dot></i>'
@@ -277,6 +339,78 @@ if (!function_exists('assetsTileHtml')) {
               . icon('bubble') . '<span data-thumb-comments-count>' . $nc . '</span></span>'
               . '</button>';
         return $out;
+    }
+}
+
+/**
+ * The Reference card at the top of an open tire (above the series switcher, whatever series the grid shows):
+ * "REFERENCE · N APPROVED", the tire name, and the tire's approved reference images as a row of sm tiles —
+ * else the pending ones ("To Review"), else a compact empty state (admin: "Add reference images").
+ * Tap a tile → the viewer over the strip's tiles (assets.js initRefStrip). When some reference images still
+ * wait (pending, + denied for admin) a "+ M to review" link switches the grid to the Reference view.
+ * $ctx: rows (reference tire_images the seat may see, sort_order order, each with 'src'), counts
+ * (pending/approved/denied), admin, tire (name), reviewUrl, allUrl, addUrl (+ addAttrs: the Upload sheet's data-upload-*), endpoint,
+ * manage, adminHtml.
+ */
+if (!function_exists('assetsRefStripHtml')) {
+    function assetsRefStripHtml(array $ctx): string {
+        $admin = !empty($ctx['admin']);
+        $c     = $ctx['counts'];
+        $nA    = (int)($c['approved'] ?? 0);
+        $nP    = (int)($c['pending'] ?? 0);
+        $nD    = $admin ? (int)($c['denied'] ?? 0) : 0;
+        $mode  = $nA > 0 ? 'approved' : ($nP > 0 ? 'pending' : 'empty');
+        $max   = 24;
+        $rows  = array_values(array_filter($ctx['rows'], static function ($r) use ($mode) { return (string)$r['status'] === $mode; }));
+        $shown = array_slice($rows, 0, $max);
+        $label = $mode === 'approved' ? 'Reference · <span data-ref-count>' . $nA . '</span> approved'
+               : ($mode === 'pending' ? 'Reference · <span class="as-refstrip-label">To Review</span>' : 'Reference');
+        $toReview = $nP + $nD;
+        $link = '';
+        if ($mode === 'approved' && $toReview > 0) {
+            $link = '<a class="as-refstrip-link" href="' . esc($ctx['reviewUrl']) . '" data-ref-review>+ ' . $toReview . ' to review</a>';
+        } elseif ($mode === 'approved' && count($rows) > $max) {
+            $link = '<a class="as-refstrip-link" href="' . esc($ctx['allUrl']) . '" data-ref-all>See all ' . count($rows) . '</a>';
+        } elseif ($mode === 'pending') {
+            $link = '<a class="as-refstrip-link" href="' . esc($ctx['reviewUrl']) . '" data-ref-review>Review ' . $nP . '</a>';
+        }
+        $hint = $mode === 'approved' ? 'Compare each series image to ' . ($nA === 1 ? 'this photo.' : 'these photos.')
+              : ($mode === 'pending' ? 'Reference images waiting for review.' : 'No reference images yet.');
+        $out  = '<section class="as-reference as-reference--strip as-refstrip--' . $mode . '" data-ref-strip="' . $mode . '" aria-label="Reference images">'
+              . '<div class="as-reference-body">'
+              . '<p class="as-reference-label" data-ref-label>' . $label . '</p>'
+              . '<h2 class="as-reference-title">' . esc($ctx['tire']) . '</h2>'
+              . '<p class="as-reference-hint">' . esc($hint) . ($link !== '' ? ' ' . $link : '') . '</p>'
+              . '</div>'
+              . (string)($ctx['adminHtml'] ?? '');
+        if ($mode === 'empty') {
+            if ($admin) {
+                $out .= '<div class="as-refstrip-empty" data-ref-empty><p>Add photos of the real tire so every series image can be compared to them.</p>'
+                      . '<a class="ui-btn ui-btn--sm ui-btn--tinted" href="' . esc($ctx['addUrl']) . '"' . (string)($ctx['addAttrs'] ?? '') . ' data-ref-add>' . icon('plus') . '<span>Add reference images</span></a></div>';
+            }
+            return $out . '</section>';
+        }
+        $n = count($shown);
+        $out .= '<div class="as-refstrip-row" role="list" data-ref-row>';
+        foreach ($shown as $i => $r) {
+            $src   = (string)$r['src'];
+            $meta  = assetMediaMeta((string)$r['image_url']);
+            $isVid = $meta['type'] === 'video';
+            $pv    = $isVid ? ['thumb' => $src, 'large' => $src, 'original' => $src] : pvUrls($src);
+            $tl    = trim((string)(($r['display_name'] ?? '') ?: ($r['caption'] ?? '')));
+            if ($tl === '') { $tl = (string)$ctx['tire'] . ' · Reference ' . ($i + 1); }
+            $stem  = safeFilenameStem(($r['display_name'] ?? '') ?: ((string)$ctx['tire'] . '-reference-' . ($i + 1)));
+            $out .= '<button type="button" class="as-refstrip-tile' . ($r['status'] === 'approved' ? ' is-approved' : '') . '" role="listitem" data-ref-tile'
+                  . ' data-id="' . (int)$r['id'] . '" data-kind="tire" data-status="' . esc($r['status']) . '"'
+                  . ' data-src="' . esc($pv['large']) . '" data-original="' . esc($pv['original']) . '" data-thumb="' . esc($pv['thumb']) . '"'
+                  . ' data-type="' . esc($meta['type']) . '"' . ($meta['mime'] !== '' ? ' data-mime="' . esc($meta['mime']) . '"' : '')
+                  . ' data-label="' . esc($tl) . '" data-download="' . esc(($stem !== '' ? $stem : 'reference') . '.' . $meta['ext']) . '"'
+                  . ' data-endpoint="' . esc($ctx['endpoint']) . '"' . ($ctx['manage'] !== '' ? ' data-manage="' . esc($ctx['manage']) . '"' : '')
+                  . ' data-series="ref" aria-label="' . esc('Open reference image ' . ($i + 1) . ' of ' . $n . ': ' . $tl) . '">'
+                  . ($isVid ? videoTile($src, ['badge' => false, 'probe' => false]) : pvImg($src, 'sm', ['sizes' => pvSizes('strip'), 'eager' => $i < 6]))
+                  . '</button>';
+        }
+        return $out . '</div></section>';
     }
 }
 
@@ -307,8 +441,8 @@ if (!function_exists('assetMediaMeta')) {
 $libCounts  = ['pending' => 0, 'approved' => 0, 'denied' => 0];
 $tireCounts = ['pending' => 0, 'approved' => 0, 'denied' => 0];
 if ($libReady) {
-    if ($view === 'library') {
-        syncLibraryImages($pdo, $cid, $slug);   // register new files dropped in media/library/<slug>/ (once per request)
+    if ($view === 'library' && !$partial) {
+        syncLibraryImages($pdo, $cid, $slug);   // register new files dropped in media/library/<slug>/ (once per page view; "Load more" skips it)
     }
     $s = $pdo->prepare("SELECT status, COUNT(*) AS n FROM library_images WHERE company_id = ? GROUP BY status");
     $s->execute([$cid]);
@@ -336,6 +470,8 @@ $seriesList  = [];      // tireSeriesForTire() rows for the open collection
 $seriesActive = null;   // the series the grid shows (null = Reference)
 $seriesKey   = '';      // 'ref' | '<id>' — the &series= value of the current view ('' when the feature is off)
 $seriesSummary = [];    // collections list: tire id → ['series' => n, 'pending' => n]
+$refStripRows = [];     // open collection: its reference images (series_id NULL) for the Reference strip
+$refCounts   = ['pending' => 0, 'approved' => 0, 'denied' => 0, 'total' => 0];
 $gridTotal   = 0;       // rows in the current filter/series (paging)
 $typeKey     = '';      // '' | photos | videos | all — the &type= of the current view (only set when it matters, see below)
 $typeEff     = 'all';   // the type the grid query applies (photos | videos | all)
@@ -362,8 +498,15 @@ if ($view === 'library') {
         $s = $pdo->prepare($sql);
         $s->execute([$cid, $filter]);
         $onDisk = array_flip(scanLibraryDir(libraryDir($slug)));   // a row whose file vanished from the folder is not shown
-        foreach ($s->fetchAll() as $r) {
-            if (!isset($onDisk[$r['filename']])) continue;
+        // Paging (ASSETS_PAGE per page, "Load more" = &partial=1&offset=N like a series): the rows are cheap, the
+        // tiles are not — filter to the files on disk first so the total and every page agree, then slice.
+        $libRows   = array_values(array_filter($s->fetchAll(), static function ($r) use ($onDisk) { return isset($onDisk[$r['filename']]); }));
+        $gridTotal = count($libRows);
+        $libLimit  = ASSETS_PAGE;
+        if (!$partial && $offset === 0 && $deepOpen && $deepOpen['kind'] === 'library') {   // a deep link past page 1: render the pages up to it
+            foreach ($libRows as $i => $r) { if ((int)$r['id'] === $deepOpen['id']) { $libLimit = max(ASSETS_PAGE, (int)ceil(($i + 1) / ASSETS_PAGE) * ASSETS_PAGE); break; } }
+        }
+        foreach (array_slice($libRows, $offset, $libLimit) as $r) {
             $url  = libraryFileUrl($slug, $r['filename']);
             $meta = assetMediaMeta($r['filename']);
             $items[] = [
@@ -387,7 +530,7 @@ if ($view === 'library') {
         $collection = $s->fetch() ?: null;
         if (!$collection) {
             $itemId = 0;
-            $notice = $notice ?: 'That collection is no longer available.';
+            $notice = $notice ?: 'That tire is no longer available.';
         }
     }
 
@@ -397,12 +540,17 @@ if ($view === 'library') {
         $s->execute([$itemId]);
         foreach ($s->fetchAll() as $r) { if (isset($scopeCounts[$r['status']])) $scopeCounts[$r['status']] = (int)$r['n']; }
 
-        // Reference = lowest sort_order image (see the ASSUMPTION at the top). Clients never see a denied one.
+        // Reference = the first approved reference image by sort_order, else the lowest sort_order one (see the
+        // ASSUMPTION at the top). Clients never see a denied one.
         // With series on, the reference is always one of the tire's own (series-less) images.
         $refOnly = $seriesOn ? ' AND series_id IS NULL' : '';
-        $s = $pdo->prepare("SELECT id, image_url, status FROM tire_images WHERE tire_id = ?{$clientOnly}{$refOnly} ORDER BY sort_order ASC, id ASC LIMIT 1");
+        $s = $pdo->prepare("SELECT id, image_url, status FROM tire_images WHERE tire_id = ?{$clientOnly}{$refOnly} ORDER BY sort_order ASC, id ASC");
         $s->execute([$itemId]);
-        $reference = $s->fetch() ?: null;
+        $reference = null;
+        foreach ($s->fetchAll() as $r) {   // approved first (in sort order), else the lowest sort_order one
+            if ($reference === null) $reference = $r;
+            if ((string)$r['status'] === 'approved') { $reference = $r; break; }
+        }
 
         if ($seriesOn) {
             // ---- Series switcher: which series does the grid show? --------------------------------
@@ -417,8 +565,14 @@ if ($view === 'library') {
             $seriesKey = $seriesActive ? (string)(int)$seriesActive['id'] : 'ref';
             // Reference counts (rows without a series) from the lib's one GROUP BY (tireSeriesCounts()['reference']).
             $tc = tireSeriesCounts($pdo, $itemId);
-            $refCounts = ['pending' => 0, 'approved' => 0, 'denied' => 0, 'total' => 0];
             foreach ($refCounts as $k => $v) { $refCounts[$k] = (int)($tc['reference'][$k] ?? 0); }
+            // The Reference strip (always on top, whatever series the grid shows): the reference images the seat may see.
+            $s = $pdo->prepare("SELECT ti.id, ti.image_url, ti.caption, ti.status, ti.sort_order{$nameSel}
+                                  FROM tire_images ti
+                                 WHERE ti.tire_id = ? AND ti.series_id IS NULL{$clientOnlyTi}
+                                 ORDER BY ti.sort_order ASC, ti.id ASC");
+            $s->execute([$itemId]);
+            foreach ($s->fetchAll() as $r) { $r['src'] = assetsRootUrl((string)tireImageSrc($r)); $refStripRows[] = $r; }
             $scopeCounts = $seriesActive
                 ? ['pending' => (int)($seriesActive['counts']['pending'] ?? 0), 'approved' => (int)($seriesActive['counts']['approved'] ?? 0), 'denied' => (int)($seriesActive['counts']['denied'] ?? 0)]
                 : ['pending' => $refCounts['pending'], 'approved' => $refCounts['approved'], 'denied' => $refCounts['denied']];
@@ -513,17 +667,25 @@ if ($view === 'library') {
             }));
         }
 
-        // 56px thumbnail = the reference image (lowest sort_order; never a denied one for clients)
+        // 56px thumbnail = the primary reference image: the first APPROVED reference still by sort_order, else the
+        // first one at all (never a denied one for clients, never a video). $refCountOf = reference images the seat sees.
         $thumbs = [];
+        $refCountOf = [];
         if ($collections) {
             $ids = array_map('intval', array_column($collections, 'id'));
             $ph  = implode(',', array_fill(0, count($ids), '?'));
             $refOnly = $seriesOn ? ' AND series_id IS NULL' : '';
-            $s = $pdo->prepare("SELECT tire_id, image_url FROM tire_images WHERE tire_id IN ($ph){$clientOnly}{$refOnly} ORDER BY tire_id, sort_order ASC, id ASC");
+            $s = $pdo->prepare("SELECT tire_id, image_url, status FROM tire_images WHERE tire_id IN ($ph){$clientOnly}{$refOnly} ORDER BY tire_id, sort_order ASC, id ASC");
             $s->execute($ids);
+            $thumbApproved = [];
             foreach ($s->fetchAll() as $r) {
                 $tid = (int)$r['tire_id'];
-                if (!isset($thumbs[$tid])) $thumbs[$tid] = $seriesOn ? assetsRootUrl((string)tireImageThumb($r)) : basePath() . '/' . ltrim((string)$r['image_url'], '/');   // a reference promoted from a series lives under /media/tires/
+                $refCountOf[$tid] = ($refCountOf[$tid] ?? 0) + 1;
+                if (!empty($thumbApproved[$tid]) || assetMediaMeta((string)$r['image_url'])['type'] === 'video') continue;
+                $isA = (string)$r['status'] === 'approved';
+                if (isset($thumbs[$tid]) && !$isA) continue;   // keep the first one until an approved one turns up
+                $thumbs[$tid] = $seriesOn ? assetsRootUrl((string)tireImageSrc($r)) : basePath() . '/' . ltrim((string)$r['image_url'], '/');   // a reference promoted from a series lives under /media/tires/
+                $thumbApproved[$tid] = $isA;
             }
             // Series summary per tire ("3 series · 24 to review") — one lib call per collection (a handful of tires).
             if ($seriesOn) {
@@ -564,20 +726,33 @@ if ($partial) {
 // ---------------------------------------------------------------------
 // Chrome
 // ---------------------------------------------------------------------
-$pageTitle  = 'Assets';
-$htmlTitle  = 'Assets — ' . $client['name'];
-$pageWide   = true;
-$navWide    = true;
-$activeTab  = $view === 'collections' ? 'tires' : 'assets';   // Tires tab (tabbar falls back to Assets when the company has none)
-$bodyClass  = 'as-body';
+// Same frame as every top-level page (the default 720px column — no wide variant): Assets = the Library,
+// Tires = the tire list (its own large title), a tire = a pushed detail screen with a back button.
+$pageTitle  = $view === 'collections' ? $collectionsLabel : 'Assets';
+$htmlTitle  = $pageTitle . ' — ' . $client['name'];
+$activeTab  = $view === 'collections' ? 'tires' : 'assets';   // Tires tab (only reachable when the company has one — see the redirect above)
+$bodyClass  = 'as-body as-body--' . ($view === 'collections' ? 'tires' : 'library');
 $headExtra  = '<link rel="stylesheet" href="' . esc(staticUrl('css/assets.css')) . '">';
 if ($collection) {
     $pageTitle   = (string)$collection['name'];
-    $htmlTitle   = $collection['name'] . ' — Assets — ' . $client['name'];
+    $htmlTitle   = $collection['name'] . ' — ' . $collectionsLabel . ' — ' . $client['name'];
     $navSubtitle = $collectionsLabel;
     $navBack     = ['href' => clientUrl('assets.php', ['view' => 'collections']), 'label' => $collectionsLabel];
 }
+// Admin "New tire" (add-feature.php — needs the tires module switched on) on the Tires list; also in "+ New".
+$newTireUrl  = ($isAdmin && $view === 'collections' && !$collection && companyTiresModuleOn($client, $pdo))
+    ? clientUrl('add-feature.php', ['module' => 'tires']) : '';
 $navTrailing = '';
+if ($newTireUrl !== '') {   // a page button under the large title (the nav row keeps room for the title at 320px)
+    $navLinks = [['label' => 'New tire', 'href' => $newTireUrl, 'tinted' => true, 'attrs' => ['data-new-tire' => '1']]];
+}
+// Admin "Upload" on the Library: the page's primary action, in the header like "New tire" / "New prompt"
+// (the Upload sheet with the Library preselected — upload-sheet.js; the no-JS href opens it on load).
+if ($isAdmin && $view === 'library') {
+    $navLinks = [['label' => 'Upload', 'href' => uploadSheetUrl('assets.php', ['dest' => 'library'], ['view' => 'library']), 'tinted' => true,
+                  'class' => 'as-library-upload',
+                  'attrs' => ['data-upload-open' => '', 'data-upload-dest' => 'library', 'data-library-upload' => '']]];
+}
 if ($isGrid && $items) {
     $navTrailing .= '<button type="button" class="ui-btn ui-btn--sm ui-btn--gray" data-assets-select aria-pressed="false">Select</button>';
 }
@@ -591,15 +766,8 @@ if ($collection) {
 include __DIR__ . '/partials/layout-top.php';
 ?>
 
+<?php if ($isGrid): // the status filter chips (the admin's Library Upload sits in the header — $navLinks above) ?>
 <div class="as-controls">
-  <?= segmented([
-      ['label' => 'Library', 'href' => clientUrl('assets.php', ['view' => 'library']),
-       'active' => $view === 'library', 'count' => $libCounts['pending'] > 0 ? $libCounts['pending'] : null],
-      ['label' => $collectionsLabel, 'href' => clientUrl('assets.php', ['view' => 'collections']),
-       'active' => $view === 'collections', 'count' => $tireCounts['pending'] > 0 ? $tireCounts['pending'] : null],
-  ], ['label' => 'Assets view']) ?>
-
-  <?php if ($isGrid): ?>
     <nav class="as-filters" aria-label="Filter">
       <?php foreach ($filters as $f): ?>
         <a class="as-chip<?= $f === $filter ? ' is-active' : '' ?>" href="<?= esc(assetsUrl(['filter' => $f])) ?>"<?= $f === $filter ? ' aria-current="page"' : '' ?>>
@@ -607,13 +775,18 @@ include __DIR__ . '/partials/layout-top.php';
         </a>
       <?php endforeach; ?>
     </nav>
-  <?php endif; ?>
 </div>
+<?php endif; ?>
 
 <?php if ($view === 'collections' && !$collection): ?>
 
   <?php if (!$collections): ?>
-    <div class="ui-empty">No <?= esc(strtolower($collectionsLabel)) ?> yet.</div>
+    <div class="ui-empty as-empty" data-tires-empty>
+      <p>No <?= esc(strtolower($collectionsLabel)) ?> yet.</p>
+      <?php if ($newTireUrl !== ''): ?>
+        <a class="ui-btn ui-btn--tinted" href="<?= esc($newTireUrl) ?>"><?= icon('plus') ?><span>New tire</span></a>
+      <?php endif; ?>
+    </div>
   <?php else: ?>
     <?= insetListOpen('', ['class' => 'as-collections', 'listClass' => 'as-collection-list']) ?>
     <?php foreach ($collections as $c):
@@ -622,11 +795,14 @@ include __DIR__ . '/partials/layout-top.php';
         $parts = [$p . ' to review', $a . ' approved'];
         if ($isAdmin && $d > 0) $parts[] = $d . ' needs changes';       // client counts exclude denied
         if ((int)$c['total_count'] === 0) $parts = ['No images yet'];
-        if (!empty($seriesSummary[$tid]['series'])) {                    // "3 series · 24 to review · 40 approved"
+        if ($seriesOn && (int)$c['total_count'] > 0) {                   // "2 reference" — the tire's own images, apart from the renders
+            array_unshift($parts, (int)($refCountOf[$tid] ?? 0) . ' reference');
+        }
+        if (!empty($seriesSummary[$tid]['series'])) {                    // "3 series · 2 reference · 24 to review · 40 approved"
             array_unshift($parts, (int)$seriesSummary[$tid]['series'] . ' series');
         }
         $thumb = isset($thumbs[$tid])
-            ? '<img src="' . esc($thumbs[$tid]) . '" alt="" loading="lazy">'
+            ? pvImg($thumbs[$tid], 'sm', ['sizes' => pvSizes('row')])
             : icon('photo');
         // A small Drive glyph before the badge when at least one series of the tire has a Google Drive link.
         $driveGlyph = !empty($seriesSummary[$tid]['drive'])
@@ -647,41 +823,72 @@ include __DIR__ . '/partials/layout-top.php';
 
 <?php else: ?>
 
-  <?php if ($collection): ?>
+  <?php if ($collection):
+    // Admin Edit + ⋯ (Delete tire…, asks first) for the tire (never rendered for clients) — in the Reference card either way.
+    // Delete is never a visible header button: it sits behind ⋯ (assign.js runs the [data-asg-menu] menus on every admin page).
+    $refAdminHtml = '';
+    if ($isAdmin) {
+        $refUpload = ['dest' => 'reference', 'tire' => $itemId];   // the Upload sheet with this tire's Reference preselected
+        $refAdminHtml = '<div class="as-reference-admin">'
+            . '<a class="ui-btn ui-btn--sm ui-btn--tinted" href="' . esc(uploadSheetUrl('assets.php', $refUpload, ['view' => 'collections', 'item' => $itemId, 'series' => 'ref'])) . '"' . uploadSheetAttrs($refUpload) . ' data-ref-upload>' . icon('upload') . '<span>Upload</span></a>'
+            . '<a class="ui-btn ui-btn--sm ui-btn--gray" href="' . esc(clientUrl('add-feature.php', ['module' => 'tires', 'edit_item' => $itemId])) . '">Edit</a>'
+            . '<div class="asg-more as-tire-more">'
+            . '<button type="button" class="ui-btn ui-btn--sm ui-btn--gray ui-btn--icon asg-more-btn" data-asg-menu-toggle aria-haspopup="menu" aria-expanded="false" aria-label="' . esc('More actions for ' . $collection['name']) . '">' . icon('ellipsis') . '</button>'
+            . '<div class="asg-menu" role="menu" data-asg-menu hidden>'
+            . '<button type="button" role="menuitem" class="is-destructive"'
+            . ' data-action="delete_tire" data-endpoint="' . esc(basePath() . '/tire-status.php') . '"'
+            . ' data-param-action="delete_tire" data-tire-id="' . $itemId . '"'
+            . ' data-confirm="' . esc('Delete “' . $collection['name'] . '” and all of its images? This cannot be undone.') . '"'
+            . ' data-href="' . esc(clientUrl('assets.php', ['view' => 'collections'])) . '" data-tire-delete-menu>Delete tire…</button>'
+            . '</div></div>'
+            . '</div>';
+    }
+  ?>
+    <?php if ($seriesOn): // ---- Reference card + strip: the tire's approved reference images, always on top (above the switcher) ----
+      $refView = static function (string $f): string { return assetsUrl(['series' => 'ref', 'filter' => $f, 'offset' => null, 'type' => null]); };
+      echo assetsRefStripHtml([
+          'rows'      => $refStripRows,
+          'counts'    => $refCounts,
+          'admin'     => $isAdmin,
+          'tire'      => (string)$collection['name'],
+          'reviewUrl' => $refView($refCounts['pending'] > 0 || !$isAdmin ? 'pending' : 'denied'),
+          'allUrl'    => $refView('approved'),
+          'addUrl'    => uploadSheetUrl('assets.php', ['dest' => 'reference', 'tire' => $itemId], ['view' => 'collections', 'item' => $itemId, 'series' => 'ref']),
+          'addAttrs'  => uploadSheetAttrs(['dest' => 'reference', 'tire' => $itemId]),
+          'endpoint'  => basePath() . '/tire-status.php',
+          'manage'    => $isAdmin ? clientUrl('add-feature.php', ['module' => 'tires', 'edit_item' => $itemId]) : '',
+          'adminHtml' => $refAdminHtml,
+      ]);
+    else: ?>
     <section class="as-reference" aria-label="Reference image">
       <?php if ($reference): ?>
-        <div class="as-reference-media"><img src="<?= esc($seriesOn ? assetsRootUrl((string)tireImageSrc($reference)) : basePath() . '/' . ltrim((string)$reference['image_url'], '/')) ?>" alt="<?= esc('Reference for ' . $collection['name']) ?>"></div>
+        <div class="as-reference-media"><?= pvImg($seriesOn ? assetsRootUrl((string)tireImageSrc($reference)) : basePath() . '/' . ltrim((string)$reference['image_url'], '/'), 'sm', ['sizes' => pvSizes('ref'), 'eager' => true, 'alt' => 'Reference for ' . $collection['name']]) ?></div>
       <?php else: ?>
         <div class="as-reference-media as-reference-media--empty"><?= icon('photo') ?></div>
       <?php endif; ?>
       <div class="as-reference-body">
         <p class="as-reference-label">Reference</p>
         <h2 class="as-reference-title"><?= esc($collection['name']) ?></h2>
-        <p class="as-reference-hint"><?= $reference ? 'Compare each render to this image.' : 'No reference image yet.' ?></p>
+        <p class="as-reference-hint"><?= $reference ? 'Compare each series image to this photo.' : 'No reference image yet.' ?></p>
       </div>
-      <?php if ($isAdmin): // admin-only: never rendered for clients ?>
-        <div class="as-reference-admin">
-          <a class="ui-btn ui-btn--sm ui-btn--gray" href="<?= esc(clientUrl('add-feature.php', ['module' => 'tires', 'edit_item' => $itemId])) ?>">Edit</a>
-          <button type="button" class="ui-btn ui-btn--sm ui-btn--deny ui-btn--tinted"
-                  data-action="delete_tire" data-endpoint="<?= esc(basePath() . '/tire-status.php') ?>"
-                  data-param-action="delete_tire" data-tire-id="<?= $itemId ?>"
-                  data-confirm="<?= esc('Delete “' . $collection['name'] . '” and all of its images? This cannot be undone.') ?>"
-                  data-href="<?= esc(clientUrl('assets.php', ['view' => 'collections'])) ?>">Delete</button>
-        </div>
-      <?php endif; ?>
+      <?= $refAdminHtml // admin-only: '' for clients ?>
     </section>
+    <?php endif; ?>
 
-    <?php if ($seriesOn && $seriesList): // ---- series switcher (Reference · Series 1 · Series 2 …) + header row ---- ?>
+    <?php if ($seriesOn && $seriesList): // ---- series switcher (Reference · N first, then Series 1 · Series 2 …) + header row ---- ?>
       <nav class="as-filters as-series" aria-label="Series" data-series-switcher>
         <?php
           // videos = the videos this seat may see in the series (admin: all, client: minus denied) → the small "3▶" glyph
           $vidsOf = static function (array $c) use ($isAdmin): int { return max(0, (int)($c['total'] ?? 0) - ($isAdmin ? 0 : (int)($c['denied'] ?? 0))); };
-          $chips = [['key' => 'ref', 'label' => 'Reference', 'pending' => (int)$refCounts['pending'], 'drive' => false, 'videos' => $vidsOf($videoCounts['reference'] ?? [])]];
-          foreach ($seriesList as $sr) { $chips[] = ['key' => (string)(int)$sr['id'], 'label' => (string)$sr['name'], 'pending' => (int)($sr['counts']['pending'] ?? 0), 'drive' => !empty($sr['drive_url']), 'videos' => $vidsOf($videoCounts['series'][(int)$sr['id']] ?? [])]; }
+          // One meaning per chip: its count is the number of images in the ACTIVE status filter (To Review /
+          // Approved / Needs changes) — the same number the grid shows when you open that series.
+          $filterNoun = ['pending' => 'to review', 'approved' => 'approved', 'denied' => 'need changes'][$filter] ?? $filter;
+          $chips = [['key' => 'ref', 'label' => 'Reference', 'n' => (int)($refCounts[$filter] ?? 0), 'drive' => false, 'videos' => $vidsOf($videoCounts['reference'] ?? [])]];
+          foreach ($seriesList as $sr) { $chips[] = ['key' => (string)(int)$sr['id'], 'label' => (string)$sr['name'], 'n' => (int)($sr['counts'][$filter] ?? 0), 'drive' => !empty($sr['drive_url']), 'videos' => $vidsOf($videoCounts['series'][(int)$sr['id']] ?? [])]; }
           foreach ($chips as $ch): $on = $ch['key'] === $seriesKey; ?>
           <a class="as-chip as-series-chip<?= $on ? ' is-active' : '' ?>" href="<?= esc(assetsUrl(['series' => $ch['key'], 'offset' => null, 'type' => null])) ?>"
              data-series-chip="<?= esc($ch['key']) ?>"<?= $on ? ' aria-current="page"' : '' ?>>
-            <?= esc($ch['label']) ?><span class="as-chip-count as-chip-count--pending" data-series-pending="<?= esc($ch['key']) ?>"<?= $ch['pending'] > 0 ? '' : ' hidden' ?>><?= $ch['pending'] ?></span><?= $ch['drive'] ? '<span class="as-chip-drive" data-series-drive-chip="' . esc($ch['key']) . '" title="Also in Google Drive" aria-label="Also in Google Drive">' . icon('drive') . '</span>' : '' ?><?= $ch['videos'] > 0 ? '<span class="as-chip-videos" data-series-videos="' . esc($ch['key']) . '" title="' . esc($ch['videos'] . ($ch['videos'] === 1 ? ' video' : ' videos')) . '" aria-label="' . esc($ch['videos'] . ($ch['videos'] === 1 ? ' video' : ' videos')) . '">' . $ch['videos'] . icon('play') . '</span>' : '' ?>
+            <?= esc($ch['label']) ?><span class="as-chip-count<?= $filter === 'pending' && $ch['n'] > 0 ? ' as-chip-count--pending' : '' ?>" data-series-count="<?= esc($ch['key']) ?>" data-series-filter="<?= esc($filter) ?>" title="<?= esc($ch['n'] . ' ' . $filterNoun) ?>"><?= $ch['n'] ?></span><?= $ch['drive'] ? '<span class="as-chip-drive" data-series-drive-chip="' . esc($ch['key']) . '" title="Also in Google Drive" aria-label="Also in Google Drive">' . icon('drive') . '</span>' : '' ?><?= $ch['videos'] > 0 ? '<span class="as-chip-videos" data-series-videos="' . esc($ch['key']) . '" title="' . esc($ch['videos'] . ($ch['videos'] === 1 ? ' video' : ' videos')) . '" aria-label="' . esc($ch['videos'] . ($ch['videos'] === 1 ? ' video' : ' videos')) . '">' . $ch['videos'] . icon('play') . '</span>' : '' ?>
           </a>
         <?php endforeach; ?>
       </nav>
@@ -689,10 +896,11 @@ include __DIR__ . '/partials/layout-top.php';
       <?php
         $headCounts = $seriesActive ? ($seriesActive['counts'] ?? []) + ['total' => 0] : $refCounts;
         $headPending = (int)($headCounts['pending'] ?? 0);
-        $studioUploadUrl = clientUrl('studio.php', ['tab' => 'renders', 'tire' => $itemId, 'series' => $seriesActive ? (int)$seriesActive['id'] : null]);
+        // Admin "Upload": the Upload sheet on this series (the Reference view → the tire's Reference)
+        $headUpload = $seriesActive ? ['dest' => 'series', 'tire' => $itemId, 'series' => (int)$seriesActive['id']] : ['dest' => 'reference', 'tire' => $itemId];
         $headDrive = $seriesActive ? (string)($seriesActive['drive_url'] ?? '') : '';   // the series' Google Drive share link ('' = none)
         // Photos · Videos: "Approve all remaining" follows the view (photos | videos → posts type=; the plain series when all)
-        $typeNoun    = $typeEff === 'videos' ? 'video' : ($typeEff === 'photos' ? 'photo' : 'render');
+        $typeNoun    = $typeEff === 'videos' ? 'video' : ($typeEff === 'photos' ? 'photo' : 'image');
         $typePending = $typeEff !== 'all' && $typeCounts ? (int)$typeCounts[$typeEff]['pending'] : $headPending;
       ?>
       <section class="as-series-head" data-series-head data-series-id="<?= esc($seriesKey) ?>"<?= $showType ? ' data-series-type="' . esc($typeEff) . '"' : '' ?> aria-label="<?= esc($seriesActive ? $seriesActive['name'] : 'Reference images') ?>">
@@ -712,19 +920,21 @@ include __DIR__ . '/partials/layout-top.php';
             <a class="ui-btn ui-btn--sm ui-btn--tinted as-series-drive" href="<?= esc($headDrive) ?>" target="_blank" rel="noopener noreferrer"
                data-series-drive title="<?= esc('Open ' . $seriesActive['name'] . ' in Google Drive (new tab)') ?>"><?= icon('drive') ?><span>Open in Google Drive</span></a>
           <?php endif; ?>
-          <?php if ($seriesActive && $typePending > 0): // client + admin: approve every remaining pending render of this series (of the type shown) ?>
-            <button type="button" class="ui-btn ui-btn--sm ui-btn--approve ui-btn--tinted as-series-approve"
+          <?php if ($seriesActive && $typePending > 0): // client + admin: approve every remaining pending render of this series (of the type shown).
+                // The client's primary (green tint). For Joust it decides on the client's behalf — a secondary (gray) after Upload. ?>
+            <button type="button" class="ui-btn ui-btn--sm <?= $isAdmin ? 'ui-btn--gray as-series-approve--admin' : 'ui-btn--approve ui-btn--tinted' ?> as-series-approve"
                     data-action="approve_series" data-endpoint="<?= esc(basePath() . '/tire-status.php') ?>"
                     data-param-action="approve_series" data-series-id="<?= (int)$seriesActive['id'] ?>"<?= $typeEff !== 'all' ? ' data-param-type="' . esc($typeEff) . '"' : '' ?>
                     data-confirm="<?= esc('Approve all ' . $typePending . ' remaining ' . $typeNoun . ($typePending === 1 ? '' : 's') . ' in ' . $seriesActive['name'] . '?') ?>"
                     data-toast="<?= esc($seriesActive['name'] . ($typeEff !== 'all' ? ' ' . $typeNoun . 's' : '') . ' approved') ?>" data-reload><?= icon('checkmark') ?><span>Approve all remaining</span></button>
           <?php endif; ?>
           <?php if ($isAdmin): // admin-only: never rendered for clients ?>
+            <a class="ui-btn ui-btn--sm ui-btn--tinted as-series-upload" href="<?= esc(uploadSheetUrl('assets.php', $headUpload, ['view' => 'collections', 'item' => $itemId, 'series' => $seriesKey])) ?>"<?= uploadSheetAttrs($headUpload) ?> data-series-upload><?= icon('upload') ?><span>Upload</span></a>
             <div class="as-menu" data-series-menu-root>
               <button type="button" class="ui-btn ui-btn--sm ui-btn--gray as-menu-btn" data-series-menu aria-haspopup="menu" aria-expanded="false" aria-label="Series options"><?= icon('ellipsis') ?></button>
               <div class="as-menu-list" data-series-menu-list role="menu" hidden>
-                <a class="as-menu-item" role="menuitem" href="<?= esc($studioUploadUrl) ?>" data-series-upload><?= icon('plus') ?>Upload more…</a>
-                <a class="as-menu-item" role="menuitem" href="<?= esc(clientUrl('studio.php', ['tab' => 'export', 'tire' => $itemId, 'series' => $seriesActive ? (int)$seriesActive['id'] : null])) ?>" data-series-export title="Studio → Export with this tire preselected"><?= icon('download') ?>Export approved…</a>
+                <button type="button" class="as-menu-item" role="menuitem" data-series-manage><?= icon('checklist') ?>Manage series…</button>
+                <a class="as-menu-item" role="menuitem" href="<?= esc(manageUrl('export', ['tire' => $itemId, 'series' => $seriesActive ? (int)$seriesActive['id'] : null])) ?>" data-series-export title="Manage → Export with this tire preselected"><?= icon('download') ?>Export approved…</a>
                 <?php if ($seriesActive): ?>
                   <button type="button" class="as-menu-item" role="menuitem" data-series-rename><?= icon('wand') ?>Rename series…</button>
                   <button type="button" class="as-menu-item" role="menuitem" data-series-drive-edit><?= icon('drive') ?><?= $headDrive !== '' ? 'Edit Google Drive link…' : 'Add Google Drive link…' ?></button>
@@ -736,7 +946,9 @@ include __DIR__ . '/partials/layout-top.php';
         </div>
       </section>
     <?php elseif ($seriesOn && $isAdmin): ?>
-      <p class="as-series-hint text-secondary" data-series-hint>No series yet — <a href="<?= esc(clientUrl('studio.php', ['tab' => 'renders', 'tire' => $itemId])) ?>">upload renders in Studio</a> or drop a folder into <code><?= esc(function_exists('tireFolderRel') ? tireFolderRel($client, $collection) . '/' : 'media/tires/<tire>/') ?></code>.</p>
+      <?php $hintUpload = ['dest' => 'series', 'tire' => $itemId, 'series' => 'new']; ?>
+      <p class="as-series-hint text-secondary" data-series-hint>No series yet — <a href="<?= esc(uploadSheetUrl('assets.php', $hintUpload, ['view' => 'collections', 'item' => $itemId])) ?>"<?= uploadSheetAttrs($hintUpload) ?>>upload images</a> or drop a folder into <code><?= esc(function_exists('tireFolderRel') ? tireFolderRel($client, $collection) . '/' : 'media/tires/<tire>/') ?></code>.
+        <button type="button" class="ui-btn ui-btn--sm ui-btn--gray" data-series-manage>Manage series</button></p>
     <?php endif; ?>
   <?php endif; ?>
 
@@ -773,7 +985,15 @@ include __DIR__ . '/partials/layout-top.php';
 <?php if ($isGrid && $items): ?>
   <div class="as-selectbar ui-glass ui-glass--top" data-assets-selectbar hidden>
     <span class="as-selectbar-count" data-select-count>0 selected</span>
-    <button type="button" class="ui-btn ui-btn--approve" data-select-approve disabled><?= icon('checkmark') ?>Approve</button>
+    <div class="as-selectbar-actions">
+      <button type="button" class="ui-btn ui-btn--approve" data-select-approve disabled><?= icon('checkmark') ?>Approve</button>
+      <?php if ($isAdmin): // approved selection → the New post pop-up (newpost.js), a zip, a manifest CSV (export.php scope=selection); never rendered for clients
+        $selExport = basePath() . '/export.php?client=' . rawurlencode($client['slug']); ?>
+        <button type="button" class="ui-btn ui-btn--filled" data-select-post disabled>Create post</button>
+        <button type="button" class="ui-btn ui-btn--gray" data-select-download data-endpoint="<?= esc($selExport) ?>" data-zip="<?= exportZipSupported() ? '1' : '0' ?>" disabled title="A zip of the selected approved files"><?= icon('download') ?><span>Download</span></button>
+        <button type="button" class="ui-btn ui-btn--gray" data-select-export data-endpoint="<?= esc($selExport) ?>" disabled title="A spreadsheet (CSV) of the selected approved files: tire, series, file name, approval date, comments, Drive link">Export</button>
+      <?php endif; ?>
+    </div>
   </div>
 <?php endif; ?>
 
@@ -796,7 +1016,7 @@ if ($isAdmin && $seriesOn && $seriesActive):
         <label class="studio-label as-series-label" for="seriesRenameDrive">Google Drive link <span class="text-tertiary">(optional)</span></label>
         <input class="ui-input" type="url" id="seriesRenameDrive" name="drive_url" maxlength="512" inputmode="url" autocomplete="off" spellcheck="false"
                placeholder="https://drive.google.com/drive/folders/…" value="<?= esc((string)($seriesActive['drive_url'] ?? '')) ?>" data-series-drive-input>
-        <p class="as-series-help text-secondary" data-series-drive-help>Paste the share link of the folder that holds these renders — the client gets an “Open in Google Drive” button on this series. Leave blank to remove it.</p>
+        <p class="as-series-help text-secondary" data-series-drive-help>Paste the share link of the folder that holds these images — the client gets an “Open in Google Drive” button on this series. Leave blank to remove it.</p>
       <?php endif; ?>
       <div class="as-series-form-actions"><button type="button" class="ui-btn ui-btn--gray" data-sheet-close>Cancel</button><button type="submit" class="ui-btn ui-btn--filled" data-series-form-submit>Save</button></div>
     </form>
@@ -862,5 +1082,59 @@ $assetsConfig = [
 $footExtra = '<script>window.AssetsPage = ' . json_encode($assetsConfig, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_UNESCAPED_SLASHES) . ';</script>' . "\n"
            . ($isAdmin ? '<script src="' . esc(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n" : '')   // App.chunkUpload for the viewer's Replace (admin only)
            . '<script src="' . esc(staticUrl('js/assets.js')) . '" defer></script>' . "\n";
+// Admin: Manage series (static/js/series-manage.js) — its own sheet, on every open tire once series exist (migrate.php).
+if ($isAdmin && $seriesOn && $collection) {
+    $smFolder  = function_exists('tireFolderRel') ? (string)tireFolderRel($client, $collection) : 'media/tires/' . safeFilenameStem((string)$collection['name']);
+    $smDriveOn = function_exists('tireSeriesHasDriveUrl') && tireSeriesHasDriveUrl($pdo);   // migrate.php 29
+    $smConfig  = [
+        'tire'      => ['id' => $itemId, 'name' => (string)$collection['name'], 'folder' => $smFolder],
+        'series'    => array_map(static function ($sr) {
+            return ['id' => (int)$sr['id'], 'name' => (string)$sr['name'], 'slug' => (string)($sr['slug'] ?? ''), 'folder' => (string)($sr['folder'] ?? ''),
+                    'drive_url' => !empty($sr['drive_url']) ? (string)$sr['drive_url'] : null,
+                    'counts' => ['pending' => (int)($sr['counts']['pending'] ?? 0), 'approved' => (int)($sr['counts']['approved'] ?? 0),
+                                 'denied' => (int)($sr['counts']['denied'] ?? 0), 'total' => (int)($sr['counts']['total'] ?? 0)]];
+        }, $seriesList),
+        'status'    => basePath() . '/tire-status.php',     // series_create / series_rename / series_drive / series_reorder / series_delete / rescan
+        'repair'    => basePath() . '/tire-upload.php?client=' . rawurlencode($slug),   // action=repair_media
+        'driveOn'   => $smDriveOn,
+        'seriesUrl' => clientUrl('assets.php', ['view' => 'collections', 'item' => $itemId, 'series' => '__SERIES__']),
+        'open'      => ($_GET['manage'] ?? '') === 'series',
+    ];
+    $footExtra .= '<script>window.SeriesManageConfig = ' . json_encode($smConfig, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_UNESCAPED_SLASHES) . ';</script>' . "\n"
+                . '<script src="' . esc(staticUrl('js/series-manage.js')) . '" defer></script>' . "\n";
+    ob_start(); ?>
+    <div class="sm" data-series-manager>
+      <p class="sm-intro text-secondary">What <?= esc($client['name']) ?> sees under <?= esc($collection['name']) ?>: rename, reorder or remove a series<?= $smDriveOn ? ', and paste a Google Drive share link to give the client an “Open in Google Drive” button on it' : '' ?>.</p>
+      <h3 class="as-series-label">Series · <span data-sm-count><?= count($seriesList) ?> series</span></h3>
+      <ul class="sm-list" data-sm-list role="list"></ul>
+      <p class="text-secondary sm-empty" data-sm-empty<?= $seriesList ? ' hidden' : '' ?>>No series yet — add one below, upload images, or drop a folder by FTP and rescan.</p>
+      <form class="sm-add" data-sm-add novalidate>
+        <h3 class="as-series-label">Add a series</h3>
+        <label class="ui-visually-hidden" for="smNewName">New series name</label>
+        <input class="ui-input" type="text" id="smNewName" maxlength="80" placeholder="e.g. Series 3" data-sm-new-name required>
+        <?php if ($smDriveOn): ?>
+          <label class="ui-visually-hidden" for="smNewDrive">Google Drive link (optional)</label>
+          <input class="ui-input" type="url" id="smNewDrive" maxlength="512" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Google Drive link (optional)" data-sm-new-drive>
+        <?php endif; ?>
+        <button type="submit" class="ui-btn ui-btn--tinted">Add series</button>
+      </form>
+      <div class="sm-ftp">
+        <h3 class="as-series-label">FTP folder</h3>
+        <p class="sm-folder"><code data-sm-folder><?= esc($smFolder) ?>/</code> <button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-sm-copy title="Copy the folder path">Copy</button></p>
+        <p class="text-secondary sm-help">Drop a sub-folder per series (<code>…/Series 3/</code>), then rescan: new folders become series, new files land as “To Review”.</p>
+        <div class="sm-actions">
+          <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-sm-rescan>Rescan folders</button>
+          <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-sm-repair title="Rewrite the media/tires/ server rules (.htaccess) and make every image readable by the web server (0644 / 0755)">Repair server rules</button>
+        </div>
+      </div>
+    </div>
+    <?php
+    $sheetId    = 'seriesManageSheet';
+    $sheetTitle = 'Manage series · ' . (string)$collection['name'];
+    $sheetBody  = (string)ob_get_clean();
+    ob_start();
+    include __DIR__ . '/partials/sheet.php';   // after </main> (layout-bottom prints $footExtra there), like #uiSheet
+    $footExtra = (string)ob_get_clean() . $footExtra;
+}
 $includeSheet = $isAdmin && $seriesOn && $seriesActive !== null;   // only the admin's Rename / Delete series forms use the generic sheet
 include __DIR__ . '/partials/layout-bottom.php';

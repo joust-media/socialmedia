@@ -2,7 +2,7 @@
 /**
  * Status / comment / date / caption update endpoint.
  * Accepts POST: id (int), and optionally:
- *   - status (pending|approved|denied)
+ *   - status (pending|approved|denied; admin also draft — "move back to drafts", once migrate.php step 35 ran)
  *   - comment (string, max 2000 chars; '' clears it)
  *   - scheduled_date (datetime string, parseable by strtotime)
  *   - caption (string, max 10000 chars)
@@ -12,6 +12,13 @@
  * Role: status + comment are open; caption + hashtags are open to the client seat
  * for its own company's posts while the post is not yet Scheduled (posted = 1 → 409);
  * scheduled_date / post_type / toggle_posted / delete_post need the admin session (403).
+ *
+ * Drafts (posts.status = 'draft'): Joust's work in progress. The client seat can never read or
+ * touch one (every request on a draft answers 404 "Post not found", as if it did not exist).
+ * The admin edits it freely; approve / deny on a draft is refused (409) — it goes to the client
+ * first with:
+ *   action=submit, id   draft → pending ("Send for review"); 422 "Add a caption first" when the
+ *                       caption is empty; 409 when the post is not a draft. Logs 'submitted'.
  * Returns JSON.
  */
 
@@ -37,7 +44,7 @@ $action = $_POST['action'] ?? '';
 // admin session (auth.php via helpers.php).
 $isAdminSession = function_exists('currentAdmin') && currentAdmin() !== null;
 $adminOnlyFields = ['scheduled_date', 'post_type'];
-$needsAdmin = in_array($action, ['toggle_posted', 'delete_post'], true);
+$needsAdmin = in_array($action, ['toggle_posted', 'delete_post', 'submit'], true);
 foreach ($adminOnlyFields as $f) {
     if (array_key_exists($f, $_POST)) { $needsAdmin = true; }
 }
@@ -115,6 +122,52 @@ if ($action === 'toggle_posted') {
     exit;
 }
 
+// ---- Send a draft for review (draft → pending) ----
+if ($action === 'submit') {
+    $postId = (int)($_POST['id'] ?? 0);
+    if ($postId <= 0) {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'Invalid id']);
+        exit;
+    }
+    try {
+        $pdo->beginTransaction();
+        $nameSel = hasPostsNameColumn($pdo) ? 'name' : "'' AS name";
+        $st = $pdo->prepare("SELECT company_id, status, caption, {$nameSel} FROM posts WHERE id = ? FOR UPDATE");
+        $st->execute([$postId]);
+        $row = $st->fetch();
+        if (!$row) {
+            $pdo->rollBack();
+            http_response_code(404);
+            echo json_encode(['ok' => false, 'error' => 'Post not found']);
+            exit;
+        }
+        if ($row['status'] !== 'draft') {
+            $pdo->rollBack();
+            http_response_code(409);
+            echo json_encode(['ok' => false, 'error' => 'Only a draft can be sent for review', 'status' => $row['status']]);
+            exit;
+        }
+        if (trim((string)$row['caption']) === '') {
+            $pdo->rollBack();
+            http_response_code(422);
+            echo json_encode(['ok' => false, 'error' => 'Add a caption first', 'field' => 'caption']);
+            exit;
+        }
+        $pdo->prepare("UPDATE posts SET status = 'pending' WHERE id = ?")->execute([$postId]);
+        $label = postDisplayLabel(['name' => $row['name'] ?? '', 'caption' => $row['caption'] ?? '', 'id' => $postId]);
+        logActivity($pdo, (int)$row['company_id'], 'post', $postId, 'submitted', 'admin',
+            "{$label} sent for review");
+        $pdo->commit();
+        echo json_encode(['ok' => true, 'id' => $postId, 'status' => 'pending']);
+    } catch (Exception $e) {
+        if ($pdo->inTransaction()) { $pdo->rollBack(); }
+        http_response_code(500);
+        echo json_encode(['ok' => false, 'error' => 'Update failed']);
+    }
+    exit;
+}
+
 // ---- Delete entire post ----
 if ($action === 'delete_post') {
     $postId = (int)($_POST['id'] ?? 0);
@@ -134,7 +187,7 @@ if ($action === 'delete_post') {
         $imgs->execute([$postId]);
         foreach ($imgs->fetchAll() as $row) {
             $path = uploadsPathOrNull((string)$row['image_url']);   // realpath-contained in uploads/
-            if ($path !== null) { @unlink($path); }
+            if ($path !== null) { if (function_exists('previewDelete')) previewDelete($path); @unlink($path); }
         }
         // CASCADE deletes post_images and post_categories
         $pdo->prepare("DELETE FROM posts WHERE id = ?")->execute([$postId]);
@@ -177,7 +230,9 @@ if (!$hasStat && !$hasCmt && !$hasDate && !$hasCap && !$hasTag && !$hasType) {
     echo json_encode(['ok' => false, 'error' => 'Nothing to update']);
     exit;
 }
-if ($hasStat && !in_array($status, ['pending', 'approved', 'denied'], true)) {
+$allowedStatuses = ['pending', 'approved', 'denied'];
+if ($isAdminSession && postsHaveDraft($pdo)) { $allowedStatuses[] = 'draft'; }   // "Move back to drafts" is Joust's
+if ($hasStat && !in_array($status, $allowedStatuses, true)) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'Invalid status']);
     exit;
@@ -267,6 +322,35 @@ try {
         echo json_encode(['ok' => false, 'error' => 'Post not found']);
         exit;
     }
+    // Drafts do not exist for the client seat (same answer as a missing post — nothing leaks).
+    if (!$isAdminSession && $prev['status'] === 'draft') {
+        $pdo->rollBack();
+        http_response_code(404);
+        echo json_encode(['ok' => false, 'error' => 'Post not found']);
+        exit;
+    }
+    // A draft goes to the client before anyone decides on it: Send for review (action=submit) first.
+    if ($hasStat && $prev['status'] === 'draft' && in_array($status, ['approved', 'denied'], true)) {
+        $pdo->rollBack();
+        http_response_code(409);
+        echo json_encode(['ok' => false, 'error' => 'Send this draft for review first']);
+        exit;
+    }
+    // draft → pending through the generic path follows the Send for review rule: a caption first.
+    if ($hasStat && $status === 'pending' && $prev['status'] === 'draft'
+        && trim((string)($hasCap ? $caption : $prev['caption'])) === '') {
+        $pdo->rollBack();
+        http_response_code(422);
+        echo json_encode(['ok' => false, 'error' => 'Add a caption first', 'field' => 'caption']);
+        exit;
+    }
+    // Back to drafts only while it is not Scheduled (the client may already expect it).
+    if ($hasStat && $status === 'draft' && !empty($prev['posted'])) {
+        $pdo->rollBack();
+        http_response_code(409);
+        echo json_encode(['ok' => false, 'error' => 'Unmark scheduled first']);
+        exit;
+    }
     // Tenant scope: a client seat may only act on its own company's posts (admin bypasses).
     if (!clientOwnsCompany($pdo, (int)$prev['company_id'])) {
         $pdo->rollBack();
@@ -318,7 +402,8 @@ try {
     if ($hasStat && $prev['status'] !== $status) {
         $action = ($status === 'approved') ? 'approved'
                 : (($status === 'denied')  ? 'denied'
-                : 'reset_pending');
+                : (($status === 'draft')   ? 'moved_to_draft'
+                : ($prev['status'] === 'draft' ? 'submitted' : 'reset_pending')));
         logActivity($pdo, $companyId, 'post', $id, $action, $actor,
             "{$postLabel} " . actionLabel($action),
             null, $batchId);

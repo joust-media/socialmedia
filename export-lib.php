@@ -1,9 +1,11 @@
 <?php
 /**
- * Approved-asset export (Studio → Export) — the helpers export.php and studio.php share.
+ * Approved-asset export (Manage → Export) — the helpers export.php and manage.php share.
  *
  * The admin picks a scope (everything approved for the client, one tire, or one series) and
- * what to include (photos, videos, reference images, library images) and gets ONE zip:
+ * what to include (photos, videos, reference images, library images) and gets ONE zip — or, from the
+ * Assets select bar, scope=selection with items=tire:<id>,library:<id>,… (exactly those approved files,
+ * same folder layout; "Download" builds the zip, "Export" is the manifest CSV):
  *
  *   <Client Name>/
  *     manifest.csv / manifest.json
@@ -261,10 +263,25 @@ if (!function_exists('exportZipSupported')) {
 }
 
 if (!function_exists('exportOptions')) {
-    /** Normalise the posted form: scope all|tire|series, tire_id, series_id, photos, videos, reference, library (bools). */
+    /** Normalise the posted form: scope all|tire|series|selection, tire_id, series_id, photos, videos, reference, library (bools);
+     *  selection: items = "tire:12,library:4" (or an array of those) → ['tire' => [ids], 'library' => [ids]], every type included. */
     function exportOptions(array $raw): array {
         $scope = strtolower(trim((string)($raw['scope'] ?? 'all')));
-        if (!in_array($scope, ['all', 'tire', 'series'], true)) $scope = 'all';
+        if (!in_array($scope, ['all', 'tire', 'series', 'selection'], true)) $scope = 'all';
+        if ($scope === 'selection') {
+            $items = ['tire' => [], 'library' => []];
+            $list = $raw['items'] ?? [];
+            if (isset($list['tire']) || isset($list['library'])) {   // already normalised (a stored job's options)
+                foreach (['tire', 'library'] as $k) { foreach ((array)($list[$k] ?? []) as $id) { if ((int)$id > 0) $items[$k][(int)$id] = (int)$id; } }
+            } else {
+                foreach (is_array($list) ? $list : preg_split('/[\s,]+/', (string)$list) as $ref) {
+                    if (preg_match('/^(tire|library):(\d+)$/', trim((string)$ref), $m) && (int)$m[2] > 0) $items[$m[1]][(int)$m[2]] = (int)$m[2];
+                }
+            }
+            $items = ['tire' => array_slice(array_values($items['tire']), 0, 1000), 'library' => array_slice(array_values($items['library']), 0, 1000)];
+            return ['scope' => 'selection', 'tire_id' => 0, 'series_id' => 0, 'photos' => true, 'videos' => true, 'reference' => true,
+                    'library' => count($items['library']) > 0, 'items' => $items];
+        }
         $flag = static function ($v, bool $default): bool {
             if ($v === null) return $default;
             if (is_bool($v)) return $v;
@@ -291,6 +308,10 @@ if (!function_exists('exportOptionsLabel')) {
     /** "Klever R/T · Series 2 · photos + videos" — what the Recent exports list shows. */
     function exportOptionsLabel(array $opts, array $ctx = []): string {
         $parts = [];
+        if ($opts['scope'] === 'selection') {
+            $n = count($opts['items']['tire'] ?? []) + count($opts['items']['library'] ?? []);
+            return 'Selected in Assets · ' . $n . ($n === 1 ? ' file' : ' files');
+        }
         if ($opts['scope'] === 'all') $parts[] = 'All approved';
         else {
             $parts[] = (string)($ctx['tire_name'] ?? ('Tire #' . (int)$opts['tire_id']));
@@ -312,6 +333,7 @@ if (!function_exists('exportZipFilename')) {
         $slug = preg_replace('/[^a-z0-9-]+/', '-', strtolower((string)($client['slug'] ?? 'client')));
         $slug = trim((string)$slug, '-') ?: 'client';
         $mid = '';
+        if (($opts['scope'] ?? 'all') === 'selection') return $slug . '-selected-assets-' . date('Y-m-d') . '.zip';
         if (($opts['scope'] ?? 'all') !== 'all' && isset($ctx['tire_name'])) {
             $mid = '-' . trim(preg_replace('/[^a-z0-9]+/', '-', strtolower((string)$ctx['tire_name'])), '-');
             if (($opts['scope'] ?? '') === 'series' && isset($ctx['series_name'])) $mid .= '-' . trim(preg_replace('/[^a-z0-9]+/', '-', strtolower((string)$ctx['series_name'])), '-');
@@ -385,13 +407,15 @@ if (!function_exists('exportEnumerate')) {
             $usedTireFolders[strtolower($folder)] = true;
             $tireFolders[$tid] = $folder;
         }
-        if ($opts['scope'] !== 'all') {
+        $sel = $opts['scope'] === 'selection';
+        if ($sel && !$opts['items']['tire'] && !$opts['items']['library']) throw new InvalidArgumentException('Select approved files first');
+        if ($opts['scope'] === 'tire' || $opts['scope'] === 'series') {
             if (!isset($tires[$opts['tire_id']])) throw new InvalidArgumentException('That tire does not belong to ' . (string)($client['name'] ?? 'this client'));
             $res['tire_name'] = $tires[$opts['tire_id']]['name'];
         }
 
         $seriesOn = function_exists('hasTireSeries') && hasTireSeries($pdo);
-        if ($opts['scope'] === 'series' && !$seriesOn) throw new InvalidArgumentException('Render series are not set up yet — run migrate.php.');
+        if ($opts['scope'] === 'series' && !$seriesOn) throw new InvalidArgumentException('Tire series are not set up yet — run migrate.php.');
 
         // Series per tire: name, folder, drive_url (one lib call per tire that has approved rows — resolved lazily).
         $seriesByTire = [];
@@ -419,18 +443,25 @@ if (!function_exists('exportEnumerate')) {
         // Approved tire rows, scoped through the tires JOIN. Order = the zip order.
         $sql = "SELECT ti.*, t.name AS tire_name FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id WHERE t.company_id = ? AND ti.status = 'approved'";
         $params = [$cid];
-        if ($opts['scope'] !== 'all') { $sql .= " AND ti.tire_id = ?"; $params[] = $opts['tire_id']; }
+        if ($opts['scope'] === 'tire' || $opts['scope'] === 'series') { $sql .= " AND ti.tire_id = ?"; $params[] = $opts['tire_id']; }
         if ($opts['scope'] === 'series') { $sql .= " AND ti.series_id = ?"; $params[] = $opts['series_id']; }
+        if ($sel) { $ids = $opts['items']['tire'] ?: [0]; $sql .= " AND ti.id IN (" . implode(',', array_fill(0, count($ids), '?')) . ")"; $params = array_merge($params, $ids); }
         $sql .= " ORDER BY t.name ASC, t.id ASC, ti.sort_order ASC, ti.id ASC";
-        $st = $pdo->prepare($sql);
-        $st->execute($params);
-        $rows = (array)$st->fetchAll();
+        $rows = [];
+        if (!$sel || $opts['items']['tire']) {
+            $st = $pdo->prepare($sql);
+            $st->execute($params);
+            $rows = (array)$st->fetchAll();
+        }
 
-        // Library rows (scope all only).
+        // Library rows (scope all, or the selected ones).
         $libRows = [];
         if ($opts['library'] && function_exists('hasLibraryImagesTable') && hasLibraryImagesTable($pdo)) {
-            $st = $pdo->prepare("SELECT id, filename, status, created_at, updated_at FROM library_images WHERE company_id = ? AND status = 'approved' ORDER BY filename ASC");
-            $st->execute([$cid]);
+            $libSql = "SELECT id, filename, status, created_at, updated_at FROM library_images WHERE company_id = ? AND status = 'approved'";
+            $libParams = [$cid];
+            if ($sel) { $libSql .= " AND id IN (" . implode(',', array_fill(0, count($opts['items']['library']), '?')) . ")"; $libParams = array_merge($libParams, $opts['items']['library']); }
+            $st = $pdo->prepare($libSql . " ORDER BY filename ASC");
+            $st->execute($libParams);
             $libRows = (array)$st->fetchAll();
         }
 
@@ -523,6 +554,11 @@ if (!function_exists('exportEnumerate')) {
             $res['bytes'] += $bytes;
             if ($isV) { $res['video_bytes'] += $bytes; $res['counts']['videos']++; } else { $res['counts']['photos']++; }
             $res['counts']['library']++;
+        }
+        if ($sel) {
+            $want = count($opts['items']['tire']) + count($opts['items']['library']);
+            $left = $want - count($res['files']) - $res['counts']['missing'];
+            if ($left > 0) $res['warnings'][] = $left . ' selected file' . ($left === 1 ? ' is' : 's are') . ' not approved (or not this client\'s) and will be left out';
         }
         if ($res['counts']['missing'] > 0) $res['warnings'][] = $res['counts']['missing'] . ' approved file' . ($res['counts']['missing'] === 1 ? ' is' : 's are') . ' missing on disk and will be left out';
         if ($res['bytes'] > EXPORT_MAX_BYTES) $res['warnings'][] = 'Over the ' . exportFormatBytes(EXPORT_MAX_BYTES) . ' limit for one export — export one tire (or one series) at a time';

@@ -165,10 +165,8 @@
     if (item) item.textContent = n;
     if (seg === E.segment) { var hdr = $('[data-segment-count]'); if (hdr) hdr.textContent = n; }
     if (E.segment === 'all') { var h2 = $('[data-segment-count]'); if (h2) h2.textContent = E.counts.all; }
-    if (seg === 'pending') {
-      var badge = $('.ui-tab--emails .ui-badge');
-      if (badge) { badge.textContent = n > 99 ? '99+' : n; badge.hidden = n === 0; }
-    }
+    // The tab badge counts the viewer's own queue (client: To Review · admin: Needs changes)
+    if (seg === App.queueStatus() && App.bumpTabBadge) App.bumpTabBadge('emails', delta);
   }
   function maybeEmpty() {
     var list = $('[data-emails-items]');
@@ -304,6 +302,16 @@
     fitPreview(root);
   }
 
+  /* "Kenda Tires asked for changes · just now" + the note, after an in-place Needs changes (admin ⋯). */
+  function fillNote(art, text, actor) {
+    var root = art.closest('.ui-sheet-root') || document;
+    var box = $('[data-pd-note]', root); if (!box) return;
+    var who = actor === 'client' ? (cfg.clientName || 'The client') : 'Joust';
+    var w = $('[data-pd-note-who]', box); if (w) w.textContent = who + ' asked for changes';
+    var when = $('[data-pd-note-when]', box); if (when) when.textContent = ' · just now';
+    var p = $('[data-pd-note-text]', box); if (p) p.textContent = text;
+  }
+
   /* ---- state sync (which footer rows show) ------------------------- */
   function syncState(root) {
     var art = ed(root); if (!art) return;
@@ -317,7 +325,15 @@
       'live':           live,
       'denied':         key === 'denied',
       'draft':          key === 'draft',
-      'admin-status':   !live,
+      'admin-pending':  key === 'pending',
+      'admin-waiting':  key === 'pending',
+      'note':           key === 'denied',
+      // ⋯ "For the client" (admin): the client's decisions, on purpose only — no direct status override
+      'menu-decide':    !live && status !== 'draft',
+      'menu-approve':   !live && (status === 'pending' || status === 'denied'),
+      'menu-deny':      !live && (status === 'pending' || status === 'approved'),
+      'menu-draft':     !live && status !== 'draft',
+      'menu-edit':      live,   // ⋯ Edit …: only when the footer has no Edit (Unmark live only)
       'admin-draft':    key === 'draft',
       'admin-approved': key === 'approved',
       'admin-denied':   key === 'denied',
@@ -429,12 +445,13 @@
             if (line) line.textContent = 'Approved ' + fmtDay(new Date()) + ' · Joust will make it live';
           }
           if (note) appendComment(art, note, App.actor);
+          if (note && status === 'denied') fillNote(art, note, App.actor);
           var form = $('[data-deny-form]', sheetRoot()); if (form) { form.hidden = true; var ta = $('[data-deny-note]', form); if (ta) ta.value = ''; }
         }
         if (opts.toast) toast(opts.toast, 'success');
         else if (status === 'approved') toast('Approved', 'success');
         else if (status === 'denied') toast(App.role === 'admin' ? 'Marked as needs changes' : 'Sent to Joust', 'success');
-        else if (status === 'pending') toast(before.status === 'draft' ? 'Sent for review' : 'Back in To Review');
+        else if (status === 'pending') toast(before.status === 'draft' ? 'Sent for review' : 'Sent for review — back in To Review', 'success');
         else toast('Moved to Draft');
         if (status === 'denied' && App.role !== 'admin' && E.current && E.current.id === id) setTimeout(E.close, 700);
       }
@@ -450,7 +467,7 @@
     var btns = item ? $$('[data-resubmit]', item) : [];
     btns.forEach(function (b) { b.disabled = true; });
     if (E.current && E.current.id === id && E.segment === 'denied') E.close();
-    return E.decide(id, 'pending', null, { toast: 'Resubmitted — back in To Review' }).then(function (res) {
+    return E.decide(id, 'pending', null, { toast: 'Sent for review — back in To Review' }).then(function (res) {
       if (!res || !res.ok) btns.forEach(function (b) { b.disabled = false; });
       return res;
     });
@@ -502,8 +519,8 @@
   function appendComment(art, text, actor) {
     var root = art.closest('.ui-sheet-root') || document;
     var thread = $('[data-thread]', root); if (!thread) return;
-    var side = actor === 'client' ? 'client' : 'joust';
-    var who  = actor === 'client' ? 'You' : (actor === 'admin' ? 'Joust' : 'Note');
+    var bw = App.bubbleWho ? App.bubbleWho(actor) : { side: 'mine', who: 'You' };   // drawn from the viewer's seat
+    var side = bw.side, who = escapeHtml(bw.who);
     var msg = document.createElement('div');
     msg.className = 'pd-msg pd-msg--' + side + ' ui-enter';
     msg.setAttribute('data-actor', actor);
@@ -515,7 +532,7 @@
     thread.setAttribute('data-count', n);
     var c = $('[data-comment-count]', root); if (c) c.textContent = n;
     var id = art.getAttribute('data-id');
-    var lc = $('[data-comment-count-for="' + id + '"]'); if (lc) lc.textContent = n + (n === 1 ? ' comment' : ' comments');
+    var lc = $('[data-comment-count-for="' + id + '"]'); if (lc) { lc.textContent = n + (n === 1 ? ' comment' : ' comments'); if (lc.parentNode && lc.parentNode.hidden) lc.parentNode.hidden = false; }
     if (actor === 'client') {
       var qc = $('[data-queue-count="' + id + '"]');
       if (qc) { var k = (parseInt((qc.textContent.match(/\d+/) || ['0'])[0], 10) || 0) + 1; qc.textContent = k + ' client ' + (k === 1 ? 'comment' : 'comments'); }
@@ -585,7 +602,7 @@
       E.open(opener.getAttribute('data-email-open'));
     });
 
-    // work queue: Resubmit for review (admin-only markup; email-status.php enforces the role)
+    // work queue: Send for review (admin-only markup; email-status.php enforces the role)
     document.addEventListener('click', function (e) {
       var btn = e.target.closest('[data-resubmit]');
       if (!btn || btn.disabled) return;
@@ -609,6 +626,17 @@
         if (st === 'denied') openDeny(root); else E.decide(id, st);
         return;
       }
+      if (t.closest('[data-approve-for-client]')) {
+        var who = cfg.clientName || 'the client';
+        // The in-sheet confirm (the Needs changes… note's place), not the browser's confirm()
+        App.confirmInline($('[data-deny-form]', root), {
+          name: 'approve', kind: 'approve', title: 'Approve this email for ' + who + '?',
+          text: 'Only do this when ' + who + ' has approved it outside the portal — they won’t be asked.',
+          ok: 'Approve for ' + who
+        }).then(function (ok) { if (ok) E.decide(id, 'approved', null, { toast: 'Approved for ' + who }); });
+        return;
+      }
+      if (t.closest('[data-set-draft]')) { E.decide(id, 'draft', null, { toast: 'Moved to Draft — the client can\'t see it now' }); return; }
       var setSt = t.closest('[data-set-status]');
       if (setSt) {
         var to = setSt.getAttribute('data-set-status');
@@ -617,7 +645,7 @@
         return;
       }
       if (t.closest('[data-deny-cancel]')) { var f = $('[data-deny-form]', root); if (f) f.hidden = true; return; }
-      if (t.closest('[data-resubmit-detail]')) { E.decide(id, 'pending', null, { toast: 'Resubmitted — back in To Review' }); return; }
+      if (t.closest('[data-resubmit-detail]')) { E.decide(id, 'pending', null, { toast: 'Sent for review — back in To Review' }); return; }
       if (t.closest('[data-submit]')) { E.submit(id); return; }
 
       var tl = t.closest('[data-toggle-live]');

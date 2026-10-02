@@ -9,11 +9,18 @@
    App.posts.open(id, {deny})     open the post detail sheet (inline template or partial fetch)
    App.posts.close()
    App.posts.decide(id, status, note, {toast})   optimistic approve / deny (+ required note) / reset
-   App.posts.resubmit(id)         admin work queue: denied → pending (status.php status=pending), row leaves the queue
+   App.posts.resubmit(id)         admin work queue: denied → pending ("Send for review", status.php status=pending), row leaves the queue
+   App.posts.refresh(id)          after a save elsewhere (the New post pop-up: create / edit / draft / send for review): fetch the
+                                  row as the server renders it now (posts.php &partial=row) and swap it in, insert it, or let it
+                                  leave this segment; the segment counts follow. → Promise {segment, month, inView}
+   App.posts.submit(id)           admin: draft → pending ("Send for review", status.php action=submit; 422 → "Add a caption first"
+                                  and the caption editor opens when the sheet shows that post)
    App.posts.comment(id, text)
    App.posts.togglePosted(id, to) (admin)   App.posts.remove(id) (admin)
    App.posts.videoFallback(root)  swaps a non-playable <video> for the "Open / Download" card
-   Events: 'posts:decided' {id, status, ok}, 'posts:open' {id}, 'posts:close' {id}
+   App.posts.approveForClient(id) admin ⋯ "Approve for client…": asks first, then approves on the client's behalf
+   Events: 'posts:decided' {id, status, ok}, 'posts:submitted' {id, ok}, 'posts:open' {id}, 'posts:close' {id},
+           'posts:refreshed' {id, segment, inView}
    ===================================================================== */
 (function (window, document) {
   'use strict';
@@ -25,7 +32,7 @@
 
   var ENDPOINT = cfg.endpoint || 'status.php';
   var DESKTOP  = window.matchMedia ? window.matchMedia('(min-width: 1024px)') : { matches: false };
-  var LABELS   = { pending: 'To Review', approved: 'Approved', denied: 'Needs changes', scheduled: 'Scheduled' };
+  var LABELS   = { draft: 'Draft', pending: 'To Review', approved: 'Approved', denied: 'Needs changes', scheduled: 'Scheduled' };
 
   function toast(msg, kind) { if (App.toast) App.toast(msg, { kind: kind }); }
   function segmentOf(status, posted) { return posted ? 'scheduled' : status; }
@@ -168,13 +175,10 @@
     var n = P.counts[seg];
     var item = $('.ui-segmented-item[data-segment="' + seg + '"] .ui-segmented-count');
     if (item) item.textContent = n;
-    if (seg === P.segment) {
-      var hdr = $('[data-segment-count]'); if (hdr) hdr.textContent = n;
-      var badge = $('.ui-tab--posts .ui-badge');
-      if (seg === 'pending' && badge) { badge.textContent = n > 99 ? '99+' : n; badge.hidden = n === 0; }
-    } else if (seg === 'pending') {
-      var b = $('.ui-tab--posts .ui-badge'); if (b) { b.textContent = n > 99 ? '99+' : n; b.hidden = n === 0; }
-    }
+    if (seg === P.segment) { var hdr = $('[data-segment-count]'); if (hdr) hdr.textContent = n; }
+    // The tab badge counts the viewer's own queue (client: To Review · admin: Needs changes) over every month,
+    // so it moves by delta rather than copying the (month-scoped) segment count.
+    if (seg === App.queueStatus() && App.bumpTabBadge) App.bumpTabBadge('posts', delta);
   }
   function maybeEmpty() {
     var list = $('[data-posts-items]');
@@ -187,7 +191,8 @@
       empty.className = 'ui-empty posts-empty ui-enter';
       empty.setAttribute('data-posts-empty', '');
       empty.textContent = P.segment === 'pending' ? 'All caught up — nothing left to review.'
-                        : (P.segment === 'denied' ? 'Nothing needs changes — the queue is clear.' : 'Nothing here.');
+                        : (P.segment === 'denied' ? 'Nothing needs changes — the queue is clear.'
+                        : (P.segment === 'draft' ? 'No drafts left.' : 'Nothing here.'));
       group.parentNode.insertBefore(empty, group);
     }
     empty.hidden = false;
@@ -199,7 +204,7 @@
     if (tpl) return Promise.resolve(tpl.innerHTML);
     if (!cfg.partialUrl) return Promise.reject(new Error('No detail available'));
     return fetch(cfg.partialUrl.replace('__ID__', encodeURIComponent(id)), { credentials: 'same-origin', headers: { 'Accept': 'text/html' } })
-      .then(function (res) { if (!res.ok) throw new Error('Could not load this post'); return res.text(); });
+      .then(function (res) { if (!res.ok) throw new Error(res.status === 404 ? 'This post is no longer available' : 'Could not load this post'); return res.text(); });
   }
 
   function splitDetail(html) {
@@ -210,7 +215,7 @@
     var body = $('[data-pd-body]', art), footer = $('[data-pd-footer]', art);
     var shell = art.cloneNode(false);
     shell.innerHTML = body ? body.outerHTML : '';
-    return { body: shell.outerHTML, footer: footer ? footer.outerHTML : '' };
+    return { body: shell.outerHTML, footer: footer ? footer.outerHTML : '', title: art.getAttribute('data-title') || '' };
   }
 
   P.open = function (id, opts) {
@@ -220,6 +225,7 @@
     var title = item ? (item.getAttribute('data-title') || 'Post') : 'Post';
     return detailHtml(id).then(function (html) {
       var parts = splitDetail(html);
+      if (!item && parts.title) title = parts.title;   // a post outside the list (e.g. the client's own Needs-changes link)
       var root = sheetRoot();
       if (!root) return null;
       var wasOpen = App.sheet.current === root;
@@ -237,6 +243,7 @@
       P.current = { id: id, item: item, root: root };
       P.videoFallback(root);
       initCarousel(root);
+      syncSlidePick(root);
       autosize($('[data-comment-input]', root));
       syncState(root);
       if (opts.deny) openDeny(root);
@@ -250,6 +257,42 @@
   };
 
   P.close = function () { if (App.sheet.current === sheetRoot()) App.sheet.close(); };
+
+  /* ---- paging ("Load more") ----------------------------------------- */
+  function rowCount() { return $$('[data-posts-items] > [data-post-item]').length; }
+  function syncMore(serverTotal) {
+    var wrap = $('[data-posts-more-wrap]'), btn = $('[data-posts-more]'), count = $('[data-posts-more-count]');
+    if (!wrap) return;
+    var total = serverTotal != null ? serverTotal : (P.counts[P.segment] != null ? P.counts[P.segment] : (parseInt(btn && btn.getAttribute('data-total'), 10) || 0));
+    var left = Math.max(0, total - rowCount());
+    if (count) count.textContent = left + ' remaining';
+    wrap.hidden = left <= 0;
+  }
+  P.loadMore = function () {
+    var btn = $('[data-posts-more]'), list = $('[data-posts-items]');
+    if (!btn || !list || P._loading || !cfg.listUrl) return Promise.resolve([]);
+    P._loading = true; btn.disabled = true; btn.setAttribute('aria-busy', 'true');
+    return fetch(cfg.listUrl.replace('__OFFSET__', String(rowCount())), { credentials: 'same-origin', headers: { 'Accept': 'text/html' } })
+      .then(function (res) {
+        if (!res.ok) throw new Error('Could not load more posts');
+        var total = res.headers.get('X-Posts-Total');
+        return res.text().then(function (html) { return { html: html, total: total !== null && total !== '' ? parseInt(total, 10) : null }; });
+      })
+      .then(function (r) {
+        var tpl = document.createElement('template'); tpl.innerHTML = r.html.trim();
+        var added = [];
+        $$('[data-post-item]', tpl.content).forEach(function (li) {
+          if (itemEl(li.getAttribute('data-post-item'))) return;   // already shown (e.g. restored after a failed decision)
+          li.classList.add('ui-enter'); list.appendChild(li); added.push(li);
+        });
+        if (App.video && App.video.enhance) App.video.enhance(list);
+        if (!added.length) { var w = $('[data-posts-more-wrap]'); if (w) w.hidden = true; }
+        else syncMore(r.total);
+        return added;
+      })
+      .catch(function (err) { toast(err.message || 'Could not load more posts', 'error'); return []; })
+      .then(function (added) { P._loading = false; btn.disabled = false; btn.removeAttribute('aria-busy'); return added; });
+  };
 
   /* history: ?post=ID ⇄ sheet */
   function urlWithPost(id) {
@@ -289,20 +332,27 @@
       'approved':        status === 'approved' && !posted,
       'scheduled':       posted,
       'denied':          status === 'denied' && !posted,
+      'note':            status === 'denied' && !posted,
+      'admin-waiting':   status === 'pending' && !posted,
+      'admin-pending':   status === 'pending' && !posted,
       'admin-approved':  status === 'approved' && !posted,
       'admin-denied':    status === 'denied' && !posted,
-      'admin-scheduled': posted
+      'draft':           status === 'draft',
+      'admin-draft':     status === 'draft',
+      'admin-scheduled': posted,
+      // ⋯ "For the client" (admin): the client's decisions, on purpose only
+      'menu-approve':    !posted && (status === 'pending' || status === 'denied'),
+      'menu-deny':       !posted && (status === 'pending' || status === 'approved'),
+      'menu-resubmit':   !posted && status === 'denied',
+      'menu-decide':     !posted && status !== 'draft'
     };
     $$('[data-state]', root).forEach(function (el) {
       var k = el.getAttribute('data-state');
       if (k in show) el.hidden = !show[k];
     });
     var label = $('.pd-when-label', root);
-    if (label) label.textContent = posted ? 'Scheduled for' : 'Planned for';
-    // Caption / hashtags are frozen once Scheduled (status.php → 409): hide the Edit button,
-    // disable the ⋯ menu item and fold an open editor.
+    // Caption / hashtags are frozen once Scheduled (status.php → 409): hide the Edit button and fold an open editor.
     var capBtn = $('[data-caption-edit]', root); if (capBtn) capBtn.hidden = posted;
-    var capMenu = $('[data-caption-menu]', root); if (capMenu) { capMenu.disabled = posted; if (posted) capMenu.title = 'Unmark scheduled first'; else capMenu.removeAttribute('title'); }
     if (posted) { var capForm = $('[data-edit-form="caption"]', root); if (capForm) capForm.hidden = true; }
     // "date has passed" note: only for Scheduled posts whose date is before today (data-past from PHP)
     var pastNote = $('[data-when-past]', root);
@@ -395,12 +445,13 @@
             if (line) line.textContent = 'Approved ' + fmtDay(new Date()) + ' · Joust will schedule this';
           }
           if (note) appendComment(art, note, App.actor);
+          if (note && status === 'denied') fillNote(art, note, App.actor);
           var form = $('[data-deny-form]', sheetRoot()); if (form) { form.hidden = true; var ta = $('[data-deny-note]', form); if (ta) ta.value = ''; }
         }
         if (opts.toast) toast(opts.toast, 'success');
         else if (status === 'approved') toast('Approved', 'success');
         else if (status === 'denied') toast(App.role === 'admin' ? 'Marked as needs changes' : 'Sent to Joust', 'success');
-        else toast('Back in To Review');
+        else toast('Sent for review — back in To Review', 'success');
         if (status === 'denied' && App.role !== 'admin' && P.current && P.current.id === id) setTimeout(P.close, 700);
       }
       document.dispatchEvent(new CustomEvent('posts:decided', { detail: { id: id, status: status, ok: res.ok } }));
@@ -415,11 +466,140 @@
     var btns = item ? $$('[data-resubmit]', item) : [];
     btns.forEach(function (b) { b.disabled = true; });
     if (P.current && P.current.id === id) P.close();
-    return P.decide(id, 'pending', null, { toast: 'Resubmitted — back in To Review' }).then(function (res) {
+    return P.decide(id, 'pending', null, { toast: 'Sent for review — back in To Review' }).then(function (res) {
       if (!res || !res.ok) btns.forEach(function (b) { b.disabled = false; });
       return res;
     });
   };
+
+  /* ---- drafts (admin): draft → pending ------------------------------ */
+  P.submit = function (id) {
+    id = String(id);
+    var item = itemEl(id);
+    var btns = $$('[data-submit-post="' + id + '"]');
+    btns.forEach(function (b) { b.disabled = true; });
+    if (item) item.classList.add('is-busy');
+    return App.post(ENDPOINT, { action: 'submit', id: id, actor: App.actor }).then(function (res) {
+      btns.forEach(function (b) { b.disabled = false; });
+      if (item) item.classList.remove('is-busy');
+      if (!res.ok) {
+        toast(res.error || 'Could not send', 'error');
+        // 422 "Add a caption first": open this post's sheet (if needed) with the caption editor showing
+        if (res.data && res.data.field === 'caption') {
+          var showEditor = function () {
+            var root = sheetRoot(), art = pd(root);
+            if (!art || art.getAttribute('data-id') !== id) return;
+            var form = $('[data-edit-form="caption"]', root);
+            if (form) { form.hidden = false; $$('textarea', form).forEach(syncCount); var ta = $('textarea', form); if (ta) ta.focus(); }
+          };
+          var open = pd();
+          if (open && open.getAttribute('data-id') === id) showEditor();
+          else P.open(id).then(showEditor);
+        }
+      } else {
+        applyStatus(id, 'pending', false);
+        bumpCount('draft', -1); bumpCount('pending', +1);
+        if (P.segment === 'draft') {
+          if (P.current && P.current.id === id) P.close();
+          leaveList(id);
+        }
+        toast('Sent for review — the client can see it now', 'success');
+      }
+      document.dispatchEvent(new CustomEvent('posts:submitted', { detail: { id: id, ok: !!res.ok } }));
+      return res;
+    });
+  };
+
+  /* ---- admin: the client's Approve, on their behalf (⋯ → Approve for client…) ---- */
+  P.approveForClient = function (id) {
+    id = String(id);
+    var who = cfg.clientName || 'the client';
+    var root = sheetRoot(), anchor = root && $('[data-deny-form]', root);
+    return App.confirmInline(anchor, approveCopy('post', who)).then(function (ok) {
+      return ok ? P.decide(id, 'approved', null, { toast: 'Approved for ' + who }) : null;
+    });
+  };
+  /** The in-sheet confirm for ⋯ → Approve for client… (the client's decision, made on their behalf). */
+  function approveCopy(noun, who) {
+    return { name: 'approve', kind: 'approve', title: 'Approve this ' + noun + ' for ' + who + '?',
+             text: 'Only do this when ' + who + ' has approved it outside the portal — they won’t be asked.',
+             ok: 'Approve for ' + who };
+  }
+
+  /* ---- refresh one row after a save elsewhere (New post pop-up) ------- */
+  function rowDate(li) { var t = li && $('.pl-date', li); return (t && t.getAttribute('datetime')) || ''; }
+  function insertRow(li) {
+    var list = $('[data-posts-items]'); if (!list) return false;
+    var rows = $$('[data-posts-items] > [data-post-item]');
+    var at = null;
+    if (!cfg.queue) {   // the queue is newest client activity first → top; every other segment: date, then id
+      var d = rowDate(li), id = parseInt(li.getAttribute('data-id'), 10) || 0;
+      for (var i = 0; i < rows.length; i++) {
+        var rd = rowDate(rows[i]), rid = parseInt(rows[i].getAttribute('data-id'), 10) || 0;
+        if (rd > d || (rd === d && rid > id)) { at = rows[i]; break; }
+      }
+      var more = $('[data-posts-more-wrap]');
+      if (!at && more && !more.hidden) return false;   // it sorts after rows not loaded yet — "Load more" brings it
+    } else at = rows[0] || null;
+    list.insertBefore(li, at);
+    var group = $('[data-posts-list]'); if (group) group.hidden = false;
+    var empty = $('[data-posts-empty]'); if (empty) empty.hidden = true;
+    return true;
+  }
+  P.refresh = function (id, opts) {
+    opts = opts || {};
+    id = String(id);
+    var old = itemEl(id);
+    if (old) { var stale = $('template[data-post-template]', old); if (stale) stale.remove(); }   // never reopen the pre-save detail
+    var loose = $('template[data-post-template="' + id + '"]'); if (loose) loose.remove();
+    var fromSeg = old ? segmentOf(old.getAttribute('data-status'), old.getAttribute('data-posted') === '1') : null;
+    if (!cfg.rowUrl) return Promise.reject(new Error('No row URL'));
+    return fetch(cfg.rowUrl.replace('__ID__', encodeURIComponent(id)), { credentials: 'same-origin', headers: { 'Accept': 'text/html' } })
+      .then(function (res) {
+        if (!res.ok) throw new Error('Could not refresh the list');
+        var seg = res.headers.get('X-Post-Segment') || '', month = res.headers.get('X-Post-Month') || '';
+        return res.text().then(function (html) { return { html: html, segment: seg, month: month }; });
+      })
+      .then(function (r) {
+        var inMonth = !cfg.month || r.month === cfg.month;
+        var inView = inMonth && r.segment === P.segment;
+        if (fromSeg) bumpCount(fromSeg, -1);          // a row in the list is always counted in this view
+        if (inMonth) bumpCount(r.segment, +1);
+        var tpl = document.createElement('template'); tpl.innerHTML = r.html.trim();
+        var li = $('[data-post-item]', tpl.content);
+        if (old && document.contains(old)) {
+          if (inView && li) {
+            if (old.classList.contains('is-open')) li.classList.add('is-open');
+            old.parentNode.replaceChild(li, old);
+          } else { leaveList(id); delete removed[id]; li = null; }
+        } else if (inView && li) {
+          li.classList.add('ui-enter');
+          if (!insertRow(li)) li = null;
+        } else li = null;
+        if (li) {
+          if (App.video && App.video.enhance) App.video.enhance(li);
+          if (P.current && P.current.id === id) { li.classList.add('is-open'); P.current.item = li; }
+        }
+        syncMore();
+        var out = { id: id, segment: r.segment, month: r.month, inView: inView, label: LABELS[r.segment] || r.segment };
+        document.dispatchEvent(new CustomEvent('posts:refreshed', { detail: out }));
+        return out;
+      });
+  };
+  P.label = function (seg) { return LABELS[seg] || seg; };
+
+  /* "Kenda Tires asked for changes · just now" + the note, after an in-place Needs changes (admin ⋯). */
+  function fillNote(art, text, actor) {
+    var root = art.closest('.ui-sheet-root') || document;
+    var box = $('[data-pd-note]', root); if (!box) return;
+    var m = /^\[Slide (\d{1,2})\]\s*/.exec(text), slide = m ? parseInt(m[1], 10) : 0;
+    if (m) text = text.slice(m[0].length);
+    var who = actor === 'client' ? (cfg.clientName || 'The client') : 'Joust';
+    var w = $('[data-pd-note-who]', box); if (w) w.textContent = who + ' asked for changes';
+    var when = $('[data-pd-note-when]', box); if (when) when.textContent = ' · just now';
+    var p = $('[data-pd-note-text]', box);
+    if (p) p.innerHTML = (slide ? '<span class="pd-note-slide">On slide ' + slide + ':</span> ' : '') + escapeHtml(text);
+  }
 
   P.togglePosted = function (id, to) {
     id = String(id);
@@ -459,22 +639,32 @@
   };
 
   /* ---- comments ----------------------------------------------------- */
+  /* "[Slide 3] text" → the chip (the slide's sm thumb + "Slide 3") the server renders (commentSlideChip()). */
+  function slideChipHtml(root, n) {
+    var fig = $('[data-carousel] [data-slide="' + (n - 1) + '"]', root);
+    var thumb = fig ? (fig.getAttribute('data-thumb') || '') : '';
+    return '<button type="button" class="pd-slide-chip" data-goto-slide="' + (n - 1) + '" aria-label="Show slide ' + n + '">'
+         + (thumb ? '<img src="' + escapeHtml(thumb) + '" alt="" decoding="async">' : '<span class="pd-slide-chip-blank" aria-hidden="true"></span>')
+         + '<span>Slide ' + n + '</span></button>';
+  }
   function appendComment(art, text, actor) {
     var root = art.closest('.ui-sheet-root') || document;
     var thread = $('[data-thread]', root); if (!thread) return;
-    var side = actor === 'client' ? 'client' : 'joust';
-    var who  = actor === 'client' ? 'You' : (actor === 'admin' ? 'Joust' : 'Note');
+    var bw = App.bubbleWho ? App.bubbleWho(actor) : { side: 'mine', who: 'You' };   // drawn from the viewer's seat
+    var side = bw.side, who = escapeHtml(bw.who);
     var msg = document.createElement('div');
     msg.className = 'pd-msg pd-msg--' + side + ' ui-enter';
     msg.setAttribute('data-actor', actor);
-    msg.innerHTML = '<div class="ui-bubble ui-bubble--' + side + '">' + escapeHtml(text).replace(/\n/g, '<br>') + '</div>'
+    var chip = '', m = /^\[Slide (\d{1,2})\]\s*/.exec(text);
+    if (m) { chip = slideChipHtml(root, parseInt(m[1], 10)); text = text.slice(m[0].length); }
+    msg.innerHTML = '<div class="ui-bubble ui-bubble--' + side + '">' + chip + escapeHtml(text).replace(/\n/g, '<br>') + '</div>'
                   + '<div class="ui-bubble-meta">' + (App.actorAvatar ? App.actorAvatar(actor) : '') + who + ' · just now</div>';
     var empty = $('[data-thread-empty]', thread); if (empty) empty.hidden = true;
     thread.appendChild(msg);
     var n = (parseInt(thread.getAttribute('data-count') || '0', 10) || 0) + 1;
     thread.setAttribute('data-count', n);
     var c = $('[data-comment-count]', root); if (c) c.textContent = n;
-    var lc = $('[data-comment-count-for="' + art.getAttribute('data-id') + '"]'); if (lc) lc.textContent = n + (n === 1 ? ' comment' : ' comments');
+    var lc = $('[data-comment-count-for="' + art.getAttribute('data-id') + '"]'); if (lc) { lc.textContent = n + (n === 1 ? ' comment' : ' comments'); if (lc.parentNode && lc.parentNode.hidden) lc.parentNode.hidden = false; }
     var body = $('[data-sheet-body]', root); if (body) body.scrollTop = body.scrollHeight;
   }
 
@@ -511,7 +701,24 @@
   }
 
   /* ---- carousel ----------------------------------------------------- */
+  /* App.carousel (carousel.js) when loaded: swipe, dots, "2 / 7", arrows, ←/→, only the visible video plays.
+     The fallback below is the pre-carousel.js behaviour (dots + counter). */
+  /* The comment "Slide" picker: "All slides" on open (a general comment is never silently tagged "Slide 1"), then —
+     once the user moves the carousel off the cover (swipe / arrow / dot / slide chip → carousel:change) — it follows
+     the slide on screen, back to slide 1 included. "All slides" stays one tap away in the picker. */
+  function syncSlidePick(root, index) {
+    var pick = $('[data-comment-slide]', root); if (!pick) return;
+    var moved = index != null;
+    if (index == null) { var car = $('[data-carousel]', root); index = car && App.carousel && App.carousel.index ? App.carousel.index(car) : 0; }
+    index = parseInt(index, 10) || 0;
+    // carousel:change also fires for slide 1 on init / resize: only a move off the cover starts the following
+    if (moved && index > 0) pick.__follow = true;
+    if (!pick.__follow) { pick.value = ''; return; }
+    var v = String(index + 1);
+    if ($('option[value="' + v + '"]', pick)) pick.value = v;
+  }
   function initCarousel(root) {
+    if (App.carousel && App.carousel.init) { App.carousel.init(root); return; }
     $$('[data-carousel]', root).forEach(function (car) {
       var track = $('[data-carousel-track]', car); if (!track || track.__init) return;
       track.__init = true;
@@ -524,7 +731,7 @@
         i = Math.max(0, Math.min(n - 1, i));
         car.setAttribute('data-index', i);
         dots.forEach(function (d, k) { d.classList.toggle('is-active', k === i); d.setAttribute('aria-selected', k === i ? 'true' : 'false'); });
-        if (counter) counter.textContent = (i + 1) + '/' + n;
+        if (counter) counter.textContent = (i + 1) + ' / ' + n;
         // pause videos that scrolled away
         $$('video', car).forEach(function (v, k) { if (k !== i && !v.paused) v.pause(); });
       }
@@ -537,11 +744,6 @@
       update();
     });
   }
-  function currentSlide(root) {
-    var car = $('[data-carousel]', root); if (!car) return null;
-    var i = parseInt(car.getAttribute('data-index') || '0', 10);
-    return $('[data-slide="' + i + '"]', car);
-  }
 
   /* ---- video (spec §6) — App.video owns fallback / posters / unmute --- */
   P.videoFallback = function (root) {
@@ -549,11 +751,12 @@
   };
 
   /* ---- viewer (tap → full screen) ----------------------------------- */
-  function openViewer(src, alt) {
+  function openViewer(src, alt, original) {
     var wrap = document.createElement('div');
     wrap.className = 'pd-viewer';
     wrap.setAttribute('role', 'dialog'); wrap.setAttribute('aria-modal', 'true'); wrap.setAttribute('aria-label', 'Full screen image');
     wrap.innerHTML = '<img src="' + escapeHtml(src) + '" alt="' + escapeHtml(alt || '') + '">'
+                   + (original && original !== src ? '<a class="pd-viewer-original" href="' + escapeHtml(original) + '" target="_blank" rel="noopener">View original</a>' : '')
                    + '<button type="button" class="pd-viewer-close" aria-label="Close"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>';
     document.body.appendChild(wrap);
     requestAnimationFrame(function () { wrap.classList.add('is-visible'); });
@@ -563,7 +766,7 @@
       document.removeEventListener('keydown', onKey);
     };
     var onKey = function (e) { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
-    wrap.addEventListener('click', close);
+    wrap.addEventListener('click', function (e) { if (!e.target.closest('.pd-viewer-original')) close(); });
     document.addEventListener('keydown', onKey, true);
     $('.pd-viewer-close', wrap).focus();
   }
@@ -658,58 +861,6 @@
       }
     });
   }
-  /* Replace: with chunk-upload.js the file goes to upload-chunk.php purpose=replace (one request when small,
-     pieces when large — videos up to 4 GB, images up to 50 MB); otherwise replace-image.php. Same reply shape. */
-  function replaceImage(art, input) {
-    var file = input.files && input.files[0]; if (!file) return;
-    var isVid = /^video\//i.test(file.type || '') || /\.(mp4|webm|mov|m4v)$/i.test(file.name || '');
-    var capMb = isVid ? (parseInt(cfg.maxVideoMb, 10) || 4096) : (parseInt(cfg.maxImageMb, 10) || 50);
-    if (file.size > capMb * 1024 * 1024) { toast('File exceeds ' + (capMb >= 1024 ? (capMb / 1024) + ' GB' : capMb + ' MB'), 'error'); input.value = ''; return; }
-    var slide = currentSlide(art); if (!slide) return;
-    var imageId = slide.getAttribute('data-image-id');
-    slide.classList.add('is-busy');
-    toast('Uploading…');
-    var chunk = App.chunkUpload && App.chunkUpload.upload ? App.chunkUpload : null;
-    var uploadEp = input.getAttribute('data-upload-endpoint') || cfg.upload || '';
-    var send;
-    if (chunk && uploadEp) {
-      var lastPct = -1;
-      send = chunk.upload({
-        endpoint: uploadEp, file: file,
-        fields: { purpose: 'replace', replace_kind: 'post', replace_id: imageId, client: (document.body && document.body.dataset.client) || '' },
-        onProgress: function (p) { if (p.pct !== lastPct && (p.count > 1 || p.pct === 100)) { lastPct = p.pct; toast('Uploading… ' + p.text); } }
-      }).promise.then(function (d) { return { ok: true, data: d }; }, function (e) { return { ok: false, data: { error: (e && e.error) || 'Replace failed' } }; });
-    } else {
-      var fd = new FormData();
-      fd.append('image_id', imageId); fd.append('image', file); fd.append('type', 'post');
-      send = fetch(input.getAttribute('data-replace-endpoint') || cfg.replace || 'replace-image.php', { method: 'POST', body: fd, credentials: 'same-origin' })
-        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok && d && d.ok, data: d }; }); });
-    }
-    send
-      .then(function (res) {
-        slide.classList.remove('is-busy');
-        if (!res.ok) { toast((res.data && res.data.error) || 'Replace failed', 'error'); return; }
-        var url = (cfg.base || '') + '/' + String(res.data.image_url).replace(/^\/+/, '') + '?t=' + Date.now();
-        var type = res.data.media_type || 'image';
-        slide.setAttribute('data-media-type', type); slide.setAttribute('data-src', url);
-        if (type === 'video') {
-          slide.innerHTML = App.video
-            ? App.video.markup(url, { autoplay: true, unmute: true, cls: 'pd-video' })
-            : '<video playsinline muted controls preload="metadata"><source src="' + escapeHtml(url) + '"></video>';
-          P.videoFallback(slide);
-        } else {
-          slide.innerHTML = '<button type="button" class="pd-slide-btn" data-viewer-open aria-label="View full screen"><img src="' + escapeHtml(url) + '" alt=""></button>';
-        }
-        if (slide.getAttribute('data-slide') === '0') {
-          var item = itemEl(art.getAttribute('data-id'));
-          var thumb = item && $('.pl-thumb img', item);
-          if (thumb && type === 'image') thumb.src = url;
-        }
-        toast(type === 'video' ? 'Video replaced' : 'Image replaced', 'success');
-      })
-      .catch(function () { slide.classList.remove('is-busy'); toast('Replace failed', 'error'); })
-      .then(function () { input.value = ''; });
-  }
 
   /* ================================================================== */
   /* Wiring                                                              */
@@ -721,7 +872,7 @@
         card: '.pl-card',
         canSwipe: function (item, dir) {
           var status = item.getAttribute('data-status'), posted = item.getAttribute('data-posted') === '1';
-          if (posted) return false;
+          if (posted || status === 'draft') return false;   // drafts are sent with Send for review, never swiped
           if (dir === 'right') return status !== 'approved';
           return status !== 'denied';
         },
@@ -734,6 +885,11 @@
       });
     }
 
+    // "Load more": the next rows of this status / month (posts.php &partial=list&offset=N). The offset is the rows
+    // still in the list — decided rows leave it, so the server's next row is exactly the first one not shown.
+    var moreBtn = $('[data-posts-more]');
+    if (moreBtn && cfg.listUrl) moreBtn.addEventListener('click', function () { P.loadMore(); });
+
     // open detail
     document.addEventListener('click', function (e) {
       var opener = e.target.closest('[data-post-open]');
@@ -743,7 +899,27 @@
       P.open(opener.getAttribute('data-post-open'));
     });
 
-    // work queue: Resubmit for review (admin-only markup; status.php enforces the role)
+    // One-shot flash from a save elsewhere (add-post.php → posts.php?post=…&msg=…): toast it once, drop it from the URL.
+    // (App.toast lives in app.js, which runs after this deferred script → wait for app:ready like the deep link.)
+    if (cfg.flash) {
+      try {
+        var u = new URL(window.location.href); u.searchParams.delete('msg');
+        history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+      } catch (err) {}
+      var showFlash = function () { toast(cfg.flash, 'success'); };
+      if (App._inited && App.toast) showFlash();
+      else document.addEventListener('app:ready', showFlash, { once: true });
+    }
+
+    // drafts: Send for review (row button or the sheet's footer; admin-only markup, status.php enforces the role)
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-submit-post]');
+      if (!btn || btn.disabled) return;
+      e.preventDefault();
+      P.submit(btn.getAttribute('data-submit-post'));
+    });
+
+    // work queue: Send for review (admin-only markup; status.php enforces the role)
     document.addEventListener('click', function (e) {
       var btn = e.target.closest('[data-resubmit]');
       if (!btn || btn.disabled) return;
@@ -761,9 +937,13 @@
       var decide = t.closest('[data-decide]');
       if (decide) {
         var st = decide.getAttribute('data-decide');
-        if (st === 'denied') openDeny(root); else P.decide(id, st);
+        closeMenu(root);
+        if (st === 'denied') openDeny(root);
+        else if (st === 'pending') P.decide(id, 'pending', null, { toast: 'Sent for review — back in To Review' });
+        else P.decide(id, st);
         return;
       }
+      if (t.closest('[data-approve-for-client]')) { closeMenu(root); P.approveForClient(id); return; }
       if (t.closest('[data-deny-cancel]')) { var f = $('[data-deny-form]', root); if (f) f.hidden = true; return; }
 
       var tp = t.closest('[data-toggle-posted]');
@@ -789,7 +969,7 @@
         var rr = $('[data-when-toggle]', root); if (rr) rr.setAttribute('aria-expanded', 'false');
         return;
       }
-      if (t.closest('[data-replace-image]')) { closeMenu(root); var inp = $('[data-replace-input]', root); if (inp) inp.click(); return; }
+      if (t.closest('[data-download-media]')) { closeMenu(root); downloadMedia(root, id); return; }
 
       var when = t.closest('[data-when-toggle]');
       if (when) {
@@ -803,10 +983,36 @@
         copyText(copy.getAttribute('data-text') || '').then(function (ok) { toast(ok ? 'Caption copied' : 'Copy failed — select and copy manually', ok ? 'success' : 'error'); });
         return;
       }
+      var gotoSlide = t.closest('[data-goto-slide]');
+      if (gotoSlide) {
+        var car = $('[data-carousel]', root), gi = parseInt(gotoSlide.getAttribute('data-goto-slide'), 10) || 0;
+        if (car && App.carousel) App.carousel.go(car, gi);
+        else if (car) { var tr = $('[data-carousel-track]', car); if (tr) tr.scrollTo({ left: gi * tr.clientWidth, behavior: 'smooth' }); }
+        var sb = $('[data-sheet-body]', root); if (sb && car) sb.scrollTo({ top: Math.max(0, car.offsetTop - 12), behavior: App.reducedMotion && App.reducedMotion() ? 'auto' : 'smooth' });
+        return;
+      }
+      // "Edit post…" (admin ⋯ menu) → the New post pop-up in edit mode (newpost.js listens for the same click)
+      if (t.closest('[data-newpost-edit]')) { closeMenu(root); return; }
       var view = t.closest('[data-viewer-open]');
-      if (view) { var img = $('img', view); if (img) openViewer(img.currentSrc || img.src, img.alt); return; }
+      if (view) { var img = $('img', view); if (img) openViewer(img.currentSrc || img.src, img.alt, view.getAttribute('data-original') || ''); return; }   // the lg preview on screen, the file behind "View original"
     });
 
+    /** Admin "Download media": every slide's file (data-src), saved one after another as <client>-<post id>-<n>.<ext>. */
+    function downloadMedia(root, id) {
+      var slides = $$('.pd-slide[data-src]', root);
+      if (!slides.length) { toast('This post has no media yet', 'error'); return; }
+      var stem = String(document.body.getAttribute('data-client') || 'post').replace(/[^a-z0-9-]/gi, '-');
+      slides.forEach(function (s, i) {
+        window.setTimeout(function () {
+          var src = s.getAttribute('data-src'), ext = s.getAttribute('data-ext') || (src.split('?')[0].split('.').pop() || 'jpg');
+          var a = document.createElement('a');
+          a.href = src; a.download = stem + '-' + id + '-' + (i + 1) + '.' + ext.toLowerCase().replace('jpeg', 'jpg');
+          a.rel = 'noopener'; a.hidden = true;
+          document.body.appendChild(a); a.click(); a.remove();
+        }, i * 300);   // browsers drop rapid-fire downloads
+      });
+      toast(slides.length === 1 ? 'Downloading 1 file' : 'Downloading ' + slides.length + ' files', 'success');
+    }
     function closeMenu(root) {
       var m = $('[data-menu]', root); if (m && !m.hidden) { m.hidden = true; var b = $('[data-menu-toggle]', root); if (b) b.setAttribute('aria-expanded', 'false'); }
     }
@@ -824,9 +1030,12 @@
       if (form.hasAttribute('data-comment-form')) {
         var input = $('[data-comment-input]', form), text = input ? input.value.trim() : '';
         if (!text) return;
+        // Optional "Slide" picker (≥ 2 slides): stored as a "[Slide N] " prefix — no schema change
+        var slidePick = $('[data-comment-slide]', form);
+        if (slidePick && slidePick.value) text = '[Slide ' + parseInt(slidePick.value, 10) + '] ' + text;
         var send = $('[data-comment-send]', form); if (send) send.disabled = true;
         P.comment(art.getAttribute('data-id'), text).then(function (res) {
-          if (res && res.ok && input) { input.value = ''; autosize(input); }
+          if (res && res.ok && input) { input.value = ''; autosize(input); syncSlidePick(root); }
           if (send) send.disabled = !(input && input.value.trim());
         });
         return;
@@ -846,13 +1055,14 @@
         var send = $('[data-comment-send]', e.target.closest('form')); if (send) send.disabled = !e.target.value.trim();
       }
     });
+    document.addEventListener('carousel:change', function (e) {
+      var root = sheetRoot(); if (!root || !root.contains(e.target)) return;
+      syncSlidePick(root, e.detail ? e.detail.index : null);
+    });
     document.addEventListener('keydown', function (e) {
       if (e.key !== 'Enter' || e.shiftKey || !e.target.matches || !e.target.matches('[data-comment-input]')) return;
       e.preventDefault();
       var form = e.target.closest('form'); if (form && form.requestSubmit) form.requestSubmit(); else if (form) form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
-    });
-    document.addEventListener('change', function (e) {
-      if (e.target.matches && e.target.matches('[data-replace-input]')) { var art = pd(); if (art) replaceImage(art, e.target); }
     });
 
     // deep link (?post=ID): open the sheet once the shared App (sheet, toast) is

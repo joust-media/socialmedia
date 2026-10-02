@@ -11,9 +11,14 @@
  *            approved_at (optional datetime for the "Approved Sep 5" row)
  *            last_edit (optional ['actor','created_at'] of the newest edited_caption / edited_hashtags
  *                       row → "Edited by <client> · 5m ago" under the caption when actor = client)
- *     $opts: 'admin'     bool  — default isAdmin(). Admin-only markup (⋯ menu, date editor, Replace,
- *                        Mark / Unmark Scheduled, Needs-changes row) is NEVER emitted otherwise. The
- *                        caption / hashtags editor is shared by both seats (hidden once Scheduled).
+ *     $opts: 'admin'     bool  — default isAdmin(). Admin-only markup (⋯ menu: Edit post… is the one editor, date editor,
+ *                        the admin footer rows, the Needs changes note banner) is NEVER emitted otherwise.
+ *                        The caption / hashtags editor is shared by both seats (hidden once Scheduled).
+ *     Footer, one primary per state — client: To Review → Needs changes · Approve. Admin (Joust's own next step):
+ *       Draft → Edit post… · Send for review   To Review → Edit post…   Needs changes → Edit & resubmit
+ *       Approved → Edit post… · Mark scheduled   Scheduled → Unmark scheduled
+ *     The client's decisions reach the admin only through ⋯ (Approve for client… asks first, Needs changes…,
+ *     Send for review on Needs changes). Needs changes pins the client's latest note above the media.
  *            'hasPosted' bool  — posts.posted exists (default true) → Mark Scheduled is offered
  *            'endpoint'  string — status endpoint (default 'status.php', resolved against basePath())
  *     Output: <article class="pd" data-post-detail="ID" data-status data-posted>
@@ -29,9 +34,13 @@
  *     Studio must render exactly this so what Lance sees is what the client sees.
  *
  *   renderPostMedia(array $images, array $opts = []): string
- *     Paged carousel with dots; video through renderVideoElement() (spec §6:
- *     autoplay muted, tap-to-unmute pill, App.video fallback card).
- *     $opts: 'admin' (adds nothing by itself — Replace lives in the ⋯ menu), 'label',
+ *     Swipeable carousel (up to 20 slides; static/js/carousel.js): scroll-snap track, dots,
+ *     "2 / 7" counter, prev / next arrows on hover-capable pointers, ←/→ on the focused track,
+ *     lg previews, each slide carries data-thumb (sm); only the visible slide's video plays.
+ *     Video through renderVideoElement() (spec §6: autoplay muted, tap-to-unmute pill, App.video
+ *     fallback card).
+ *   pdSlideThumbs(array $images): array — sm URL per slide ('' for video), for comment slide chips.
+ *     $opts: 'admin' (adds nothing by itself — media is replaced in Edit post…), 'label',
  *            'autoplay' (default true).
  *
  *   pdMediaUrl(string $url): string — root-rooted URL for an image_url value.
@@ -130,24 +139,41 @@ if (!function_exists('renderCaptionPreview')) {
     }
 }
 
+if (!function_exists('pdSlideThumbs')) {
+    /** The sm preview URL of every slide ('' for a video) — the comment thread's "Slide 3" chips. */
+    function pdSlideThumbs(array $images): array
+    {
+        $out = [];
+        foreach (array_values($images) as $img) {
+            $src = pdMediaUrl((string)($img['url'] ?? ''));
+            $out[] = pdIsVideo($img) ? '' : (function_exists('pvUrl') ? pvUrl($src, 'sm') : $src);
+        }
+        return $out;
+    }
+}
+
 if (!function_exists('renderPostMedia')) {
     function renderPostMedia(array $images, array $opts = []): string
     {
-        $images = array_slice(array_values($images), 0, 10);
+        $images = array_slice(array_values($images), 0, defined('POST_MAX_MEDIA') ? POST_MAX_MEDIA : 20);   // Instagram's carousel cap
         $n = count($images);
         if ($n === 0) {
             return '<div class="pd-media pd-media--empty"><span class="text-tertiary">No media yet</span></div>';
         }
         $label    = (string)($opts['label'] ?? 'Post media');
         $autoplay = !array_key_exists('autoplay', $opts) || $opts['autoplay'];
-        $out  = '<div class="pd-media" data-carousel data-count="' . $n . '" aria-roledescription="carousel" aria-label="' . pdEsc($label) . '">';
-        $out .= '<div class="pd-track" data-carousel-track>';
+        // Swipeable carousel (static/js/carousel.js — App.carousel): scroll-snap track, dots, "2 / 7", arrows on
+        // hover-capable pointers, ←/→ on the focused track; only the visible slide's video plays.
+        $out  = '<div class="pd-media" data-carousel data-count="' . $n . '" data-autoplay="' . ($autoplay ? '1' : '0') . '" aria-roledescription="carousel" aria-label="' . pdEsc($label) . '">';
+        $out .= '<div class="pd-track" data-carousel-track tabindex="0">';
         foreach ($images as $i => $img) {
             $src  = pdMediaUrl((string)($img['url'] ?? ''));
             $ext  = strtolower(pathinfo((string)($img['url'] ?? ''), PATHINFO_EXTENSION));
             $id   = (int)($img['id'] ?? 0);
             $vid  = pdIsVideo($img);
-            $out .= '<figure class="pd-slide" data-slide="' . $i . '" data-image-id="' . $id . '" data-media-type="' . ($vid ? 'video' : 'image') . '" data-src="' . pdEsc($src) . '" data-ext="' . pdEsc($ext) . '">';
+            $thumb = $vid ? '' : (function_exists('pvUrl') ? pvUrl($src, 'sm') : $src);
+            $out .= '<figure class="pd-slide" data-slide="' . $i . '" data-image-id="' . $id . '" data-media-type="' . ($vid ? 'video' : 'image') . '" data-src="' . pdEsc($src) . '" data-ext="' . pdEsc($ext) . '" data-thumb="' . pdEsc($thumb) . '"'
+                  . ' aria-roledescription="slide" aria-label="' . ($i + 1) . ' of ' . $n . '"' . ($i > 0 ? ' aria-hidden="true"' : '') . '>';
             if ($vid) {
                 // spec §6 markup (playsinline muted controls preload=metadata, quicktime source first,
                 // mp4 twin when on disk, fallback card) — one renderer for the whole portal.
@@ -158,24 +184,33 @@ if (!function_exists('renderPostMedia')) {
                     'class'    => 'pd-video',
                 ]);
             } else {
-                $out .= '<button type="button" class="pd-slide-btn" data-viewer-open aria-label="View full screen">'
-                      . '<img src="' . pdEsc($src) . '" alt="' . pdEsc($label . ' ' . ($i + 1)) . '" loading="' . ($i === 0 ? 'eager' : 'lazy') . '" decoding="async">'
-                      . '</button>';
+                // The lg preview (srcset / sizes / width / height, preview-ui.php); the full-screen view keeps "View original" → the file
+                $img = function_exists('pvImg')
+                    ? pvImg($src, 'lg', ['sizes' => pvSizes('slide'), 'eager' => $i === 0, 'alt' => $label . ' ' . ($i + 1)])
+                    : '<img src="' . pdEsc($src) . '" alt="' . pdEsc($label . ' ' . ($i + 1)) . '" loading="' . ($i === 0 ? 'eager' : 'lazy') . '" decoding="async">';
+                $out .= '<button type="button" class="pd-slide-btn" data-viewer-open data-original="' . pdEsc($src) . '" aria-label="View slide ' . ($i + 1) . ' full screen">' . $img . '</button>';
             }
             $out .= '</figure>';
         }
         $out .= '</div>';
         if ($n > 1) {
+            $chev = static function (string $d): string {
+                return '<svg class="ui-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' . $d . '"/></svg>';
+            };
+            $out .= '<button type="button" class="pd-arrow pd-arrow--prev" data-carousel-prev aria-label="Previous slide" disabled>' . $chev('m15 5-7 7 7 7') . '</button>';
+            $out .= '<button type="button" class="pd-arrow pd-arrow--next" data-carousel-next aria-label="Next slide">' . $chev('m9 5 7 7-7 7') . '</button>';
             $out .= '<div class="pd-dots" role="tablist" aria-label="Slides">';
             for ($d = 0; $d < $n; $d++) {
-                $out .= '<button type="button" class="pd-dot' . ($d === 0 ? ' is-active' : '') . '" data-carousel-dot="' . $d . '" role="tab" aria-selected="' . ($d === 0 ? 'true' : 'false') . '" aria-label="Slide ' . ($d + 1) . '"></button>';
+                $out .= '<button type="button" class="pd-dot' . ($d === 0 ? ' is-active' : '') . '" data-carousel-dot="' . $d . '" role="tab" aria-selected="' . ($d === 0 ? 'true' : 'false') . '" aria-label="Slide ' . ($d + 1) . '"' . ($d === 0 ? '' : ' tabindex="-1"') . '></button>';
             }
             $out .= '</div>';
-            $out .= '<span class="ui-pill ui-pill--glass ui-pill--nodot pd-counter" data-carousel-counter>1/' . $n . '</span>';
+            $out .= '<span class="ui-pill ui-pill--glass ui-pill--nodot pd-counter" data-carousel-counter aria-hidden="true">1 / ' . $n . '</span>';
         }
         return $out . '</div>';
     }
 }
+
+require_once __DIR__ . '/review-actions.php';   // reviewLatestNote() / reviewNoteBanner(): the Needs changes note on top
 
 if (!function_exists('renderPostDetail')) {
     function renderPostDetail(array $post, array $opts = []): string
@@ -183,11 +218,11 @@ if (!function_exists('renderPostDetail')) {
         $admin     = array_key_exists('admin', $opts) ? (bool)$opts['admin'] : (function_exists('isAdmin') && isAdmin());
         $hasPosted = !array_key_exists('hasPosted', $opts) || $opts['hasPosted'];
         $endpoint  = pdMediaUrl((string)($opts['endpoint'] ?? 'status.php'));
-        $replaceEp = pdMediaUrl('replace-image.php');
 
         $id       = (int)($post['id'] ?? 0);
         $status   = strtolower((string)($post['status'] ?? 'pending'));
-        if (!in_array($status, ['pending', 'approved', 'denied'], true)) $status = 'pending';
+        if (!in_array($status, ['draft', 'pending', 'approved', 'denied'], true)) $status = 'pending';
+        if ($status === 'draft' && !$admin) $status = 'pending';   // never reached (posts.php filters drafts for clients in SQL)
         $posted   = !empty($post['posted']);
         $images   = is_array($post['images'] ?? null) ? $post['images'] : [];
         $comments = is_array($post['comments'] ?? null) ? $post['comments'] : [];
@@ -203,6 +238,13 @@ if (!function_exists('renderPostDetail')) {
         $approvedAt = !empty($post['approved_at']) ? strtotime((string)$post['approved_at']) : false;
         $approvedLine = 'Approved' . ($approvedAt ? ' ' . date('M j', $approvedAt) : '') . ' · Joust will schedule this';
 
+        // Admin ⋯ "For the client" group (posts.js syncState re-evaluates the same rules after every change)
+        $isDenied   = $status === 'denied' && !$posted;
+        $canApprove = !$posted && in_array($status, ['pending', 'denied'], true);
+        $canDeny    = !$posted && in_array($status, ['pending', 'approved'], true);
+        $menuDecide = $canApprove || $canDeny || $isDenied;
+        $clientName = trim((string)($post['company_name'] ?? '')) !== '' ? (string)$post['company_name'] : 'the client';
+
         $out  = '<article class="pd" data-post-detail="' . $id . '" data-id="' . $id . '" data-status="' . pdEsc($status) . '" data-posted="' . ($posted ? '1' : '0') . '" data-past="' . ($datePast ? '1' : '0') . '" data-endpoint="' . pdEsc($endpoint) . '">';
         $out .= '<div class="pd-body" data-pd-body>';
 
@@ -217,19 +259,32 @@ if (!function_exists('renderPostDetail')) {
             $out .= '<div class="pd-more">'
                   . '<button type="button" class="ui-btn ui-btn--gray ui-btn--icon ui-btn--sm" data-menu-toggle aria-haspopup="menu" aria-expanded="false" aria-label="More actions">' . (function_exists('icon') ? icon('ellipsis') : '&hellip;') . '</button>'
                   . '<div class="pd-menu" role="menu" data-menu hidden>'
-                  . '<button type="button" role="menuitem" data-edit="caption" data-caption-menu' . ($posted ? ' disabled title="Unmark scheduled first"' : '') . '>Edit caption</button>'
-                  . '<button type="button" role="menuitem" data-edit="date">Edit date</button>'
-                  . '<button type="button" role="menuitem" data-replace-image' . ($images ? '' : ' disabled') . '>Replace image</button>'
+                  // ONE editor (media add / remove / reorder / replace, caption, date, type): the New post pop-up in edit
+                  // mode (newpost.js). The inline "Edit caption" / date "Edit" stay as quick shortcuts on the sheet itself.
+                  . '<button type="button" role="menuitem" data-newpost-edit="' . $id . '">Edit post…</button>'
+                  // Every file of the post, saved one by one (posts.js) — what Classic admin's "Save" button did
+                  . '<button type="button" role="menuitem" data-download-media' . ($images ? '' : ' disabled') . '>Download media</button>'
+                  // The client's decisions, taken on their behalf only on purpose (never a footer button for the admin):
+                  // Approve for client… asks first; Needs changes… opens the note; Send for review resubmits as is.
+                  . '<div class="pd-menu-group" role="group" aria-label="For the client" data-state="menu-decide"' . ($menuDecide ? '' : ' hidden') . '>'
+                  . '<div class="pd-menu-sep" role="separator"></div>'
+                  . '<button type="button" role="menuitem" data-approve-for-client data-state="menu-approve"' . ($canApprove ? '' : ' hidden') . '>Approve for client…</button>'
+                  . '<button type="button" role="menuitem" data-decide="denied" data-state="menu-deny"' . ($canDeny ? '' : ' hidden') . '>Needs changes…</button>'
+                  . '<button type="button" role="menuitem" data-decide="pending" data-state="menu-resubmit"' . ($isDenied ? '' : ' hidden') . '>Send for review</button>'
+                  . '</div>'
+                  . '<div class="pd-menu-sep" role="separator"></div>'
                   . '<button type="button" role="menuitem" class="is-destructive" data-delete-post>Delete</button>'
                   . '</div></div>';
         }
         $out .= '</div>';
 
+        // ---- 0. Needs changes (admin): the client's note first, above the media ----------------
+        if ($admin) {
+            $out .= reviewNoteBanner(reviewLatestNote($comments, (string)$brand['name']), $isDenied);
+        }
+
         // ---- 1. Media carousel -------------------------------------------
         $out .= renderPostMedia($images, ['admin' => $admin, 'label' => (string)$brand['name'] . ' post']);
-        if ($admin) {
-            $out .= '<input type="file" class="ui-visually-hidden" data-replace-input accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov" tabindex="-1" data-replace-endpoint="' . pdEsc($replaceEp) . '" data-upload-endpoint="' . pdEsc(pdMediaUrl('upload-chunk.php')) . '">';   // upload-chunk.php purpose=replace: large replacements in pieces
-        }
 
         // ---- 2. Caption preview ----------------------------------------------
         // Caption + hashtags are editable by BOTH seats until the post is Scheduled
@@ -264,7 +319,7 @@ if (!function_exists('renderPostDetail')) {
         $out .= '<div class="pd-when" data-when>';
         $out .= '<button type="button" class="pd-when-row" data-when-toggle aria-expanded="false">'
               . (function_exists('icon') ? icon('calendar', 'pd-when-icon') : '')
-              . '<span class="pd-when-body"><span class="pd-when-label">' . ($posted ? 'Scheduled for' : 'Planned for') . '</span>'
+              . '<span class="pd-when-body"><span class="pd-when-label">Post date</span>'
               . '<span class="pd-when-date" data-when-display data-iso="' . pdEsc($whenTs ? date('Y-m-d\TH:i', $whenTs) : '') . '">' . pdEsc($whenTs ? pdFormatWhen($when) : 'Date to be confirmed') . '</span></span>'
               . '<span class="pd-when-cta">' . ($admin ? 'Edit' : 'Request a change') . '</span>'
               . '</button>';
@@ -272,7 +327,7 @@ if (!function_exists('renderPostDetail')) {
         $out .= '<p class="pd-when-past text-tertiary" data-when-past' . ($isPast ? '' : ' hidden') . '>This post\'s date has passed.</p>';
         if ($admin) {
             $out .= '<form class="pd-editor" data-edit-form="date" hidden>'
-                  . '<label class="pd-editor-label" for="pd-date-' . $id . '">Scheduled date</label>'
+                  . '<label class="pd-editor-label" for="pd-date-' . $id . '">Post date</label>'
                   . '<input class="ui-input" type="datetime-local" id="pd-date-' . $id . '" name="scheduled_date" value="' . pdEsc($whenTs ? date('Y-m-d\TH:i', $whenTs) : '') . '" required>'
                   . '<div class="ui-btn-group"><button type="button" class="ui-btn ui-btn--gray" data-edit-cancel>Cancel</button><button type="submit" class="ui-btn ui-btn--filled ui-btn--primary">Save</button></div>'
                   . '</form>';
@@ -288,22 +343,23 @@ if (!function_exists('renderPostDetail')) {
 
         // ---- 4. Comments thread ------------------------------------------------
         $out .= '<section class="pd-comments"><h3 class="pd-section-title">Comments <span class="pd-comment-count text-tertiary" data-comment-count>' . count($comments) . '</span></h3>';
-        $out .= commentThreadHtml($comments, ['empty' => 'No messages yet — questions and change requests go here.']);
+        // "[Slide 3] …" comments render a slide chip (thumb + "Slide 3"; tap → the carousel goes there)
+        $out .= commentThreadHtml($comments, ['empty' => 'No messages yet — questions and change requests go here.', 'slides' => pdSlideThumbs($images)]);
         $out .= '</section>';
 
         $out .= '</div>'; // /.pd-body
 
         // ---- 5. Sticky footer: composer + action bar / status row ------------
         $out .= '<div class="pd-footer" data-pd-footer>';
-        $out .= commentComposer($id, ['endpoint' => $endpoint]);
+        $out .= commentComposer($id, ['endpoint' => $endpoint, 'slides' => count(array_slice($images, 0, defined('POST_MAX_MEDIA') ? POST_MAX_MEDIA : 20))]);   // ≥ 2 slides → the "Slide" picker
 
-        // Deny note (required, min 3) — the same form for client and admin
+        // Needs changes note (required, min 3) — the client's button; the admin reaches it from ⋯ → Needs changes…
         $out .= '<form class="pd-deny" data-deny-form hidden>'
               . '<label class="pd-editor-label" for="pd-deny-' . $id . '">What should change?</label>'
               . '<textarea class="ui-textarea" id="pd-deny-' . $id . '" data-deny-note placeholder="What should change?" minlength="3" maxlength="2000" rows="2" required></textarea>'
               . '<p class="pd-editor-hint" data-deny-hint>A short note is required so Joust knows what to fix.</p>'
               . '<div class="ui-btn-group"><button type="button" class="ui-btn ui-btn--gray" data-deny-cancel>Cancel</button>'
-              . '<button type="submit" class="ui-btn ui-btn--deny ui-btn--primary" data-deny-submit disabled>Send &amp; deny</button></div>'
+              . '<button type="submit" class="ui-btn ui-btn--deny ui-btn--primary" data-deny-submit disabled>Send</button></div>'
               . '</form>';
 
         // State rows (all rendered; posts.js toggles [data-state] by data-status/data-posted)
@@ -312,32 +368,45 @@ if (!function_exists('renderPostDetail')) {
         $out .= '<div class="pd-state pd-state--scheduled" data-state="scheduled"' . ($posted ? '' : ' hidden') . '>'
               . (function_exists('icon') ? icon('checkmark') : '') . '<span>Scheduled</span></div>';
         if ($admin) {
-            $out .= '<div class="pd-state pd-state--denied" data-state="denied"' . (($status === 'denied' && !$posted) ? '' : ' hidden') . '>'
-                  . (function_exists('icon') ? icon('xmark') : '') . '<span>Needs changes</span></div>';
+            $out .= '<div class="pd-state pd-state--draft" data-state="draft"' . ($status === 'draft' ? '' : ' hidden') . '>'
+                  . '<span>Draft — the client can\'t see this yet</span></div>';
+            $out .= '<div class="pd-state pd-state--pending" data-state="admin-waiting"' . (($status === 'pending' && !$posted) ? '' : ' hidden') . '>'
+                  . '<span>Waiting on ' . pdEsc($clientName) . ' to review</span></div>';
         }
 
-        // Action bar
+        // Action bar — one primary per state.
+        //   Client: To Review → Needs changes · Approve.
+        //   Admin (Joust's own next step; the client's decisions live in ⋯):
+        //     Draft → Edit post… · Send for review      To Review → Edit post…
+        //     Needs changes → Edit & resubmit (the New post pop-up in edit mode; its primary resubmits)
+        //     Approved → Edit post… · Mark scheduled     Scheduled → Unmark scheduled
         $out .= '<div class="pd-actions" data-actions>';
-        // Deny · Approve — for pending (client + admin); admin also gets them on approved/denied to re-route work
-        $out .= '<div class="ui-btn-group pd-decide" data-state="decide"' . (($status === 'pending' && !$posted) ? '' : ' hidden') . '>'
-              . '<button type="button" class="ui-btn ui-btn--large ui-btn--deny ui-btn--tinted" data-decide="denied">Deny</button>'
-              . '<button type="button" class="ui-btn ui-btn--large ui-btn--approve ui-btn--primary" data-decide="approved">Approve</button>'
-              . '</div>';
-        if ($admin) {
-            // Approved + not scheduled: Needs changes · Mark Scheduled (primary)
-            $out .= '<div class="ui-btn-group pd-admin-approved" data-state="admin-approved"' . (($status === 'approved' && !$posted) ? '' : ' hidden') . '>'
+        if (!$admin) {
+            $out .= '<div class="ui-btn-group pd-decide" data-state="decide"' . (($status === 'pending' && !$posted) ? '' : ' hidden') . '>'
                   . '<button type="button" class="ui-btn ui-btn--large ui-btn--deny ui-btn--tinted" data-decide="denied">Needs changes</button>'
-                  . ($hasPosted ? '<button type="button" class="ui-btn ui-btn--large ui-btn--filled ui-btn--primary" data-toggle-posted="1">Mark Scheduled</button>' : '')
-                  . '</div>';
-            // Denied: back to review · Approve
-            $out .= '<div class="ui-btn-group pd-admin-denied" data-state="admin-denied"' . (($status === 'denied' && !$posted) ? '' : ' hidden') . '>'
-                  . '<button type="button" class="ui-btn ui-btn--large ui-btn--gray" data-decide="pending">Back to review</button>'
                   . '<button type="button" class="ui-btn ui-btn--large ui-btn--approve ui-btn--primary" data-decide="approved">Approve</button>'
                   . '</div>';
-            // Scheduled: Unmark
+        } else {
+            $editBtn = static function (string $cls, string $label = 'Edit post…', string $extra = '') use ($id) {
+                return '<button type="button" class="ui-btn ui-btn--large ' . $cls . '" data-newpost-edit="' . $id . '"' . $extra . '>' . $label . '</button>';
+            };
+            $out .= '<div class="ui-btn-group pd-admin-draft" data-state="admin-draft"' . ($status === 'draft' ? '' : ' hidden') . '>'
+                  . $editBtn('ui-btn--gray')
+                  . '<button type="button" class="ui-btn ui-btn--large ui-btn--filled ui-btn--primary" data-submit-post="' . $id . '">Send for review</button>'
+                  . '</div>';
+            $out .= '<div class="ui-btn-group pd-admin-pending" data-state="admin-pending"' . (($status === 'pending' && !$posted) ? '' : ' hidden') . '>'
+                  . $editBtn('ui-btn--filled ui-btn--primary')
+                  . '</div>';
+            $out .= '<div class="ui-btn-group pd-admin-denied" data-state="admin-denied"' . ($isDenied ? '' : ' hidden') . '>'
+                  . $editBtn('ui-btn--filled ui-btn--primary', 'Edit &amp; resubmit', ' data-newpost-resubmit')
+                  . '</div>';
+            $out .= '<div class="ui-btn-group pd-admin-approved" data-state="admin-approved"' . (($status === 'approved' && !$posted) ? '' : ' hidden') . '>'
+                  . $editBtn($hasPosted ? 'ui-btn--gray' : 'ui-btn--filled ui-btn--primary')
+                  . ($hasPosted ? '<button type="button" class="ui-btn ui-btn--large ui-btn--filled ui-btn--primary" data-toggle-posted="1">Mark scheduled</button>' : '')
+                  . '</div>';
             if ($hasPosted) {
                 $out .= '<div class="ui-btn-group pd-admin-scheduled" data-state="admin-scheduled"' . ($posted ? '' : ' hidden') . '>'
-                      . '<button type="button" class="ui-btn ui-btn--gray" data-toggle-posted="0">Unmark Scheduled</button>'
+                      . '<button type="button" class="ui-btn ui-btn--large ui-btn--gray" data-toggle-posted="0">Unmark scheduled</button>'
                       . '</div>';
             }
         }
@@ -345,5 +414,56 @@ if (!function_exists('renderPostDetail')) {
         $out .= '</div>'; // /.pd-footer
         $out .= '</article>';
         return $out;
+    }
+}
+
+if (!function_exists('renderPostHiddenNotice')) {
+    /**
+     * Client seat, a post they marked Needs changes (it left their view: Joust's queue). Their own activity row
+     * ("You requested changes on …") still links here, so the sheet says what is going on and shows THEIR note —
+     * never the work in progress, never a silent 404. Read-only: no composer, no decisions.
+     *   $note: reviewLatestNote() of the post's comments (the client's latest note) or null.
+     */
+    function renderPostHiddenNotice(array $post, ?array $note): string
+    {
+        $id    = (int)($post['id'] ?? 0);
+        $name  = function_exists('postDisplayLabel') ? postDisplayLabel($post) : ('post #' . $id);
+        $out   = '<article class="pd pd--hidden" data-post-detail="' . $id . '" data-id="' . $id . '" data-status="denied" data-posted="0" data-hidden-post data-title="' . pdEsc($name) . '">';
+        $out  .= '<div class="pd-body" data-pd-body>';
+        $out  .= '<section class="pd-hidden">'
+               . '<p class="pd-hidden-lead">' . (function_exists('statusPill') ? statusPill('denied', false, ['class' => 'pd-pill']) : '') . '</p>'
+               . '<h3 class="pd-hidden-title">Joust is updating this post</h3>'
+               . '<p class="pd-hidden-text">You asked for changes on <strong>' . pdEsc($name) . '</strong>. It comes back to To Review when it is ready — nothing to do until then.</p>';
+        if ($note && trim((string)$note['text']) !== '') {
+            $when = $note['at'] !== '' && function_exists('relativeTime') ? relativeTime($note['at']) : '';
+            $out .= '<figure class="pd-hidden-note" data-hidden-note>'
+                  . '<figcaption class="pd-hidden-note-head">Your note' . ($when !== '' ? ' · ' . pdEsc($when) : '') . '</figcaption>'
+                  . '<blockquote>' . ((int)$note['slide'] > 0 ? '<span class="pd-note-slide">On slide ' . (int)$note['slide'] . ':</span> ' : '') . nl2br(pdEsc($note['text'])) . '</blockquote>'
+                  . '</figure>';
+        }
+        // Joust's replies since the client's latest comment (read-only): the Home "Joust commented on …" link lands
+        // here, so the reply it announces is on screen. The newest three, oldest first.
+        $comments = is_array($post['comments'] ?? null) ? array_values($post['comments']) : [];
+        $from = 0;
+        foreach ($comments as $k => $c) {
+            if (strtolower(trim((string)($c['actor'] ?? ''))) === 'client') $from = $k + 1;
+        }
+        $replies = [];
+        foreach (array_slice($comments, $from) as $c) {
+            if (strtolower(trim((string)($c['actor'] ?? ''))) !== 'admin' || trim((string)($c['detail'] ?? '')) === '') continue;
+            $replies[] = $c;
+        }
+        foreach (array_slice($replies, -3) as $c) {
+            [$slide, $text] = function_exists('commentSlideSplit') ? commentSlideSplit(trim((string)$c['detail'])) : [0, trim((string)$c['detail'])];
+            $at   = (string)($c['created_at'] ?? '');
+            $when = $at !== '' && function_exists('relativeTime') ? relativeTime($at) : '';
+            $out .= '<figure class="pd-hidden-note pd-hidden-note--joust" data-hidden-reply>'
+                  . '<figcaption class="pd-hidden-note-head">Joust replied' . ($when !== '' ? ' · ' . pdEsc($when) : '') . '</figcaption>'
+                  . '<blockquote>' . ((int)$slide > 0 ? '<span class="pd-note-slide">On slide ' . (int)$slide . ':</span> ' : '') . nl2br(pdEsc(trim((string)$text))) . '</blockquote>'
+                  . '</figure>';
+        }
+        $out  .= '</section></div>';
+        $out  .= '<div class="pd-footer" data-pd-footer><div class="pd-actions"><button type="button" class="ui-btn ui-btn--large ui-btn--gray" data-sheet-close>Back to posts</button></div></div>';
+        return $out . '</article>';
     }
 }

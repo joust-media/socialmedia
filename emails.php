@@ -7,7 +7,8 @@
  *   &status=pending|approved|live          segment — default pending
  *          |draft|denied                   admin only (client → falls back to pending)
  *          |all                            every row the viewer may see (Studio's "Open emails")
- *   &group=free,pro  (or group[]=free)     group filter chips (ANY of); persists across segments
+ *   &audience=free,pro (or audience[]=free) Audience filter chips (ANY of); persists across segments.
+ *                                          (email_groups in the DB; &group= is the old name and still works)
  *   &q=welcome                             substring over code / title / subject
  *   &email=<id>                            open that email's detail on load (segment follows the row)
  *   &email=<id>&partial=1                  return ONLY the detail partial HTML (lists > 40 items)
@@ -26,6 +27,7 @@ require __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/partials/components/comment-thread.php';
 require_once __DIR__ . '/partials/components/email-detail.php';
+require_once __DIR__ . '/partials/components/assign.php';
 
 /** Escape helper (page-local by convention; partials use esc()). */
 function h($s) {
@@ -77,7 +79,7 @@ if (!$client) {
     if (!$hasTable) {
         echo '<div class="ui-empty">Emails are not set up yet — run <code>migrate.php</code> first.</div>';
     } elseif (!$companies) {
-        echo '<div class="ui-empty">No client has the Emails module yet. Enable it in Studio or add the first email.</div>';
+        echo '<div class="ui-empty">No client has the Emails module yet. Turn it on in Manage → Clients, or add the first email.</div>';
     } else {
         echo insetListOpen('Clients');
         foreach ($companies as $c) {
@@ -102,13 +104,23 @@ if (!$client) {
 $cid       = (int)$client['id'];
 $visibleTo = $admin ? 'admin' : 'client';
 
+// A client without Emails (no module, no emails): old admin links (admin.php?tab=emails) land on the module
+// switch in Manage → Clients, not on an empty, tab-less Emails page.
+if ($admin && !$isPartial && $emailParam <= 0 && $hasTable && !companyHasEmails($client, $pdo) && (int)(emailCounts($pdo, $cid)['total'] ?? 0) === 0) {
+    header('Location: ' . manageUrl('clients', ['edit' => $cid, 'msg' => $client['name'] . ' doesn’t use Emails yet — turn it on here.']));
+    exit;
+}
+
 // ---------------------------------------------------------------------
-// Filters: group chips (multi, `group=a,b` or repeated) + q search
+// Filters: Audience chips (multi, `audience=a,b` or repeated; `group=` is the old alias) + q search
 // ---------------------------------------------------------------------
 $allGroups  = $hasTable ? emailGroupsForCompany($pdo, $cid) : [];
 $knownSlugs = array_map(static function ($g) { return (string)$g['slug']; }, $allGroups);
-$rawGroups  = $_GET['group'] ?? [];
-if (!is_array($rawGroups)) $rawGroups = [$rawGroups];
+$rawGroups  = [];
+foreach (['audience', 'group'] as $gParam) {
+    $v = $_GET[$gParam] ?? [];
+    foreach (is_array($v) ? $v : [$v] as $one) $rawGroups[] = $one;
+}
 $groupSlugs = [];
 foreach ($rawGroups as $g) {
     if (!is_string($g)) continue;
@@ -123,8 +135,8 @@ $q = isset($_GET['q']) && is_string($_GET['q']) ? trim(mb_substr($_GET['q'], 0, 
 // ---------------------------------------------------------------------
 // Segments
 // ---------------------------------------------------------------------
-$segments = $admin
-    ? ['draft' => 'Draft', 'pending' => 'To Review', 'approved' => 'Approved', 'live' => 'Live', 'denied' => 'Needs changes']
+$segments = $admin   // admin: Joust's own work first (Draft · Needs changes) so the queue is on screen at 390 px
+    ? ['draft' => 'Draft', 'denied' => 'Needs changes', 'pending' => 'To Review', 'approved' => 'Approved', 'live' => 'Live']
     : ['pending' => 'To Review', 'approved' => 'Approved', 'live' => 'Live'];
 $segment = strtolower(trim((string)($_GET['status'] ?? 'pending')));
 if ($segment !== 'all' && !isset($segments[$segment])) { $segment = 'pending'; }
@@ -211,6 +223,10 @@ if ($directEmail) {
 $filtered = $hasTable ? emailsForCompany($pdo, $cid, ['group' => $groupSlugs, 'q' => $q, 'visibleTo' => $visibleTo]) : [];
 $counts   = ['draft' => 0, 'pending' => 0, 'approved' => 0, 'live' => 0, 'denied' => 0, 'all' => 0];
 foreach ($filtered as $r) { $counts[emailStatusKey($r)]++; $counts['all']++; }
+// Admin with no explicit segment: open on Joust's own queue (Needs changes) when it has items — the tab badge counts it too.
+if ($admin && !$directEmail && trim((string)($_GET['status'] ?? '')) === '' && $counts['denied'] > 0) {
+    $segment = 'denied';
+}
 
 $emails = $segment === 'all' ? $filtered : array_values(array_filter($filtered, static function ($r) use ($segment) {
     return emailStatusKey($r) === $segment;
@@ -293,7 +309,7 @@ $inlineDetails = count($emails) <= $inlineLimit;
 // ---------------------------------------------------------------------
 $groupParam = $groupSlugs ? implode(',', $groupSlugs) : null;
 $pageUrl = function (array $extra = []) use ($groupParam, $q) {
-    return emailsUrl(array_merge(['group' => $groupParam, 'q' => $q !== '' ? $q : null], $extra));
+    return emailsUrl(array_merge(['audience' => $groupParam, 'q' => $q !== '' ? $q : null], $extra));
 };
 $segmentUrl = function (string $seg) use ($pageUrl) {
     return $pageUrl(['status' => $seg]);
@@ -302,7 +318,7 @@ $chipUrl = function (string $slug) use ($groupSlugs, $segment, $q) {
     $set = in_array($slug, $groupSlugs, true)
         ? array_values(array_diff($groupSlugs, [$slug]))
         : array_merge($groupSlugs, [$slug]);
-    return emailsUrl(['status' => $segment, 'group' => $set ? implode(',', $set) : null, 'q' => $q !== '' ? $q : null]);
+    return emailsUrl(['status' => $segment, 'audience' => $set ? implode(',', $set) : null, 'q' => $q !== '' ? $q : null]);
 };
 
 $segItems = [];
@@ -333,6 +349,7 @@ $segLabel = $segment === 'all' ? 'All' : $segments[$segment];
 // ---------------------------------------------------------------------
 $pageTitle   = 'Emails';
 $activeTab   = 'emails';
+$pageFlash   = $admin && is_string($_GET['msg'] ?? null) ? $_GET['msg'] : '';   // after a save in add-email.php (toasted once)
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">' . "\n"
              . '<link rel="stylesheet" href="' . h(staticUrl('css/emails.css')) . '">';
 $bodyClass   = 'page-emails';
@@ -352,6 +369,7 @@ if ($flowCount > 0 || ($admin && function_exists('hasEmailFlowsTable'))) {
 $emailsConfig = [
     'base'        => basePath(),
     'endpoint'    => basePath() . '/email-status.php',
+    'clientName'  => (string)($client['name'] ?? ''),   // ⋯ Approve for client… confirm
     'partialUrl'  => $pageUrl(['status' => $segment, 'email' => '__ID__', 'partial' => 1]),
     'segment'     => $segment,
     'counts'      => $counts,
@@ -367,17 +385,19 @@ $footExtra = '<script>window.EmailsConfig = ' . json_encode($emailsConfig, JSON_
 include __DIR__ . '/partials/layout-top.php';
 ?>
 
+<?= emailsPagesSwitchHtml('emails', $client, $pdo) // admin, merged Emails/Pages tab only ?>
+
 <div class="posts-toolbar emails-toolbar">
-  <?= segmented($segItems, ['label' => 'Email status']) ?>
+  <?= segmented($segItems, ['label' => 'Email status', 'scroll' => true]) ?>
 </div>
 
 <?php if ($allGroups || $q !== ''): ?>
 <div class="emails-filters" data-emails-filters>
   <?php if ($allGroups): ?>
-  <div class="emails-chips" role="group" aria-label="Filter by group" data-group-chips>
+  <div class="emails-chips" role="group" aria-label="Filter by audience" data-group-chips data-audience-chips>
     <?php foreach ($allGroups as $g):
         $on = in_array((string)$g['slug'], $groupSlugs, true); ?>
-      <a class="em-chip<?= $on ? ' is-active' : '' ?>" href="<?= h($chipUrl((string)$g['slug'])) ?>" data-group-chip="<?= h($g['slug']) ?>" aria-pressed="<?= $on ? 'true' : 'false' ?>"><?= h($g['name']) ?></a>
+      <a class="em-chip<?= $on ? ' is-active' : '' ?>" href="<?= h($chipUrl((string)$g['slug'])) ?>" data-group-chip="<?= h($g['slug']) ?>" data-audience-chip="<?= h($g['slug']) ?>" aria-pressed="<?= $on ? 'true' : 'false' ?>"><?= h($g['name']) ?></a>
     <?php endforeach; ?>
     <?php if ($groupSlugs): ?>
       <a class="em-chip em-chip--clear" href="<?= h(emailsUrl(['status' => $segment, 'q' => $q !== '' ? $q : null])) ?>" data-group-clear><?= icon('xmark') ?>Clear</a>
@@ -387,11 +407,11 @@ include __DIR__ . '/partials/layout-top.php';
   <form class="emails-search" method="get" action="<?= h(pagePath('emails')) ?>" role="search" data-emails-search>
     <?php if (!empty($clientSlug)): ?><input type="hidden" name="client" value="<?= h($clientSlug) ?>"><?php endif; ?>
     <input type="hidden" name="status" value="<?= h($segment) ?>">
-    <?php if ($groupParam !== null): ?><input type="hidden" name="group" value="<?= h($groupParam) ?>"><?php endif; ?>
+    <?php if ($groupParam !== null): ?><input type="hidden" name="audience" value="<?= h($groupParam) ?>"><?php endif; ?>
     <label class="ui-visually-hidden" for="emails-q">Search emails</label>
     <input class="ui-input emails-search-input" type="search" id="emails-q" name="q" value="<?= h($q) ?>" placeholder="Search code, title or subject" autocomplete="off" enterkeyhint="search">
     <?php if ($q !== ''): ?>
-      <a class="ui-btn ui-btn--gray ui-btn--sm" href="<?= h(emailsUrl(['status' => $segment, 'group' => $groupParam])) ?>">Clear</a>
+      <a class="ui-btn ui-btn--gray ui-btn--sm" href="<?= h(emailsUrl(['status' => $segment, 'audience' => $groupParam])) ?>">Clear</a>
     <?php endif; ?>
   </form>
 </div>
@@ -409,12 +429,13 @@ include __DIR__ . '/partials/layout-top.php';
 <?php endif; ?>
 
 <section class="ui-list-group posts-group emails-group" data-emails-list data-segment="<?= h($segment) ?>"<?= !$emails ? ' hidden' : '' ?>>
-  <h2 class="ui-list-header">
-    <span data-segment-count><?= (int)$counts[$segment] ?></span> <?= h(strtolower($segLabel)) ?><?= $segment === 'all' ? ' emails' : '' ?>
+  <h2 class="ui-list-header<?= $admin ? ' asg-list-header' : '' ?>">
+    <span<?= $admin ? ' class="asg-list-title"' : '' ?>><span data-segment-count><?= (int)$counts[$segment] ?></span> <?= h(strtolower($segLabel)) ?><?= $segment === 'all' ? ' emails' : '' ?>
     <?php if ($groupSlugs): ?> · <?= h(implode(', ', array_map(static function ($s) use ($allGroups) {
         foreach ($allGroups as $g) if ($g['slug'] === $s) return $g['name'];
         return $s;
-    }, $groupSlugs))) ?><?php endif; ?>
+    }, $groupSlugs))) ?><?php endif; ?></span>
+    <?php if ($admin): ?><?= assignSelectButtonHtml('email') ?><?php endif; ?>
   </h2>
   <ul class="ui-list posts-list emails-list" role="list" data-emails-items>
     <?php foreach ($emails as $email):
@@ -445,8 +466,8 @@ include __DIR__ . '/partials/layout-top.php';
     ?>
       <li class="pl-item el-item<?= $queue ? ' pl-item--queue' : '' ?><?= $isPast ? ' pl-item--past' : '' ?>" id="email-<?= $eid ?>" data-email-item="<?= $eid ?>" data-id="<?= $eid ?>"
           data-status="<?= h($email['status']) ?>" data-live="<?= $live ? '1' : '0' ?>" data-key="<?= h($key) ?>"<?= $isPast ? ' data-past="1"' : '' ?>
-          data-title="<?= h($rowTitle) ?>"<?= $queue ? ' data-queue' : ' data-swipe' ?>>
-        <?php if (!$queue): ?>
+          data-title="<?= h($rowTitle) ?>"<?= $queue ? ' data-queue' : ($admin ? '' : ' data-swipe') ?>>
+        <?php if (!$queue && !$admin): /* swipe = the client's decision; Joust decides for the client only via ⋯ → Approve for client… */ ?>
         <div class="pl-swipe pl-swipe--approve" aria-hidden="true"><?= icon('checkmark') ?><span>Approve</span></div>
         <div class="pl-swipe pl-swipe--deny" aria-hidden="true"><?= icon('xmark') ?><span>Needs changes</span></div>
         <?php endif; ?>
@@ -487,16 +508,19 @@ include __DIR__ . '/partials/layout-top.php';
               <?php if ($queue): ?>
                 <span class="pl-meta-item"><span class="pl-meta-sep">·</span><span data-queue-count="<?= $eid ?>"><?= $qCount > 0 ? $qCount . ' client ' . ($qCount === 1 ? 'comment' : 'comments') : 'no client comments' ?></span></span>
               <?php else: ?>
-                <span class="pl-meta-item"><span class="pl-meta-sep">·</span><span data-comment-count-for="<?= $eid ?>"><?= $nCmt ?> <?= $nCmt === 1 ? 'comment' : 'comments' ?></span></span>
+                <span class="pl-meta-item"<?= $nCmt > 0 ? '' : ' hidden' ?>><span class="pl-meta-sep">·</span><span data-comment-count-for="<?= $eid ?>"><?= $nCmt ?> <?= $nCmt === 1 ? 'comment' : 'comments' ?></span></span>
               <?php endif; ?>
             </div>
           </div>
           <?= icon('chevron-right', 'ui-row-chevron') ?>
         </a>
+        <?php if ($admin): // ⋯ Move to client… · Add to flow… · Set audiences… (assign.js) ?>
+          <?= assignMenuHtml('email', $eid, emailDisplayLabel($email), ['admin' => true, 'class' => 'asg-row-more', 'editUrl' => clientUrl('add-email.php', ['edit' => $eid])]) ?>
+        <?php endif; ?>
         <?php if ($queue): ?>
           <div class="pl-queue-actions">
             <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-email-open="<?= $eid ?>">Open</button>
-            <button type="button" class="ui-btn ui-btn--tinted ui-btn--sm" data-resubmit="<?= $eid ?>" title="Move this email back to the client's To Review list">Resubmit for review</button>
+            <button type="button" class="ui-btn ui-btn--tinted ui-btn--sm" data-resubmit="<?= $eid ?>" title="Move this email back to the client's To Review list">Send for review</button>
           </div>
         <?php endif; ?>
         <?php if ($inlineDetails): ?>
@@ -505,10 +529,10 @@ include __DIR__ . '/partials/layout-top.php';
       </li>
     <?php endforeach; ?>
   </ul>
-  <?php if ($segment === 'pending'): ?>
-    <p class="ui-list-footer posts-hint">Swipe right to approve, left to request changes. Tap an email for the full preview.</p>
+  <?php if ($segment === 'pending' && !$admin): ?>
+    <p class="ui-list-footer posts-hint">Swipe right to approve, left for needs changes. Tap an email for the full preview.</p>
   <?php elseif ($isQueue): ?>
-    <p class="ui-list-footer">Newest client activity first. Open an email for the full thread; Resubmit sends it back to the client's To Review list.</p>
+    <p class="ui-list-footer">Newest client activity first. Open an email for the full thread; Send for review puts it back on the client's To Review list.</p>
   <?php endif; ?>
 </section>
 

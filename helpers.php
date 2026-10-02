@@ -83,6 +83,140 @@ require_once __DIR__ . '/partials/components/segmented.php';
 require_once __DIR__ . '/partials/components/inset-list.php';
 require_once __DIR__ . '/partials/components/card.php';
 require_once __DIR__ . '/partials/components/video.php';
+require_once __DIR__ . '/partials/components/new-menu.php';   // admin "+ New" (navbar.php)
+require_once __DIR__ . '/partials/components/upload-sheet.php'; // admin Upload sheet: boot tags (layout-bottom.php) + uploadSheetUrl() / uploadSheetAttrs()
+
+/** The admin's hub for the global tools (Prompt / Vehicle Library, AI Builder, Drive, Clients) — the parent
+ *  their back links point at: Manage → Tools (manage.php, keeping the client scope when there is one).
+ *  The one place to repoint when it moves. */
+if (!function_exists('adminToolsUrl')) {
+    function adminToolsUrl(): string { return manageUrl('tools'); }
+}
+
+/** Manage (manage.php) — the admin's settings hub. Sections: clients · export · drive (drive.php) · tools. */
+if (!defined('MANAGE_SECTIONS')) {
+    define('MANAGE_SECTIONS', ['clients' => 'Clients', 'export' => 'Export', 'drive' => 'Drive', 'tools' => 'Tools']);
+}
+
+if (!function_exists('manageUrl')) {
+    /** manageUrl('export', ['tire' => 3]) → manage.php?client=<scope>&section=export&tire=3 · 'drive' → drive.php (the view
+     *  itself is global; the scope rides along so the tab bar and the Manage switch keep the client). */
+    function manageUrl(string $section = '', array $extra = []): string {
+        if ($section === 'drive') return clientUrl('drive.php', $extra);
+        return clientUrl('manage.php', ($section !== '' ? ['section' => $section] : []) + $extra);
+    }
+}
+
+if (!function_exists('manageNavHtml')) {
+    /** The Manage section switch (a segmented row of links) shared by manage.php and drive.php. */
+    function manageNavHtml(string $active): string {
+        $items = [];
+        foreach (MANAGE_SECTIONS as $key => $label) {
+            $items[] = ['label' => $label, 'href' => manageUrl($key), 'active' => $key === $active, 'value' => $key,
+                        'attrs' => ['data-manage-section-link' => $key]];
+        }
+        return '<div class="manage-toolbar">' . segmented($items, ['label' => 'Manage sections', 'class' => 'manage-segmented']) . '</div>';
+    }
+}
+
+if (!function_exists('navMergesEmailsPages')) {
+    /** The admin tab bar holds at most 6 items (partials/tabbar.php): when a client has Tires, Emails AND Pages, Emails and
+     *  Pages share one "Emails/Pages" tab and both pages carry an Emails · Pages switch (emailsPagesSwitchHtml()). */
+    function navMergesEmailsPages(?array $client, ?PDO $pdo): bool {
+        if (empty($client['id']) || !$pdo || !isAdmin()) return false;
+        try {
+            return companyHasTires($client, $pdo)
+                && function_exists('companyHasEmails') && companyHasEmails($client, $pdo)
+                && function_exists('companyHasPages') && companyHasPages($client, $pdo);
+        } catch (Throwable $e) {
+            return false;
+        }
+    }
+}
+
+if (!function_exists('emailsPagesSwitchHtml')) {
+    /** "Emails · Pages" segmented links for the merged admin tab ('' when the tabs are separate). */
+    function emailsPagesSwitchHtml(string $active, ?array $client, ?PDO $pdo): string {
+        if (!navMergesEmailsPages($client, $pdo)) return '';
+        $items = [
+            ['label' => 'Emails', 'href' => clientUrl('emails.php'), 'active' => $active === 'emails', 'value' => 'emails', 'attrs' => ['data-mail-switch' => 'emails']],
+            ['label' => 'Pages',  'href' => clientUrl('pages.php'),  'active' => $active === 'pages',  'value' => 'pages',  'attrs' => ['data-mail-switch' => 'pages']],
+        ];
+        return '<div class="manage-toolbar mail-switch">' . segmented($items, ['label' => 'Emails or Pages']) . '</div>';
+    }
+}
+
+if (!function_exists('legacyAdminTarget')) {
+    /**
+     * Where an old admin URL lands now — shared by studio.php, admin.php and legacy/admin.php so every bookmark
+     * of the retired Studio / Classic admin keeps working ($q = the old query string, i.e. $_GET):
+     *   tab=posts → Posts · tab=uploads|batch → Posts with the Upload sheet (a draft post per file)
+     *   tab=compose or newpost=1 → Posts with the New post pop-up · tab=emails / pages → those pages
+     *   tab=renders[&tire=&series=] → the tire in Assets with Manage series open (no tire → the Tires list)
+     *   tab=export[&tire=&series=] → Manage → Export · tab=clients[&edit=] → Manage → Clients · no tab → Manage
+     *   upload=1[&dest=&tire=&series=&each=] → the same Upload sheet deep link on Posts. ?msg= is kept.
+     * Returns a root-rooted URL; the client scope comes from $q['client'].
+     */
+    function legacyAdminTarget(array $q): string {
+        $slug  = preg_replace('/[^a-z0-9\-]/', '', strtolower(trim(is_string($q['client'] ?? null) ? $q['client'] : '')));
+        $tab   = strtolower(trim(is_string($q['tab'] ?? null) ? $q['tab'] : ''));
+        $msg   = isset($q['msg']) && is_string($q['msg']) && trim($q['msg']) !== '' ? trim($q['msg']) : null;
+        $int   = static function (string $k) use ($q) { $v = is_scalar($q[$k] ?? null) ? (int)$q[$k] : 0; return $v > 0 ? $v : null; };
+        $build = static function (string $page, array $extra) use ($slug) {
+            $extra = array_filter(($slug !== '' ? ['client' => $slug] : []) + $extra, static function ($v) { return $v !== null && $v !== ''; });
+            return pagePath($page) . ($extra ? '?' . http_build_query($extra) : '');
+        };
+        if (!empty($q['upload'])) {   // an Upload sheet deep link keeps its destination
+            $keep = ['upload' => '1'];
+            foreach (['dest', 'tire', 'series', 'each'] as $k) {
+                if (isset($q[$k]) && is_scalar($q[$k]) && preg_match('/^[a-z0-9]{1,20}$/', (string)$q[$k])) $keep[$k] = (string)$q[$k];
+            }
+            if ($tab === 'uploads' || $tab === 'batch') $keep += ['dest' => 'post', 'each' => '1'];
+            return $build('posts', $keep);
+        }
+        if (!empty($q['newpost']) || $tab === 'compose') return $build('posts', ['newpost' => 1]);
+        switch ($tab) {
+            case 'posts':   return $build('posts', ['msg' => $msg]);
+            case 'uploads':
+            case 'batch':   return $build('posts', ['upload' => '1', 'dest' => 'post', 'each' => '1']);
+            case 'emails':  return $build('emails', ['msg' => $msg]);
+            case 'pages':   return $build('pages', ['msg' => $msg]);
+            case 'renders':
+                if ($slug === '') return $build('manage', ['section' => 'tools']);
+                $tire = $int('tire');
+                return $build('assets', ['view' => 'collections', 'item' => $tire, 'series' => $tire ? $int('series') : null, 'manage' => $tire ? 'series' : null]);
+            case 'export':  return $build('manage', ['section' => 'export', 'tire' => $int('tire'), 'series' => $int('series'), 'msg' => $msg]);
+            case 'clients': return $build('manage', ['section' => 'clients', 'edit' => $int('edit'), 'msg' => $msg]);
+            case 'tools':   return $build('manage', ['section' => 'tools', 'msg' => $msg]);
+            case 'drive':   return pagePath('drive');
+        }
+        return $build('manage', ['msg' => $msg]);
+    }
+}
+
+if (!function_exists('legacyAdminModuleTarget')) {
+    /** admin.php / studio.php ?tab=emails|pages for a client without that module (and no rows): straight to
+     *  Manage → Clients with the "turn it on here" flash — the one hop emails.php / pages.php would add. null otherwise. */
+    function legacyAdminModuleTarget(PDO $pdo, ?array $client, array $q): ?string {
+        $tab = strtolower(trim(is_string($q['tab'] ?? null) ? $q['tab'] : ''));
+        if (empty($client['id']) || !in_array($tab, ['emails', 'pages'], true) || !empty($q['upload']) || !empty($q['newpost'])) return null;
+        try {
+            $cid = (int)$client['id'];
+            if ($tab === 'emails') {
+                if (!hasEmailsTable($pdo) || companyHasEmails($client, $pdo) || (int)(emailCounts($pdo, $cid)['total'] ?? 0) > 0) return null;
+                $what = 'Emails';
+            } else {
+                require_once __DIR__ . '/pages-lib.php';
+                if (!hasPagesTable($pdo) || companyHasPages($client, $pdo) || (int)(pageCounts($pdo, $cid)['total'] ?? 0) > 0) return null;
+                $what = 'Pages';
+            }
+        } catch (Throwable $e) {
+            error_log('legacyAdminModuleTarget: ' . $e->getMessage());
+            return null;
+        }
+        return manageUrl('clients', ['edit' => $cid, 'msg' => $client['name'] . ' doesn’t use ' . $what . ' yet — turn it on here.']);
+    }
+}
 
 /** Return "client=hmf" or "" for building URLs */
 function clientQs() {
@@ -248,6 +382,39 @@ function companyHasTires(array $company, ?PDO $pdo = null): bool {
 }
 
 /**
+ * True when the tires MODULE is switched on for the company (company_modules) — the condition add-feature.php
+ * ("New tire") requires. companyHasTires() is wider (module on OR any tire rows) and decides the Tires tab;
+ * this one decides where "New tire" is offered (+ New menu, the Tires list).
+ */
+if (!function_exists('companyTiresModuleOn')) {
+    function companyTiresModuleOn(array $company, ?PDO $pdo = null): bool {
+        static $cache = [];
+        $cid = (int)($company['id'] ?? 0);
+        if ($cid <= 0) return false;
+        if (array_key_exists($cid, $cache)) return $cache[$cid];
+        if ($pdo === null) { $pdo = $GLOBALS['pdo'] ?? null; }
+        if (!$pdo instanceof PDO) return false;
+        try {
+            $s = $pdo->prepare("SELECT 1 FROM company_modules cm INNER JOIN modules m ON m.id = cm.module_id
+                                 WHERE cm.company_id = ? AND m.slug = 'tires' LIMIT 1");
+            $s->execute([$cid]);
+            return $cache[$cid] = (bool)$s->fetchColumn();
+        } catch (Throwable $e) {
+            error_log('companyTiresModuleOn failed: ' . $e->getMessage());
+            return $cache[$cid] = false;
+        }
+    }
+}
+
+/** The client's word for its tire content ("Tires" unless companies.feature_label says otherwise) — tab, titles, copy. */
+if (!function_exists('tiresLabel')) {
+    function tiresLabel(?array $company): string {
+        $l = trim((string)($company['feature_label'] ?? ''));
+        return $l !== '' ? $l : 'Tires';
+    }
+}
+
+/**
  * Render the page chrome for a client page: the large-title nav bar plus the
  * role-aware tab bar (partials/navbar.php + partials/tabbar.php).
  *
@@ -271,14 +438,14 @@ function renderClientNav(array $items, $current = '', array $opts = []) {
     return renderAppChrome($title, $opts);
 }
 
-/** Map a legacy page key to a tab id ('home'|'assets'|'posts'|'projects'|'studio'|null). */
+/** Map a legacy page key to a tab id ('home'|'assets'|'posts'|'projects'|'manage'|null). */
 function appTabForPage(string $current) {
     if ($current === 'index')    return 'home';
     if ($current === 'feed')     return 'posts';
     if ($current === 'library')  return 'assets';
     if (strpos($current, 'module:') === 0) return 'assets';
     if ($current === 'projects') return 'projects';
-    if ($current === 'admin' || $current === 'studio') return 'studio';
+    if ($current === 'admin' || $current === 'studio' || $current === 'manage') return 'manage';
     return null;
 }
 
@@ -289,7 +456,7 @@ function appPageTitle(string $current, array $items, $client): string {
         case 'feed':     return 'Posts';
         case 'library':  return 'Assets';
         case 'projects': return 'Projects';
-        case 'admin':    return 'Studio';
+        case 'admin':    return 'Manage';
     }
     foreach ($items as $it) {
         if (($it['page'] ?? '') === $current && !empty($it['label'])) return (string)$it['label'];
@@ -340,6 +507,80 @@ if (!function_exists('hasPostedColumn')) {
         ");
         $s->execute();
         return $cached = (int)$s->fetchColumn() > 0;
+    }
+}
+
+/** Most media (images + videos) one post may carry — a carousel. The one number every create /
+ *  edit path (add-post.php, batch-process.php, the pool helpers, the post-detail carousel) and the
+ *  JS config (StudioConfig.maxImages / PostsConfig.maxMedia) use. */
+if (!defined('POST_MAX_MEDIA')) { define('POST_MAX_MEDIA', 20); }
+
+/** Does posts.status accept 'draft' yet? (migrate.php step 35.) Cached for the request. Before the
+ *  migration every create path falls back to 'pending' and the Drafts segment is not offered. */
+if (!function_exists('postsHaveDraft')) {
+    function postsHaveDraft(PDO $pdo): bool {
+        static $cached = null;
+        if ($cached !== null) return $cached;
+        try {
+            $s = $pdo->prepare("
+                SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'posts' AND COLUMN_NAME = 'status'
+            ");
+            $s->execute();
+            return $cached = strpos(strtolower((string)$s->fetchColumn()), "'draft'") !== false;
+        } catch (Throwable $e) {
+            return $cached = false;
+        }
+    }
+}
+
+/** SQL condition (alias p) for the posts the CLIENT seat may see: never drafts (Joust is still
+ *  building them) and never denied work (Joust's queue). Callers add it only for non-admins. */
+if (!function_exists('postsClientVisibleSql')) {
+    function postsClientVisibleSql(string $alias = 'p'): string {
+        $a = $alias !== '' ? $alias . '.' : '';
+        return "{$a}status IN ('pending','approved')";
+    }
+}
+
+/**
+ * Status rules of the full edit forms (add-email.php / add-page.php) — the same transitions as the
+ * sheets (email-status.php / page-status.php): a form routes work, it never decides for the client.
+ *   reviewFormStatusOptions($current)  the Status choices: Draft · To Review, plus "keep" for a row the
+ *                                      client already decided (Approved / Needs changes) — so editing an
+ *                                      approved item keeps it approved (posts' "keep" rule, post-compose.php)
+ *   reviewFormStatusError($old, $new, $live, $noun)  '' when the save is allowed, else the message
+ * Approving (and Needs changes) stays the client's — or the sheet's ⋯ "Approve for client…" with its confirm.
+ */
+if (!function_exists('reviewFormStatusOptions')) {
+    function reviewFormStatusOptions(string $current = ''): array {
+        $keep = [];
+        if ($current === 'approved') $keep['approved'] = 'Approved — unchanged';
+        elseif ($current === 'denied') $keep['denied'] = 'Needs changes — unchanged';
+        return $keep + ['draft' => 'Draft', 'pending' => 'To Review'];
+    }
+}
+if (!function_exists('reviewFormStatusHelp')) {
+    /** The help line under the form's Status select, for the row's current status ('' = new). Points at
+     *  "Approve for client…" only where the sheet's ⋯ menu has it (To Review / Needs changes). */
+    function reviewFormStatusHelp(string $current, string $noun): string {
+        switch ($current) {
+            case 'pending':  return "The client approves. If they approved this {$noun} outside the portal, Approve for client… is in the {$noun}’s ⋯ menu.";
+            case 'denied':   return "The client asked for changes. Pick To Review to send it back to them once it’s fixed.";
+            case 'approved': return "The client approved this {$noun}. Saving keeps it approved; To Review sends it back to them.";
+            default:         return "The client approves. Send it for review when it’s ready.";
+        }
+    }
+}
+if (!function_exists('reviewFormStatusError')) {
+    function reviewFormStatusError(string $old, string $new, bool $live, string $noun): string {
+        if (!isset(reviewFormStatusOptions($old)[$new])) {
+            if ($new === 'approved') return "Only the client approves. If they approved this {$noun} outside the portal, use Approve for client… in the {$noun}'s ⋯ menu.";
+            if ($new === 'denied')   return "Needs changes is the client's call. Use Needs changes… in the {$noun}'s ⋯ menu to note what they asked for.";
+            return 'Unknown status.';
+        }
+        if ($live && $new !== 'approved') return "Only an approved {$noun} can be marked live.";
+        return '';
     }
 }
 
@@ -676,23 +917,9 @@ if (!function_exists('requireSameSiteFetch')) {
     }
 }
 
-/** Absolute path of a stored media URL ('uploads/x.jpg') ONLY when the file
- *  really lives directly inside this app's uploads/ directory (realpath
- *  containment — 'uploads/../config.php' and symlink tricks return null).
- *  Use before every unlink of a DB-supplied path. */
-if (!function_exists('uploadsPathOrNull')) {
-    function uploadsPathOrNull(string $url): ?string {
-        $url = trim($url);
-        if ($url === '' || strpos($url, 'uploads/') !== 0) return null;
-        $uploadsDir = realpath(__DIR__ . '/uploads');
-        if ($uploadsDir === false) return null;
-        $path = __DIR__ . '/' . $url;
-        if (!is_file($path)) return null;
-        $real = realpath($path);
-        if ($real === false || realpath(dirname($path)) !== $uploadsDir || dirname($real) !== $uploadsDir) return null;
-        return $real;
-    }
-}
+// uploadsPathOrNull() — realpath containment of 'uploads/<file>' — lives in media-lib.php (the
+// session-free preview.php needs it too).
+require_once __DIR__ . '/media-lib.php';
 
 /**
  * Fetch the full comment thread for one entity, oldest → newest.
@@ -862,7 +1089,7 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
     $grouped = array_slice($grouped, 0, $limit);
 
     // -------------------------------------------------------------------
-    // Enrich tire / tire_image rows so activityLink() can deep-link to the
+    // Enrich tire / tire_image rows so activityDeepLink() can deep-link to the
     // exact item (and image anchor) instead of dumping the user on a gallery.
     // Two batched lookups — only fire when we actually have rows that need them.
     // -------------------------------------------------------------------
@@ -990,12 +1217,13 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
         $ph = implode(',', array_fill(0, count($postIds), '?'));
         // posts.name is optional — degrade gracefully if migrate hasn't run.
         $nameSel = hasPostsNameColumn($pdo) ? 'name' : "'' AS name";
-        $s = $pdo->prepare("SELECT id, {$nameSel}, caption FROM posts WHERE id IN ($ph)");
+        $s = $pdo->prepare("SELECT id, {$nameSel}, caption, status FROM posts WHERE id IN ($ph)");
         $s->execute($postIds);
         foreach ($s->fetchAll() as $r) {
             $postMeta[(int)$r['id']] = [
                 'name'    => $r['name'] ?? '',
                 'caption' => $r['caption'] ?? '',
+                'status'  => (string)($r['status'] ?? ''),
             ];
         }
     }
@@ -1075,6 +1303,16 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
     }
     unset($g);
 
+    // Drafts are Joust's work in progress: the client seat never sees a row about a post that is
+    // a draft right now, nor the draft bookkeeping rows themselves (drafted / moved back to drafts).
+    if (!(function_exists('isAdmin') && isAdmin())) {
+        $grouped = array_values(array_filter($grouped, static function ($g) {
+            if (($g['entity_type'] ?? '') !== 'post') return true;
+            if (($g['_meta']['status'] ?? '') === 'draft') return false;
+            return (bool)array_diff((array)($g['actions'] ?? []), ['drafted', 'moved_to_draft']);
+        }));
+    }
+
     return $grouped;
 }
 
@@ -1082,10 +1320,12 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
 function actionLabel($action) {
     static $map = [
         'approved'             => 'approved',
-        'denied'               => 'denied',
-        'reset_pending'        => 'reset to pending',
-        'posted'               => 'marked posted',
-        'unposted'             => 'unmarked posted',
+        'denied'               => 'requested changes',     // the "Needs changes" button (one word per action)
+        'reset_pending'        => 'sent for review',       // a resubmit reads like the first send
+        'drafted'              => 'started a draft of',
+        'moved_to_draft'       => 'moved back to drafts',
+        'posted'               => 'marked scheduled',
+        'unposted'             => 'unmarked scheduled',
         'commented'            => 'commented',
         'uncommented'          => 'cleared comment',
         'edited_caption'       => 'edited caption',
@@ -1114,6 +1354,8 @@ function actionLabel($action) {
         'edited_send_at'       => 'changed send date',
         'edited_html_url'      => 'changed email link',
         'edited_code'          => 'changed ID',
+        'edited_groups'        => 'edited audiences',
+        'moved'                => 'moved to another client',
         // pages (entity_type = 'page'; 'uploaded' is shared with tire series below)
         'deleted_file'         => 'removed a file from',
         'extracted_assets'     => 'extracted embedded images from',
@@ -1151,85 +1393,6 @@ function dayBucket($datetime) {
     return date(date('Y') === date('Y', $ts) ? 'D M j' : 'M j, Y', $ts);
 }
 
-/** Build a deep-link URL for an activity row.
- *  Root-rooted via pagePath() so it resolves the same from any page. Aims to land the
- *  user *on the exact entity* — the post editor, the specific tire's review with the
- *  image anchored, the task highlighted in the project list — never a generic gallery. */
-function activityLink($entry) {
-    $slug = $entry['company_slug'] ?? '';
-    $meta = $entry['_meta'] ?? null;
-
-    $clientPair = $slug !== '' ? ['client' => $slug] : [];
-
-    switch ($entry['entity_type']) {
-        case 'post':
-            // Land in the post editor with the comment thread visible.
-            $qs = http_build_query(array_merge($clientPair, ['edit' => (int)$entry['entity_id']]));
-            return pagePath('add-post') . '?' . $qs;
-
-        case 'tire_image':
-            // Per-image review: features?client=X&module=<slug>&item=<tire_id>#image-<id>
-            $moduleSlug = $meta['module_slug'] ?? 'tires';
-            $tireId     = (int)($meta['tire_id'] ?? 0);
-            $params     = array_merge($clientPair, ['module' => $moduleSlug]);
-            if ($tireId > 0) { $params['item'] = $tireId; }
-            $url = pagePath('features') . '?' . http_build_query($params);
-            if ($tireId > 0) { $url .= '#image-' . (int)$entry['entity_id']; }
-            return $url;
-
-        case 'tire':
-            // Per-tire review (catch the tire entity itself: created/deleted/etc.)
-            $moduleSlug = $meta['module_slug'] ?? 'tires';
-            $params     = array_merge($clientPair, [
-                'module' => $moduleSlug,
-                'item'   => (int)$entry['entity_id'],
-            ]);
-            return pagePath('features') . '?' . http_build_query($params);
-
-        case 'task':
-            // Anchor straight to the task in the project list.
-            $url = pagePath('projects');
-            if ($clientPair) { $url .= '?' . http_build_query($clientPair); }
-            return $url . '#task-' . (int)$entry['entity_id'];
-
-        case 'library_image':
-            // Anchor straight to the tile in the brand's library gallery.
-            $url = pagePath('library');
-            if ($clientPair) { $url .= '?' . http_build_query($clientPair); }
-            return $url . '#lib-' . (int)$entry['entity_id'];
-
-        case 'email':
-            // Emails list with the row's detail open.
-            $qs = http_build_query(array_merge($clientPair, ['email' => (int)$entry['entity_id']]));
-            return pagePath('emails') . '?' . $qs;
-
-        case 'page':
-            // Pages list with the row's detail sheet open.
-            $qs = http_build_query(array_merge($clientPair, ['page' => (int)$entry['entity_id']]));
-            return pagePath('pages') . '?' . $qs;
-
-        case 'email_flow':
-            // The flow page (slug from _meta; the list when the flow is gone).
-            $params = $clientPair;
-            if (!empty($meta['slug'])) { $params['flow'] = (string)$meta['slug']; }
-            return pagePath('flows') . ($params ? '?' . http_build_query($params) : '');
-
-        case 'tire_series':
-            // The collection in Assets with the series selected.
-            $tireId = (int)($meta['tire_id'] ?? 0);
-            $params = array_merge($clientPair, ['view' => 'collections']);
-            if ($tireId > 0) { $params['item'] = $tireId; $params['series'] = (int)$entry['entity_id']; }
-            return pagePath('assets') . '?' . http_build_query($params);
-
-        case 'drive_snapshot':
-            // The Drive storage view (admin-only, unscoped) at that snapshot.
-            return pagePath('drive') . '?' . http_build_query(['snapshot' => (int)$entry['entity_id']]);
-
-        default:
-            return pagePath('admin') . ($clientPair ? '?' . http_build_query($clientPair) : '');
-    }
-}
-
 // =====================================================================
 // Humanized activity (spec §4.1 / §9: "Activity feed contains zero raw
 // filenames"). Every sentence is built from entity_type + action + actor +
@@ -1248,6 +1411,25 @@ if (!function_exists('activityLooksLikeFilename')) {
         if (preg_match('/^hf-\d{8}-\d{6}/i', $s)) return true;                                 // Higgsfield export stems
         if (preg_match('/^(IMG|DSC|DSCF|PXL|MVI|GOPR|DJI)[_-]?\d{3,}/i', $s)) return true;     // camera / phone stems
         return false;
+    }
+}
+
+/**
+ * Slide comments (the post sheet's "Slide" picker) are stored as "[Slide N] text" — no schema change.
+ * commentSlideSplit("[Slide 3] Darker please") → [3, 'Darker please']; anything else → [0, $text].
+ * commentSlideHuman() is the plain-text form for feed sentences, the digest and Home notes:
+ * "on slide 3: Darker please" (the stored text is never rewritten).
+ */
+if (!function_exists('commentSlideSplit')) {
+    function commentSlideSplit(string $text): array {
+        if (preg_match('/^\[Slide (\d{1,2})\]\s*/u', $text, $m)) return [(int)$m[1], (string)substr($text, strlen($m[0]))];
+        return [0, $text];
+    }
+}
+if (!function_exists('commentSlideHuman')) {
+    function commentSlideHuman(string $text): string {
+        [$n, $rest] = commentSlideSplit($text);
+        return $n > 0 ? 'on slide ' . $n . ': ' . $rest : $text;
     }
 }
 
@@ -1386,8 +1568,8 @@ if (!function_exists('activityDeepLink')) {
                     ? emailFlowUrl(['slug' => $flowSlug], $qs)
                     : clientUrl('flows', $qs + ($flowSlug !== '' ? ['flow' => $flowSlug] : []));
             case 'company':
-                // Studio → Clients with this client's card open (admin only; a client never sees company rows link there).
-                return clientUrl('studio', $qs + ['tab' => 'clients', 'edit' => $id]);
+                // Manage → Clients with this client's card open (admin only; a client never sees company rows link there).
+                return clientUrl('manage', $qs + ['section' => 'clients', 'edit' => $id]);
             case 'drive_snapshot':
                 // The Drive storage view (admin-only, unscoped — never carries a client).
                 return pagePath('drive') . '?' . http_build_query(['snapshot' => $id]);
@@ -1401,7 +1583,7 @@ if (!function_exists('activityDeepLink')) {
 if (!function_exists('activityPrimaryAction')) {
     function activityPrimaryAction(array $actions): string {
         static $rank = [
-            'denied' => 1, 'approved' => 2, 'reset_pending' => 3, 'submitted' => 3,
+            'denied' => 1, 'approved' => 2, 'reset_pending' => 3, 'submitted' => 3, 'moved_to_draft' => 3, 'drafted' => 6,
             'posted' => 4, 'unposted' => 5, 'marked_live' => 4, 'unmarked_live' => 5,
             'seeded' => 5, 'scanned' => 5, 'uploaded' => 5, 'created' => 6, 'deleted' => 7, 'imported' => 7,
             'set_reference' => 12, 'drive_linked' => 23, 'drive_unlinked' => 23,
@@ -1425,14 +1607,15 @@ if (!function_exists('activityPrimaryAction')) {
  * Turn recentActivity() entries into humanized rows.
  *
  *   humanizeActivityRows($entries, $role, $client)  → array of rows:
- *     text        plain sentence         "You denied 3 images in Warhawk renders"
+ *     text        plain sentence         "You requested changes on 3 images in Warhawk renders"
  *     html        escaped HTML sentence, names wrapped in <em>
  *     href        deep link (see activityDeepLink)
  *     icon        icon() name            checkmark | xmark | ellipsis | calendar | plus | grid | photo | checklist
  *     tone        approve | deny | accent | scheduled | neutral
  *     time        created_at of the newest merged row; time_rel / time_abs formatted
  *     count       how many items the row stands for (1 unless collapsed)
- *     children    [['text','who','time','time_rel','href'], …]  comment texts (for the disclosure)
+ *     children    [['text','slide','who','time','time_rel','href'], …]  comment texts (for the disclosure;
+ *                 a "[Slide N] " prefix is split off into 'slide' = N, 0 otherwise)
  *     edits       ['caption','schedule',…] for edit batches
  *     who, is_you, actor, action, actions, verb, thing, name, parent, parent_key,
  *     entity_type, entity_id, entity_ids, company_id, company_name, company_slug, batch_id
@@ -1463,8 +1646,11 @@ if (!function_exists('humanizeActivityRows')) {
             $children = [];
             foreach ((array)($e['details'] ?? []) as $d) {
                 if (($d['action'] ?? '') === 'commented' && trim((string)($d['text'] ?? '')) !== '') {
+                    // "[Slide 3] text" → slide 3 + the text; sentences say "on slide 3: …" (never the raw prefix)
+                    [$slideNo, $body] = commentSlideSplit(trim((string)$d['text']));
                     $children[] = [
-                        'text'     => trim((string)$d['text']),
+                        'text'     => trim($body),
+                        'slide'    => $slideNo,
                         'who'      => $who,
                         'time'     => (string)($e['created_at'] ?? ''),
                         'time_rel' => relativeTime($e['created_at'] ?? null),
@@ -1474,7 +1660,8 @@ if (!function_exists('humanizeActivityRows')) {
             }
             $edits = [];
             foreach ($actions as $a) {
-                if (strpos($a, 'edited_') === 0) $edits[] = str_replace('_', ' ', substr($a, 7));
+                if ($a === 'edited_groups') $edits[] = 'audiences';   // email_groups = Audiences in the UI
+                elseif (strpos($a, 'edited_') === 0) $edits[] = str_replace('_', ' ', substr($a, 7));
                 elseif (strpos($a, 'renamed_') === 0) $edits[] = 'name';
                 elseif ($a === 'type_changed') $edits[] = 'type';
             }
@@ -1570,8 +1757,9 @@ if (!function_exists('activityFinalizeRows')) {
                     else                     { $objT = $objH = $lead; }
                     break;
                 case 'collection':
-                    if (!$many && $r['name'] !== '') { $objT = 'the ' . $r['name'] . ' collection'; $objH = 'the <em>' . $h($r['name']) . '</em> collection'; }
-                    else                             { $objT = $objH = $many ? $n . ' collections' : 'a collection'; }
+                    // (internal 'collection' = a tire; the UI only ever says "tire")
+                    if (!$many && $r['name'] !== '') { $objT = $r['name']; $objH = '<em>' . $h($r['name']) . '</em>'; }
+                    else                             { $objT = $objH = $many ? $n . ' tires' : 'a tire'; }
                     break;
                 case 'task':
                     if (!$many && $r['name'] !== '') { $objT = $r['name']; $objH = '<em>' . $h($r['name']) . '</em>'; }
@@ -1612,11 +1800,11 @@ if (!function_exists('activityFinalizeRows')) {
                     $verb = 'approved'; $icon = 'checkmark'; $tone = 'approve';
                     $t = "$who approved $objT"; $hh = "$whoH approved $objH"; break;
                 case 'denied':
-                    $verb = 'denied'; $icon = 'xmark'; $tone = 'deny';
-                    $t = "$who denied $objT"; $hh = "$whoH denied $objH"; break;
-                case 'reset_pending':
-                    $verb = 'reopened'; $icon = 'grid'; $tone = 'accent';
-                    $t = "$who reopened $objT for review"; $hh = "$whoH reopened $objH for review"; break;
+                    $verb = 'requested changes'; $icon = 'xmark'; $tone = 'deny';
+                    $t = "$who requested changes on $objT"; $hh = "$whoH requested changes on $objH"; break;
+                case 'reset_pending':   // a resubmit: the same words as the first "Send for review"
+                    $verb = 'sent for review'; $icon = 'grid'; $tone = 'accent';
+                    $t = "$who sent $objT for review"; $hh = "$whoH sent $objH for review"; break;
                 case 'posted':
                     $verb = 'scheduled'; $icon = 'calendar'; $tone = 'scheduled';
                     $t = "$who scheduled $objT"; $hh = "$whoH scheduled $objH"; break;
@@ -1646,7 +1834,9 @@ if (!function_exists('activityFinalizeRows')) {
                     break;
                 case 'created':
                     $icon = 'plus'; $tone = 'accent';
-                    if ($r['thing'] === 'post')     { $verb = 'added'; $t = "$who added $objT for review"; $hh = "$whoH added $objH for review"; }
+                    // A post that is still a Draft was never sent to the client: no "for review" (it says what it is)
+                    if ($r['thing'] === 'post' && (($r['_entry']['_meta']['status'] ?? '') === 'draft')) { $verb = 'started a draft'; $t = "$who started a draft: $objT"; $hh = "$whoH started a draft: $objH"; }
+                    elseif ($r['thing'] === 'post') { $verb = 'added'; $t = "$who added $objT for review"; $hh = "$whoH added $objH for review"; }
                     elseif ($r['thing'] === 'task') { $verb = 'opened'; $t = "$who opened $objT"; $hh = "$whoH opened $objH"; }
                     else                            { $verb = 'added'; $t = "$who added $objT"; $hh = "$whoH added $objH"; }
                     break;
@@ -1654,21 +1844,21 @@ if (!function_exists('activityFinalizeRows')) {
                     $verb = 'removed'; $icon = 'xmark'; $tone = 'neutral';
                     // The entity is gone, so no name resolves; say what kind of thing it was.
                     $kind = $r['thing'] === 'image' ? ($many ? $n . ' images' : 'an image')
-                          : ($r['thing'] === 'collection' ? ($many ? $n . ' collections' : 'a collection')
+                          : ($r['thing'] === 'collection' ? ($many ? $n . ' tires' : 'a tire')
                           : ($r['thing'] === 'post' ? ($many ? $n . ' posts' : 'a post')
                           : ($r['thing'] === 'email' ? ($many ? $n . ' emails' : 'an email')
                           : ($r['thing'] === 'flow' ? ($many ? $n . ' flows' : 'a flow')
                           : ($r['thing'] === 'page' ? ($many ? $n . ' pages' : 'a page')
                           : ($r['thing'] === 'series' ? ($many ? $n . ' series' : 'a series') : $objT))))));
                     $t = "$who removed $kind"; $hh = "$whoH removed " . $h($kind); break;
-                // tire series (entity_type = 'tire_series') + renders
+                // tire series (entity_type = 'tire_series') + their images
                 case 'scanned':
-                    $verb = 'added renders'; $icon = 'photo'; $tone = 'accent';
-                    $t = "$who added new renders to $objT"; $hh = "$whoH added new renders to $objH"; break;
+                    $verb = 'added images'; $icon = 'photo'; $tone = 'accent';
+                    $t = "$who added new images to $objT"; $hh = "$whoH added new images to $objH"; break;
                 case 'uploaded':
                     $verb = 'uploaded'; $icon = 'photo'; $tone = 'accent';
-                    // pages (entity_type = 'page'): files, not renders
-                    $what = $r['entity_type'] === 'page' ? 'files' : 'renders';
+                    // pages (entity_type = 'page'): files; tire series: images
+                    $what = $r['entity_type'] === 'page' ? 'files' : 'images';
                     $t = "$who uploaded $what to $objT"; $hh = "$whoH uploaded $what to $objH"; break;
                 case 'deleted_file':
                     $verb = 'removed a file'; $icon = 'xmark'; $tone = 'neutral';
@@ -1704,8 +1894,19 @@ if (!function_exists('activityFinalizeRows')) {
                 case 'seeded':
                     $verb = 'created'; $icon = 'plus'; $tone = 'accent';
                     $t = "$who created $objT from the email series"; $hh = "$whoH created $objH from the email series"; break;
+                case 'moved':
+                    // Move to client… (assign.php): logged on the client the item now belongs to
+                    $verb = 'moved'; $icon = 'grid'; $tone = 'accent';
+                    $dest = trim((string)($r['company_name'] ?? ''));
+                    $t = "$who moved $objT" . ($dest !== '' ? " to $dest" : ''); $hh = "$whoH moved $objH" . ($dest !== '' ? ' to <em>' . $h($dest) . '</em>' : ''); break;
+                case 'drafted':
+                    $verb = 'started a draft'; $icon = 'plus'; $tone = 'neutral';
+                    $t = "$who started a draft: $objT"; $hh = "$whoH started a draft: $objH"; break;
+                case 'moved_to_draft':
+                    $verb = 'moved back to drafts'; $icon = 'grid'; $tone = 'neutral';
+                    $t = "$who moved $objT back to drafts"; $hh = "$whoH moved $objH back to drafts"; break;
                 case 'submitted':
-                    $verb = 'sent for review'; $icon = 'mail'; $tone = 'accent';
+                    $verb = 'sent for review'; $icon = $r['thing'] === 'post' ? 'plus' : 'mail'; $tone = 'accent';
                     $t = "$who sent $objT for review"; $hh = "$whoH sent $objH for review"; break;
                 case 'marked_live':
                     $verb = 'marked live'; $icon = 'mail'; $tone = 'scheduled';
@@ -1765,8 +1966,9 @@ if (!function_exists('activityFinalizeRows')) {
             if (count($r['children']) === 1) {
                 $q = $r['children'][0]['text'];
                 $qShort = (function_exists('mb_strlen') && mb_strlen($q) > 240) ? rtrim(mb_substr($q, 0, 239)) . '…' : $q;
-                $t  .= " — '" . $qShort . "'";
-                $hh .= ' — <q>' . $h($qShort) . '</q>';
+                $onSlide = !empty($r['children'][0]['slide']) ? 'on slide ' . (int)$r['children'][0]['slide'] . ': ' : '';
+                $t  .= ' — ' . $onSlide . "'" . $qShort . "'";
+                $hh .= ' — ' . $onSlide . '<q>' . $h($qShort) . '</q>';
             }
             $r['verb']     = $verb;
             $r['text']     = $t;
@@ -1823,7 +2025,7 @@ function renderActivityFeed(PDO $pdo, $companyId = null, $limit = 20) {
         if (count($r['children']) > 1) {
             foreach ($r['children'] as $c) {
                 $q = $c['text'];
-                $detailHtml .= '<div class="activity-detail">"' . $h(mb_substr($q, 0, 240))
+                $detailHtml .= '<div class="activity-detail">' . (!empty($c['slide']) ? 'on slide ' . (int)$c['slide'] . ': ' : '') . '"' . $h(mb_substr($q, 0, 240))
                             . (mb_strlen($q) > 240 ? '…' : '') . '"</div>';
             }
         }
@@ -1949,7 +2151,8 @@ function appIconTags(): string {
  * commentBubble() renders server-side. 'client' is '' on unscoped pages.
  */
 function avatarScriptTag($client = null): string {
-    $data = ['admin' => joustAvatar('ui-avatar--xs'), 'client' => !empty($client['name']) ? clientAvatar($client, 'ui-avatar--xs') : ''];
+    $data = ['admin' => joustAvatar('ui-avatar--xs'), 'client' => !empty($client['name']) ? clientAvatar($client, 'ui-avatar--xs') : '',
+             'names' => ['client' => !empty($client['name']) ? (string)$client['name'] : '']];   // App.bubbleWho(): the client's name on the admin seat
     return '<script>window.AppAvatars = ' . json_encode($data, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) . ';</script>' . "\n";
 }
 
@@ -2124,3 +2327,10 @@ require_once __DIR__ . '/emails-lib.php';
 // Google Drive storage view (hasDriveTables, driveLatestSnapshot, driveClients, driveCandidates, …).
 // Function definitions only — no DB work at load; see scratchpad drive-design.md.
 require_once __DIR__ . '/drive-lib.php';
+
+// Image previews (previewUrl, previewImgAttrs, previewAfterStore, previewDelete, …): sm 480 / lg 1600 derivatives
+// in <dir>/.thumbs/. Function definitions only — no DB work at load; see scratchpad previews-design.md.
+require_once __DIR__ . '/preview-lib.php';
+
+// Render-side wrappers over preview-lib.php: pvImg() / pvUrls() / pvSizes() (sm tiles, lg viewer). Definitions only.
+require_once __DIR__ . '/preview-ui.php';

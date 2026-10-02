@@ -1,6 +1,6 @@
 <?php
 /**
- * Studio → Clients endpoint: create / edit companies, their logo and module toggles.
+ * Manage → Clients endpoint: create / edit companies, their logo, settings and module toggles.
  * Admin only (session), POST only, same-site only (requireSameSiteFetch). The first
  * company-creation UI in the portal — deleting a company is refused on purpose.
  *
@@ -8,7 +8,10 @@
  *   action=update         id*, name*, slug*, feature_label
  *   action=logo_upload    id*, logo* (file)
  *   action=logo_remove    id*
- *   action=module_toggle  id*, module=tires|emails|pages, to=1|0     (company_modules row)
+ *   action=module_toggle  id*, module=tires|emails|pages, to=1|0     (company_modules row — the ONLY place the
+ *                         portal turns a client's Tires / Emails / Pages tab on or off)
+ *   action=settings       id*, default_hashtags, product_type, industry  (each only once its migration-gated
+ *                         column exists — hasClientProfileColumns() / companies.default_hashtags; blank = NULL)
  *   action=delete         → 405, never implemented here
  *
  * Slug: [a-z0-9-]{2,40}, unique (409 when taken). Logo: an image by content (getimagesize
@@ -19,7 +22,7 @@
  * (uploaded Pages live under the company slug; pages-lib.php) — both realpath-contained.
  *
  * Replies JSON ({ok, …, redirect}) when the request accepts JSON (studio.js fetch); a plain
- * form post is redirected back to studio.php?tab=clients with msg= / err= instead.
+ * form post is redirected back to manage.php?section=clients with msg= / err= instead.
  * Codes: 200 · 400 bad input · 403 not admin / cross-site · 404 unknown id · 405 not POST or
  * delete · 409 slug taken / module row missing · 413 file too large · 415 not an image · 422 validation.
  *
@@ -39,14 +42,21 @@ function caWantsJson(): bool {
     return stripos((string)($_SERVER['HTTP_ACCEPT'] ?? ''), 'application/json') !== false;
 }
 
-/** Where a form post lands afterwards: Studio → Clients, keeping the page's client scope. */
+/** Where a form post lands afterwards: Manage → Clients, keeping the page's client scope. */
 function caClientsUrl(string $scopeSlug, int $editId = 0, array $extra = []): string {
     $qs = [];
     if ($scopeSlug !== '') $qs['client'] = $scopeSlug;
-    $qs['tab'] = 'clients';
+    $qs['section'] = 'clients';
     if ($editId > 0) $qs['edit'] = $editId;
     foreach ($extra as $k => $v) { if ($v !== null && $v !== '') $qs[$k] = $v; }
-    return pagePath('studio') . '?' . http_build_query($qs);
+    return pagePath('manage') . '?' . http_build_query($qs);
+}
+
+/** Which optional company settings columns exist (migration-gated): default_hashtags, product_type, industry. */
+function caSettingsColumns(PDO $pdo): array {
+    $st = $pdo->query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE()
+                       AND TABLE_NAME = 'companies' AND COLUMN_NAME IN ('default_hashtags', 'product_type', 'industry')");
+    return $st ? array_values(array_map('strval', $st->fetchAll(PDO::FETCH_COLUMN))) : [];
 }
 
 /** JSON or redirect, depending on the caller. $payload['redirect'] is filled in when missing. */
@@ -199,6 +209,34 @@ function caFields(PDO $pdo, int $exceptId): array {
     return ['name' => $name, 'slug' => $slug, 'feature_label' => $label];
 }
 
+/** The Settings fields posted with the form (default_hashtags / product_type / industry — only columns that exist,
+ *  only keys that were posted) → ['sets' => [...], 'params' => [...], 'fields' => [...]], or ['error', 'code'] when too long.
+ *  Shared by action=settings and action=update (Manage → Clients posts the fields and Settings as ONE form). */
+function caSettingsFromPost(PDO $pdo): array {
+    $cols   = caSettingsColumns($pdo);
+    $limits = ['default_hashtags' => 4000, 'product_type' => 120, 'industry' => 120];
+    $out = ['sets' => [], 'params' => [], 'fields' => []];
+    foreach ($limits as $col => $max) {
+        if (!in_array($col, $cols, true) || !array_key_exists($col, $_POST)) continue;
+        $v = trim(str_replace(["\r\n", "\r"], "\n", (string)$_POST[$col]));
+        if (mb_strlen($v) > $max) return ['error' => str_replace('_', ' ', ucfirst($col)) . ' is too long (' . $max . ' characters max).', 'code' => 422];
+        $out['sets'][] = $col . ' = ?'; $out['params'][] = $v === '' ? null : $v; $out['fields'][] = $col;
+    }
+    return $out;
+}
+
+/** Write caSettingsFromPost() output for company $id → the columns that actually changed ([] when none). Throws on a DB error. */
+function caSaveSettings(PDO $pdo, int $id, array $set): array {
+    if (!$set['sets']) return [];
+    $prev = $pdo->prepare("SELECT " . implode(', ', $set['fields']) . " FROM companies WHERE id = ?");
+    $prev->execute([$id]);
+    $before = $prev->fetch() ?: [];
+    $pdo->prepare("UPDATE companies SET " . implode(', ', $set['sets']) . " WHERE id = ?")->execute(array_merge($set['params'], [$id]));
+    $changed = [];
+    foreach ($set['fields'] as $k => $col) { if ((string)($before[$col] ?? '') !== (string)($set['params'][$k] ?? '')) $changed[] = $col; }
+    return $changed;
+}
+
 switch ($action) {
     // ---- create -------------------------------------------------------------
     case 'create': {
@@ -238,6 +276,8 @@ switch ($action) {
         if (!$co) caReply(404, ['error' => 'Unknown client.'], $scope);
         $f = caFields($pdo, $id);
         if (isset($f['error'])) caReply($f['code'], ['error' => $f['error']], $scope, $id);
+        $set = caSettingsFromPost($pdo);   // the Settings fields ride along (one Save on the client card); validated before anything is written
+        if (isset($set['error'])) caReply($set['code'], ['error' => $set['error']], $scope, $id);
         $changed = [];
         foreach (['name', 'slug', 'feature_label'] as $k) { if ((string)($co[$k] ?? '') !== $f[$k]) $changed[] = $k; }
         $logoUrl = (string)$co['logo_url'];
@@ -273,6 +313,16 @@ switch ($action) {
                 caReply(500, ['error' => 'The database refused the change: ' . mb_substr($e->getMessage(), 0, 160)], $scope, $id);
             }
             caLog($pdo, $id, 'updated', 'Client updated: ' . $f['name'], implode(', ', $changed));
+        }
+        try {
+            $setChanged = caSaveSettings($pdo, $id, $set);
+        } catch (Throwable $e) {
+            error_log('client-admin update settings failed: ' . $e->getMessage());
+            caReply(500, ['error' => 'The database refused the settings change.'], $scope, $id);
+        }
+        if ($setChanged) {
+            caLog($pdo, $id, 'updated', 'Settings updated: ' . $f['name'], implode(', ', $setChanged));
+            $changed = array_merge($changed, $setChanged);
         }
         if ($scope !== '' && $scope === (string)$co['slug']) $scope = $f['slug'];   // the scoped client was renamed: follow it
         $msg = ($changed ? 'Saved ' . implode(', ', array_map(static fn($k) => str_replace('_', ' ', $k), $changed)) . ' for ' . $f['name'] . '.' : 'Nothing changed.') . $pagesMoveWarning;
@@ -326,6 +376,24 @@ switch ($action) {
         $label = ['tires' => 'Tires tab', 'emails' => 'Emails tab', 'pages' => 'Pages tab'][$module];
         if ($flipped) caLog($pdo, $id, 'updated', ($on ? 'Enabled ' : 'Disabled ') . $label . ' for ' . $co['name'], $module . ($on ? ' on' : ' off'));
         caReply(200, ['message' => $label . ($on ? ' enabled' : ' disabled') . ' for ' . $co['name'] . '.', 'id' => $id, 'module' => $module, 'enabled' => $on === 1], $scope, $id);
+    }
+
+    // ---- settings (default hashtags, AI Builder profile) -------------------------
+    case 'settings': {
+        $co = caCompany($pdo, $id);
+        if (!$co) caReply(404, ['error' => 'Unknown client.'], $scope);
+        if (!caSettingsColumns($pdo)) caReply(409, ['error' => 'Run migrate.php first to enable client settings.'], $scope, $id);
+        $set = caSettingsFromPost($pdo);
+        if (isset($set['error'])) caReply($set['code'], ['error' => $set['error']], $scope, $id);
+        if (!$set['sets']) caReply(400, ['error' => 'Nothing to save.'], $scope, $id);
+        try {
+            $changed = caSaveSettings($pdo, $id, $set);
+        } catch (Throwable $e) {
+            error_log('client-admin settings failed: ' . $e->getMessage());
+            caReply(500, ['error' => 'The database refused the change.'], $scope, $id);
+        }
+        if ($changed) caLog($pdo, $id, 'updated', 'Settings updated: ' . $co['name'], implode(', ', $changed));
+        caReply(200, ['message' => $changed ? 'Settings saved for ' . $co['name'] . '.' : 'Nothing changed.', 'id' => $id, 'changed' => $changed], $scope, $id);
     }
 
     default:

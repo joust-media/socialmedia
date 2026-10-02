@@ -14,10 +14,7 @@ require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/upload-lib.php';
 requireAdmin();
 
-$uploadsDir    = __DIR__ . '/uploads';
-$uploadsUrl    = 'uploads';
-$allowedExt    = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-$maxFileSize   = uploadMaxBytes('image');   // 50 MB (upload-lib.php) — with JS the files go through upload-chunk.php purpose=feature (in pieces when large); this form path is the no-JS fallback
+$maxFileSize   = uploadMaxBytes('image');   // 50 MB (upload-lib.php) — Replace goes through upload-chunk.php purpose=replace; new reference images through the Upload sheet
 $maxFileMb     = (int)($maxFileSize / (1024 * 1024));
 $maxItemImages = uploadFeatureMaxImages();  // 6 reference images per item (renders in a series never count)
 
@@ -32,10 +29,23 @@ function h($s) {
     return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
-// --- Require client ---
+// --- Require client --- (unscoped: the Tires chooser, where every client's tires — and "New tire" — live)
 if (!$client) {
-    http_response_code(400);
-    echo 'Missing ?client= — go to <a href="admin.php">admin</a>.';
+    header('Location: ' . pagePath('assets') . '?view=collections', true, 302);
+    exit;
+}
+
+/** A dead end inside the shared shell (unknown module / module switched off) instead of a bare text page. */
+function featureFailPage(int $code, string $title, string $message, array $back): void {
+    global $client, $pdo, $clientSlug;
+    http_response_code($code);
+    $pageTitle   = $title;
+    $navSubtitle = $client['name'] ?? '';
+    $navBack     = $back;
+    $activeTab   = 'manage';
+    include __DIR__ . '/partials/layout-top.php';
+    echo '<div class="ui-empty">' . h($message) . '</div>';
+    include __DIR__ . '/partials/layout-bottom.php';
     exit;
 }
 
@@ -45,15 +55,14 @@ if ($moduleSlug === '') { $moduleSlug = 'tires'; }
 $stmt = $pdo->prepare("SELECT id, slug, singular_label, plural_label, icon FROM modules WHERE slug = ?");
 $stmt->execute([$moduleSlug]);
 $module = $stmt->fetch();
-if (!$module) { http_response_code(404); echo 'Unknown module.'; exit; }
+if (!$module) { featureFailPage(404, 'Not found', 'Unknown module.', ['href' => adminToolsUrl(), 'label' => 'Manage']); }
 
 // Confirm client has this module enabled
 $chk = $pdo->prepare("SELECT 1 FROM company_modules WHERE company_id = ? AND module_id = ? LIMIT 1");
 $chk->execute([$client['id'], $module['id']]);
 if (!$chk->fetchColumn()) {
-    http_response_code(403);
-    echo h($client['name']) . ' does not have the ' . h($module['plural_label']) . ' module enabled.';
-    exit;
+    featureFailPage(403, 'Module off', $client['name'] . ' does not have the ' . $module['plural_label'] . ' module switched on. Turn it on in Manage → Clients.',
+                    ['href' => manageUrl('clients', ['edit' => (int)$client['id']]), 'label' => 'Manage']);
 }
 
 $sLabel = $module['singular_label'];   // e.g. "Tire"
@@ -96,7 +105,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 foreach ($imgs->fetchAll() as $row) {
                     if (strpos($row['image_url'], 'uploads/') === 0) {
                         $path = __DIR__ . '/' . $row['image_url'];
-                        if (is_file($path)) { @unlink($path); }
+                        if (is_file($path)) { if (function_exists('previewDelete')) previewDelete($path); @unlink($path); }
                     }
                 }
                 $pdo->prepare("DELETE FROM tires WHERE id = ?")->execute([$itemId]);
@@ -198,7 +207,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             foreach ($sel->fetchAll() as $row) {
                                 if (strpos($row['image_url'], 'uploads/') === 0) {
                                     $path = __DIR__ . '/' . $row['image_url'];
-                                    if (is_file($path)) { @unlink($path); }
+                                    if (is_file($path)) { if (function_exists('previewDelete')) previewDelete($path); @unlink($path); }
                                 }
                             }
                             $del = $pdo->prepare("
@@ -219,78 +228,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
 
-                if (!empty($_FILES['item_images']) && is_array($_FILES['item_images']['name'])) {
-                    $cnt = $pdo->prepare("SELECT COUNT(*) FROM tire_images WHERE tire_id = ?{$refOnly}");
-                    $cnt->execute([$itemId]);
-                    $existing = (int)$cnt->fetchColumn();
-
-                    $sortQ = $pdo->prepare("SELECT COALESCE(MAX(sort_order), 0) FROM tire_images WHERE tire_id = ?{$refOnly}");
-                    $sortQ->execute([$itemId]);
-                    $sortOrder = (int)$sortQ->fetchColumn();
-
-                    $slots = $maxItemImages - $existing;
-                    if (!is_dir($uploadsDir)) { @mkdir($uploadsDir, 0755, true); }
-
-                    // Cache once: do we have the display_name column to seed?
-                    $hasDisplayName = $pdo->query("SHOW COLUMNS FROM tire_images LIKE 'display_name'")->rowCount() > 0;
-
-                    $uploadedCount = 0;
-                    foreach ($_FILES['item_images']['name'] as $i => $origName) {
-                        if ($uploadedCount >= $slots) {
-                            $errors[] = "Max {$maxItemImages} images per {$sLower} — some were skipped.";
-                            break;
-                        }
-                        $err = $_FILES['item_images']['error'][$i] ?? UPLOAD_ERR_NO_FILE;
-                        if ($err === UPLOAD_ERR_NO_FILE) { continue; }
-                        if ($err !== UPLOAD_ERR_OK) {
-                            $errors[] = "Upload error on '{$origName}' (code {$err}).";
-                            continue;
-                        }
-                        if ($_FILES['item_images']['size'][$i] > $maxFileSize) {
-                            $errors[] = "'{$origName}' exceeds {$maxFileMb} MB.";
-                            continue;
-                        }
-                        $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
-                        if (!in_array($ext, $allowedExt, true)) {
-                            $errors[] = "'{$origName}' has an unsupported file type.";
-                            continue;
-                        }
-                        $finfo = @getimagesize($_FILES['item_images']['tmp_name'][$i]);
-                        if ($finfo === false) {
-                            $errors[] = "'{$origName}' is not a valid image.";
-                            continue;
-                        }
-
-                        // On-disk we still use a uniqid to dodge collisions, but seed
-                        // display_name from the original upload filename's stem so the
-                        // admin/user sees their own name and downloads recover it.
-                        $newName = uniqid('feat_', true) . '.' . $ext;
-                        $newName = preg_replace('/[^a-zA-Z0-9_.\-]/', '', $newName);
-                        $dest    = $uploadsDir . '/' . $newName;
-                        $seedName = safeFilenameStem(pathinfo($origName, PATHINFO_FILENAME));
-                        if ($seedName === '') { $seedName = null; }
-
-                        if (move_uploaded_file($_FILES['item_images']['tmp_name'][$i], $dest)) {
-                            $sortOrder++;
-                            if ($hasDisplayName) {
-                                $ins = $pdo->prepare("
-                                    INSERT INTO tire_images (tire_id, image_url, caption, sort_order, display_name)
-                                    VALUES (?, ?, '', ?, ?)
-                                ");
-                                $ins->execute([$itemId, $uploadsUrl . '/' . $newName, $sortOrder, $seedName]);
-                            } else {
-                                $ins = $pdo->prepare("
-                                    INSERT INTO tire_images (tire_id, image_url, caption, sort_order)
-                                    VALUES (?, ?, '', ?)
-                                ");
-                                $ins->execute([$itemId, $uploadsUrl . '/' . $newName, $sortOrder]);
-                            }
-                            $uploadedCount++;
-                        } else {
-                            $errors[] = "Failed to save '{$origName}'. Check uploads/ permissions.";
-                        }
-                    }
-                }
+                // Reference images are uploaded through the Upload sheet (Assets → this tire → Upload; upload-chunk.php purpose=feature).
 
                 $pdo->commit();
                 $msg = $action === 'item_create' ? $sLabel . ' created.' : $sLabel . ' updated.';
@@ -363,563 +301,22 @@ function selfUrl($extra = []) {
     $qs = array_merge(['client' => $client['slug'], 'module' => $module['slug']], $extra);
     return 'add-feature.php?' . http_build_query(array_filter($qs, fn($v) => $v !== null && $v !== ''));
 }
-?>
-<!DOCTYPE html>
-<html lang="en" data-theme="light">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title><?= $isEdit ? 'Edit' : 'Add' ?> <?= h($sLabel) ?> — <?= h($client['name']) ?></title>
-<?= renderAppHead() ?>
-<style>
-  :root {
-    --bg: #f0f2f5; --surface: #ffffff; --surface-2: #f7f8fa;
-    --border: #dadde1; --text: #050505; --text-muted: #65676b;
-    --accent: #1877f2; --accent-hover: #166fe5;
-    --danger: #dc2626; --danger-hover: #b91c1c;
-    --shadow: 0 1px 2px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04);
-  }
-  [data-theme="dark"] {
-    --bg: #18191a; --surface: #242526; --surface-2: #3a3b3c;
-    --border: #3e4042; --text: #e4e6eb; --text-muted: #b0b3b8;
-    --accent: #2d88ff; --accent-hover: #4599ff;
-    --danger: #ef4444; --danger-hover: #dc2626;
-    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 1px 3px rgba(0,0,0,0.3);
-  }
-  * { box-sizing: border-box; } html, body { margin: 0; padding: 0; }
-  body {
-    background: var(--bg); color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    font-size: 15px; line-height: 1.4; min-height: 100vh;
-  }
-  .topbar { position: sticky; top: 0; z-index: 100; background: var(--surface);
-            border-bottom: 1px solid var(--border); box-shadow: var(--shadow); }
-  .topbar-inner { max-width: 900px; margin: 0 auto; padding: 12px 20px;
-                  display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .brand { display: flex; align-items: center; gap: 10px;
-           font-weight: 700; font-size: 20px; color: var(--accent); letter-spacing: -0.5px; }
-  .brand-mark { width: 32px; height: 32px; border-radius: 8px; background: var(--accent);
-                color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; }
-  .brand-sub { font-size: 12px; font-weight: 600; color: var(--text-muted);
-               text-transform: uppercase; letter-spacing: 1px; padding: 3px 8px; border-radius: 4px;
-               background: var(--surface-2); border: 1px solid var(--border); }
-  .top-actions { display: flex; gap: 8px; align-items: center; }
-  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-         padding: 8px 14px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;
-         border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
-         text-decoration: none; transition: background 0.15s, transform 0.1s; }
-  .btn:hover { background: var(--border); } .btn:active { transform: scale(0.98); }
-  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .btn.primary:hover { background: var(--accent-hover); }
-  .btn.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
-  .btn.ghost { background: transparent; } .btn.sm { padding: 6px 10px; font-size: 13px; }
 
-  .wrap { max-width: 900px; margin: 0 auto; padding: 24px 20px 80px; }
-  .flash, .errors { padding: 12px 16px; border-radius: 8px; margin-bottom: 20px;
-                    font-size: 14px; font-weight: 500; }
-  .flash  { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
-  .errors { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
-  [data-theme="dark"] .flash  { background: #14532d; color: #bbf7d0; border-color: #166534; }
-  [data-theme="dark"] .errors { background: #7f1d1d; color: #fecaca; border-color: #991b1b; }
-
-  .card { background: var(--surface); border: 1px solid var(--border);
-          border-radius: 12px; box-shadow: var(--shadow); margin-bottom: 24px; overflow: hidden; }
-  .card-header { padding: 16px 20px; border-bottom: 1px solid var(--border);
-                 display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .card-title { font-size: 17px; font-weight: 700; margin: 0; }
-  .card-body { padding: 20px; }
-
-  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .form-grid .full { grid-column: 1 / -1; }
-  .field { display: flex; flex-direction: column; gap: 6px; }
-  .field label { font-size: 13px; font-weight: 600; color: var(--text-muted);
-                 text-transform: uppercase; letter-spacing: 0.5px; }
-  .field input[type="text"], .field select, .field textarea {
-    background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
-    padding: 10px 12px; border-radius: 8px; font: inherit; width: 100%; font-size: 15px;
-  }
-  .field input:focus, .field textarea:focus {
-    outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(24,119,242,0.15);
-  }
-  .field .help { font-size: 12px; color: var(--text-muted); }
-
-  .file-drop { border: 2px dashed var(--border); border-radius: 8px;
-               padding: 24px; text-align: center; background: var(--surface-2); cursor: pointer;
-               transition: border-color 0.15s, background 0.15s; }
-  .file-drop:hover { border-color: var(--accent); background: var(--surface); }
-  .file-drop input[type="file"] { display: none; }
-  .file-drop-label { font-weight: 600; color: var(--accent); display: block; margin-bottom: 4px; }
-  .file-drop-hint { font-size: 12px; color: var(--text-muted); }
-  .file-list { margin-top: 10px; font-size: 13px; color: var(--text-muted); }
-
-  .form-actions { display: flex; gap: 10px; justify-content: flex-end;
-                  margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
-
-  .cat-group { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 0; }
-  .cat-chip { display: inline-flex; align-items: center; gap: 6px;
-              padding: 6px 12px; background: var(--surface-2);
-              border: 1px solid var(--border); border-radius: 20px;
-              font-size: 13px; font-weight: 600; cursor: pointer; user-select: none; }
-  .cat-chip input { display: none; }
-  .cat-chip:hover { background: var(--border); }
-  .cat-chip.checked { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .cat-chip.checked::before { content: '✓ '; font-weight: 700; }
-
-  .tire-edit-images { display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
-  .tire-edit-row { display: grid; grid-template-columns: 110px 1fr auto;
-                   gap: 12px; align-items: flex-start; padding: 12px;
-                   background: var(--surface-2); border: 1px solid var(--border);
-                   border-radius: 8px; transition: opacity 0.15s, border-color 0.15s; }
-  .tire-edit-row.marked { opacity: 0.4; border-color: var(--danger); }
-  .tire-edit-thumb { display: flex; flex-direction: column; gap: 6px; align-items: center; }
-  .tire-edit-thumb-frame { position: relative; width: 100px; height: 100px;
-                           border-radius: 6px; overflow: hidden;
-                           background: var(--border); }
-  .tire-edit-thumb-frame img { width: 100%; height: 100%; object-fit: cover;
-                               display: block; transition: opacity 0.2s, filter 0.2s; }
-  .tire-edit-thumb-frame.replacing img { opacity: 0.4; filter: blur(1px); }
-  .tire-edit-replace-btn {
-    position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%);
-    background: rgba(0,0,0,0.72); color: #fff; border: none;
-    padding: 5px 9px; border-radius: 14px;
-    cursor: pointer; font-size: 11px; font-weight: 700;
-    letter-spacing: 0.3px; white-space: nowrap;
-    opacity: 0; transition: opacity 0.18s, background 0.15s;
-    backdrop-filter: blur(4px);
-  }
-  .tire-edit-thumb-frame:hover .tire-edit-replace-btn,
-  .tire-edit-replace-btn:focus { opacity: 1; }
-  .tire-edit-replace-btn:hover { background: rgba(0,0,0,0.9); }
-  .tire-edit-replace-btn:disabled { opacity: 1; cursor: wait; background: rgba(0,0,0,0.85); }
-  @media (hover: none) { .tire-edit-replace-btn { opacity: 1; } }
-  .tire-edit-status {
-    display: inline-block; width: 100%; text-align: center;
-    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
-    padding: 4px 8px; border-radius: 12px; white-space: nowrap;
-    background: var(--surface); color: var(--text-muted); border: 1px solid var(--border);
-  }
-  .tire-edit-status.pending  { background: #fef3c7; color: #92400e; border-color: transparent; }
-  .tire-edit-status.approved { background: #dcfce7; color: #166534; border-color: transparent; }
-  .tire-edit-status.denied   { background: #fee2e2; color: #991b1b; border-color: transparent; }
-  [data-theme="dark"] .tire-edit-status.pending  { background: #78350f; color: #fde68a; }
-  [data-theme="dark"] .tire-edit-status.approved { background: #14532d; color: #bbf7d0; }
-  [data-theme="dark"] .tire-edit-status.denied   { background: #7f1d1d; color: #fecaca; }
-  .tire-edit-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-  .tire-edit-row input[type="text"] { background: var(--surface); border: 1px solid var(--border);
-                                      color: var(--text); padding: 10px 12px; border-radius: 6px;
-                                      font: inherit; width: 100%; }
-  .tire-edit-meta { font-size: 11px; color: var(--text-muted); }
-  /* Display-name input + ".jpg" suffix preview */
-  .tire-edit-name { position: relative; display: flex; align-items: stretch; }
-  .tire-edit-name input[type="text"] {
-    flex: 1; padding-right: 56px !important;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 13px !important;
-  }
-  .tire-edit-name-suffix {
-    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
-    font-size: 12px; color: var(--text-muted);
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    pointer-events: none;
-  }
-  .tire-edit-status-row {
-    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  }
-  .tire-edit-status-label {
-    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
-    color: var(--text-muted);
-  }
-  .tire-edit-status-buttons { display: inline-flex; gap: 4px; }
-  .status-btn {
-    background: var(--surface-2); border: 1px solid var(--border); color: var(--text-muted);
-    padding: 5px 10px; border-radius: 14px;
-    font-size: 12px; font-weight: 700; letter-spacing: 0.3px; cursor: pointer;
-    transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.1s;
-  }
-  .status-btn:hover { background: var(--border); color: var(--text); }
-  .status-btn:active { transform: scale(0.97); }
-  .status-btn:disabled { opacity: 0.6; cursor: wait; }
-  .status-btn.pending.active  { background: #f59e0b; color: #fff; border-color: #f59e0b; }
-  .status-btn.approved.active { background: #16a34a; color: #fff; border-color: #16a34a; }
-  .status-btn.denied.active   { background: #dc2626; color: #fff; border-color: #dc2626; }
-  .tire-edit-status-hint {
-    font-size: 11px; color: var(--text-muted); font-style: italic;
-    transition: color 0.15s;
-  }
-  .tire-edit-status-hint.saved { color: #16a34a; font-style: normal; font-weight: 600; }
-  .tire-edit-status-hint.error { color: var(--danger); font-style: normal; font-weight: 600; }
-  .tire-edit-comments {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 8px; padding: 10px 12px;
-  }
-  .tire-edit-comments-label {
-    font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px;
-    color: var(--text-muted); margin-bottom: 6px;
-  }
-  .tire-edit-no-comments {
-    font-size: 12px; color: var(--text-muted); font-style: italic;
-    padding: 6px 0;
-  }
-  /* Comment thread bubbles (admin theme — adapts to light + dark via tokens) */
-  .tire-edit-comments .comment-thread { display: flex; flex-direction: column; gap: 6px; }
-  .tire-edit-comments .comment-msg {
-    background: var(--surface-2); border: 1px solid var(--border);
-    border-radius: 8px; padding: 8px 12px;
-  }
-  .tire-edit-comments .comment-msg-client { border-left: 3px solid var(--accent); }
-  .tire-edit-comments .comment-msg-admin  { border-left: 3px solid #a855f7; }
-  .tire-edit-comments .comment-msg-head {
-    display: flex; gap: 8px; align-items: baseline; margin-bottom: 2px;
-  }
-  .tire-edit-comments .comment-msg-actor {
-    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
-    color: var(--text-muted);
-  }
-  .tire-edit-comments .comment-msg-actor::before { content: '@'; opacity: 0.5; }
-  .tire-edit-comments .comment-msg-time {
-    font-size: 11px; color: var(--text-muted); margin-left: auto;
-  }
-  .tire-edit-comments .comment-msg-body {
-    font-size: 13px; color: var(--text); white-space: pre-wrap; word-wrap: break-word;
-  }
-
-  .tire-edit-row label.remove { display: flex; flex-direction: column; align-items: center; gap: 4px;
-                                font-size: 11px; font-weight: 600; color: var(--text-muted);
-                                text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; }
-  .tire-edit-row input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
-  @media (max-width: 600px) {
-    .tire-edit-row { grid-template-columns: 90px 1fr; grid-template-rows: auto auto; }
-    .tire-edit-thumb-frame { width: 80px; height: 80px; }
-    .tire-edit-row label.remove { grid-column: 1 / -1; flex-direction: row; justify-content: flex-start; }
-  }
-
-  .post-list { display: flex; flex-direction: column; }
-  .post-row { display: grid; grid-template-columns: 1fr auto auto;
-              gap: 16px; padding: 14px 20px; border-top: 1px solid var(--border); align-items: center; }
-  .post-row:first-child { border-top: none; }
-  .meta-company { font-weight: 600; }
-  .cat-list { font-size: 12px; color: var(--text-muted); margin-top: 3px; font-style: italic; }
-  .img-count { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
-  .row-actions { display: flex; gap: 6px; }
-  .inline-form { display: inline; }
-  .empty { padding: 40px 20px; text-align: center; color: var(--text-muted); }
-
-  @media (max-width: 720px) {
-    .form-grid { grid-template-columns: 1fr; }
-    .post-row { grid-template-columns: 1fr; gap: 8px; }
-    .row-actions { justify-content: flex-start; }
-  }
-</style>
-</head>
-<body>
-
-<?php
-  // When editing a specific tire, point at its review page (detail view) instead of the gallery.
-  $viewQs = ['client' => $client['slug'], 'module' => $module['slug']];
-  if ($isEdit) { $viewQs['item'] = (int)$editItem['id']; }
-  $viewLabel = $isEdit ? 'Review on site' : 'View ' . $pLower;
-?>
-<?= renderAppChrome(($isEdit ? 'Edit ' : 'Add ') . $sLabel, [
-      'subtitle' => $client['name'],
-      'active'   => 'studio',
-      'width'    => '900px',
-      'back'     => ['href' => 'admin.php?client=' . rawurlencode($client['slug']), 'label' => 'Studio'],
-      'links'    => [
-        ['label' => $viewLabel, 'href' => 'features.php?' . http_build_query($viewQs), 'attrs' => ['target' => '_blank']],
-        ['label' => 'Sign out', 'href' => 'logout.php', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
-      ],
-    ]) ?>
-
-<div class="wrap">
-
-  <?php if ($flash): ?><div class="flash">✓ <?= h($flash) ?></div><?php endif; ?>
-  <?php if ($errors): ?>
-    <div class="errors">
-      <?php foreach ($errors as $err): ?><div>⚠ <?= h($err) ?></div><?php endforeach; ?>
-    </div>
-  <?php endif; ?>
-
-  <div class="card">
-    <div class="card-header">
-      <h2 class="card-title"><?= h($formTitle) ?></h2>
-      <?php if ($isEdit): ?>
-        <a class="btn sm ghost" href="<?= h(selfUrl()) ?>">Cancel edit</a>
-      <?php endif; ?>
-    </div>
-    <div class="card-body">
-      <form method="POST" action="<?= h(selfUrl()) ?>" enctype="multipart/form-data">
-        <input type="hidden" name="action" value="<?= h($formAction) ?>">
-        <?php if ($isEdit): ?>
-          <input type="hidden" name="id" value="<?= (int)$editItem['id'] ?>">
-        <?php endif; ?>
-
-        <div class="form-grid">
-          <div class="field full">
-            <label for="item_name"><?= h($sLabel) ?> name</label>
-            <input type="text" name="item_name" id="item_name"
-                   value="<?= h($val_item_name) ?>"
-                   placeholder="e.g. Kenda Klever R/T" required>
-          </div>
-
-          <div class="field full">
-            <label>Categories</label>
-            <div class="cat-group">
-              <?php foreach ($allCategories as $cat):
-                $checked = in_array((int)$cat['id'], $editCategories, true);
-              ?>
-                <label class="cat-chip <?= $checked ? 'checked' : '' ?>" data-cat-chip>
-                  <input type="checkbox" name="item_categories[]" value="<?= (int)$cat['id'] ?>"
-                         <?= $checked ? 'checked' : '' ?>>
-                  <?= h($cat['name']) ?>
-                </label>
-              <?php endforeach; ?>
-            </div>
-            <span class="help">Click chips to toggle. Multiple categories allowed.</span>
-          </div>
-
-          <?php if ($isEdit && $editImages): ?>
-            <div class="field full">
-              <label>Existing images — review status, comments, and captions</label>
-              <div class="tire-edit-images">
-                <?php foreach ($editImages as $img):
-                  $imgStatus = $img['status'] ?? 'pending';
-                  $threadHtml = renderCommentThread($pdo, 'tire_image', (int)$img['id']);
-                ?>
-                  <div class="tire-edit-row" data-tire-row data-image-id="<?= (int)$img['id'] ?>" data-status="<?= h($imgStatus) ?>">
-                    <div class="tire-edit-thumb">
-                      <div class="tire-edit-thumb-frame">
-                        <img src="<?= h(tireImageThumb($img)) ?>" alt="" data-thumb-img>
-                        <button type="button" class="tire-edit-replace-btn"
-                                data-replace-tire-img
-                                title="Replace this image">
-                          🔄 Replace
-                        </button>
-                      </div>
-                    </div>
-                    <div class="tire-edit-body">
-                      <?php
-                        $imgExt = strtolower(pathinfo($img['image_url'], PATHINFO_EXTENSION) ?: 'jpg');
-                      ?>
-                      <div class="tire-edit-name">
-                        <input type="text"
-                               name="display_names[<?= (int)$img['id'] ?>]"
-                               value="<?= h($img['display_name'] ?? '') ?>"
-                               placeholder="Image name (used when downloading)"
-                               data-display-name>
-                        <span class="tire-edit-name-suffix">.<?= h($imgExt) ?></span>
-                      </div>
-                      <input type="text"
-                             name="captions[<?= (int)$img['id'] ?>]"
-                             value="<?= h($img['caption']) ?>"
-                             placeholder="Caption for this image">
-                      <div class="tire-edit-status-row">
-                        <span class="tire-edit-status-label">Status</span>
-                        <div class="tire-edit-status-buttons" role="group" aria-label="Approval status">
-                          <button type="button" class="status-btn pending <?= $imgStatus === 'pending' ? 'active' : '' ?>"
-                                  data-status-set="pending" title="Mark as pending review">⏳ Pending</button>
-                          <button type="button" class="status-btn approved <?= $imgStatus === 'approved' ? 'active' : '' ?>"
-                                  data-status-set="approved" title="Approve this image">✓ Approve</button>
-                          <button type="button" class="status-btn denied <?= $imgStatus === 'denied' ? 'active' : '' ?>"
-                                  data-status-set="denied" title="Deny this image">✕ Deny</button>
-                        </div>
-                        <span class="tire-edit-status-hint" data-status-hint></span>
-                      </div>
-                      <?php if (!empty($img['updated_at'])): ?>
-                        <div class="tire-edit-meta" title="<?= h(absoluteTime($img['updated_at'])) ?>" data-updated-meta>
-                          Last updated <?= h(relativeTime($img['updated_at'])) ?>
-                        </div>
-                      <?php endif; ?>
-                      <?php if ($threadHtml): ?>
-                        <div class="tire-edit-comments">
-                          <div class="tire-edit-comments-label">💬 Comments</div>
-                          <?= $threadHtml ?>
-                        </div>
-                      <?php else: ?>
-                        <div class="tire-edit-no-comments">No comments on this image yet.</div>
-                      <?php endif; ?>
-                    </div>
-                    <label class="remove">
-                      <input type="checkbox" name="remove_item_images[]"
-                             value="<?= (int)$img['id'] ?>" data-tire-remove>
-                      Remove
-                    </label>
-                  </div>
-                <?php endforeach; ?>
-              </div>
-              <span class="help">
-                Currently <?= count($editImages) ?> of <?= $maxItemImages ?> slots used.
-                Status changes save instantly. To reply to comments, open the
-                <a href="<?= h('features.php?' . http_build_query(['client' => $client['slug'], 'module' => $module['slug'], 'item' => (int)$editItem['id']])) ?>"
-                   target="_blank">review page</a>.
-              </span>
-            </div>
-          <?php endif; ?>
-
-          <?php if ($isEdit && !empty($editSeries)):
-            // Series renders are reviewed in Assets (approve / deny per image or per series), not here.
-            $editTireRow = tireWithSlug($pdo, (int)$editItem['id']);
-            $hasRenders  = $editSeries['series_count'] > 0 || $editSeries['render_count'] > 0;
-          ?>
-            <div class="field full" data-tire-series-summary>
-              <label>Render series</label>
-              <span class="help">
-                <?php if ($hasRenders): ?>
-                  <?= (int)$editSeries['series_count'] ?> series · <?= (int)$editSeries['render_count'] ?> renders
-                  (<?= (int)array_sum(array_column($editSeries['series'], 'pending')) ?> to review) —
-                  <a href="<?= h(clientUrl('assets.php', ['view' => 'collections', 'item' => (int)$editItem['id']])) ?>">Review in Assets</a>.
-                <?php else: ?>
-                  No render series yet.
-                <?php endif; ?>
-                <?php if ($editTireRow): ?>
-                  Drop folders into <code><?= h(tireFolderRel($client, $editTireRow)) ?>/&lt;series&gt;/</code> or upload from Assets.
-                <?php endif; ?>
-              </span>
-            </div>
-          <?php endif; ?>
-
-          <?php if ($isEdit): ?>
-            <div class="field full">
-              <label for="item_images">Add more images</label>
-              <label class="file-drop">
-                <input type="file" name="item_images[]" id="item_images"
-                       accept="image/jpeg,image/png,image/gif,image/webp" multiple>
-                <span class="file-drop-label">Click to choose files</span>
-                <span class="file-drop-hint">
-                  Max <?= $maxItemImages ?> per <?= h($sLower) ?>, <?= $maxFileMb ?> MB each (large files go up in pieces). Captions editable after upload.
-                </span>
-              </label>
-              <div class="file-list" id="itemFileList" data-feature-id="<?= (int)$editItem['id'] ?>" data-feature-count="<?= count($editImages) ?>" data-feature-max="<?= $maxItemImages ?>"></div>
-            </div>
-          <?php else: ?>
-            <div class="field full">
-              <span class="help">Create the <?= h($sLower) ?> first, then add images on the edit screen.</span>
-            </div>
-          <?php endif; ?>
-        </div>
-
-        <div class="form-actions">
-          <a class="btn" href="admin.php?client=<?= h($client['slug']) ?>">Cancel</a>
-          <button type="submit" class="btn primary"><?= h($formSubmit) ?></button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-header">
-      <h2 class="card-title">All <?= h($pLower) ?> (<?= count($allItems) ?>)</h2>
-    </div>
-    <?php if (empty($allItems)): ?>
-      <div class="empty">No <?= h($pLower) ?> yet. Create your first one above.</div>
-    <?php else: ?>
-      <div class="post-list">
-        <?php foreach ($allItems as $t): ?>
-          <div class="post-row">
-            <div>
-              <div class="meta-company"><?= h($t['name']) ?></div>
-              <div class="cat-list"><?= h($t['category_names'] ?? '') ?></div>
-            </div>
-            <div class="img-count">🖼 <?= (int)$t['image_count'] ?> / <?= $maxItemImages ?></div>
-            <div class="row-actions">
-              <a class="btn sm" href="<?= h(selfUrl(['edit_item' => (int)$t['id']])) ?>">Edit</a>
-              <a class="btn sm"
-                 href="<?= h('features.php?' . http_build_query(['client' => $client['slug'], 'module' => $module['slug'], 'item' => (int)$t['id']])) ?>"
-                 target="_blank">Review ↗</a>
-              <form method="POST" action="<?= h(selfUrl()) ?>" class="inline-form"
-                    onsubmit="return confirm('Delete this <?= h($sLower) ?> and all its images? This cannot be undone.');">
-                <input type="hidden" name="action" value="item_delete">
-                <input type="hidden" name="id" value="<?= (int)$t['id'] ?>">
-                <button type="submit" class="btn sm danger">Delete</button>
-              </form>
-            </div>
-          </div>
-        <?php endforeach; ?>
-      </div>
-    <?php endif; ?>
-  </div>
-
-</div>
-
-<script src="<?= h(staticUrl('js/chunk-upload.js')) ?>"></script>
+// Inline behaviour (status chips, Replace, Remove, category chips) — printed after </main> by layout-bottom.php.
+$tireScript = <<<'JS'
 <script>
-  // Uploads go through upload-chunk.php (purpose=feature / replace): one request for a small file, pieces
-  // for a large one (chunk-upload.js), so the host's upload_max_filesize no longer caps them. Without JS
-  // the form still posts item_images[] to this page.
-  const UPLOAD_ENDPOINT = 'upload-chunk.php?client=<?= rawurlencode($client['slug']) ?>';
-  const CLIENT_SLUG     = <?= json_encode($client['slug']) ?>;
-  const MAX_IMAGE_MB    = <?= (int)$maxFileMb ?>;
+  // Replace goes through upload-chunk.php (purpose=replace): one request for a small file, pieces for a large one
+  // (chunk-upload.js), so the host's upload_max_filesize no longer caps it. New reference images: the Upload sheet (Assets).
+  const UPLOAD_ENDPOINT = __UPLOAD_ENDPOINT__;
+  const CLIENT_SLUG     = __CLIENT_SLUG__;
+  const MAX_IMAGE_MB    = __MAX_IMAGE_MB__;
   const chunkUp = window.App && window.App.chunkUpload;
-  function fmtMb(n) { return (n / 1024 / 1024).toFixed(n > 10 * 1024 * 1024 ? 0 : 2) + ' MB'; }
   function uploadOne(file, fields, onProgress) {
     if (!chunkUp || !chunkUp.upload) {
       return { promise: Promise.reject({ error: 'Uploads need chunk-upload.js' }), abort: function () {} };
     }
     return chunkUp.upload({ endpoint: UPLOAD_ENDPOINT, file: file, fields: Object.assign({ client: CLIENT_SLUG, actor: 'admin' }, fields), onProgress: onProgress });
   }
-
-  const itemFileInput = document.getElementById('item_images');
-  const itemFileList  = document.getElementById('itemFileList');
-  if (itemFileInput && itemFileList) {
-    let queue = [], busy = false;
-    const featureId = itemFileList.getAttribute('data-feature-id');
-    let count = parseInt(itemFileList.getAttribute('data-feature-count'), 10) || 0;
-    const max = parseInt(itemFileList.getAttribute('data-feature-max'), 10) || 6;
-    const next = () => {
-      if (busy || !queue.length) return;
-      const job = queue.shift(); busy = true;
-      job.row.textContent = '• ' + job.file.name + ' — uploading… 0%';
-      const ctl = uploadOne(job.file, { purpose: 'feature', feature_id: featureId }, p => { job.row.textContent = '• ' + job.file.name + ' — uploading… ' + p.text; });
-      ctl.promise.then(d => {
-        count++;
-        // No automatic reload: the admin may have unsaved edits in the form. The row is in the DB already and
-        // shows in the list after Save (which comes back here) or a reload.
-        job.row.textContent = '✓ ' + job.file.name + ' — added (' + count + ' of ' + max + '); it appears in the list after you save or reload';
-        busy = false; next();
-      }, e => {
-        job.row.textContent = '✗ ' + job.file.name + ' — ' + ((e && e.error) || 'upload failed');
-        busy = false; next();
-      });
-    };
-    itemFileInput.addEventListener('change', () => {
-      const files = [...itemFileInput.files];
-      if (!files.length) return;
-      if (!chunkUp || !chunkUp.upload) {   // no chunk support: leave the files in the form (posted with Save)
-        itemFileList.innerHTML = '<strong>Selected:</strong>';
-        files.forEach(f => { const div = document.createElement('div'); div.textContent = '• ' + f.name + ' (' + fmtMb(f.size) + ')'; itemFileList.appendChild(div); });
-        return;
-      }
-      itemFileInput.value = '';   // the files go up now; the form must not post them again
-      if (!itemFileList.querySelector('strong')) itemFileList.innerHTML = '<strong>Uploading now (large files go in pieces):</strong>';
-      files.forEach(f => {
-        const row = document.createElement('div');
-        itemFileList.appendChild(row);
-        const ext = (f.name.toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
-        if (['jpg', 'jpeg', 'png', 'gif', 'webp'].indexOf(ext) === -1) { row.textContent = '✗ ' + f.name + ' — images only (JPG, PNG, GIF, WebP)'; return; }
-        if (f.size > MAX_IMAGE_MB * 1024 * 1024) { row.textContent = '✗ ' + f.name + ' — over ' + MAX_IMAGE_MB + ' MB'; return; }
-        if (count + queue.length + (busy ? 1 : 0) >= max) { row.textContent = '✗ ' + f.name + ' — max ' + max + ' images per item'; return; }
-        row.textContent = '• ' + f.name + ' (' + fmtMb(f.size) + ') — waiting…';
-        queue.push({ file: f, row: row });
-      });
-      next();
-    });
-  }
-
-  document.querySelectorAll('.file-drop').forEach(drop => {
-    const input = drop.querySelector('input[type="file"]');
-    if (!input) return;
-    ['dragenter','dragover'].forEach(ev =>
-      drop.addEventListener(ev, e => { e.preventDefault(); drop.style.borderColor = 'var(--accent)'; })
-    );
-    ['dragleave','drop'].forEach(ev =>
-      drop.addEventListener(ev, e => { e.preventDefault(); drop.style.borderColor = ''; })
-    );
-    drop.addEventListener('drop', e => {
-      if (e.dataTransfer.files.length) {
-        input.files = e.dataTransfer.files;
-        input.dispatchEvent(new Event('change'));
-      }
-    });
-  });
 
   document.querySelectorAll('[data-tire-remove]').forEach(cb => {
     cb.addEventListener('change', () => {
@@ -930,41 +327,91 @@ function selfUrl($extra = []) {
   document.querySelectorAll('[data-cat-chip]').forEach(chip => {
     const cb = chip.querySelector('input[type="checkbox"]');
     if (!cb) return;
-    cb.addEventListener('change', () => { chip.classList.toggle('checked', cb.checked); });
+    cb.addEventListener('change', () => { chip.classList.toggle('is-active', cb.checked); });
   });
 
-  // ---- Inline status change (Pending / Approve / Deny) -------------
-  document.addEventListener('click', async (e) => {
+  // ---- Inline status change (To Review / Approved / Needs changes) -------------
+  // "Needs changes" asks for the note first (tire-status.php requires >= 3 characters), in the shared sheet —
+  // the same rule and wording as the post / email / page "Needs changes…" flows.
+  const NOTE_MIN = 3;
+  let noteRow = null;
+  function noteEsc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+  function askNote(row) {
+    const App = window.App;
+    if (!App || !App.sheet || !document.getElementById('uiSheet')) {   // no sheet shell: a plain prompt
+      const t = window.prompt('What should change? (at least ' + NOTE_MIN + ' characters)');
+      if (t !== null && t.trim().length >= NOTE_MIN) saveStatus(row, 'denied', t.trim());
+      return;
+    }
+    noteRow = row;
+    const name = (row.querySelector('[data-display-name]') || {}).value || '';
+    const html = '<form class="tl-note" data-tl-note-form novalidate>'
+      + '<label class="studio-label" for="tlNote">What should change' + (name ? ' in <strong>' + noteEsc(name) + '</strong>' : '') + '?</label>'
+      + '<textarea class="ui-textarea" id="tlNote" data-tl-note data-sheet-autofocus rows="3" minlength="' + NOTE_MIN + '" maxlength="2000" placeholder="What should change?" required></textarea>'
+      + '<p class="studio-help" data-tl-note-hint>A short note is required (at least ' + NOTE_MIN + ' characters). It is added to the image\'s comments.</p>'
+      + '</form>';
+    const footer = '<div class="ui-btn-group">'
+      + '<button type="button" class="ui-btn ui-btn--large ui-btn--gray" data-sheet-close>Cancel</button>'
+      + '<button type="button" class="ui-btn ui-btn--large ui-btn--deny ui-btn--primary" data-tl-note-submit disabled>Needs changes</button></div>';
+    App.sheet.open('#uiSheet', { title: 'Needs changes', html: html, footer: footer });
+  }
+  function noteValid() {
+    const ta = document.querySelector('[data-tl-note]'), btn = document.querySelector('[data-tl-note-submit]'), hint = document.querySelector('[data-tl-note-hint]');
+    const len = ta ? ta.value.trim().length : 0, ok = len >= NOTE_MIN;
+    if (btn) btn.disabled = !ok;
+    if (hint) hint.classList.toggle('is-error', !ok && len > 0);
+    return ok;
+  }
+  function sendNote() {
+    if (!noteRow || !noteValid()) { const ta = document.querySelector('[data-tl-note]'); if (ta) ta.focus(); return; }
+    const row = noteRow, text = document.querySelector('[data-tl-note]').value.trim();
+    noteRow = null;
+    window.App.sheet.close();
+    saveStatus(row, 'denied', text);
+  }
+  document.addEventListener('input', (e) => { if (e.target.matches && e.target.matches('[data-tl-note]')) noteValid(); });
+  document.addEventListener('submit', (e) => { if (e.target.matches && e.target.matches('[data-tl-note-form]')) { e.preventDefault(); sendNote(); } });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && e.target.matches && e.target.matches('[data-tl-note]')) { e.preventDefault(); sendNote(); }
+  });
+  document.addEventListener('click', (e) => { if (e.target.closest('[data-tl-note-submit]')) { e.preventDefault(); sendNote(); } });
+  document.addEventListener('sheet:close', () => { noteRow = null; });
+
+  document.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-status-set]');
     if (!btn) return;
     const row     = btn.closest('[data-tire-row]');
-    const imageId = row.getAttribute('data-image-id');
     const next    = btn.getAttribute('data-status-set');
-    const current = row.getAttribute('data-status');
-    if (next === current) return;
+    if (next === row.getAttribute('data-status')) return;
+    if (next === 'denied') { askNote(row); return; }
+    saveStatus(row, next, '');
+  });
 
-    const allBtns = row.querySelectorAll('.status-btn');
+  async function saveStatus(row, next, note) {
+    const imageId = row.getAttribute('data-image-id');
+    const allBtns = row.querySelectorAll('[data-status-set]');
     const hint    = row.querySelector('[data-status-hint]');
     allBtns.forEach(b => b.disabled = true);
-    if (hint) { hint.className = 'tire-edit-status-hint'; hint.textContent = 'Saving…'; }
+    if (hint) { hint.className = 'tl-status-hint'; hint.textContent = 'Saving…'; }
 
     try {
       const fd = new FormData();
       fd.append('id', imageId);
       fd.append('status', next);
       fd.append('actor', 'admin');
+      if (note) fd.append('comment', note);   // Needs changes: the note (also the image's latest comment)
       const res  = await fetch('tire-status.php', { method: 'POST', body: fd });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Failed');
 
       row.setAttribute('data-status', next);
-      allBtns.forEach(b => b.classList.toggle('active', b.getAttribute('data-status-set') === next));
+      allBtns.forEach(b => { const on = b.getAttribute('data-status-set') === next; b.classList.toggle('is-active', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); });
       if (hint) {
-        hint.className = 'tire-edit-status-hint saved';
-        hint.textContent = '✓ Saved';
+        hint.className = 'tl-status-hint saved';
+        hint.textContent = 'Saved';
         setTimeout(() => {
-          if (hint.textContent === '✓ Saved') {
-            hint.className = 'tire-edit-status-hint';
+          if (hint.textContent === 'Saved') {
+            hint.className = 'tl-status-hint';
             hint.textContent = '';
           }
         }, 2000);
@@ -974,13 +421,13 @@ function selfUrl($extra = []) {
       if (meta) meta.textContent = 'Last updated just now';
     } catch (err) {
       if (hint) {
-        hint.className = 'tire-edit-status-hint error';
+        hint.className = 'tl-status-hint error';
         hint.textContent = 'Save failed — try again';
       }
     } finally {
       allBtns.forEach(b => b.disabled = false);
     }
-  });
+  }
 
   // ---- Image replacement (admin tire-edit) -------------------------
   // One hidden file input shared by every per-row Replace button.
@@ -1009,7 +456,7 @@ function selfUrl($extra = []) {
     }
 
     const row     = pendingReplaceBtn.closest('[data-tire-row]');
-    const frame   = pendingReplaceBtn.closest('.tire-edit-thumb-frame');
+    const frame   = pendingReplaceBtn.closest('[data-thumb-frame]');
     const imgEl   = row.querySelector('[data-thumb-img]');
     const imageId = row.getAttribute('data-image-id');
     const original = pendingReplaceBtn.textContent;
@@ -1017,13 +464,13 @@ function selfUrl($extra = []) {
 
     frame.classList.add('replacing');
     btn.disabled = true;
-    btn.textContent = '⏳ Uploading…';
+    btn.textContent = 'Uploading…';
 
     try {
       let data;
       if (chunkUp && chunkUp.upload) {
         // upload-chunk.php purpose=replace: one request for a small file, pieces for a large one; same reply as replace-image.php
-        data = await uploadOne(file, { purpose: 'replace', replace_kind: 'tire', replace_id: imageId }, p => { btn.textContent = '⏳ ' + p.pct + '%'; }).promise;
+        data = await uploadOne(file, { purpose: 'replace', replace_kind: 'tire', replace_id: imageId }, p => { btn.textContent = p.pct + '%'; }).promise;
       } else {
         const fd = new FormData();
         fd.append('image_id', imageId);
@@ -1034,8 +481,9 @@ function selfUrl($extra = []) {
         if (!data.ok) throw new Error(data.error || 'Failed');
       }
       // Cache-bust in case the same filename gets reused
-      const fresh = data.src || data.image_url;   // src: ready-to-use URL (series renders live under /media/tires/)
+      const fresh = data.thumb || data.src || data.image_url;   // thumb: the sm preview of the new file; src: ready-to-use URL (series renders live under /media/tires/)
       const bust = fresh + (fresh.includes('?') ? '&' : '?') + 't=' + Date.now();
+      imgEl.removeAttribute('srcset'); imgEl.removeAttribute('sizes');   // else the browser keeps the old candidates
       imgEl.src = bust;
     } catch (err) {
       alert('Replace failed: ' + ((err && (err.error || err.message)) || 'unknown'));
@@ -1047,6 +495,161 @@ function selfUrl($extra = []) {
     }
   });
 </script>
+JS;
 
-</body>
-</html>
+// ---- Chrome: the shared shell. Parent = the Tires tab (this tire when editing) ----
+$tiresWord   = tiresLabel($client);
+$tiresUrl    = clientUrl('assets.php', ['view' => 'collections']);
+$tireUrl     = $isEdit ? clientUrl('assets.php', ['view' => 'collections', 'item' => (int)$editItem['id']]) : $tiresUrl;
+$pageTitle   = $isEdit ? 'Edit ' . $sLower : 'New ' . $sLower;
+$htmlTitle   = ($isEdit ? $editItem['name'] . ' — Edit' : 'New ' . $sLower) . ' — ' . $client['name'];
+$navSubtitle = $client['name'] . ' · ' . $tiresWord;
+$navBack     = $isEdit ? ['href' => $tireUrl, 'label' => mb_strimwidth((string)$editItem['name'], 0, 28, '…')]
+                       : ['href' => $tiresUrl, 'label' => $tiresWord];
+$activeTab   = 'tires';
+$bodyClass   = 'page-studio page-tool page-tire-form';
+$headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">' . "\n"
+             . '<link rel="stylesheet" href="' . h(staticUrl('css/tools.css')) . '">';
+$footExtra   = '<script src="' . h(staticUrl('js/chunk-upload.js')) . '"></script>' . "\n" . str_replace(
+    ['__UPLOAD_ENDPOINT__', '__CLIENT_SLUG__', '__MAX_IMAGE_MB__'],
+    [json_encode(basePath() . '/upload-chunk.php?client=' . rawurlencode($client['slug'])), json_encode($client['slug']), (string)(int)$maxFileMb],
+    $tireScript);
+include __DIR__ . '/partials/layout-top.php';
+?>
+
+<?php if ($flash): ?>
+  <div class="studio-alert studio-alert--ok" role="status"><?= h($flash) ?></div>
+<?php endif; ?>
+<?php if ($errors): ?>
+  <div class="studio-alert studio-alert--error" role="alert">
+    <?php foreach ($errors as $err): ?><div><?= h($err) ?></div><?php endforeach; ?>
+  </div>
+<?php endif; ?>
+
+<form method="POST" action="<?= h(clientUrl('add-feature.php', ['module' => $module['slug']])) ?>" enctype="multipart/form-data" class="ui-card tl-card" data-tire-form>
+  <input type="hidden" name="action" value="<?= h($formAction) ?>">
+  <?php if ($isEdit): ?>
+    <input type="hidden" name="id" value="<?= (int)$editItem['id'] ?>">
+  <?php endif; ?>
+  <div class="ui-card-header"><div class="ui-card-heading">
+    <h3 class="ui-card-title"><?= $isEdit ? h($editItem['name']) : 'New ' . h($sLower) ?></h3>
+    <p class="ui-card-subtitle"><?= $isEdit
+        ? 'Name, categories and the reference photos of the real ' . h($sLower) . '. Series images are reviewed in ' . h($tiresWord) . '.'
+        : 'Name it first. Then add reference photos and series images from its page in ' . h($tiresWord) . '.' ?></p>
+  </div></div>
+  <div class="ui-card-body tl-fields">
+    <div class="studio-field">
+      <label class="studio-label" for="item_name"><?= h($sLabel) ?> name</label>
+      <input class="ui-input" type="text" name="item_name" id="item_name" value="<?= h($val_item_name) ?>" placeholder="e.g. Kenda Klever R/T" required<?= $isEdit ? '' : ' autofocus' ?>>
+    </div>
+
+    <div class="studio-field">
+      <span class="studio-label">Categories <span class="text-tertiary">— any number</span></span>
+      <div class="studio-chips studio-chips--wrap">
+        <?php foreach ($allCategories as $cat): $checked = in_array((int)$cat['id'], $editCategories, true); ?>
+          <label class="studio-chip<?= $checked ? ' is-active' : '' ?>" data-cat-chip>
+            <input type="checkbox" name="item_categories[]" value="<?= (int)$cat['id'] ?>"<?= $checked ? ' checked' : '' ?>>
+            <?= h($cat['name']) ?>
+          </label>
+        <?php endforeach; ?>
+        <?php if (!$allCategories): ?><span class="text-secondary">No categories yet.</span><?php endif; ?>
+      </div>
+    </div>
+
+    <?php if ($isEdit && $editImages): ?>
+      <div class="studio-field" data-tire-images>
+        <span class="studio-label">Reference photos <span class="text-tertiary">— <?= count($editImages) ?> of <?= $maxItemImages ?> · status saves instantly</span></span>
+        <ul class="tl-images" role="list">
+          <?php foreach ($editImages as $img):
+            $imgStatus  = $img['status'] ?? 'pending';
+            $threadHtml = renderCommentThread($pdo, 'tire_image', (int)$img['id']);
+            $imgExt     = strtolower(pathinfo($img['image_url'], PATHINFO_EXTENSION) ?: 'jpg');
+          ?>
+            <li class="tl-image" data-tire-row data-image-id="<?= (int)$img['id'] ?>" data-status="<?= h($imgStatus) ?>">
+              <div class="tl-image-thumb" data-thumb-frame>
+                <?= pvImg(tireImageSrc($img), 'sm', ['sizes' => '96px', 'attrs' => ['data-thumb-img' => '']]) ?>
+                <button type="button" class="tl-image-replace" data-replace-tire-img title="Replace this image">Replace</button>
+              </div>
+              <div class="tl-image-body">
+                <div class="tl-image-name">
+                  <input class="ui-input" type="text" name="display_names[<?= (int)$img['id'] ?>]" value="<?= h($img['display_name'] ?? '') ?>"
+                         placeholder="File name for downloads" aria-label="File name for downloads" data-display-name>
+                  <span class="tl-image-ext">.<?= h($imgExt) ?></span>
+                </div>
+                <input class="ui-input" type="text" name="captions[<?= (int)$img['id'] ?>]" value="<?= h($img['caption']) ?>" placeholder="Caption" aria-label="Caption">
+                <div class="tl-image-status" role="group" aria-label="Review status">
+                  <?php foreach (['pending' => 'To Review', 'approved' => 'Approved', 'denied' => 'Needs changes'] as $sk => $sl): $on = $imgStatus === $sk; ?>
+                    <button type="button" class="studio-chip<?= $on ? ' is-active' : '' ?>" data-status-set="<?= $sk ?>" aria-pressed="<?= $on ? 'true' : 'false' ?>"><?= $sl ?></button>
+                  <?php endforeach; ?>
+                  <span class="tl-status-hint" data-status-hint aria-live="polite"></span>
+                </div>
+                <?php if (!empty($img['updated_at'])): ?>
+                  <div class="tl-image-meta" title="<?= h(absoluteTime($img['updated_at'])) ?>" data-updated-meta>Last updated <?= h(relativeTime($img['updated_at'])) ?></div>
+                <?php endif; ?>
+                <?php if ($threadHtml): ?>
+                  <div class="tl-comments"><?= $threadHtml ?></div>
+                <?php endif; ?>
+              </div>
+              <label class="tl-image-remove">
+                <input type="checkbox" name="remove_item_images[]" value="<?= (int)$img['id'] ?>" data-tire-remove>
+                Remove
+              </label>
+            </li>
+          <?php endforeach; ?>
+        </ul>
+        <p class="studio-help">To reply to a comment, open the image on <a href="<?= h(clientUrl('assets.php', ['view' => 'collections', 'item' => (int)$editItem['id'], 'series' => 'ref'])) ?>">the <?= h($sLower) ?>'s page</a>.</p>
+      </div>
+    <?php endif; ?>
+
+    <?php if ($isEdit): ?>
+      <div class="studio-field">
+        <span class="studio-label">Add reference photos</span>
+        <?php // The Upload sheet (upload-sheet.js) is the one uploader: the tire page opens it on this tire's Reference ?>
+        <div class="tl-actions tl-actions--start" style="margin-top:0">
+          <a class="ui-btn ui-btn--tinted" href="<?= h(uploadSheetUrl('assets.php', ['dest' => 'reference', 'tire' => (int)$editItem['id']], ['view' => 'collections', 'item' => (int)$editItem['id'], 'series' => 'ref'])) ?>" data-reference-upload><?= icon('upload') ?><span>Upload reference photos</span></a>
+        </div>
+        <p class="studio-help">Opens the Upload sheet on this <?= h($sLower) ?>'s Reference · up to <?= $maxItemImages ?> per <?= h($sLower) ?>, <?= $maxFileMb ?> MB each (large files go up in pieces). Save your changes here first.</p>
+      </div>
+    <?php endif; ?>
+
+    <?php if ($isEdit && !empty($editSeries)):
+      // Series images are reviewed on the tire's page (approve / deny per image or per series), not here.
+      $editTireRow = tireWithSlug($pdo, (int)$editItem['id']);
+      $hasRenders  = $editSeries['series_count'] > 0 || $editSeries['render_count'] > 0;
+    ?>
+      <div class="studio-field" data-tire-series-summary>
+        <span class="studio-label">Series</span>
+        <p class="studio-help">
+          <?php if ($hasRenders): ?>
+            <?= (int)$editSeries['series_count'] ?> series · <?= (int)$editSeries['render_count'] ?> images
+            (<?= (int)array_sum(array_column($editSeries['series'], 'pending')) ?> to review) —
+            <a href="<?= h($tireUrl) ?>">review them on the <?= h($sLower) ?>'s page</a>.
+          <?php else: ?>
+            No series yet.
+          <?php endif; ?>
+          <?php if ($editTireRow): ?>
+            Drop folders into <code class="tl-code"><?= h(tireFolderRel($client, $editTireRow)) ?>/&lt;series&gt;/</code> or upload from the <?= h($sLower) ?>'s page.
+          <?php endif; ?>
+        </p>
+      </div>
+    <?php endif; ?>
+
+    <div class="tl-actions">
+      <a class="ui-btn ui-btn--gray" href="<?= h($tireUrl) ?>">Cancel</a>
+      <button type="submit" class="ui-btn ui-btn--filled"><?= h($formSubmit) ?></button>
+    </div>
+  </div>
+</form>
+
+<?php if ($isEdit): ?>
+  <div class="tl-danger-zone">
+    <form method="POST" action="<?= h(clientUrl('add-feature.php', ['module' => $module['slug']])) ?>"
+          onsubmit="return confirm(<?= h(json_encode('Delete “' . $editItem['name'] . '” and all of its images? This cannot be undone.')) ?>);" data-tire-delete>
+      <input type="hidden" name="action" value="item_delete">
+      <input type="hidden" name="id" value="<?= (int)$editItem['id'] ?>">
+      <button type="submit" class="ui-btn ui-btn--plain studio-danger-btn">Delete this <?= h($sLower) ?></button>
+    </form>
+  </div>
+<?php endif; ?>
+
+<?php include __DIR__ . '/partials/layout-bottom.php'; ?>

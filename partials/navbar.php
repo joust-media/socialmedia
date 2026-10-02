@@ -11,8 +11,10 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
  *   $navBack      array|null  ['href' => …, 'label' => …] → leading back button (optional)
  *   $navLeading   string      raw HTML for the leading slot (used when $navBack is not set)
  *   $navTrailing  string|null raw HTML for the top-right slot; null → client avatar; '' → nothing
- *                             (the Appearance sun/moon button always precedes it — every page has it)
- *   $navLinks     array       [['label' => …, 'href' => …, 'primary' => bool, 'attrs' => []], …] (optional)
+ *                             (the Appearance sun/moon button always precedes it — every page has it — and,
+ *                             for the admin only, the "+ New" create menu before that)
+ *   $navNewMenu   bool        false → no "+ New" menu on this page (default: shown to the admin)
+ *   $navLinks     array       [['label' => …, 'href' => …, 'primary' => bool, 'tinted' => bool, 'attrs' => []], …] (optional)
  *   $navLinksExtra string     raw HTML appended at the end of the links row (e.g. appearanceControl())
  *   $navWide      bool        match a wide (1200px) content column
  *   $navWidth     string      exact content column to align with, e.g. '900px' (sets --content-w)
@@ -36,6 +38,11 @@ if ($navTrailing === null) {
 // Appearance toggle (Light → Dark → Auto) on every page, left of the avatar / page buttons.
 if (function_exists('themeToggleButton')) {
     $navTrailing = themeToggleButton() . $navTrailing;
+}
+// Admin only: the "+ New" create menu leads the trailing slot (partials/components/new-menu.php;
+// '' for the client seat — server-side). A page may opt out with $navNewMenu = false.
+if ((!isset($navNewMenu) || $navNewMenu !== false) && function_exists('newMenuHtml')) {
+    $navTrailing = newMenuHtml($client ?? null, (isset($pdo) && $pdo instanceof PDO) ? $pdo : null) . $navTrailing;
 }
 $navLinksExtra = isset($navLinksExtra) ? (string)$navLinksExtra : '';
 ?>
@@ -65,12 +72,12 @@ $navLinksExtra = isset($navLinksExtra) ? (string)$navLinksExtra : '';
       <nav class="ui-nav-links" aria-label="Page links">
         <?php foreach ($navLinks as $lnk):
           if (empty($lnk['label']) || empty($lnk['href'])) continue;
-          $lcls  = 'ui-btn ui-btn--sm ' . (!empty($lnk['primary']) ? 'ui-btn--filled' : 'ui-btn--gray');
+          $lcls  = 'ui-btn ui-btn--sm ' . (!empty($lnk['primary']) ? 'ui-btn--filled' : (!empty($lnk['tinted']) ? 'ui-btn--tinted' : 'ui-btn--gray'));
           if (!empty($lnk['class'])) $lcls .= ' ' . $lnk['class'];
           $lattr = '';
           foreach (($lnk['attrs'] ?? []) as $k => $v) {
               $k = preg_replace('/[^a-zA-Z0-9\-]/', '', (string)$k);
-              if ($k !== '') $lattr .= ' ' . $k . '="' . esc($v) . '"';
+              if ($k !== '') $lattr .= ' ' . $k . ((string)$v === '' ? '' : '="' . esc($v) . '"');   // '' → a bare boolean attribute
           }
         ?>
           <a class="<?= esc($lcls) ?>" href="<?= esc($lnk['href']) ?>"<?= $lattr ?>><?= esc($lnk['label']) ?></a>

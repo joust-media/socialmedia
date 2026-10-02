@@ -5,6 +5,8 @@
  * two downloads. Helpers: export-lib.php.
  *
  *   POST action=estimate  {scope, tire_id, series_id, photos, videos, reference, library}
+ *                         scope=selection + items=tire:<id>,library:<id>,… = exactly those approved files (the Assets
+ *                         select bar: Download = start → step → download; Export = GET manifest with the same fields)
  *                         → {ok, files, bytes, video_bytes, counts, warnings, label}   (no job written)
  *   POST action=start     same fields → {ok, job, files, bytes, label, filename}       (sidecar written; stale jobs cleaned)
  *   POST action=step      {job}   → {ok, done, added, remaining, bytes_done, bytes, files, zip_bytes}

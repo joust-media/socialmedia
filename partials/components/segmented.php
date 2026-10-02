@@ -10,7 +10,9 @@
  *     ['label' => 'Approved',  'href' => '…', 'active' => false, 'count' => 2],
  *     ['label' => 'Denied',    'value' => 'denied'],            // button item
  *   ];
- *   $opts: 'class' (extra classes), 'auto' (bool: shrink to content), 'label' (aria-label)
+ *   $opts: 'class' (extra classes), 'auto' (bool: shrink to content), 'label' (aria-label),
+ *          'scroll' (bool: on phones the items keep their natural width and the control scrolls
+ *          sideways with fade edges — components.css .ui-segmented--scroll, app.js App.segmented)
  */
 if (!function_exists('segmented')) {
     function segmented(array $items, array $opts = []): string
@@ -21,6 +23,7 @@ if (!function_exists('segmented')) {
         $cls = 'ui-segmented';
         if (!empty($opts['auto']))  $cls .= ' ui-segmented--auto';
         if (count($items) >= 4)     $cls .= ' ui-segmented--dense';   // 4+ segments: tighter on narrow phones (components.css)
+        if (!empty($opts['scroll'])) $cls .= ' ui-segmented--scroll';
         if (!empty($opts['class'])) $cls .= ' ' . $opts['class'];
         $aria = !empty($opts['label']) ? ' aria-label="' . $esc($opts['label']) . '"' : '';
 

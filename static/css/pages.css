@@ -51,9 +51,14 @@ li + li > .pgl-card::before { left: 84px; }
 /* ---------------------------------------------------------------------
    Detail — preview frame
    --------------------------------------------------------------------- */
-.pg-head { flex-wrap: wrap; row-gap: 4px; }
-.pg-head .pd-type, .pg-head .pd-edited { white-space: nowrap; }
-.pg-head .pd-edited { margin-left: auto; }
+/* One row, ⋯ always on it (390 / 320 px too): the code and the "edited" stamp give way (ellipsis) before anything wraps */
+.pg-head { flex-wrap: nowrap; min-width: 0; }
+.pg-head > * { flex: none; }
+.pg-head .pd-type, .pg-head .pd-edited { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.pg-head .pd-type { flex: 0 1 auto; }
+.pg-head .pd-edited { flex: 0 1 auto; margin-left: auto; }
+/* Phones: the "edited" stamp steps aside so the code, the pill and ⋯ share one row */
+@media (max-width: 559px) { .pg-head { gap: 6px; } .pg-head .pd-edited { display: none; } .pg-head .pd-more { margin-left: auto; } }
 .pg-preview { margin: 0 -16px; padding: 0 16px 4px; }
 .pg-preview-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 .pg-preview-toggle .ui-segmented-item { min-height: 28px; padding: 3px 12px; }
@@ -139,30 +144,16 @@ a.pg-file-name:hover { color: var(--accent); }
 .pg-files-empty[hidden] { display: none; }   /* .studio-help sets display, so the attribute alone would lose */
 
 /* ---------------------------------------------------------------------
-   Detail — footer: admin status control + tools
+   Detail — footer: one button row per state (review-actions.php)
    --------------------------------------------------------------------- */
-.pg-status-ctl { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px; }
-.pg-status-ctl[hidden] { display: none; }
-.pg-status-ctl-label {
-  font-size: var(--text-caption); line-height: var(--lh-caption); letter-spacing: 0.2px;
-  font-weight: 600; text-transform: uppercase; color: var(--label-secondary);
-}
-.pg-status-ctl .ui-segmented-item {
-  flex: 1 1 auto; padding-inline: 6px; gap: 0;
-  font-size: var(--text-caption); letter-spacing: 0;
-  overflow: hidden; text-overflow: ellipsis;
-}
 .page-pages .pd-actions .ui-btn--large {
   padding-inline: 10px;
   font-size: var(--text-subhead); letter-spacing: var(--ls-subhead);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.page-pages .pd-decide > .ui-btn, .page-pages .pd-admin-denied > .ui-btn { flex: 1 1 0; }
-.pg-admin-tools { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
-.pg-admin-tools .ui-btn .ui-icon { width: 14px; height: 14px; }
-.pg-delete { color: var(--deny); }
+.page-pages .pd-actions .ui-btn-group > .ui-btn { flex: 1 1 0; }
 .pd-state--draft { color: var(--label-secondary); background: var(--fill-tertiary); }
-.pd-decide[hidden], .pd-admin-draft[hidden], .pd-admin-approved[hidden], .pd-admin-denied[hidden], .pd-admin-live[hidden] { display: none; }
+.pd-decide[hidden], .pd-admin-draft[hidden], .pd-admin-pending[hidden], .pd-admin-approved[hidden], .pd-admin-denied[hidden], .pd-admin-live[hidden] { display: none; }
 
 /* ---------------------------------------------------------------------
    add-page.php — file uploader card

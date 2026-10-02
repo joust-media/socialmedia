@@ -71,7 +71,7 @@ if (!$client) {
     if (!$hasFlows) {
         echo '<div class="ui-empty" data-flows-empty="setup">Flows are not set up yet — run <code>migrate.php</code> first.</div>';
     } elseif (!$companies) {
-        echo '<div class="ui-empty">No client has the Emails module yet. Enable it in Studio or add the first email.</div>';
+        echo '<div class="ui-empty">No client has the Emails module yet. Turn it on in Manage → Clients, or add the first email.</div>';
     } else {
         echo insetListOpen('Clients');
         foreach ($companies as $c) {
@@ -295,7 +295,7 @@ include __DIR__ . '/partials/layout-top.php';
       <label class="ui-visually-hidden" for="fl-pick-q">Search emails</label>
       <input class="ui-input fl-picker-search" type="search" id="fl-pick-q" placeholder="Search code, title or subject" autocomplete="off" data-flow-pick-search data-sheet-autofocus>
       <?php if (!$pickerGroups): ?>
-        <div class="ui-empty" data-flow-pick-empty>No emails yet — add one in Studio first.</div>
+        <div class="ui-empty" data-flow-pick-empty>No emails yet — add one with + New → New email first.</div>
       <?php else: ?>
         <div class="ui-empty" data-flow-pick-empty hidden>Every email is already in this flow.</div>
         <div class="ui-empty" data-flow-pick-nomatch hidden>No email matches.</div>

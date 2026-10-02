@@ -12,7 +12,8 @@
  *
  * States: no tables or no snapshot yet → setup pointer; stale (> 48 h) or partial snapshot → banner;
  * no limit → usage only; < 30 days of history → "based on N days"; zero candidates; empty client.
- * Chrome like studio.php (Studio tab active, Joust mark, back to Studio). Read model: drive-lib.php
+ * Manage → Drive: the Manage tab is active and the overview carries the Manage section switch (manageNavHtml());
+ * the client / offboard views keep a back button to the overview. Joust mark. Read model: drive-lib.php
  * (loaded by helpers.php). "Drive" throughout = active_bytes (Google's usageInDrive minus the trash):
  * that is what the collector lists, so the client tiles plus (unfiled) sum to it exactly.
  */
@@ -104,18 +105,20 @@ try {
 }
 $sid = $snap ? (int)($snap['id'] ?? 0) : 0;
 
-// Chrome (studio.php's unscoped shape: Studio tab, Joust mark, back button)
-$activeTab   = 'studio';
+// Chrome: Manage → Drive (Manage tab, Joust mark; the overview shows the Manage section switch, sub-views a back button)
+$activeTab   = 'manage';
 $navTrailing = joustAvatar();
-$pageWide    = true;
+// The overview is a Manage section: the same 720px frame as every top-level page. The pushed table views
+// (Offboard first, the file lists) keep the wide column, with the title aligned to it.
+$pageWide    = $view !== 'overview';
+$navWide     = $pageWide;
 $bodyClass   = 'page-drive page-drive--' . $view;
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/drive.css')) . '">';
 $footExtra   = '';
 $htmlTitle   = 'Drive — Joust Media';
 $navLinks    = [];
 if ($view === 'overview') {
-    $pageTitle = 'Drive'; $navSubtitle = 'Google Drive storage';
-    $navBack   = ['href' => pagePath('studio'), 'label' => 'Studio'];
+    $pageTitle = 'Drive'; $navSubtitle = 'Manage · Google Drive storage';
 } elseif ($view === 'offboard') {
     $pageTitle = 'Offboard first'; $navSubtitle = 'Drive';
     $navBack   = ['href' => dvUrl(), 'label' => 'Drive'];
@@ -146,9 +149,10 @@ if ($snap) {
 // Not set up / no snapshot yet
 // ---------------------------------------------------------------------
 if (!$snap) {
-    $pageTitle = 'Drive'; $navSubtitle = 'Google Drive storage';
-    $navBack   = ['href' => pagePath('studio'), 'label' => 'Studio'];
+    $pageTitle = 'Drive'; $navSubtitle = 'Manage · Google Drive storage';
+    $navBack   = null;
     include __DIR__ . '/partials/layout-top.php';
+    echo manageNavHtml('drive');
     $why = !$hasTables ? 'The Drive tables have not been created yet — open migrate.php once.' : 'The tables are ready; the Apps Script has not posted a complete snapshot yet.';
     ?>
     <section class="ui-card ui-card--quiet drive-setup" data-drive-state="<?= !$hasTables ? 'notables' : 'nosnapshot' ?>">
@@ -238,6 +242,7 @@ if ($view === 'overview') {
 
     include __DIR__ . '/partials/layout-top.php';
     ?>
+    <?= manageNavHtml('drive') ?>
     <div class="drive-toolbar"><?= $segNav ?><?= $snapLine ?></div>
     <?= $banner ?>
     <?= driveCapacityStrip($snap, $proj) ?>

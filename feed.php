@@ -9,7 +9,7 @@
  *   status → status (first of the old comma list; 'denied' only survives for admins)
  *   #post-N anchors can't be seen server-side; ?post=N is passed through when present.
  *
- * The pre-redesign page still exists at legacy/feed.php until parity is verified.
+ * The pre-redesign page (legacy/feed.php) is retired and redirects through here.
  */
 
 require __DIR__ . '/db.php';

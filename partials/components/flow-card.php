@@ -142,11 +142,8 @@ if (!function_exists('renderFlowCard')) {
         $out .= '<div class="el-code-tile el-code-tile--' . fcEsc($key) . ' fl-code-tile" aria-hidden="true"><span class="el-code">' . fcEsc($code !== '' ? $code : '—') . '</span></div>';
         $out .= '<div class="fl-heading">';
         $out .= '<div class="fl-title">' . fcEsc($rowTitle) . '</div>';
-        if ($trigLn !== '') {
-            $out .= '<div class="el-trigger fl-trigger">' . $ico('calendar', 'el-trigger-icon') . '<span>' . fcEsc($trigLn) . '</span></div>';
-        } else {
-            $out .= '<div class="el-trigger fl-trigger fl-trigger--empty"><span>No trigger yet</span></div>';
-        }
+        // One timing per step: the connector pill above the card (the step's override, else the email's trigger).
+        // The email's own trigger line is not repeated on the card (it read "Day 1 after signup" next to "3 days after W2").
         $out .= '</div>';
         if ($admin) {
             $out .= '<div class="fl-tools" data-flow-tools>'

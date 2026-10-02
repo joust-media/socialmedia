@@ -382,9 +382,11 @@ function render_summary(array $rows, int $leftover, array $config) {
             $textOut .= "  • [{$e['actor']}] {$entityLabel} — {$verb} ({$when})\n";
             foreach ($e['details'] as $d) {
                 if (in_array($d['action'], ['commented', 'uncommented'], true)) {
-                    $excerpt = mb_substr($d['text'], 0, 240);
-                    $textOut .= "      \"" . str_replace("\n", ' ', $excerpt)
-                              . (mb_strlen($d['text']) > 240 ? '…' : '') . "\"\n";
+                    // "[Slide 3] text" → on slide 3: "text" (the stored prefix is never printed)
+                    [$slideNo, $body] = commentSlideSplit((string)$d['text']);
+                    $excerpt = mb_substr($body, 0, 240);
+                    $textOut .= "      " . ($slideNo > 0 ? "on slide {$slideNo}: " : '') . "\"" . str_replace("\n", ' ', $excerpt)
+                              . (mb_strlen($body) > 240 ? '…' : '') . "\"\n";
                 } elseif (strpos($d['action'], 'edited_') === 0) {
                     // Caption / hashtag diffs are stored as "old → new" (each side ≤ 300 chars);
                     // keep the whole line so a client's rewrite is readable in the digest.
@@ -403,10 +405,12 @@ function render_summary(array $rows, int $leftover, array $config) {
                       . '<span style="color:#9ca3af;font-size:12px">· ' . $h($when) . '</span>';
             foreach ($e['details'] as $d) {
                 if (in_array($d['action'], ['commented', 'uncommented'], true)) {
-                    $excerpt = mb_substr($d['text'], 0, 240);
+                    [$slideNo, $body] = commentSlideSplit((string)$d['text']);
+                    $excerpt = mb_substr($body, 0, 240);
                     $htmlOut .= '<div style="margin-top:6px;padding:8px 10px;background:#f7f8fa;'
                               . 'border-left:3px solid #1877f2;font-style:italic;color:#3a3b3c">'
-                              . '"' . $h($excerpt) . ($h(mb_strlen($d['text']) > 240 ? '…' : '')) . '"</div>';
+                              . ($slideNo > 0 ? '<span style="font-style:normal;color:#65676b">on slide ' . $slideNo . ':</span> ' : '')
+                              . '"' . $h($excerpt) . ($h(mb_strlen($body) > 240 ? '…' : '')) . '"</div>';
                 } elseif (strpos($d['action'], 'edited_') === 0) {
                     $htmlOut .= '<div style="margin-top:4px;font-size:12px;color:#65676b">'
                               . $h(mb_substr($d['text'], 0, 640)) . '</div>';

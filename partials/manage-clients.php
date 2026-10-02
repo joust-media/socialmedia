@@ -1,15 +1,18 @@
 <?php
-// Not a page: only meaningful when included from studio.php (helpers.php loaded, admin verified).
+// Not a page: only meaningful when included from manage.php (helpers.php loaded, admin verified).
 if (!function_exists('esc') || !function_exists('isAdmin') || !isAdmin()) { http_response_code(404); exit; }
 /**
- * Studio → Clients: company management — the one place the portal creates and edits
- * companies (name, slug, feature label, logo, module toggles). Included by studio.php
- * both as the "Clients" segment of a scoped hub and on its own (studio.php?tab=clients).
+ * Manage → Clients: company management — the one place the portal creates and edits companies
+ * (name, slug, feature label, logo, settings) and the ONLY place a client's Tires / Emails / Pages
+ * tabs are turned on or off. Included by manage.php (section=clients, the default).
  *
  *   - "New client" card: name, slug (auto from the name, editable), feature label, logo file
  *   - list of every company: logo (brandLogoUrl() → uploads/ → static/brand/<slug> → initials),
  *     name, slug, feature label, Tires / Emails / Pages module state; a row opens its edit card
- *   - edit card (?edit=<id>): the same fields, replace / remove logo, module toggles
+ *   - edit card (?edit=<id>; scoped to a client without &edit → that client's card, &edit=0 → the list):
+ *     ONE form + ONE "Save changes" for the fields and Settings (default hashtags; AI Builder product type +
+ *     industry — once their migration-gated columns exist), then replace / remove logo, module toggles.
+ *     No file paths in the copy (they sit in a tooltip on the logo help line).
  *
  * Every form posts to client-admin.php (studio.js submits them with fetch + FormData and
  * follows the JSON `redirect`; without JS the endpoint redirects back here itself).
@@ -18,10 +21,15 @@ if (!function_exists('esc') || !function_exists('isAdmin') || !isAdmin()) { http
  * Reads from the including scope: $pdo, $client (the scoped company, may be null), $_GET['edit'].
  */
 $scCompanies = [];
+$scSettingCols = [];   // migration-gated companies columns: default_hashtags (step 11a), product_type + industry
 try {
-    $scCompanies = $pdo->query("SELECT id, name, slug, feature_label, logo_url FROM companies ORDER BY name ASC")->fetchAll();
+    $scSettingCols = $pdo->query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'companies' AND COLUMN_NAME IN ('default_hashtags', 'product_type', 'industry')")->fetchAll(PDO::FETCH_COLUMN);
+    $scSettingCols = array_map('strval', $scSettingCols);
+    $scCompanies = $pdo->query("SELECT id, name, slug, feature_label, logo_url"
+        . ($scSettingCols ? ', ' . implode(', ', $scSettingCols) : '') . " FROM companies ORDER BY name ASC")->fetchAll();
 } catch (Throwable $scErr) {
-    error_log('studio clients list failed: ' . $scErr->getMessage());
+    error_log('manage clients list failed: ' . $scErr->getMessage());
 }
 $scModules   = ['tires' => 'Tires tab', 'emails' => 'Emails tab', 'pages' => 'Pages tab'];
 $scModuleIds = [];
@@ -35,13 +43,14 @@ try {
         foreach ($scSt->fetchAll() as $scR) { $scEnabled[(int)$scR['company_id']][(string)$scR['slug']] = true; }
     }
 } catch (Throwable $scErr) {
-    error_log('studio clients modules failed: ' . $scErr->getMessage());
+    error_log('manage clients modules failed: ' . $scErr->getMessage());
 }
-$scEditId  = (int)($_GET['edit'] ?? 0);
+// Scoped to a client and no explicit &edit → that client's card ("Client settings"); &edit=0 → the list.
+$scEditId  = isset($_GET['edit']) ? (int)$_GET['edit'] : (int)($client['id'] ?? 0);
 $scEdit    = null;
 foreach ($scCompanies as $scC) { if ((int)$scC['id'] === $scEditId) { $scEdit = $scC; break; } }
 $scEndpoint = basePath() . '/client-admin.php' . (!empty($client['slug']) ? '?client=' . rawurlencode($client['slug']) : '');
-$scListUrl  = clientUrl('studio.php', ['tab' => 'clients']);
+$scListUrl  = clientUrl('manage.php', ['section' => 'clients', 'edit' => !empty($client['id']) ? '0' : null]);
 $scErrFlash = trim((string)($_GET['err'] ?? ''));
 $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
     $bits = ['<code>' . esc($co['slug']) . '</code>'];
@@ -70,7 +79,7 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
           </div>
         </div>
       </div>
-      <div class="ui-card-aside"><a class="ui-btn ui-btn--gray ui-btn--sm" href="<?= esc($scListUrl) ?>" data-client-close>Done</a></div>
+      <div class="ui-card-aside"><a class="ui-btn ui-btn--gray ui-btn--sm" href="<?= esc($scListUrl) ?>" data-client-close>All clients</a></div>
     </div>
     <div class="ui-card-body">
       <form method="POST" action="<?= esc($scEndpoint) ?>" class="studio-client-form" data-client-form autocomplete="off">
@@ -84,8 +93,29 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
           <div class="studio-field"><label class="studio-label" for="clientLabel<?= (int)$scEdit['id'] ?>">Feature label <span class="text-tertiary">Tires tab name</span></label>
             <input class="ui-input" type="text" name="feature_label" id="clientLabel<?= (int)$scEdit['id'] ?>" value="<?= esc($scEdit['feature_label'] ?? '') ?>" maxlength="60" placeholder="Tires"></div>
         </div>
+      <?php if ($scSettingCols): ?>
+        <div class="studio-client-settings" data-client-settings>
+        <div class="studio-label">Settings</div>
+        <?php if (in_array('default_hashtags', $scSettingCols, true)): ?>
+          <div class="studio-field"><label class="studio-label" for="clientTags<?= (int)$scEdit['id'] ?>">Default hashtags <span class="text-tertiary">pre-filled on every new post</span></label>
+            <textarea class="ui-textarea" name="default_hashtags" id="clientTags<?= (int)$scEdit['id'] ?>" rows="2" maxlength="4000" placeholder="#Brand #Campaign" data-client-hashtags><?= esc($scEdit['default_hashtags'] ?? '') ?></textarea></div>
+        <?php endif; ?>
+        <?php if (in_array('product_type', $scSettingCols, true) || in_array('industry', $scSettingCols, true)): ?>
+        <div class="studio-field-row">
+          <?php if (in_array('product_type', $scSettingCols, true)): ?>
+          <div class="studio-field"><label class="studio-label" for="clientProduct<?= (int)$scEdit['id'] ?>">Product type <span class="text-tertiary">AI Builder</span></label>
+            <input class="ui-input" type="text" name="product_type" id="clientProduct<?= (int)$scEdit['id'] ?>" maxlength="120" value="<?= esc($scEdit['product_type'] ?? '') ?>" placeholder="e.g. tires, apparel, software"></div>
+          <?php endif; ?>
+          <?php if (in_array('industry', $scSettingCols, true)): ?>
+          <div class="studio-field"><label class="studio-label" for="clientIndustry<?= (int)$scEdit['id'] ?>">Industry <span class="text-tertiary">AI Builder</span></label>
+            <input class="ui-input" type="text" name="industry" id="clientIndustry<?= (int)$scEdit['id'] ?>" maxlength="120" value="<?= esc($scEdit['industry'] ?? '') ?>" placeholder="e.g. powersports, retail, SaaS"></div>
+          <?php endif; ?>
+        </div>
+        <?php endif; ?>
+        </div>
+      <?php endif; ?>
         <div class="studio-client-actions">
-          <button type="submit" class="ui-btn ui-btn--filled">Save changes</button>
+          <button type="submit" class="ui-btn ui-btn--filled" data-client-save>Save changes</button>
           <span class="studio-client-status" data-client-status aria-live="polite"></span>
         </div>
       </form>
@@ -111,11 +141,12 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
             </form>
           <?php endif; ?>
         </div>
-        <p class="studio-help">PNG, JPG, GIF or WebP up to 2 MB; resized to 512px and saved as <code>uploads/logo_<?= esc($scEdit['slug']) ?>.png</code> (or .jpg).
-          <?php if (brandStaticLogoUrl((string)$scEdit['slug']) !== '' && trim((string)$scEdit['logo_url']) === ''): ?>Showing the bundled mark <code>static/brand/<?= esc($scEdit['slug']) ?>.png</code> until one is uploaded.<?php endif; ?></p>
+        <p class="studio-help" title="<?= esc('Saved as uploads/logo_' . $scEdit['slug'] . '.png (or .jpg); the bundled mark is static/brand/' . $scEdit['slug'] . '.png') ?>">PNG, JPG, GIF or WebP up to 2 MB, resized to 512px.
+          <?php if (brandStaticLogoUrl((string)$scEdit['slug']) !== '' && trim((string)$scEdit['logo_url']) === ''): ?>Showing the logo that ships with the portal until one is uploaded.<?php endif; ?></p>
       </div>
 
-      <div class="studio-client-modules">
+
+      <div class="studio-client-modules" data-client-modules>
         <div class="studio-label">Modules</div>
         <ul class="studio-client-modlist" role="list">
           <?php foreach ($scModules as $scKey => $scLabel):
@@ -124,9 +155,9 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
           ?>
             <li class="studio-client-mod-row" data-client-module="<?= esc($scKey) ?>">
               <div class="studio-client-mod-body">
-                <div class="ui-row-title"><?= esc($scLabel) ?></div>
+                <div class="ui-row-title"><?= esc($scKey === 'tires' ? tiresLabel($scEdit) . ' tab' : $scLabel) ?></div>
                 <div class="ui-row-subtitle"><?= $scKey === 'tires'
-                    ? 'Shows the ' . esc(trim((string)($scEdit['feature_label'] ?? '')) !== '' ? $scEdit['feature_label'] : 'Collections') . ' tab. It also appears on its own once the client has a tire.'
+                    ? 'Shows the ' . esc(tiresLabel($scEdit)) . ' tab and “New tire”. The tab also appears on its own once the client has a tire.'
                     : ($scKey === 'pages'
                         ? 'Shows the Pages tab even with zero pages. It also appears on its own once the client has a page.'
                         : 'Shows the Emails tab even with zero emails. It also appears on its own once the client has an email.') ?></div>
@@ -153,7 +184,7 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
   <!-- New client card -->
   <section class="ui-card studio-client-card" data-client-new>
     <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">New client</h3>
-      <p class="ui-card-subtitle">The slug becomes the review link (<code>?client=slug</code>) and the folder names under <code>media/</code> — pick it once.</p></div></div>
+      <p class="ui-card-subtitle">The slug becomes the review link (<code>?client=slug</code>) and the client's folder names — pick it once.</p></div></div>
     <div class="ui-card-body">
       <form method="POST" action="<?= esc($scEndpoint) ?>" enctype="multipart/form-data" class="studio-client-form" data-client-form autocomplete="off">
         <input type="hidden" name="action" value="create">
@@ -173,7 +204,7 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
           <button type="submit" class="ui-btn ui-btn--filled">Create client</button>
           <span class="studio-client-status" data-client-status aria-live="polite"></span>
         </div>
-        <p class="studio-help">No logo yet? A bundled mark in <code>static/brand/&lt;slug&gt;.png</code> shows automatically (there is one for <code>privacybee</code>, <code>cometic</code> and <code>hmf</code>); otherwise the client's initial does.</p>
+        <p class="studio-help" title="Bundled marks live in static/brand/&lt;slug&gt;.png">No logo yet? If a logo ships with the portal for this client it shows automatically; otherwise the client's initial does.</p>
       </form>
     </div>
   </section>
@@ -185,7 +216,7 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
     <?php endif; ?>
     <?php foreach ($scCompanies as $scC): ?>
       <?= insetRow([
-          'href'        => clientUrl('studio.php', ['tab' => 'clients', 'edit' => (int)$scC['id']]),
+          'href'        => clientUrl('manage.php', ['section' => 'clients', 'edit' => (int)$scC['id']]),
           'leading'     => clientAvatar($scC, 'ui-avatar--lg'),
           'title'       => $scC['name'],
           'subtitle'    => $scFmt($scC),
@@ -196,6 +227,6 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
           'attrs'       => ['data-client-row' => $scC['slug']],
       ]) ?>
     <?php endforeach; ?>
-  <?= insetListClose('Logos come from the uploaded file, else the bundled static/brand mark, else the initial. Clients cannot be deleted here.') ?>
+  <?= insetListClose('Logos come from the uploaded file, else the logo that ships with the portal, else the initial. Clients cannot be deleted here.') ?>
 </div>
-<?php unset($scCompanies, $scModules, $scModuleIds, $scEnabled, $scEditId, $scEdit, $scEndpoint, $scListUrl, $scErrFlash, $scFmt, $scC, $scM, $scR, $scSt, $scErr, $scKey, $scLabel, $scOn, $scHas); ?>
+<?php unset($scSettingCols, $scCompanies, $scModules, $scModuleIds, $scEnabled, $scEditId, $scEdit, $scEndpoint, $scListUrl, $scErrFlash, $scFmt, $scC, $scM, $scR, $scSt, $scErr, $scKey, $scLabel, $scOn, $scHas); ?>
