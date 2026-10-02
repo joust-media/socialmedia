@@ -347,8 +347,8 @@ join Approved assets and the composer like any tire image.
   page); the admin's Home "Latest notes" merges client comments on assets from the last 7 days
   with the post / email notes, each linking to the viewer.
 - **Thumbnails**: every render gets the portal-wide image previews (see *Image previews* below):
-  `sm` made at upload, and during a folder scan for at most 3 s per page view (the rest on first
-  view through `preview.php`). Older `<series>/.thumbs/<stem>.jpg` (640 px) thumbs keep working
+  made in the browser at upload, or on first view through `preview.php` (FTP drops). Page renders and
+  folder scans never build previews. Older `<series>/.thumbs/<stem>.jpg` (640 px) thumbs keep working
   until the preview replaces them.
 - **Migration**: `migrate.php` steps 25–26 create `tire_series` and add `tire_images.series_id`
   (one idempotent `ALTER TABLE tire_images ADD COLUMN series_id INT UNSIGNED NULL` — the only
@@ -381,34 +381,48 @@ changed:
 They live in a `.thumbs/` folder beside the original: `<dir>/.thumbs/<stem>.sm.webp` /
 `<stem>.lg.webp` (`<stem>.sm.jpg` / `<stem>.lg.jpg` when the server's GD cannot encode WebP), plus `<stem>.dims.json`
 (the original's size, for `width` / `height` attributes). WebP quality 78, JPEG 80; aspect ratio
-kept; never upscaled (an original already smaller than the size is used as-is); EXIF rotation
+kept; never upscaled (an original already smaller than the size is used as-is — except that an original of
+1600 px or less that weighs over 500 KB still gets an `lg`, re-encoded at its own size); EXIF rotation
 applied; transparency kept in WebP (flattened onto white in JPEG); animated GIFs use the first
 frame. SVGs and videos get no previews. Code: `preview-lib.php`.
 
-- **When they are made**: right after each upload (renders, reference images, Compose / Uploads /
-  Batch files, Approved assets picks — copied from the source's previews when it has them, Replace
-  regenerates), within a per-request time budget. Anything not made yet — FTP drops into
-  `media/library/` or `media/tires/`, big batches — is made on first view by **`preview.php`**:
-  the page links `preview.php?f=<signed path>&s=sm|lg&v=<mtime>`, which makes the file once and
-  serves it; the next page view links the static file. If a preview cannot be made (too large for
-  the PHP memory limit even at 512 MB, damaged file, no GD) `preview.php` redirects to the
-  original, so an image never breaks.
-- **Backfill**: Manage → **Export** → *Image previews* → **Build previews** (optionally *All
-  clients*) walks every tire image, library file and post image in ~15-second steps
-  (`preview-job.php`) and reports how many were made, already up to date, failed or missing, and
-  the bytes of the small previews against the originals. Safe to run any time; it only makes what
-  is missing or stale.
+- **Made in the browser at upload**: the Upload sheet, New post's Upload pane and Replace make the `sm` / `lg`
+  WebP themselves (`static/js/chunk-upload.js` `App.imagePreview`: `createImageBitmap` with EXIF orientation,
+  canvas → WebP q 0.78) while the original uploads, and send them in one small follow-up request
+  (`action=previews` on `upload-chunk.php` / `tire-upload.php`, with the one-time `preview_key` of that upload —
+  tied to the admin session, the client and that one file). The server checks each file strictly (WebP magic +
+  `getimagesize`, long edge 480 / 1600 ± 2 px, aspect within 2 % of the original, ≤ 300 KB / 1.5 MB) and writes it
+  under the name it would have chosen itself — so it decodes nothing (each reply says so in `X-Preview-Gd: 0`).
+  Anything refused, or a browser without a WebP encoder, falls back to the server making them. The same small
+  `sm` is the thumbnail on the upload screens (never the multi-MB original), and the New post tray / carousel get
+  the preview URLs of the parked file; the previews follow the file when the post is saved.
+- **On first view**: anything not made yet — FTP / Drive drops into `media/library/` or `media/tires/` — is made
+  by **`preview.php`**: the page links `preview.php?f=<signed path>&s=sm|lg&v=<mtime>`, which makes BOTH sizes in
+  one decode and 302s (cached for a year) to the static `.thumbs/` URL — the very URL the next page prints, so each
+  preview is downloaded once. At most **2 previews are made at a time** on the whole host (`flock` slots in
+  `uploads/.locks/`; env `PREVIEW_SLOTS`); when both are busy `preview.php` answers at once with a tiny
+  placeholder (`no-store`, `Server-Timing: pv-pending`) and the page retries that tile with backoff
+  (`static/js/app.js` `App.previewRetry`). If a preview cannot be made (too large for the PHP memory limit even at
+  512 MB, damaged file, no GD) the tile gets a neutral placeholder (logged, remembered in `<stem>.fail.json` until
+  the original changes) — the multi-MB original is never sent into a tile. Every request releases the admin
+  session before decoding, so other tabs are never queued behind a preview.
+- **Backfill**: Manage → **Tools** → *Image previews* → **Build previews** (optionally *All
+  clients*) walks every tire image (FTP drops included), library file on disk (FTP / Drive drops included) and post
+  image, several per ~15-second step inside the same 2-at-a-time cap (`preview-job.php`), and reports how many
+  were made, are left, already up to date, failed or missing, and the bytes of the small previews against the
+  originals. Safe to run any time; it only makes what is missing or stale.
 - **Signed URLs**: `preview.php` only accepts paths the portal signed (HMAC-SHA256). Set a
   `'preview_secret' => '<32+ random characters>'` key in `config.php` to use your own key;
   without it the key is derived from the database credentials. Changing it only changes the lazy
   URLs (existing previews are static files).
 - **Caching**: the portal's `.htaccess` text (marker `# joust-portal-media v3`, written to
-  `media/tires/`, `media/pages/` and now `uploads/`) adds guarded `mod_expires` / `mod_headers`
+  `media/tires/`, `media/pages/`, `media/library/` and `uploads/`) adds guarded `mod_expires` / `mod_headers`
   rules — 7 days for originals — and every `.thumbs/` folder gets its own `.htaccess` with a
   1-year `immutable` rule (preview URLs carry `?v=<mtime of the original>`, so a replaced image
-  gets a new URL). Older v1 / v2 files of ours are upgraded on the next upload, scan, backfill or
-  Repair; files without the marker are never touched. `uploads/` holds only media and data files
-  (nothing there needs PHP), so it gets the same "static files only" rules.
+  gets a new URL). Every directive except `Options -Indexes` sits inside `<IfModule>`. Older v1 / v2 files of
+  ours are upgraded on the next upload, scan, backfill or Repair (Assets → Manage series → **Repair server
+  rules** also writes `media/library/.htaccess`); files without the marker are never touched. `uploads/` holds
+  only media and data files (nothing there needs PHP), so it gets the same "static files only" rules.
 - **Deleting**: removing an image, post, tire, series or page removes its previews too. Deleting a
   `.thumbs/` folder by hand is harmless — the previews come back on the next view.
 
@@ -572,7 +586,8 @@ request exactly as before. The surfaces and their endpoints:
   `App.chunkUpload.upload()` is the one browser call for any size.
 - **Claim tokens** (Compose / Uploads / Batch): the file is validated and parked as
   `uploads/tmp_<token>.<ext>` with a sidecar `uploads/.spool/<token>.claim` (purpose, client,
-  name, size); the reply is `{token, name, size, type, preview_url}` and the form submits
+  name, size); the reply is `{token, name, size, type, preview_url, thumb, large}` (preview URLs, never the
+  parked original) and the form submits
   `claimed[]`. `add-post.php` / `batch-process.php` check each token (32 hex, sidecar purpose +
   client match, file directly inside `uploads/`, younger than 24 h — a bad one is a 400 in the
   composer and a per-row error in a batch, nothing is saved), rename the file to its final

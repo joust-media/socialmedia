@@ -754,6 +754,21 @@ function libraryDir($slug) {
     return __DIR__ . '/../media/library/' . $slug;
 }
 
+/**
+ * media/library/.htaccess = the shared media text (media-lib.php mediaHtaccessText(): static files only, every
+ * directive but `Options -Indexes` inside <IfModule>, 7-day caching for the originals); each brand's .thumbs/
+ * carries the 1-year immutable text (preview-lib.php). Written when missing / older than ours, never over a file
+ * that is not ours. Once per request; called by the Library page sync, Library uploads, the preview job and
+ * Assets → Repair server rules. Returns mediaEnsureHtaccess()'s reply (action 'no-dir' when there is no library yet).
+ */
+function ensureLibraryMediaHtaccess(): array {
+    static $r = null;
+    if ($r !== null) return $r;
+    $root = dirname(libraryDir('x'));
+    if (!is_dir($root)) return ['action' => 'no-dir', 'file' => $root . '/.htaccess', 'from' => 0, 'version' => 0];
+    return $r = mediaEnsureHtaccess($root, 'helpers.php');
+}
+
 /** Public URL for a file inside a brand's library folder. Root-relative —
  *  assumes media/ is served from the same document root as this app. */
 function libraryFileUrl($slug, $filename) {
@@ -807,6 +822,7 @@ function syncLibraryImages(PDO $pdo, $companyId, $slug) {
     if (!hasLibraryImagesTable($pdo)) return [];
     $dir = libraryDir($slug);
     if (!is_dir($dir)) { @mkdir($dir, 0755, true); }
+    ensureLibraryMediaHtaccess();   // FTP / Drive drops land here: static only + caching
     $onDisk = scanLibraryDir($dir);
 
     if ($onDisk) {

@@ -145,7 +145,9 @@
         html += App.video ? App.video.markup(it.src, { cls: 'pd-video', autoplay: false, unmute: true })
                           : '<video playsinline muted controls preload="metadata" src="' + esc(it.src) + '"></video>';
       } else {
-        html += '<img src="' + esc(it.large || it.src) + '" alt="' + label + ' ' + (i + 1) + '" loading="' + (i === 0 ? 'eager' : 'lazy') + '" decoding="async">';
+        var u = it.large || it.src;   // the lg preview (or a browser-made one while uploading) — never wait on an empty src
+        html += u ? '<img src="' + esc(u) + '" alt="' + label + ' ' + (i + 1) + '" loading="' + (i === 0 ? 'eager' : 'lazy') + '" decoding="async"' + (it.w && it.h ? ' width="' + (it.w | 0) + '" height="' + (it.h | 0) + '"' : '') + '>'
+                  : '<div class="pd-slide-pending" role="img" aria-label="' + label + ' ' + (i + 1) + ' (preparing preview)"></div>';
       }
       html += '</figure>';
     });

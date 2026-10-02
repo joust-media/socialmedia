@@ -13,6 +13,14 @@
  *   action=chunk_finish   upload_id → validates the spooled file like a single upload → the purpose's reply
  *   action=chunk_abort    upload_id                                                  → {aborted}
  *   action=claim_discard  token (+ client)                                           → {discarded}   (a parked Compose / Batch file the admin removed)
+ *   action=previews       preview_key + client + `sm` / `lg` (WebP made in the browser) → {accepted, rejected, generated, thumb, large}
+ *
+ * Client-made previews (static/js/chunk-upload.js App.imagePreview): an image upload / chunk_finish that carries
+ * client_previews=1 stores the file WITHOUT decoding it and adds preview_key to its reply — a one-time ticket for
+ * that file, this admin session and this client (preview-lib.php previewClientTicket). action=previews redeems it:
+ * each file is validated (WebP magic + getimagesize, size caps, long edge, aspect within 2 %) and written exactly
+ * where preview-lib would; whatever is refused is made here instead (library / reference / replace) or when the
+ * post is saved (post / batch). Every reply carries X-Preview-Gd: <originals decoded in this request>.
  *
  * Purpose fields (chunk_init / upload; `client` is always required and is the tenant scope):
  *   purpose=post      Compose one-offs         → the file is parked as uploads/tmp_<token>.<ext>; reply
@@ -57,11 +65,13 @@ function ucReply(array $r): void {
 }
 
 $action  = (string)($_POST['action'] ?? $_GET['action'] ?? 'upload');
-$actions = ['probe', 'upload', 'chunk_init', 'chunk_put', 'chunk_status', 'chunk_finish', 'chunk_abort', 'claim_discard'];
+$actions = ['probe', 'upload', 'chunk_init', 'chunk_put', 'chunk_status', 'chunk_finish', 'chunk_abort', 'claim_discard', 'previews'];
 if (!in_array($action, $actions, true)) { ucFail(400, 'Unknown action'); }
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' && !($action === 'probe' && $_SERVER['REQUEST_METHOD'] === 'GET')) { ucFail(405, 'Method not allowed'); }
 requireSameSiteFetch();   // cross-site requests get a JSON 403 (helpers.php)
 if (!currentAdmin()) { ucFail(403, 'Admin sign-in required'); }
+previewReleaseSession();   // nothing below writes the session: the admin's other tabs / requests are not queued behind this upload
+previewGdHeader();
 
 $iniMax   = (string)(ini_get('upload_max_filesize') ?: '?');
 $purposes = ['post', 'batch', 'feature', 'replace', 'library'];
@@ -127,18 +137,22 @@ function ucCheckNameSize(string $purpose, string $origName, int $size): array {
 function ucFinalize(PDO $pdo, array $t, string $src, string $origName, string $ext, bool $isVideo, string $mime, bool $uploaded, array $extra = []): void {
     global $ucDiscard;
     $purpose = (string)$t['purpose'];
+    $client  = !$isVideo && previewClientRequested();   // the browser sends this image's previews: store without decoding
+    previewClientDefer($client);
     if ($purpose === 'post' || $purpose === 'batch') {
         $claim = uploadClaimStore($src, $uploaded, ['purpose' => $purpose, 'client' => $t['client'], 'name' => $origName, 'ext' => $ext, 'video' => $isVideo, 'mime' => $mime]);
         if ($claim === null) { ucFail(500, 'Failed to save the file (check uploads/ permissions)'); }
         $ucDiscard = null;
-        echo json_encode(['ok' => true, 'purpose' => $purpose] + $claim + $extra);
+        $pv = $client ? ucPreviewTicket(uploadClaimFilePath((string)$claim['file']), (string)$t['client'], false) : [];
+        echo json_encode(['ok' => true, 'purpose' => $purpose] + $claim + $pv + $extra);
         exit;
     }
     if ($purpose === 'library') {
         $r = uploadLibraryStore($pdo, ['id' => (int)$t['company_id'], 'slug' => (string)$t['client']], $src, $origName, $ext, $isVideo, $uploaded);
         if ((int)$r['code'] !== 200) { ucFail((int)$r['code'], (string)($r['body']['error'] ?? 'Upload failed')); }
         $ucDiscard = null;
-        $r['body'] = ['purpose' => 'library'] + $r['body'] + $extra;
+        $pv = $client ? ucPreviewTicket(previewResolveOriginal((string)($r['body']['image']['src'] ?? '')), (string)$t['client'], true) : [];
+        $r['body'] = ['purpose' => 'library'] + $r['body'] + $pv + $extra;
         ucReply($r);
     }
     if ($purpose === 'feature') {
@@ -147,15 +161,30 @@ function ucFinalize(PDO $pdo, array $t, string $src, string $origName, string $e
         $r = uploadFeatureInsert($pdo, $tire, $src, $origName, $ext, $uploaded);
         if ((int)$r['code'] !== 200) { ucFail((int)$r['code'], (string)($r['body']['error'] ?? 'Upload failed'), array_diff_key($r['body'], ['ok' => 1, 'error' => 1])); }
         $ucDiscard = null;
-        $r['body'] = ['purpose' => 'feature'] + $r['body'] + $extra;
+        $pv = $client ? ucPreviewTicket(previewResolveOriginal((string)($r['body']['image']['image_url'] ?? '')), (string)$t['client'], true) : [];
+        $r['body'] = ['purpose' => 'feature'] + $r['body'] + $pv + $extra;
         ucReply($r);
     }
     // replace
     $r = uploadReplaceApply($pdo, (string)$t['replace_kind'], (int)$t['replace_id'], $src, $ext, $isVideo, $uploaded);
     if ((int)$r['code'] !== 200) { ucFail((int)$r['code'], (string)($r['body']['error'] ?? 'Replace failed')); }
     $ucDiscard = null;
-    $r['body'] = ['purpose' => 'replace'] + $r['body'] + (function_exists('pvReplyFields') ? pvReplyFields($r['body']) : []) + $extra;   // + thumb / large previews
+    $pv = $client ? ucPreviewTicket(previewResolveOriginal((string)($r['body']['image_url'] ?? '')), (string)$t['client'], true) : [];
+    $r['body'] = ['purpose' => 'replace'] + $r['body'] + (function_exists('pvReplyFields') ? pvReplyFields($r['body']) : []) + $pv + $extra;   // + thumb / large previews
     ucReply($r);
+}
+
+/**
+ * The stored image's one-time preview ticket → ['preview_key' => …]. No ticket possible (nothing needed, no session,
+ * spool unusable): previews are made the usual way right here (when $gen) and [] is returned.
+ */
+function ucPreviewTicket(?string $abs, string $client, bool $gen): array {
+    previewClientDefer(false);
+    if ($abs === null || $abs === '') return [];
+    $key = previewClientTicket($abs, $client, $gen);
+    if ($key !== null) return ['preview_key' => $key];
+    if ($gen) previewAfterStore($abs);
+    return [];
 }
 
 // =====================================================================
@@ -192,6 +221,14 @@ if ($action === 'claim_discard') {
     uploadClaimDiscard($token, true);
     echo json_encode(['ok' => true, 'token' => $token, 'discarded' => true]);
     exit;
+}
+
+// =====================================================================
+// previews — the browser-made sm / lg WebP for an upload whose reply carried preview_key
+// =====================================================================
+if ($action === 'previews') {
+    $r = previewClientAccept((string)($_POST['preview_key'] ?? ''), postedClientSlug(), ['sm' => $_FILES['sm'] ?? null, 'lg' => $_FILES['lg'] ?? null]);
+    ucReply($r);
 }
 
 // =====================================================================

@@ -3,14 +3,18 @@
  * Image-preview backfill (Studio → Export → "Image previews"). Admin only, same-site, POST, JSON.
  *
  *   action=start  scope=client|all  → enumerates every image of the client (?client=<slug>) or of every company:
- *                                     tire images (references + series renders), library files on disk, post images;
+ *                                     tire images (references + series renders, FTP drops included — the folder sync
+ *                                     made their rows), library files on disk (FTP / Drive drops too), post images;
  *                                     writes uploads/.exports/previews-<company id|all>.json (deny-all folder shared
  *                                     with Export) and replies with the status shape below (nothing generated yet)
- *   action=step   scope=…           → makes the missing / stale sm + lg previews for ≈15 s (env PREVIEW_QA_STEP_ITEMS=n
- *                                     caps the items per step for the harness), then replies with the status shape
+ *   action=step   scope=…           → makes the missing / stale sm + lg previews (one decode per image, several images
+ *                                     per step) for ≈15 s, inside the host-wide generator cap (preview-lib.php
+ *                                     previewSlotAcquire — waits up to 5 s for a slot, else ends the step early with
+ *                                     busy: true and the same image next time); env PREVIEW_QA_STEP_ITEMS=n caps the
+ *                                     items per step for the harness. Replies with the status shape + busy, step_items
  *   action=status scope=…           → the status shape, or {ok, job: null} when nothing was started
  *
- * Status: {ok, job: {scope, total, processed, done, skipped, failed, missing, bytes_original, bytes_sm, bytes_saved,
+ * Status: {ok, job: {scope, total, processed, remaining, done, skipped, failed, missing, bytes_original, bytes_sm, bytes_saved,
  *          finished, format, started_at, updated_at}}. done = generated now, skipped = already up to date (or the
  * original is already small), failed = could not be made (too big for memory, undecodable — the lazy endpoint
  * serves the original), missing = the file is gone from disk. bytes_* sum the original vs its sm file over done +
@@ -74,6 +78,7 @@ function previewJobSummary(array $job): array {
     $o = (int)$job['bytes_original']; $s = (int)$job['bytes_sm'];
     return ['job' => [
         'scope' => (string)$job['scope'], 'total' => count($job['refs']), 'processed' => (int)$job['pos'],
+        'remaining' => max(0, count($job['refs']) - (int)$job['pos']),
         'done' => (int)$job['done'], 'skipped' => (int)$job['skipped'], 'failed' => (int)$job['failed'], 'missing' => (int)$job['missing'],
         'bytes_original' => $o, 'bytes_sm' => $s, 'bytes_saved' => max(0, $o - $s),
         'finished' => (int)$job['pos'] >= count($job['refs']), 'format' => previewFormat(),
@@ -123,6 +128,7 @@ if ($action === 'start') {
     }
     previewEnsureUploadsHtaccess();
     if (function_exists('ensureTireMediaHtaccess')) ensureTireMediaHtaccess();
+    if (function_exists('ensureLibraryMediaHtaccess')) ensureLibraryMediaHtaccess();   // media/library/: static only + 7-day caching
     if (function_exists('ensurePagesMediaHtaccess') && is_dir(mediaRootPath() . '/pages')) ensurePagesMediaHtaccess();   // v1/v2 → v3 for the pages folder too
     $job = ['scope' => $scope, 'refs' => previewJobEnumerate($pdo, $companies), 'pos' => 0, 'done' => 0, 'skipped' => 0, 'failed' => 0,
             'missing' => 0, 'bytes_original' => 0, 'bytes_sm' => 0, 'started_at' => time()];
@@ -142,6 +148,7 @@ $job = previewJobRead($key) ?? $job;   // re-read under the lock
 $deadline = microtime(true) + 15.0;
 $cap = (int)getenv('PREVIEW_QA_STEP_ITEMS');
 $n = 0;
+$busy = false;
 $total = count($job['refs']);
 while ((int)$job['pos'] < $total) {
     if ($n > 0 && (microtime(true) >= $deadline || ($cap > 0 && $n >= $cap))) break;
@@ -155,8 +162,14 @@ while ((int)$job['pos'] < $total) {
     if ($fresh) {
         $job['skipped']++;
     } else {
-        $made = previewEnsureAll($abs);
-        if (in_array(null, $made, true)) { $job['failed']++; continue; }
+        $st = '';
+        $made = previewEnsureAll($abs, ['wait' => 5.0], $st);
+        if ($st === 'busy') {   // both generator slots taken (page views): this item again next step
+            $job['pos'] = (int)$job['pos'] - 1;
+            $busy = true;
+            break;
+        }
+        if (in_array(null, $made, true)) { $job['failed']++; previewMarkFailed($abs, 'build job'); continue; }
         $job['done']++;
     }
     clearstatcache();
@@ -166,4 +179,4 @@ while ((int)$job['pos'] < $total) {
 }
 previewJobSave($key, $job);
 @flock($lock, LOCK_UN); @fclose($lock);
-previewJobReply(previewJobSummary($job));
+previewJobReply(previewJobSummary($job) + ['busy' => $busy, 'step_items' => $n - ($busy ? 1 : 0)]);

@@ -9,6 +9,10 @@
                                                   + name/size/type + `file`) when the file fits in a piece, else send()
                                                   (init → pieces → finish). opts as send(); opts.uploadId resumes.
                                                   abort() works before the probe has answered too.
+                                                  opts.previews: true → an image's sm / lg WebP previews are made
+                                                  in the browser meanwhile and sent with action=previews
+                                                  (data.previews); the server then decodes nothing.
+     App.imagePreview.make(file)                → Promise({sm, lg, …}) browser-made previews (below)
      App.chunkUpload.send(opts)                 → { promise, abort() }
         opts.endpoint   the upload endpoint (may carry ?client=…)
         opts.file       the File
@@ -165,7 +169,7 @@
       });
     };
     var finish = function (attempt) {
-      return run(function () { return request(endpoint, Object.assign({}, base, { action: 'chunk_finish', upload_id: uploadId }), null); }).then(function (r) {
+      return run(function () { return request(endpoint, Object.assign({}, base, opts.finishFields || {}, { action: 'chunk_finish', upload_id: uploadId }), null); }).then(function (r) {
         if (r.status === 200 && r.data && r.data.ok) return r.data;
         if (r.status === 409 && r.data && typeof r.data.received === 'number' && r.data.received < total) return putFrom(r.data.received, 0).then(function () { return finish(0); });
         if (r.status >= 500 && attempt < RETRIES) return new Promise(function (res) { setTimeout(res, 1000 * Math.pow(2, attempt)); }).then(function () { return finish(attempt + 1); });
@@ -191,22 +195,32 @@
   }
 
   /* One file, the right way: a single request when it fits in one piece (or the server has no chunk support),
-     pieces otherwise (always pieces when resuming an upload_id). Same opts / callbacks / rejection shape as send(). */
+     pieces otherwise (always pieces when resuming an upload_id). Same opts / callbacks / rejection shape as send().
+     opts.previews: true → for an image the browser makes the sm / lg WebP previews (App.imagePreview) WHILE the
+     original uploads, the upload says client_previews=1 (the server then decodes nothing), and once the reply
+     carries a preview_key they go up in one small action=previews request; its reply lands on data.previews
+     ({accepted, rejected, generated, thumb, large}). No WebP encoder → nothing is said, the server makes them. */
   function upload(opts) {
     var inner = null, aborted = false, uploadId = opts.uploadId || null, file = opts.file;
-    var promise = probe(opts.endpoint).then(function (info) {
+    var wantPv = !!opts.previews && App.imagePreview && App.imagePreview.eligible(file);
+    var pvReady = wantPv ? App.imagePreview.supported() : Promise.resolve(false);
+    var promise = Promise.all([probe(opts.endpoint), pvReady]).then(function (both) {
+      var info = both[0], pvOn = both[1];
       if (aborted) return Promise.reject({ error: 'Cancelled', aborted: true });
+      var pv = pvOn ? App.imagePreview.make(file) : null;   // cached per File: the sheet may have started it already
+      var extra = pvOn ? { client_previews: '1' } : {};
+      var after = function (data) { return pv && data && data.preview_key && !aborted ? sendPreviews(opts, data, pv) : data; };
       if (info && !opts.single && (uploadId || file.size > info.chunk_size)) {
-        inner = send(Object.assign({}, opts, { chunkSize: info.chunk_size, uploadId: uploadId }));
-        return inner.promise;
+        inner = send(Object.assign({}, opts, { chunkSize: info.chunk_size, uploadId: uploadId, finishFields: extra }));
+        return inner.promise.then(after);
       }
-      var fields = Object.assign({}, opts.fields || {}, { action: 'upload', name: file.name, size: file.size, type: file.type || '' });
+      var fields = Object.assign({}, opts.fields || {}, extra, { action: 'upload', name: file.name, size: file.size, type: file.type || '' });
       var progress = makeProgress(file.size, opts.onProgress, null);
       inner = request(opts.endpoint, fields, file, file.name, function (loaded, sent) { progress(Math.min(file.size, Math.round(loaded / Math.max(1, sent) * file.size)), 0); });
       return inner.promise.then(function (r) {
         if (r.status === 200 && r.data && r.data.ok) { progress(file.size, 0); return r.data; }
         return Promise.reject({ error: (r.data && r.data.error) || ('Upload failed (' + r.status + ')'), status: r.status, data: r.data, retryable: r.status >= 500 || r.status === 0 });
-      });
+      }).then(after);
     });
     return {
       promise: promise,
@@ -220,6 +234,115 @@
       }
     };
   }
+
+  /* action=previews: the browser-made WebP files for the upload whose reply carried preview_key. Never fails the
+     upload — any problem leaves the previews to the server (it makes them itself when it refuses what arrives). */
+  function sendPreviews(opts, data, pv) {
+    var client = clientSlug(opts.fields);
+    return pv.then(null, function () { return null; }).then(function (res) {
+      var fd = new FormData();
+      fd.append('action', 'previews');
+      fd.append('preview_key', data.preview_key);
+      if (client) fd.append('client', client);
+      if (opts.fields && opts.fields.actor) fd.append('actor', opts.fields.actor);
+      if (res && res.sm && res.smNeeded) fd.append('sm', res.sm, 'sm.webp');
+      if (res && res.lg) fd.append('lg', res.lg, 'lg.webp');
+      return fetch(opts.endpoint, { method: 'POST', body: fd, credentials: 'same-origin', headers: { Accept: 'application/json' } })
+        .then(function (r) { return r.json().catch(function () { return null; }); });
+    }).then(function (reply) { if (reply) data.previews = reply; return data; }, function () { return data; });
+  }
+
+  /* =====================================================================
+     App.imagePreview — sm (480) / lg (1600) WebP previews made in the browser, the same rules as preview-lib.php
+     (long edge, never upscaled; lg also for an original ≤ 1600 px over 500 KB, GIFs excepted), EXIF orientation
+     applied (createImageBitmap imageOrientation 'from-image'), q 0.78 (0.6 when over the server's caps).
+       App.imagePreview.eligible(file)   JPG / PNG / WebP / GIF
+       App.imagePreview.supported()      → Promise(bool) — the canvas really encodes image/webp
+       App.imagePreview.make(file)       → Promise({sm, lg, smNeeded, lgNeeded, w, h, smW, smH} | null); memoised
+                                           per File, two at a time (a 12 MP decode is ~48 MB of bitmap)
+     `sm` always exists when make() succeeds (the screen thumbnail too); smNeeded says whether the server wants it.
+     ===================================================================== */
+  App.imagePreview = (function () {
+    var SM = 480, LG = 1600, Q = 0.78, HEAVY = 500 * 1024, CAPS = { sm: 300 * 1024, lg: 1536 * 1024 }, PAR = 2;
+    var memo = typeof WeakMap === 'function' ? new WeakMap() : null, queue = [], active = 0, support = null;
+    function eligible(f) {
+      if (!f) return false;
+      return /^image\/(jpeg|png|webp|gif)$/i.test(f.type || '') || /\.(jpe?g|png|webp|gif)$/i.test(f.name || '');
+    }
+    function supported() {
+      if (support) return support;
+      support = new Promise(function (resolve) {
+        try {
+          if (typeof window.createImageBitmap !== 'function') { resolve(false); return; }
+          var c = document.createElement('canvas'); c.width = 2; c.height = 2;
+          if (!c.toBlob) { resolve(false); return; }
+          c.toBlob(function (b) { resolve(!!b && b.type === 'image/webp'); }, 'image/webp', 0.8);
+        } catch (e) { resolve(false); }
+      });
+      return support;
+    }
+    function fit(w, h, max) {
+      if (Math.max(w, h) <= max) return null;
+      return w >= h ? [max, Math.max(1, Math.round(h * max / w))] : [Math.max(1, Math.round(w * max / h)), max];
+    }
+    function canvas(w, h) {
+      if (typeof window.OffscreenCanvas === 'function') { try { return new window.OffscreenCanvas(w, h); } catch (e) { /* fall through */ } }
+      var c = document.createElement('canvas'); c.width = w; c.height = h; return c;
+    }
+    function draw(src, w, h) {
+      var c = canvas(w, h), ctx = c.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(src, 0, 0, w, h);
+      return c;
+    }
+    function encode(c, q) {
+      if (c.convertToBlob) return c.convertToBlob({ type: 'image/webp', quality: q });
+      return new Promise(function (resolve) { c.toBlob(resolve, 'image/webp', q); });
+    }
+    function encodeCapped(c, cap) {
+      var okBlob = function (b) { return !!b && b.type === 'image/webp' && b.size <= cap; };
+      return encode(c, Q).then(function (b) { return okBlob(b) ? b : encode(c, 0.6).then(function (b2) { return okBlob(b2) ? b2 : null; }); });
+    }
+    function decode(file) {
+      var plain = function () { return window.createImageBitmap(file); };
+      try { return window.createImageBitmap(file, { imageOrientation: 'from-image' }).then(null, plain); } catch (e) { return plain(); }
+    }
+    function build(file) {
+      return supported().then(function (ok) {
+        if (!ok) return null;
+        return decode(file).then(function (bmp) {
+          var w = bmp.width, h = bmp.height;
+          var gif = /gif$/i.test(file.type || '') || /\.gif$/i.test(file.name || '');
+          var lgT = fit(w, h, LG) || (!gif && file.size > HEAVY ? [w, h] : null);
+          var smT = fit(w, h, SM), smNeeded = !!smT;
+          smT = smT || [w, h];
+          var lgC = lgT ? draw(bmp, lgT[0], lgT[1]) : null;
+          var smC = draw(lgC || bmp, smT[0], smT[1]);   // sm from lg: cheaper and sharper than straight from 12 MP
+          if (bmp.close) bmp.close();
+          return Promise.all([encodeCapped(smC, smNeeded ? CAPS.sm : 4 * CAPS.lg), lgC ? encodeCapped(lgC, CAPS.lg) : Promise.resolve(null)]).then(function (r) {
+            if (!r[0]) return null;
+            return { sm: r[0], lg: lgT ? r[1] : null, smNeeded: smNeeded, lgNeeded: !!lgT, w: w, h: h, smW: smT[0], smH: smT[1] };
+          });
+        });
+      }).then(null, function () { return null; });
+    }
+    function next() {
+      while (active < PAR && queue.length) start(queue.shift());
+    }
+    function start(job) {
+      active++;
+      build(job.file).then(function (r) { active--; job.resolve(r); next(); });
+    }
+    function make(file) {
+      if (!eligible(file)) return Promise.resolve(null);
+      if (memo && memo.has(file)) return memo.get(file);
+      var p = new Promise(function (resolve) { queue.push({ file: file, resolve: resolve }); next(); });
+      if (memo) memo.set(file, p);
+      return p;
+    }
+    return { eligible: eligible, supported: supported, make: make };
+  })();
 
   /* ---- localStorage ledger: what to offer after a reload ---- */
   function readStore() {

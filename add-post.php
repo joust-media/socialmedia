@@ -578,7 +578,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->commit();
                 foreach ($unlinkAfter as $gone) { if (function_exists('previewDelete')) previewDelete($gone); @unlink($gone); }
                 // Previews outside the transaction: sm + lg within the request budget (preview-lib.php), the rest lazily.
-                if (function_exists('previewAfterStore')) { foreach ($previewQueue as $pq) previewAfterStore($pq); }
+                if (function_exists('previewAfterStore') && $previewQueue) { previewReleaseSession(); foreach ($previewQueue as $pq) previewAfterStore($pq); }
                 $msg = $action === 'create' ? ($status === 'draft' ? 'Draft saved — only you can see it.' : 'Post created.') : 'Post updated.';
                 if ($errors) {
                     $msg .= ' (Some warnings: ' . implode(' ', $errors) . ')';
@@ -752,7 +752,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
 
                     $pdo->commit();
-                    if (!$isVideo && function_exists('previewAfterStore')) previewAfterStore($dest);   // sm + lg previews (per-request budget; the rest lazily)
+                    if (!$isVideo && function_exists('previewAfterStore')) { previewReleaseSession(); previewAfterStore($dest); }   // sm + lg previews (per-request budget; the rest lazily)
                     $createdCount++;
                 } catch (Exception $e) {
                     if ($pdo->inTransaction()) $pdo->rollBack();

@@ -54,6 +54,7 @@ if (!currentAdmin()) {
     echo json_encode(['ok' => false, 'error' => 'Not signed in']);
     exit;
 }
+previewGdHeader();   // X-Preview-Gd: originals decoded for previews in this request (0 when the browser sent them)
 
 // Client from ?client= slug (helpers.php)
 if (!$client) {
@@ -192,7 +193,7 @@ function batchCreateFromFile(PDO $pdo, int $companyId, string $name, string $saf
         logActivity($pdo, $companyId, 'post', $postId, $status === 'draft' ? 'drafted' : 'created', 'admin',
             ($status === 'draft' ? 'Started draft post #' : 'Created post #') . $postId . ' from an upload');
         $pdo->commit();
-        if (!$isVideo && function_exists('previewAfterStore')) previewAfterStore($destPath);   // sm + lg previews (per-request budget; the rest lazily)
+        if (!$isVideo && function_exists('previewAfterStore')) { previewReleaseSession(); previewAfterStore($destPath); }   // sm + lg previews (per-request budget; the rest lazily)
         $created[] = [
             'filename'   => $name,
             'post_id'    => $postId,

@@ -24,7 +24,11 @@
  *                 into the series folder, inserts the row; same reply as the single path
  *   chunk_abort   upload_id → deletes the spool
  *   repair_media  (admin) rewrite media/tires/.htaccess when old / missing, drop an old media/.htaccess of
- *                 ours, chmod media/tires/ to 0644 / 0755 (capped) → {ok, summary, rules, parent, perms}
+ *                 ours, chmod media/tires/ to 0644 / 0755 (capped); media/library/.htaccess too
+ *                 → {ok, summary, rules, parent, perms, library}
+ *   previews      preview_key + client + `sm` / `lg` WebP made in the browser (the upload / chunk_finish said
+ *                 client_previews=1 and its reply carried preview_key; preview-lib.php previewClientAccept)
+ *                 → {ok, accepted, rejected, generated, thumb, large}
  * The spool lives in media/tires/.spool/ (dot-prefixed: never scanned, deny-all .htaccess), the
  * sidecar's client must match the posted `client`, and every action is admin + same-site only.
  *
@@ -60,10 +64,12 @@ function tireUploadFail(int $code, string $msg, array $extra = []): void {
 
 $action = (string)($_POST['action'] ?? $_GET['action'] ?? 'upload');
 $chunkActions = ['probe', 'chunk_init', 'chunk_put', 'chunk_status', 'chunk_finish', 'chunk_abort'];
-if ($action !== 'upload' && $action !== 'repair_media' && !in_array($action, $chunkActions, true)) { tireUploadFail(400, 'Unknown action'); }
+if ($action !== 'upload' && $action !== 'repair_media' && $action !== 'previews' && !in_array($action, $chunkActions, true)) { tireUploadFail(400, 'Unknown action'); }
 if ($_SERVER['REQUEST_METHOD'] !== 'POST' && !($action === 'probe' && $_SERVER['REQUEST_METHOD'] === 'GET')) { tireUploadFail(405, 'Method not allowed'); }
 requireSameSiteFetch();   // cross-site requests get a JSON 403 (helpers.php)
 if (!currentAdmin()) { tireUploadFail(403, 'Admin sign-in required'); }
+previewReleaseSession();   // nothing below writes the session: other admin requests are not queued behind this upload
+previewGdHeader();         // X-Preview-Gd: originals decoded in this request
 
 // =====================================================================
 // repair_media (admin, no DB needed) — the "Repair server rules" button in Studio → Renders:
@@ -76,8 +82,22 @@ if ($action === 'repair_media') {
     if (!is_dir($root)) { mediaMkdir($root, mediaRootPath()); }
     $rep = mediaRepair($root, 'tire-series-lib.php', is_dir($root) ? $root : null, 5000, mediaRootPath());
     $rep['scope'] = 'media/tires';
+    // media/library/ (Library originals: static only + 7-day caching) is repaired from the same button.
+    $lib = function_exists('ensureLibraryMediaHtaccess') ? ensureLibraryMediaHtaccess() : ['action' => 'no-dir'];
+    $rep['library'] = $lib;
+    if (in_array($lib['action'], ['written', 'updated'], true)) $rep['summary'] .= ' · library rules ' . $lib['action'];
+    elseif ($lib['action'] === 'failed') { $rep['summary'] .= ' · could not write media/library/.htaccess'; }
     if (!$rep['ok']) { http_response_code(500); }
     echo json_encode($rep);
+    exit;
+}
+
+// previews — the browser-made sm / lg WebP for an upload whose reply carried preview_key (preview-lib.php
+// previewClientAccept; refused sizes are made here instead).
+if ($action === 'previews') {
+    $r = previewClientAccept((string)($_POST['preview_key'] ?? ''), postedClientSlug(), ['sm' => $_FILES['sm'] ?? null, 'lg' => $_FILES['lg'] ?? null]);
+    if ((int)$r['code'] !== 200) { http_response_code((int)$r['code']); }
+    echo json_encode($r['body']);
     exit;
 }
 
@@ -259,7 +279,13 @@ function tireUploadStore(PDO $pdo, array $company, array $tire, array $series, s
 
     $row = ['id' => $imageId, 'tire_id' => $tireId, 'series_id' => (int)$series['id'], 'image_url' => $imageUrl,
             'display_name' => $displayName, 'caption' => '', 'status' => 'pending', 'sort_order' => $sortOrder];
-    if (!$isVideo) { $stored = tireImagePath($row); if ($stored !== null) previewAfterStore($stored); }   // sm + lg previews (preview-lib.php)
+    // sm + lg previews (preview-lib.php) — unless the browser sends them (client_previews=1 → preview_key).
+    $pvKey = [];
+    if (!$isVideo && ($stored = tireImagePath($row)) !== null) {
+        $key = previewClientRequested() ? previewClientTicket($stored, (string)$company['slug'], true) : null;
+        if ($key !== null) $pvKey = ['preview_key' => $key];
+        else previewAfterStore($stored);
+    }
     $meta = tireImageRowMeta($row, ['tire_name' => (string)$tire['name']]);
 
     echo json_encode([
@@ -279,7 +305,7 @@ function tireUploadStore(PDO $pdo, array $company, array $tire, array $series, s
         'series'  => tireSeriesById($pdo, (int)$series['id']) ?: $series,
         'storage' => $storage,
         'batch'   => $batchId,
-    ] + $extraReply);
+    ] + $pvKey + $extraReply);
 }
 
 // =====================================================================

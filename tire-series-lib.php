@@ -1033,7 +1033,10 @@ if (!function_exists('syncTireSeries')) {
         }
         if (!$tires) return $out;
 
-        $wantThumbs = array_key_exists('thumbs', $opts) ? (bool)$opts['thumbs'] : true;
+        // Previews are NOT made during a page render any more (default off): tiles load them lazily through
+        // preview.php inside the host-wide generator cap, or Manage → Tools → Build previews makes them. Only an
+        // explicit rescan (tire-status.php) still asks for them, within its budget.
+        $wantThumbs = array_key_exists('thumbs', $opts) ? (bool)$opts['thumbs'] : false;
         $thumbCap   = isset($opts['thumb_cap']) ? max(0, (int)$opts['thumb_cap']) : PHP_INT_MAX;
         $thumbBudget = isset($opts['thumb_budget']) ? max(0.0, (float)$opts['thumb_budget']) : 3.0;
         $actor      = (string)($opts['actor'] ?? 'admin');
@@ -1100,7 +1103,7 @@ if (!function_exists('syncTireSeries')) {
         }
 
         if ($wantThumbs && function_exists('previewEnsure')) {
-            // `sm` previews only, inline for at most $thumbBudget seconds; whatever is left is made lazily
+            // sm + lg in one decode per original (explicit rescans only), at most $thumbBudget seconds and never waiting for a busy generator slot; the rest is made lazily
             // (preview.php on first view) or by Studio → Export → Image previews.
             $imgExts = previewImageExts();
             $deadline = microtime(true) + $thumbBudget;
@@ -1110,7 +1113,7 @@ if (!function_exists('syncTireSeries')) {
                 $abs = tireImagePath($row);
                 if ($abs === null || previewIsFresh($abs, 'sm')) continue;
                 if ($out['thumbs_made'] >= $thumbCap || microtime(true) >= $deadline) { $out['thumbs_pending']++; continue; }
-                if (previewEnsure($abs, 'sm') !== null) $out['thumbs_made']++;
+                if (previewEnsure($abs, 'sm', ['wait' => 0]) !== null) $out['thumbs_made']++;
                 else $out['thumbs_pending']++;
             }
         }

@@ -709,6 +709,97 @@
   })();
 
   /* ---------------------------------------------------------------- */
+  /* Preview placeholders: while every preview generator slot on the   */
+  /* host is busy, preview.php answers a tiny no-store SVG with        */
+  /* Server-Timing / X-Preview: pv-pending. Those <img> are queued and */
+  /* re-asked two at a time (fetch: its headers are readable) with a   */
+  /* backoff that grows while the server stays busy; once a fetch      */
+  /* follows the 302 to the static preview, the <img> is pointed at    */
+  /* that final URL (already in the cache — the URL every later page   */
+  /* prints). pv-failed tiles are left alone. Detection of the first   */
+  /* placeholder: Resource Timing serverTiming, else a ≤1×1 natural    */
+  /* size on a preview.php image.                                      */
+  /* ---------------------------------------------------------------- */
+  App.previewRetry = (function () {
+    var PV = /\/preview\.php\?/, PAR = 2, MAX_TRIES = 60, MIN_DELAY = 250, MAX_DELAY = 6000;
+    var timing = !!(window.PerformanceObserver && window.PerformanceServerTiming && window.fetch);
+    var queue = [], inflight = 0, delay = MIN_DELAY, timer = null;
+    function bump(u, n) { return /([?&])r=\d+/.test(u) ? u.replace(/([?&])r=\d+/, '$1r=' + n) : u + '&r=' + n; }
+    function enqueue(img) {
+      if (!img || img.__pvQueued || !window.fetch) return;
+      img.__pvQueued = true;
+      img.setAttribute('data-pv-pending', '');
+      queue.push(img);
+      schedule();
+    }
+    function schedule() {
+      if (timer || !queue.length || inflight >= PAR) return;
+      timer = setTimeout(function () { timer = null; pump(); }, delay);
+    }
+    function pump() {
+      while (inflight < PAR && queue.length) {
+        var img = queue.shift();
+        if (img.isConnected) ask(img);
+        else img.__pvQueued = false;
+      }
+    }
+    function done(img) { img.__pvQueued = false; img.removeAttribute('data-pv-pending'); }
+    function ask(img) {
+      var u = img.currentSrc || img.src || '';
+      if (!PV.test(u)) { done(img); return; }
+      var n = (parseInt(img.getAttribute('data-pv-retry'), 10) || 0) + 1;
+      img.setAttribute('data-pv-retry', String(n));
+      inflight++;
+      fetch(bump(u, n), { credentials: 'same-origin' }).then(function (res) {
+        var state = res.headers.get('X-Preview');
+        if (state === 'pending' || !res.ok) {
+          if (res.body && res.body.cancel) { try { res.body.cancel(); } catch (e) {} }
+          delay = Math.min(MAX_DELAY, delay + 250 + Math.round(delay * 0.15));   // the host is busy: ask a little less often
+          if (n < MAX_TRIES) { img.__pvQueued = false; enqueue(img); } else done(img);
+          return null;
+        }
+        if (state === 'failed') { done(img); return null; }
+        return res.arrayBuffer().then(function () {   // the static preview is now in the HTTP cache
+          delay = MIN_DELAY;
+          var fin = res.url || bump(u, n);
+          var set = img.getAttribute('srcset');
+          if (set) img.setAttribute('srcset', set.split(',').map(function (part) { var p = part.trim().split(/\s+/); if (p[0] && new URL(p[0], location.href).href === u) p[0] = fin; return p.join(' '); }).join(', '));
+          if (new URL(img.getAttribute('src') || '', location.href).href === u || !set) img.setAttribute('src', fin);
+          done(img);
+        });
+      }).catch(function () {
+        delay = Math.min(MAX_DELAY, delay * 2);
+        if (n < MAX_TRIES) { img.__pvQueued = false; enqueue(img); } else done(img);
+      }).then(function () { inflight--; schedule(); });
+    }
+    /** A placeholder was answered for this absolute URL: queue the <img> showing it (its load may not have fired yet). */
+    function pendingUrl(u, tries) {
+      var hit = $$('img').filter(function (img) { return img.currentSrc === u || img.src === u; });
+      hit.forEach(enqueue);
+      if (!hit.length && (tries || 0) < 20) setTimeout(function () { pendingUrl(u, (tries || 0) + 1); }, 150);
+    }
+    function onLoad(img) {
+      if (timing || !img || img.tagName !== 'IMG') return;
+      if (PV.test(img.currentSrc || img.src || '') && img.naturalWidth <= 1 && img.naturalHeight <= 1) enqueue(img);
+    }
+    if (timing) {
+      try {
+        if (performance.setResourceTimingBufferSize) performance.setResourceTimingBufferSize(2000);
+        new PerformanceObserver(function (list) {
+          list.getEntries().forEach(function (e) {
+            if (e.initiatorType !== 'img' || !PV.test(e.name) || !e.serverTiming) return;
+            for (var i = 0; i < e.serverTiming.length; i++) if (e.serverTiming[i].name === 'pv-pending') { pendingUrl(e.name, 0); return; }
+          });
+        }).observe({ type: 'resource', buffered: true });
+      } catch (err) { timing = false; }
+    }
+    // load does not bubble — listen in the capture phase for every <img> on the page, now and later.
+    document.addEventListener('load', function (e) { onLoad(e.target); }, true);
+    function scan(root) { $$('img', root || document).forEach(function (img) { if (img.complete) onLoad(img); }); }
+    return { scan: scan };
+  })();
+
+  /* ---------------------------------------------------------------- */
   /* Init                                                              */
   /* ---------------------------------------------------------------- */
   App.init = function () {
@@ -718,6 +809,7 @@
     initNav();
     initSegScroll();
     App.theme.apply();
+    App.previewRetry.scan();   // placeholders that loaded before this script ran
     // One-shot flash from a save elsewhere (<body data-flash>, layout-top.php $pageFlash): toast it once, drop msg= from the URL.
     var flash = document.body && document.body.getAttribute('data-flash');
     if (flash) {

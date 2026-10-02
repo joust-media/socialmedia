@@ -325,7 +325,7 @@ include __DIR__ . '/partials/layout-top.php';
   <!-- Maintenance → Image previews backfill (preview-lib.php / preview-job.php / static/js/studio-previews.js) -->
   <section class="ui-card studio-export-card manage-previews" id="previews" data-previews data-tool="previews" data-endpoint="<?= h(basePath() . '/preview-job.php' . ($client ? '?client=' . rawurlencode($client['slug']) : '')) ?>">
     <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Image previews</h3>
-      <p class="ui-card-subtitle">Small (480 px) and large (1600 px) <?= h(strtoupper(previewFormat())) ?> copies of every image, used by tiles, lists and the viewer instead of the full originals. New uploads get them automatically; this builds them for everything already on the server (tire images, library, posts). Originals are never changed.</p></div></div>
+      <p class="ui-card-subtitle">Small (480 px) and large (1600 px) <?= h(strtoupper(previewFormat())) ?> copies of every image, used by tiles, lists and the viewer instead of the full originals. New uploads get them automatically (made in the browser while the file uploads); this builds them for everything already on the server (tire images and FTP drops, library files incl. FTP / Drive drops, posts), two at a time so pages stay fast. Originals are never changed.</p></div></div>
     <div class="ui-card-body">
       <?php if ($client): ?>
         <label class="studio-export-choice"><input type="checkbox" data-previews-all> <span>All clients (not just <?= h($client['name']) ?>)</span></label>

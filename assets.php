@@ -483,9 +483,10 @@ if ($view === 'collections' && $seriesOn) {
     // Register files dropped by FTP into media/tires/<tire>/<series>/: the throttled hook (folder mtimes + 60 s,
     // tire-series-lib.php) on every collections view; &rescan=1 (admin, the Studio "Rescan folders" button) forces a scan.
     try {
-        if ($isAdmin && isset($_GET['rescan'])) { syncTireSeries($pdo, $client, $itemId > 0 ? $itemId : null, ['thumbs' => true]); }
+        // Rows only — previews are never built inside this render (tiles load them lazily, capped; preview-lib.php).
+        if ($isAdmin && isset($_GET['rescan'])) { syncTireSeries($pdo, $client, $itemId > 0 ? $itemId : null, ['thumbs' => false]); }
         elseif (function_exists('tireSeriesSyncThrottled')) { tireSeriesSyncThrottled($pdo, $client); }
-        else { syncTireSeries($pdo, $client, null, ['thumbs' => true]); }
+        else { syncTireSeries($pdo, $client, null, ['thumbs' => false]); }
     } catch (Throwable $e) { error_log('tire series sync failed: ' . $e->getMessage()); }
 }
 

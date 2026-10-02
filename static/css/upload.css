@@ -127,6 +127,7 @@
 .us-summary-thumbs span + span { margin-left: -12px; }
 .us-summary-thumbs img { width: 100%; height: 100%; object-fit: cover; }
 .us-summary-thumbs .ui-icon { width: 14px; height: 14px; }
+.us-thumb-icon, .us-summary-thumbs .us-thumb-icon { display: contents; }   /* icon placeholder until the browser-made preview is ready (upload-sheet.js localThumb) */
 .us-summary-text { flex: 1 1 auto; min-width: 0; font-size: var(--text-subhead); }
 .us-cards { display: grid; gap: 10px; margin: 0; padding: 0; border: 0; min-width: 0; }
 .us-cards legend { padding: 0; margin: 0 0 8px; font-size: var(--text-footnote); font-weight: 600; text-transform: uppercase; letter-spacing: .02em; color: var(--label-secondary); }

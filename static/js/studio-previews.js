@@ -1,5 +1,6 @@
-/* Studio → Export → Image previews: backfill the sm / lg derivatives (preview-job.php).
- * Status on load; "Build previews" = start (enumerate) then step (~15 s each) until finished; counts + bytes saved.
+/* Manage → Tools → Image previews: backfill the sm / lg derivatives (preview-job.php).
+ * Status on load; "Build previews" = start (enumerate) then step (~15 s each, several images per step, inside the
+ * server's generator cap — a busy step backs off 2 s) until finished; done / left counts + bytes saved.
  * "All clients" switches scope=all. Resumes an unfinished job when the page is reopened (Build continues it). */
 (function () {
   'use strict';
@@ -42,11 +43,13 @@
     var pct = j.total ? Math.round(j.processed / j.total * 100) : 100;
     fill.style.width = pct + '%';
     progress.hidden = j.finished && !busy;
-    var bits = [j.processed + ' of ' + j.total + ' images checked', j.done + ' made', j.skipped + ' already up to date'];
+    var left = typeof j.remaining === 'number' ? j.remaining : Math.max(0, j.total - j.processed);
+    var bits = [j.processed + ' of ' + j.total + ' images checked', left + ' left', j.done + ' made', j.skipped + ' already up to date'];
     if (j.failed) bits.push(j.failed + ' could not be made (the original is shown)');
     if (j.missing) bits.push(j.missing + ' missing on disk');
     var saved = j.bytes_original ? ' · small previews are ' + fmtBytes(j.bytes_sm) + ' instead of ' + fmtBytes(j.bytes_original) + ' (' + fmtBytes(j.bytes_saved) + ' saved per full view)' : '';
-    statusEl.textContent = (j.finished ? 'Done: ' : (busy ? 'Building… ' : 'Paused: ')) + bits.join(' · ') + saved + ' · format ' + String(j.format || '').toUpperCase() + '.';
+    statusEl.textContent = (j.finished ? 'Done: ' : (busy ? (d.busy ? 'Waiting for the server (previews are being made for page views)… ' : 'Building… ') : 'Paused: ')) + bits.join(' · ') + saved + ' · format ' + String(j.format || '').toUpperCase() + '.';
+    if (progress) progress.setAttribute('title', j.done + ' made · ' + left + ' left');
     btn.querySelector('span').textContent = j.finished ? 'Build again' : 'Continue';
   }
   function fail(e) {
@@ -56,7 +59,7 @@
   function loop() {
     call('step').then(function (d) {
       render(d);
-      if (d.job && !d.job.finished) { loop(); return; }
+      if (d.job && !d.job.finished) { if (d.busy) setTimeout(loop, 2000); else loop(); return; }   // busy: both generator slots taken — back off
       busy = false; btn.disabled = false; if (allBox) allBox.disabled = false; render(d);
     }, fail);
   }

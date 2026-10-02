@@ -375,7 +375,7 @@
     S.uploads.forEach(function (u) {
       if (u.ctl && u.state === 'uploading') { try { u.ctl.abort(); } catch (e) {} }
       if (u.token && !after) { try { postRaw(S.init && S.init.urls ? S.init.urls.upload : '', { action: 'claim_discard', token: u.token, client: S.slug }); } catch (e) {} }
-      if (u.url) { try { URL.revokeObjectURL(u.url); } catch (e) {} }
+      (u.urls || []).forEach(function (x) { try { URL.revokeObjectURL(x); } catch (e) {} });
     });
     var root = R, back = S.lastFocus;
     var detail = { postId: S.postId, mode: S.mode };
@@ -694,9 +694,11 @@
         var token = String(r.ref).split(':')[1], ref = 'upload:' + token;
         if (slideIndexByRef(ref) !== -1) return;
         var media = r.media === 'video' ? 'video' : 'image', name = r.name || (media === 'video' ? 'video' : 'image');
-        var u = { id: 'u' + (++uid), file: { name: name }, state: 'done', pct: 100, token: token, url: media === 'image' ? (r.thumb || '') : '', media: media, error: '' };
+        var u = { id: 'u' + (++uid), file: { name: name }, state: 'done', pct: 100, token: token, thumb: media === 'image' ? (r.thumb || '') : '', media: media, error: '' };
         S.uploads.push(u);
-        S.slides.push({ uid: ++uid, ref: ref, upload: u.id, media: media, thumb: r.thumb || '', large: r.thumb || '', src: r.thumb || '', name: name, label: name });
+        // r.thumb / r.large: the parked file's sm / lg PREVIEW URLs (upload-sheet.js handOff) — never the original
+        var large = r.large || r.thumb || '';
+        S.slides.push({ uid: ++uid, ref: ref, upload: u.id, media: media, thumb: r.thumb || '', large: large, src: large, name: name, label: name });
         added++;
       });
       if (missing) toast(missing + ' of the selected images are not approved — left out', 'error', 4000);
@@ -918,9 +920,10 @@
       if (f.size > (vid ? capVid : capImg)) { toast(f.name + ' is over ' + (vid ? Math.round(capVid / 1073741824) + ' GB' : Math.round(capImg / 1048576) + ' MB'), 'error', 4000); return; }
       if (room <= 0) { skipped++; return; }
       room--;
-      var u = { id: 'u' + (++uid), file: f, state: 'queued', pct: 0, token: null, url: vid ? '' : URL.createObjectURL(f), media: vid ? 'video' : 'image', error: '' };
+      var u = { id: 'u' + (++uid), file: f, state: 'queued', pct: 0, token: null, url: '', urls: [], media: vid ? 'video' : 'image', error: '' };
       S.uploads.push(u);
-      var slide = { uid: ++uid, ref: null, upload: u.id, media: u.media, thumb: u.url, large: u.url, src: u.url, local: true, name: f.name, label: f.name, uploading: true, pct: 0 };
+      var slide = { uid: ++uid, ref: null, upload: u.id, media: u.media, thumb: '', large: '', src: '', local: true, name: f.name, label: f.name, uploading: true, pct: 0 };
+      if (!vid) localPreview(u, slide);
       if (S.replaceAt !== null) {
         var old = S.slides[S.replaceAt];
         S.slides[S.replaceAt] = slide;
@@ -934,6 +937,23 @@
     captionNext();   // an inline upload (two panes): the caption is the next thing to do
     pump();
   }
+  /** The slide's on-screen image while composing: the browser-made sm (tray) / lg (carousel) WebP — the same files that
+   *  go up with the upload (App.imagePreview) — never an object URL of the multi-MB original. No encoder: a small
+   *  original (≤ 1.5 MB) is shown as is, else the slide waits for the server's preview URLs. */
+  function localPreview(u, slide) {
+    var file = u.file;
+    var p = App.imagePreview && App.imagePreview.eligible(file) ? App.imagePreview.make(file) : Promise.resolve(null);
+    p.then(function (r) {
+      if (!S || S.uploads.indexOf(u) === -1) return;
+      var mk = function (b) { var x = URL.createObjectURL(b); u.urls.push(x); return x; };
+      var thumb = '', large = '';
+      if (r && r.sm) { thumb = mk(r.sm); large = r.lg ? mk(r.lg) : thumb; slide.w = slide.w || r.w; slide.h = slide.h || r.h; }
+      else if (/^image\//.test(file.type || '') && file.size <= 1572864) { thumb = large = mk(file); }
+      if (!thumb || slide.thumb) return;
+      u.thumb = slide.thumb = thumb; slide.large = slide.src = large;
+      renderAll(); renderUploads();
+    });
+  }
   function pump() {
     if (!S || S.busyUpload) return;
     var u = S.uploads.filter(function (x) { return x.state === 'queued'; })[0];
@@ -942,6 +962,7 @@
     var slug = S.slug;
     u.ctl = App.chunkUpload.upload({
       endpoint: S.init.urls.upload, file: u.file,
+      previews: u.media === 'image',   // the browser's sm / lg previews go up with it (the server decodes nothing)
       fields: { purpose: 'post', client: slug, actor: 'admin' },
       onProgress: function (p) { u.pct = p.pct; u.text = p.text; syncUpload(u); }
     });
@@ -950,7 +971,15 @@
       if (!S || S.slug !== slug) return;
       u.state = 'done'; u.token = data.token; u.pct = 100;
       var s = slideByUpload(u.id);
-      if (s) { s.ref = 'upload:' + data.token; s.uploading = false; if (!s.thumb && data.preview_url && u.media === 'image') { s.thumb = s.large = data.preview_url; } }
+      if (s) {
+        s.ref = 'upload:' + data.token; s.uploading = false;
+        if (u.media === 'image' && !s.thumb) {   // no local preview could be made: the server's preview URLs (never the original)
+          var pv = data.previews && data.previews.ok ? data.previews : {};
+          s.thumb = pv.thumb || data.thumb || data.preview_url || '';
+          s.large = s.src = pv.large || data.large || s.thumb;
+          u.thumb = s.thumb;
+        }
+      }
     }, function (e) {
       if (!S) return;
       if (e && e.aborted) { u.state = 'removed'; return; }
@@ -977,7 +1006,7 @@
     if (u.state !== 'uploading') u.state = 'removed';
     if (!fromSlide) { var s = slideByUpload(u.id); if (s) S.slides.splice(S.slides.indexOf(s), 1); }
     S.uploads = S.uploads.filter(function (x) { return x !== u; });
-    if (u.url) { var keep = S.slides.some(function (s) { return s.thumb === u.url; }); if (!keep) try { URL.revokeObjectURL(u.url); } catch (e) {} }
+    (u.urls || []).forEach(function (x) { var keep = S.slides.some(function (s) { return s.thumb === x || s.large === x; }); if (!keep) try { URL.revokeObjectURL(x); } catch (e) {} });
     renderUploads(); renderFooter();
   }
   function removeUpload(id) { var u = uploadById(id); if (!u) return; cancelUpload(u, false); markDirty(); renderAll(); }
@@ -986,7 +1015,7 @@
     ul.innerHTML = S.uploads.map(function (u) {
       var status = u.state === 'done' ? 'Uploaded — in the slides above' : u.state === 'failed' ? u.error : u.state === 'queued' ? 'Waiting…' : 'Uploading… ' + (u.text || u.pct + '%');
       return '<li class="np-up' + (u.state === 'failed' ? ' is-failed' : '') + (u.state === 'done' ? ' is-done' : '') + '" data-np-up="' + u.id + '">'
-        + '<span class="np-up-thumb">' + (u.url ? '<img src="' + esc(u.url) + '" alt="">' : I.play) + '</span>'
+        + '<span class="np-up-thumb">' + (u.thumb ? '<img src="' + esc(u.thumb) + '" alt="" decoding="async">' : (u.media === 'video' ? I.play : '')) + '</span>'
         + '<span class="np-up-body"><span class="np-up-name">' + esc(u.file.name) + '</span>'
         + '<span class="np-up-bar"' + (u.state === 'uploading' || u.state === 'queued' ? '' : ' hidden') + '><span class="np-up-fill" style="transform:translateX(' + (u.pct - 100) + '%)"></span></span>'
         + '<span class="np-up-status text-secondary">' + esc(status) + '</span></span>'
