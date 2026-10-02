@@ -187,10 +187,10 @@ function vehicleLabel($v) {
 <body>
 
 <?= renderAppChrome('Vehicle Library', [
-      'active'   => 'studio',
+      'active'   => 'manage',
       'width'    => '980px',
       'trailing' => '',
-      'back'     => ['href' => adminToolsUrl(), 'label' => 'Studio'],
+      'back'     => ['href' => adminToolsUrl(), 'label' => 'Manage'],
       'links'    => [
         ['label' => 'New vehicle', 'href' => 'add-vehicle.php', 'primary' => true],
         ['label' => 'Prompts',     'href' => 'prompts.php'],

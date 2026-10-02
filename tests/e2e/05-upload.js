@@ -121,7 +121,7 @@ function note(line) { fs.appendFileSync(CLICKS, line + '\n'); }
     });
 
     await test('tire series from + New: tire → series, then "New series…" creates one', async (page) => {
-      await page.goto(url('studio.php?client=kenda'));
+      await page.goto(url('manage.php?client=kenda'));
       let clicks = 0;
       await openFromNew(page); clicks += 2;
       await pick(page, [f.r1, f.r2, f.r3, f.r4, f.r5]); clicks++;
@@ -176,11 +176,12 @@ function note(line) { fs.appendFileSync(CLICKS, line + '\n'); }
       expect(body.indexOf('e2e-lib') !== -1 && body.indexOf('clip') !== -1, 'both To Review in the Library');
     });
 
-    await test('New post, a draft per file: Studio Uploads launcher → Draft', async (page) => {
+    await test('New post, a draft per file: the old Studio Uploads link opens the sheet on Posts → Draft', async (page) => {
       const drafts = url('posts.php?client=kenda&status=draft&month=all');
-      await page.goto(url('studio.php?client=kenda&tab=uploads'));
+      await page.goto(url('posts.php?client=kenda'));
       const before = ((await html(page, drafts)).match(/data-draft\b/g) || []).length;
-      await page.click('[data-studio-upload]');
+      await page.goto(url('studio.php?client=kenda&tab=uploads'));
+      expect(/posts\.php\?client=kenda/.test(page.url()), 'landed on Posts: ' + page.url());
       await page.waitForSelector(S.root);
       await page.setInputFiles(S.file, [f.each1, f.each2]);
       await page.waitForSelector(S.dest);
@@ -188,7 +189,7 @@ function note(line) { fs.appendFileSync(CLICKS, line + '\n'); }
       expect(await page.isChecked('input[name="usEach"][value="each"]'), 'a draft per file');
       const t = await uploadAndClose(page);
       expect(/2 draft posts created/.test(t.text), t.text);
-      expect(/status=draft/.test(t.href), t.href);
+      expect(/status=draft/.test(t.href || t.url), 'already on Posts → reloaded onto Draft (or a link there): ' + (t.href || t.url));
       const after = ((await html(page, t.dest)).match(/data-draft\b/g) || []).length;
       expect(after > before, `more drafts in Posts → Draft (${before} → ${after})`);
     });
@@ -266,7 +267,7 @@ function note(line) { fs.appendFileSync(CLICKS, line + '\n'); }
       await page.waitForSelector(S.dest);
       expect(await page.isChecked('#usDest_library'));
       await page.keyboard.press('Escape');
-      await page.goto(url('studio.php'));
+      await page.goto(url('manage.php'));
       await page.click('[data-new-menu-toggle]');
       await page.click('[data-new-action="upload"]');
       await page.waitForSelector('[data-us-pick-client="kenda"]');

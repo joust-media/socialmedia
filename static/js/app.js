@@ -631,6 +631,13 @@
     initNav();
     initSegScroll();
     App.theme.apply();
+    // One-shot flash from a save elsewhere (<body data-flash>, layout-top.php $pageFlash): toast it once, drop msg= from the URL.
+    var flash = document.body && document.body.getAttribute('data-flash');
+    if (flash) {
+      document.body.removeAttribute('data-flash');
+      try { var u = new URL(window.location.href); u.searchParams.delete('msg'); history.replaceState(history.state, '', u.pathname + u.search + u.hash); } catch (e) {}
+      setTimeout(function () { App.toast(flash, { kind: 'success' }); }, 0);
+    }
     document.dispatchEvent(new CustomEvent('app:ready', { detail: { App: App } }));
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', App.init);

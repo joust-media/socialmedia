@@ -5,7 +5,7 @@
  *     await test('opens', async (page) => { await page.goto(url('posts.php?client=kenda')); … });
  *   }, { role: 'admin', viewports: ['desktop', 'phone'] });
  *
- * opts: role 'admin' | 'client', viewports ['desktop', 'phone'], reseed 'viewport' | 'test' (tests that write).
+ * opts: role 'admin' | 'client', viewports ['desktop', 'phone' (390), 'w320', 'w360', 'w430'], reseed 'viewport' | 'test' (tests that write).
  * Every test gets a fresh page per viewport; a failing test saves a screenshot to
  * $PORTAL_TEST_ROOT/shots/. Uncaught page errors (pageerror) fail the test they happen in.
  */
@@ -23,7 +23,9 @@ const { chromium } = loadPlaywright();
 
 const BASE = (process.env.PORTAL_TEST_BASE || 'http://127.0.0.1:8099/portal').replace(/\/$/, '');
 const ROOT = process.env.PORTAL_TEST_ROOT || '/tmp/portal-test';
-const VIEWPORTS = { desktop: { width: 1440, height: 900 }, phone: { width: 390, height: 844 } };
+const VIEWPORTS = { desktop: { width: 1440, height: 900 }, phone: { width: 390, height: 844 },
+                    // narrow / wide phones for layout checks (07-nav.js): iPhone SE 1st gen, small Android, Pro Max
+                    w320: { width: 320, height: 640 }, w360: { width: 360, height: 760 }, w430: { width: 430, height: 932 } };
 
 const url = (p) => BASE + '/' + String(p || '').replace(/^\//, '');
 

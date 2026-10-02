@@ -404,6 +404,8 @@ $monthUrl = function (string $ym) use ($segment) {
 };
 
 $monthLabel = $selectedMonth !== '' ? date('M Y', strtotime($selectedMonth . '-01')) : 'All months';
+// Phones: the pill shrinks to "All" / "Oct" (this year) / "Oct 25" so the large "Posts" title keeps its room.
+$monthShort = $selectedMonth === '' ? 'All' : date(substr($selectedMonth, 0, 4) === date('Y') ? 'M' : "M 'y", strtotime($selectedMonth . '-01'));
 $monthIdx   = $selectedMonth !== '' ? array_search($selectedMonth, $availableMonths, true) : false;
 $prevMonth  = ($monthIdx !== false && $monthIdx > 0) ? $availableMonths[$monthIdx - 1] : null;
 $nextMonth  = ($monthIdx !== false && $monthIdx < count($availableMonths) - 1) ? $availableMonths[$monthIdx + 1] : null;
@@ -433,10 +435,10 @@ $emptyCopy = [
 // ---------------------------------------------------------------------
 $pageTitle   = 'Posts';
 $activeTab   = 'posts';
-// Admin: "New post" opens the New post pop-up (newpost.js, booted by layout-bottom.php); the href is the no-JS deep link.
-$navTrailing = ($admin ? '<a class="ui-btn ui-btn--filled ui-btn--sm posts-new" href="' . h(clientUrl('posts.php', ['newpost' => 1])) . '" data-newpost>' . icon('plus') . '<span>New post</span></a>' : '')
-             . '<button type="button" class="ui-btn ui-btn--tinted ui-btn--sm posts-month-pill" data-sheet-open="#postMonthSheet" aria-haspopup="dialog">'
-             . h($monthLabel) . icon('chevron-down', 'posts-month-chevron') . '</button>'
+// Admin: new posts come from the global "+ New" menu in this bar (navbar.php) — no second "New post" button here.
+$navTrailing = '<button type="button" class="ui-btn ui-btn--tinted ui-btn--sm posts-month-pill" data-sheet-open="#postMonthSheet" aria-haspopup="dialog">'
+             . '<span class="posts-month-long">' . h($monthLabel) . '</span><span class="posts-month-short" aria-hidden="true">' . h($monthShort) . '</span>'
+             . icon('chevron-down', 'posts-month-chevron') . '</button>'
              . (!empty($client) ? clientAvatar($client) : '');
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">';
 $bodyClass   = 'page-posts';

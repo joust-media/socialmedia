@@ -1,5 +1,5 @@
-/* New post pop-up (static/js/newpost.js): every entry point, a 5-slide carousel across two series in ≤ 7
-   clicks, drag + keyboard reorder, the shape warning, Save draft → the post, edit → reorder → saved order,
+/* New post pop-up (static/js/newpost.js): every entry point, a 5-slide carousel across two series in ≤ 8
+   clicks (the audit's T2 target; the Posts header's own "New post" button is gone — "+ New → New post" is 2 clicks), drag + keyboard reorder, the shape warning, Save draft → the post, edit → reorder → saved order,
    validation, the unsaved-changes guard, the phone layout, and the client's swipeable carousel + slide
    comment chip. Screenshots of the pop-up: $PORTAL_TEST_ROOT/shots/newpost-1440-dark.png, -390-light.png. */
 'use strict';
@@ -23,7 +23,8 @@ const sel = {
 };
 async function openFromPosts(page, url) {
   await page.goto(url('posts.php?client=kenda'));
-  await page.click('[data-newpost]');
+  await page.click('[data-new-menu-toggle]');
+  await page.click('[data-new-action="post"]');
   await page.waitForSelector(sel.root);
   await page.waitForSelector(sel.tile);
 }
@@ -75,7 +76,7 @@ async function load(page, url, id) {
 
   await run('newpost', async ({ test, url, expect, viewport }) => {
     if (viewport === 'desktop') {
-      await test('entry points: + New, Posts, Studio, Home, ?newpost=1, Studio tab=compose, add-post.php', async (page) => {
+      await test('entry points: + New, Home, ?newpost=1, old Studio tab=compose, add-post.php', async (page) => {
         await page.goto(url('posts.php?client=kenda'));
         await page.click('[data-new-menu-toggle]');
         await page.click('[data-new-action="post"]');
@@ -84,7 +85,8 @@ async function load(page, url, id) {
         expect((await page.getAttribute('.np-panel', 'role')) === 'dialog' && (await page.getAttribute('.np-panel', 'aria-modal')) === 'true', 'ARIA dialog');
         await page.keyboard.press('Escape');
         await page.waitForSelector('.np-root', { state: 'detached' });
-        for (const p of ['posts.php?client=kenda', 'studio.php?client=kenda', '?client=kenda']) {
+        expect.eq(await page.$$eval('.ui-nav [data-newpost]', (e) => e.length), 0, 'Posts header: only the global + New');
+        for (const p of ['?client=kenda']) {
           await page.goto(url(p));
           await page.click('[data-newpost]');
           await page.waitForSelector(sel.root);
@@ -93,7 +95,7 @@ async function load(page, url, id) {
         }
         for (const p of ['posts.php?client=kenda&newpost=1', 'studio.php?client=kenda&tab=compose', 'add-post.php?client=kenda', 'batch.php?client=kenda']) {
           await page.goto(url(p));
-          if (p.indexOf('batch') !== -1) { expect(/tab=uploads/.test(page.url()), 'batch → Uploads: ' + page.url()); await page.waitForSelector('.us-root'); continue; }   // the Upload sheet (a draft post per file)
+          if (p.indexOf('batch') !== -1) { expect(/posts\.php\?client=kenda/.test(page.url()), 'batch → Posts: ' + page.url()); await page.waitForSelector('.us-root'); continue; }   // the Upload sheet (a draft post per file)
           await page.waitForSelector(sel.root);
           expect(!/newpost=/.test(page.url()), 'param stripped: ' + page.url());
           await page.keyboard.press('Escape');
@@ -110,11 +112,11 @@ async function load(page, url, id) {
         expect((await page.textContent('[data-np-client]')).indexOf('Kenda') !== -1, 'scoped to Kenda');
       });
 
-      await test('5-slide carousel across two series in ≤ 7 clicks → Save draft lands on the post', async (page) => {
+      await test('5-slide carousel across two series in ≤ 8 clicks → Save draft lands on the post', async (page) => {
         let clicks = 0;
         const tap = async (s) => { clicks++; await page.click(s); };
         await page.goto(url('posts.php?client=kenda'));
-        await tap('[data-newpost]');
+        await tap('[data-new-menu-toggle]'); await tap('[data-new-action="post"]');   // "+ New → New post" (Posts has no second button)
         await page.waitForSelector(sel.tile);
         const r = await seriesRefs(page);
         const picks = [r.s1[0], r.s1[1], r.s1[2], r.s2[0], r.s2[1]];
@@ -128,7 +130,7 @@ async function load(page, url, id) {
         await page.waitForTimeout(400);
         await page.screenshot({ path: path.join(SHOTS, 'newpost-1440-light.png') });
         await Promise.all([page.waitForNavigation(), tap('[data-np-save="draft"]')]);
-        expect(clicks <= 7, 'clicks: ' + clicks);
+        expect(clicks <= 8, 'clicks: ' + clicks);
         fs.appendFileSync(CLICKS, `carousel5 ${clicks}\n`);
         const id = parseInt(new URL(page.url()).searchParams.get('post') || '0', 10);
         expect(id > 0, 'landed on posts.php?post=ID: ' + page.url());
@@ -144,19 +146,19 @@ async function load(page, url, id) {
         let clicks = 0;
         const tap = async (s) => { clicks++; await page.click(s); };
         await page.goto(url('posts.php?client=kenda'));
-        await tap('[data-newpost]');
+        await tap('[data-new-menu-toggle]'); await tap('[data-new-action="post"]');   // "+ New → New post" (Posts has no second button)
         await page.waitForSelector(sel.tile);
         const r = await seriesRefs(page);
         await tap(`[data-np-grid] [data-np-ref="${r.s1[0]}"]`);
         await page.fill('#npCaption', 'One render');
         await Promise.all([page.waitForNavigation(), tap('[data-np-save="review"]')]);
         fs.appendFileSync(CLICKS, `single ${clicks}\n`);
-        expect(clicks <= 3, 'single: ' + clicks);
+        expect(clicks <= 4, 'single: ' + clicks);   // the audit's T1 target
         expect.eq(await page.getAttribute('#uiSheet .pd[data-post-detail]', 'data-status'), 'pending', 'sent for review');
 
         clicks = 0;
         await page.goto(url('posts.php?client=kenda'));
-        await tap('[data-newpost]');
+        await tap('[data-new-menu-toggle]'); await tap('[data-new-action="post"]');   // "+ New → New post" (Posts has no second button)
         await page.waitForSelector(sel.root);
         await tap('[data-np-source] [data-value="upload"]');
         const [chooser] = await Promise.all([page.waitForEvent('filechooser'), tap('[data-np-drop]')]);
@@ -164,7 +166,7 @@ async function load(page, url, id) {
         await page.waitForFunction(() => App.newPost._state().slides.length === 1 && /^upload:/.test(App.newPost._state().slides[0].ref || ''));
         await Promise.all([page.waitForNavigation(), tap('[data-np-save="draft"]')]);
         fs.appendFileSync(CLICKS, `upload ${clicks}\n`);
-        expect(clicks <= 4, 'upload: ' + clicks);
+        expect(clicks <= 5, 'upload: ' + clicks);
         expect.eq(await page.$$eval('#uiSheet .pd-slide', (e) => e.length), 1);
       });
 

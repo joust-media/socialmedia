@@ -2,13 +2,13 @@
 /**
  * Legacy shim — the tires module is now the Collections view of the unified
  * Assets page. 301s there, preserving ?client= and mapping ?tire= → ?item=.
- * Old unscoped bookmarks go to the Studio (admin) client picker.
+ * Old unscoped bookmarks go to Home (its "Choose a client" list).
  */
 require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';
 
 if (!$client) {
-    header('Location: ' . clientUrl('studio.php'), true, 301);
+    header('Location: ' . pagePath('index'), true, 301);
     exit;
 }
 

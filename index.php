@@ -11,7 +11,7 @@
  *                     3. Activity — humanized, run-collapsed, never a filename.
  *                     Admin additionally sees "Needs changes" (denied posts / emails /
  *                     assets waiting on Joust, with the latest client notes, linking to
- *                     the posts.php / emails.php work queues) and a Studio quick-action
+ *                     the posts.php / emails.php work queues) and a Joust quick-action
  *                     row. Role is enforced with isAdmin().
  *   (no client)     → a client chooser; admin also sees cross-client activity.
  *
@@ -103,7 +103,14 @@ if (!$client) {
     </section>
     <?php if ($isAdmin): ?>
       <section class="home-section">
-        <?= insetListOpen('Storage') ?>
+        <?= insetListOpen('Manage', ['attrs' => ['data-home-manage' => '1']]) ?>
+        <?= insetRow([
+            'href'     => manageUrl('clients'),
+            'icon'     => 'sliders',
+            'title'    => 'Clients',
+            'subtitle' => 'Add a client, logos, settings, which tabs each one sees',
+            'attrs'    => ['data-home-link' => 'clients'],
+        ]) ?>
         <?= insetRow([
             'href'     => pagePath('drive'),
             'icon'     => 'drive',
@@ -730,13 +737,19 @@ if ($pendingCollections > 0) {
 
 <?php // --- 4. Admin variant (server-side gated) ------------------------ ?>
 <?php if ($isAdmin): ?>
-<section class="home-section" aria-labelledby="home-studio">
-  <h2 class="ui-list-header" id="home-studio">Studio</h2>
+<section class="home-section" aria-labelledby="home-manage" data-home-admin>
+  <h2 class="ui-list-header" id="home-manage">Joust</h2>
   <div class="home-quick">
     <?php // New post = the pop-up (newpost.js), Upload = the Upload sheet (upload-sheet.js); the hrefs are the no-JS deep links ?>
     <a class="ui-btn ui-btn--filled" href="<?= h(clientUrl('posts.php', ['newpost' => 1])) ?>" data-newpost><?= icon('plus') ?><span>New post</span></a>
-    <a class="ui-btn ui-btn--gray" href="<?= h(uploadSheetUrl('studio.php', [], ['tab' => 'uploads'])) ?>"<?= uploadSheetAttrs([]) ?>><?= icon('upload') ?><span>Upload</span></a>
+    <a class="ui-btn ui-btn--gray" href="<?= h(uploadSheetUrl('posts.php')) ?>"<?= uploadSheetAttrs([]) ?>><?= icon('upload') ?><span>Upload</span></a>
   </div>
+  <?= insetListOpen('', ['class' => 'home-manage', 'attrs' => ['data-home-manage' => '1']]) ?>
+    <?= insetRow(['href' => manageUrl('clients'), 'icon' => 'sliders', 'title' => 'Client settings', 'subtitle' => 'Logo, default hashtags, which tabs ' . $client['name'] . ' sees', 'attrs' => ['data-home-link' => 'clients']]) ?>
+    <?= insetRow(['href' => manageUrl('export'), 'icon' => 'download', 'title' => 'Export approved assets', 'subtitle' => 'One zip, a folder per tire', 'attrs' => ['data-home-link' => 'export']]) ?>
+    <?= insetRow(['href' => clientUrl('projects.php'), 'icon' => 'checklist', 'title' => 'Projects', 'subtitle' => 'Tasks shared with ' . $client['name'], 'attrs' => ['data-home-link' => 'projects']]) ?>
+    <?= insetRow(['href' => manageUrl('tools'), 'icon' => 'wand', 'title' => 'Tools', 'subtitle' => 'New tire, AI Builder, prompts, vehicles, email import', 'attrs' => ['data-home-link' => 'tools']]) ?>
+  <?= insetListClose() ?>
 </section>
 <?php endif; ?>
 

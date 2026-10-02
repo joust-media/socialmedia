@@ -275,7 +275,7 @@ $formSubmitText = $isEdit ? 'Save changes' : 'Create prompt';
 
 <?= renderAppChrome($isEdit ? 'Edit prompt' : 'New prompt', [
       'subtitle' => 'Prompt Library',
-      'active'   => 'studio',
+      'active'   => 'manage',
       'width'    => '860px',
       'trailing' => '',
       'back'     => ['href' => 'prompts.php', 'label' => 'Prompts'],

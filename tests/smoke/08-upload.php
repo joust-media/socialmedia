@@ -260,13 +260,13 @@ test('contextual Upload buttons carry their destination (admin only)', function 
     has($s, 'item=1&amp;series=1&amp;upload=1&amp;dest=series&amp;tire=1', 'no-JS deep link');
     $l = status(get('assets.php?client=kenda&view=library', 'admin'), 200)['body'];
     ok(preg_match('#data-upload-open data-upload-dest="library"[^>]*data-library-upload#', $l) === 1, 'Library Upload');
-    $u = status(get('studio.php?client=kenda&tab=uploads', 'admin'), 200)['body'];
-    ok(preg_match('#data-upload-dest="post" data-upload-each="1"[^>]*data-upload-drop data-studio-upload#', $u) === 1, 'Studio Uploads launcher');
-    hasNot($u, 'data-upload-zone', 'the old Uploads drop zone is gone');
-    $rr = status(get('studio.php?client=kenda&tab=renders&tire=2', 'admin'), 200)['body'];
-    $newest = (int)q1("SELECT id FROM tire_series WHERE tire_id = 2 ORDER BY sort_order DESC, id DESC LIMIT 1");   // the newest series (an earlier test may have added one)
-    ok(preg_match('#data-upload-dest="series" data-upload-tire="2" data-upload-series="' . $newest . '"[^>]*data-renders-launch#', $rr) === 1, 'Studio Renders launcher on the picked tire + its newest series');
-    hasNot($rr, 'data-renders-input', 'the old Renders drop zone is gone');
+    // The Studio Uploads / Renders launchers are retired: their URLs land on Posts with the sheet / on the tire (Manage series).
+    $u = get('studio.php?client=kenda&tab=uploads', 'admin');
+    has($u['location'], 'posts.php?client=kenda&upload=1&dest=post&each=1', 'Studio Uploads → Posts + the sheet (a draft post per file)');
+    $rr = get('studio.php?client=kenda&tab=renders&tire=2', 'admin');
+    has($rr['location'], 'assets.php?client=kenda&view=collections&item=2&manage=series', 'Studio Renders → the tire, Manage series open');
+    $t2 = status(get('assets.php?client=kenda&view=collections&item=2', 'admin'), 200)['body'];
+    ok(preg_match('#data-upload-open data-upload-dest="series" data-upload-tire="2" data-upload-series="\d+"[^>]*data-series-upload#', $t2) === 1, 'the tire page Upload is on its series');
     $f = status(get('add-feature.php?client=kenda&module=tires&edit_item=1', 'admin'), 200)['body'];
     has($f, 'assets.php?client=kenda&amp;view=collections&amp;item=1&amp;series=ref&amp;upload=1&amp;dest=reference&amp;tire=1', 'tire form → the sheet on its Reference');
     hasNot($f, 'name="item_images[]"', 'the old reference file input is gone');
@@ -276,18 +276,18 @@ test('contextual Upload buttons carry their destination (admin only)', function 
     }
 });
 test('every admin page boots the sheet; the client seat never gets it', function () {
-    foreach (['posts.php?client=kenda', 'assets.php?client=kenda', 'studio.php?client=kenda', '?client=kenda', 'studio.php'] as $p) {
+    foreach (['posts.php?client=kenda', 'assets.php?client=kenda', 'manage.php?client=kenda', '?client=kenda', 'manage.php', 'posts.php'] as $p) {
         $b = status(get($p, 'admin'), 200)['body'];
         has($b, 'window.UploadSheetConfig', $p); has($b, 'upload-sheet.js', $p);
     }
     hasNot(status(get('assets.php?client=kenda', 'client'), 200)['body'], 'UploadSheetConfig');
 });
 test('retired upload routes land on the sheet', function () {
-    foreach (['batch.php?client=kenda' => 'studio.php?client=kenda&tab=uploads&upload=1&dest=post&each=1',
-              'studio.php?client=kenda&tab=batch' => 'studio.php?client=kenda&tab=uploads&upload=1&dest=post&each=1',
-              'batch.php' => 'studio.php?upload=1'] as $from => $to) {
+    foreach (['batch.php?client=kenda' => 'posts.php?client=kenda&upload=1&dest=post&each=1',
+              'studio.php?client=kenda&tab=batch' => 'posts.php?client=kenda&upload=1&dest=post&each=1',
+              'batch.php' => 'posts.php?upload=1'] as $from => $to) {
         $r = get($from, 'admin');
-        is($r['code'], 302, $from);
+        ok(in_array($r['code'], [301, 302], true), $from . ' redirects');
         has($r['location'], $to, $from);
     }
 });

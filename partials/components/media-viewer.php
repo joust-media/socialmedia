@@ -130,7 +130,7 @@ $viewerCommentsEndpoint = isset($viewerCommentsEndpoint) ? (string)$viewerCommen
       <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-use-in-post hidden><?= icon('plus') ?>Use in post</button>
       <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-replace data-tire-only><?= icon('photo') ?>Replace image…</button>
       <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-set-reference data-tire-only><?= icon('checkmark') ?>Set as reference</button>
-      <a class="ui-viewer-menu-item" role="menuitem" data-viewer-manage data-tire-only href="#"><?= icon('wand') ?>Manage in Studio</a>
+      <a class="ui-viewer-menu-item" role="menuitem" data-viewer-manage data-tire-only href="#"><?= icon('wand') ?>Edit tire…</a>
       <button type="button" class="ui-viewer-menu-item is-destructive" role="menuitem" data-viewer-delete data-tire-only><?= icon('xmark') ?>Delete image…</button>
     <?php endif; ?>
   </div>

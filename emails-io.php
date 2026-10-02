@@ -10,7 +10,7 @@
  *
  *   POST emails-io.php?client=<slug>   multipart `file` (CSV or JSON) or `payload` (rows from a preview)
  *        mode=preview (default; also dry_run=1) → diff table, NO writes, plus a Confirm form
- *        mode=apply                              → one transaction, then studio?tab=emails&msg=summary
+ *        mode=apply                              → one transaction, then manage.php?section=tools&msg=summary (Manage → Tools)
  *        format=json / Accept: application/json  → {ok, dry_run, summary, rows} instead of HTML
  *
  * The Confirm form re-posts the normalised rows as JSON in a hidden field (`payload`) —
@@ -40,7 +40,7 @@ function ioFail(string $msg, int $code = 400): void {
         echo json_encode(['ok' => false, 'error' => $msg]);
         exit;
     }
-    header('Location: ' . clientUrl('studio.php', ['tab' => 'emails', 'msg' => $msg]));
+    header('Location: ' . manageUrl('tools', ['msg' => $msg]) . '#emails-io');
     exit;
 }
 
@@ -84,7 +84,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
         echo $csv;
         exit;
     }
-    header('Location: ' . clientUrl('studio.php', ['tab' => 'emails']));
+    header('Location: ' . manageUrl('tools') . '#emails-io');
     exit;
 }
 
@@ -214,7 +214,7 @@ if ($mode === 'apply') {
             'flows' => $flowResult ? ['created' => $flowResult['created'], 'updated' => $flowResult['updated'], 'unchanged' => $flowResult['unchanged'], 'steps' => $flowResult['steps'], 'missing' => $flowResult['missing']] : null]);
         exit;
     }
-    header('Location: ' . clientUrl('studio.php', ['tab' => 'emails', 'msg' => emailImportSummaryText($result['summary'], true) . $flowMsg]));
+    header('Location: ' . manageUrl('tools', ['msg' => emailImportSummaryText($result['summary'], true) . $flowMsg]) . '#emails-io');
     exit;
 }
 
@@ -242,11 +242,11 @@ $actionLabel = ['create' => 'New', 'update' => 'Changed', 'unchanged' => 'Unchan
 $actionTone  = ['create' => 'approved', 'update' => 'pending', 'unchanged' => 'neutral', 'skip' => 'denied', 'duplicate' => 'denied'];
 
 $pageTitle   = 'Import emails';
-$navSubtitle = 'Studio · ' . $client['name'] . ' · Emails';
-$activeTab   = 'studio';
+$navSubtitle = 'Manage · ' . $client['name'] . ' · Emails';
+$activeTab   = 'manage';
 $pageWide    = true;
 $navWide     = true;
-$navBack     = ['href' => clientUrl('studio.php', ['tab' => 'emails']), 'label' => 'Studio'];
+$navBack     = ['href' => manageUrl('tools') . '#emails-io', 'label' => 'Tools'];
 $bodyClass   = 'page-studio page-email-import';
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">' . "\n"
              . '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">';
@@ -278,7 +278,7 @@ include __DIR__ . '/partials/layout-top.php';
       <?php if ($flowsPayload !== ''): ?><input type="hidden" name="flows_payload" value="<?= h($flowsPayload) ?>"><?php endif; ?>
       <div class="studio-actions studio-actions--start">
         <button type="submit" class="ui-btn ui-btn--filled"<?= ($writes === 0 && !$flows) ? ' disabled' : '' ?>>Apply <?= $writes ?> change<?= $writes === 1 ? '' : 's' ?><?= $flows ? ' + ' . count($flows) . ' flow' . (count($flows) === 1 ? '' : 's') : '' ?></button>
-        <a class="ui-btn ui-btn--gray" href="<?= h(clientUrl('studio.php', ['tab' => 'emails'])) ?>">Cancel</a>
+        <a class="ui-btn ui-btn--gray" href="<?= h(manageUrl('tools') . '#emails-io') ?>">Cancel</a>
         <span class="studio-help">Applies in one transaction; changed emails are logged as “imported”, new ones as “created”.</span>
       </div>
     </form>

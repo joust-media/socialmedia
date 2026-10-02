@@ -251,6 +251,8 @@ if (!function_exists('renderPostDetail')) {
                   . '<button type="button" role="menuitem" data-edit="caption" data-caption-menu' . ($posted ? ' disabled title="Unmark scheduled first"' : '') . '>Edit caption</button>'
                   . '<button type="button" role="menuitem" data-edit="date">Edit date</button>'
                   . '<button type="button" role="menuitem" data-replace-image' . ($images ? '' : ' disabled') . '>Replace image</button>'
+                  // Every file of the post, saved one by one (posts.js) — what Classic admin's "Save" button did
+                  . '<button type="button" role="menuitem" data-download-media' . ($images ? '' : ' disabled') . '>Download media</button>'
                   . '<button type="button" role="menuitem" class="is-destructive" data-delete-post>Delete</button>'
                   . '</div></div>';
         }

@@ -1,6 +1,6 @@
 <?php
 /**
- * Approved-asset export (Studio → Export) — the helpers export.php and studio.php share.
+ * Approved-asset export (Manage → Export) — the helpers export.php and manage.php share.
  *
  * The admin picks a scope (everything approved for the client, one tire, or one series) and
  * what to include (photos, videos, reference images, library images) and gets ONE zip — or, from the

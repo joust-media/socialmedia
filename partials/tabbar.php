@@ -4,23 +4,27 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
 /**
  * Role-aware tab bar — fixed bottom on mobile, left sidebar at ≥1024px.
  *
- *   Client: Home · Assets · [Tires] · Posts · [Emails] · Projects
- *   Admin:  + Studio (Joust orange). The Studio tab is never rendered for a
- *           client — the role check is server-side (isAdmin()), not CSS.
+ *   Client: Home · Assets · [Tires] · Posts · [Emails] · [Pages] · Projects   (unchanged)
+ *   Admin:  Home · Assets · [Tires] · Posts · [Emails] · [Pages] · Manage — never more than 6
+ *           (UI_TABS_MAX_ADMIN): when Tires, Emails and Pages are all on, Emails and Pages share one
+ *           "Emails/Pages" destination (short label "Emails" in the phone bar; emails.php / pages.php
+ *           carry an Emails · Pages switch). Projects lives in Manage → Tools for the admin.
+ *           The Manage tab is never rendered for a client — the role check is server-side
+ *           (isAdmin()), not CSS.
  *   Tires:  only for companies with the tires module enabled or at least one
  *           tires row (companyHasTires(), helpers.php). Labelled with the
  *           company's own word (companies.feature_label, "Tires" for Kenda;
  *           "Collections" when unset) and linking to assets.php?view=collections.
- *   Emails: only for companies with the emails module enabled or at least one
- *           email row (companyHasEmails(), emails-lib.php) — same for both roles.
+ *   Emails / Pages: only for companies with the module enabled or at least one
+ *           row (companyHasEmails() / companyHasPages()) — same for both roles.
  *
  * Reads from the including scope: $client, $pdo (helpers.php globals) and an
- * optional $activeTab override ('home'|'assets'|'tires'|'posts'|'emails'|'projects'|'studio').
- * When $activeTab is not set the active tab is derived from SCRIPT_NAME; on
- * assets.php, ?view=collections (or a tire deep link, kind=tire) → Tires.
- * 'tires' falls back to Assets when the company has no Tires tab.
+ * optional $activeTab override ('home'|'assets'|'tires'|'posts'|'emails'|'pages'|'projects'|'manage';
+ * 'studio' is the old name of 'manage'). When $activeTab is not set the active tab is derived from
+ * SCRIPT_NAME; on assets.php, ?view=collections (or a tire deep link, kind=tire) → Tires.
+ * 'tires' falls back to Assets when the company has no Tires tab; 'pages' → the merged Emails/Pages tab.
  *
- * Badges on Assets, Tires, Posts and Emails = items awaiting the client's action
+ * Badges on Assets, Tires, Posts, Emails and Pages = items awaiting the client's action
  * (pending), scoped to the current client. With a Tires tab present the Assets
  * badge is pending library images only and Tires is pending tire images, so a
  * render never counts twice; without it Assets carries both. A DB hiccup can
@@ -30,6 +34,7 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
  * ONE place to update when later phases ship the new pages:
  * change 'page' (and the 'scripts' aliases) below.
  */
+if (!defined('UI_TABS_MAX_ADMIN')) { define('UI_TABS_MAX_ADMIN', 6); }
 $uiTiresLabel = trim((string)($client['feature_label'] ?? ''));
 if ($uiTiresLabel === '') { $uiTiresLabel = 'Collections'; }
 
@@ -39,21 +44,22 @@ $uiTabs = [
     'assets'   => ['label' => 'Assets',   'icon' => 'photo',     'page' => 'assets.php',
                    'scripts' => ['library', 'features', 'tires', 'assets']],
     'tires'    => ['label' => $uiTiresLabel, 'icon' => 'tire',   'page' => 'assets.php',
-                   'query' => ['view' => 'collections'], 'scripts' => [],
+                   'query' => ['view' => 'collections'], 'scripts' => ['add-feature', 'add-tire'],
                    'module' => 'tires'],
     'posts'    => ['label' => 'Posts',    'icon' => 'grid',      'page' => 'posts.php',
-                   'scripts' => ['feed', 'posts']],
+                   'scripts' => ['feed', 'posts', 'add-post', 'batch']],
     'emails'   => ['label' => 'Emails',   'icon' => 'mail',      'page' => 'emails.php',
-                   'scripts' => ['emails', 'email-status', 'flows', 'flow-status'],
+                   'scripts' => ['emails', 'email-status', 'flows', 'flow-status', 'add-email', 'emails-io'],
                    'module' => 'emails'],
     'pages'    => ['label' => 'Pages',    'icon' => 'page',      'page' => 'pages.php',
-                   'scripts' => ['pages', 'page-status'],
+                   'scripts' => ['pages', 'page-status', 'add-page'],
                    'module' => 'pages'],
     'projects' => ['label' => 'Projects', 'icon' => 'checklist', 'page' => 'projects.php',
-                   'scripts' => ['projects', 'add-project']],
-    'studio'   => ['label' => 'Studio',   'icon' => 'wand',      'page' => 'studio.php',
-                   'scripts' => ['admin', 'studio', 'add-post', 'add-feature', 'add-tire', 'batch', 'build',
-                                 'prompts', 'add-prompt', 'vehicles', 'add-vehicle', 'add-email', 'emails-io', 'add-page', 'drive'],
+                   'scripts' => ['projects', 'add-project'],
+                   'client' => true],    // the client's tab; the admin reaches Projects from Manage → Tools and Home
+    'manage'   => ['label' => 'Manage',   'icon' => 'sliders',   'page' => 'manage.php',
+                   'scripts' => ['manage', 'admin', 'studio', 'build', 'prompts', 'add-prompt', 'vehicles', 'add-vehicle',
+                                 'drive', 'client-admin'],
                    'admin' => true],
 ];
 
@@ -75,6 +81,24 @@ if (!empty($client['id']) && isset($pdo) && $pdo instanceof PDO && function_exis
 }
 $uiModules = ['emails' => $uiHasEmails, 'tires' => $uiHasTires, 'pages' => $uiHasPages];
 
+// The admin bar holds at most UI_TABS_MAX_ADMIN items: with every module on, Emails + Pages share one tab.
+$uiMergeMail = false;
+if ($uiIsAdmin) {
+    $uiCountTabs = 0;
+    foreach ($uiTabs as $uiKey => $uiTab) {
+        if (!empty($uiTab['client'])) continue;
+        if (!empty($uiTab['module']) && empty($uiModules[$uiTab['module']])) continue;
+        $uiCountTabs++;
+    }
+    $uiMergeMail = $uiCountTabs > UI_TABS_MAX_ADMIN && $uiHasEmails && $uiHasPages;   // = navMergesEmailsPages() (helpers.php)
+    if ($uiMergeMail) {
+        $uiTabs['emails']['label'] = 'Emails/Pages';
+        $uiTabs['emails']['short'] = 'Emails';
+        $uiTabs['emails']['scripts'] = array_merge($uiTabs['emails']['scripts'], $uiTabs['pages']['scripts']);
+        unset($uiTabs['pages']);
+    }
+}
+
 // Active tab: explicit override, else the current script name (+ the assets.php view).
 $uiActive = isset($activeTab) && $activeTab !== null ? (string)$activeTab : null;
 if ($uiActive === null) {
@@ -87,10 +111,13 @@ if ($uiActive === null) {
         $uiActive = 'tires';
     }
 }
+if ($uiActive === 'studio') { $uiActive = 'manage'; }                        // the old name of the admin hub
 if ($uiActive === 'tires' && !$uiHasTires) { $uiActive = 'assets'; }   // no Tires tab → collections live under Assets
+if ($uiActive === 'pages' && $uiMergeMail) { $uiActive = 'emails'; }   // Pages share the Emails/Pages tab
+if ($uiActive === 'projects' && $uiIsAdmin) { $uiActive = 'manage'; }  // the admin's Projects live under Manage
 
 // Badge counts — pending items only, scoped to the client, never fatal.
-$uiBadges = ['assets' => 0, 'tires' => 0, 'posts' => 0, 'emails' => 0];
+$uiBadges = ['assets' => 0, 'tires' => 0, 'posts' => 0, 'emails' => 0, 'pages' => 0];
 if (!empty($client['id']) && isset($pdo) && $pdo instanceof PDO) {
     try {
         $uiCid = (int)$client['id'];
@@ -125,12 +152,13 @@ if (!empty($client['id']) && isset($pdo) && $pdo instanceof PDO) {
         }
     } catch (Throwable $uiErr) {
         error_log('tabbar badge query failed: ' . $uiErr->getMessage());
-        $uiBadges = ['assets' => 0, 'tires' => 0, 'posts' => 0, 'emails' => 0];
+        $uiBadges = ['assets' => 0, 'tires' => 0, 'posts' => 0, 'emails' => 0, 'pages' => 0];
     }
+    if ($uiMergeMail) { $uiBadges['emails'] += $uiBadges['pages']; }
 }
 
 $uiBrandName = !empty($client['name']) ? $client['name'] : 'Joust Media';
-$uiBrandHref = clientUrl($uiIsAdmin && empty($client) ? 'admin.php' : 'index.php');
+$uiBrandHref = clientUrl('index.php');
 ?>
 <nav class="ui-tabbar ui-glass ui-glass--top" aria-label="Main navigation">
   <a class="ui-tabbar-brand" href="<?= esc($uiBrandHref) ?>">
@@ -140,6 +168,7 @@ $uiBrandHref = clientUrl($uiIsAdmin && empty($client) ? 'admin.php' : 'index.php
   <ul class="ui-tabbar-list">
     <?php foreach ($uiTabs as $uiKey => $uiTab):
       if (!empty($uiTab['admin']) && !$uiIsAdmin) continue;   // admin-only tab: not rendered for clients
+      if (!empty($uiTab['client']) && $uiIsAdmin) continue;   // client-only tab (Projects): the admin has it under Manage
       if (!empty($uiTab['module']) && empty($uiModules[$uiTab['module']])) continue; // module-gated tab (Tires / Emails): company has none
       $uiIsActive = ($uiKey === $uiActive);
       $uiCount    = $uiBadges[$uiKey] ?? 0;
@@ -148,7 +177,11 @@ $uiBrandHref = clientUrl($uiIsAdmin && empty($client) ? 'admin.php' : 'index.php
       <li>
         <a class="<?= esc($uiCls) ?>" href="<?= esc(clientUrl($uiTab['page'], $uiTab['query'] ?? [])) ?>"<?= $uiIsActive ? ' aria-current="page"' : '' ?> data-tab="<?= esc($uiKey) ?>">
           <?= icon($uiTab['icon']) ?>
-          <span class="ui-tab-label"><?= esc($uiTab['label']) ?></span>
+          <?php if (!empty($uiTab['short'])): // merged tab: full label in the sidebar, the short one in the phone bar ?>
+            <span class="ui-tab-label ui-tab-label--long"><?= esc($uiTab['label']) ?></span><span class="ui-tab-label ui-tab-label--short"><?= esc($uiTab['short']) ?></span>
+          <?php else: ?>
+            <span class="ui-tab-label"><?= esc($uiTab['label']) ?></span>
+          <?php endif; ?>
           <?php if ($uiCount > 0): ?>
             <span class="ui-badge ui-tab-badge" aria-label="<?= esc($uiCount . ' to review') ?>"><?= $uiCount > 99 ? '99+' : (int)$uiCount ?></span>
           <?php endif; ?>
@@ -160,4 +193,4 @@ $uiBrandHref = clientUrl($uiIsAdmin && empty($client) ? 'admin.php' : 'index.php
     <div class="ui-tabbar-footer">Signed in as Joust · <a href="<?= esc(pagePath('logout')) ?>">Sign out</a></div>
   <?php endif; ?>
 </nav>
-<?php unset($uiTabs, $uiTiresLabel, $uiIsAdmin, $uiHasEmails, $uiHasTires, $uiHasPages, $uiModules, $uiActive, $uiScript, $uiKey, $uiTab, $uiBadges, $uiCid, $uiSt, $uiErr, $uiBrandName, $uiBrandHref, $uiIsActive, $uiCount, $uiCls); ?>
+<?php unset($uiMergeMail, $uiCountTabs, $uiTabs, $uiTiresLabel, $uiIsAdmin, $uiHasEmails, $uiHasTires, $uiHasPages, $uiModules, $uiActive, $uiScript, $uiKey, $uiTab, $uiBadges, $uiCid, $uiSt, $uiErr, $uiBrandName, $uiBrandHref, $uiIsActive, $uiCount, $uiCls); ?>

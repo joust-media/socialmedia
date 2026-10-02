@@ -1069,31 +1069,6 @@ if (!function_exists('emailsModuleId')) {
     }
 }
 
-if (!function_exists('emailsModuleEnabled')) {
-    /** Is the 'emails' module switched on for the company (company_modules row)? */
-    function emailsModuleEnabled(PDO $pdo, int $companyId): bool {
-        $mid = emailsModuleId($pdo);
-        if ($mid <= 0 || $companyId <= 0) return false;
-        $s = $pdo->prepare("SELECT 1 FROM company_modules WHERE company_id = ? AND module_id = ? LIMIT 1");
-        $s->execute([$companyId, $mid]);
-        return (bool)$s->fetchColumn();
-    }
-}
-
-if (!function_exists('setEmailsModuleEnabled')) {
-    /** Enable / disable the Emails tab for a company. Returns false when the module row is missing. */
-    function setEmailsModuleEnabled(PDO $pdo, int $companyId, bool $on): bool {
-        $mid = emailsModuleId($pdo);
-        if ($mid <= 0 || $companyId <= 0) return false;
-        if ($on) {
-            $pdo->prepare("INSERT IGNORE INTO company_modules (company_id, module_id, sort_order) VALUES (?, ?, ?)")->execute([$companyId, $mid, 99]);
-        } else {
-            $pdo->prepare("DELETE FROM company_modules WHERE company_id = ? AND module_id = ?")->execute([$companyId, $mid]);
-        }
-        return true;
-    }
-}
-
 if (!function_exists('emailGroupById')) {
     /** One of the company's groups, or null. */
     function emailGroupById(PDO $pdo, int $companyId, int $groupId): ?array {

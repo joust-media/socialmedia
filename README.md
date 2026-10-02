@@ -21,11 +21,69 @@ Social Media Builder
 with `migrate.php`, deterministic fixtures) and runs the HTTP smoke suites and the Playwright
 checks. See `tests/README.md`. `tests/` is never deployed.
 
+## Navigation and Manage (admin)
+
+- **Tab bar** (`partials/tabbar.php`; bottom bar on phones, sidebar from 1024px). Admin: **Home · Assets ·
+  [Tires] · Posts · [Emails] · [Pages] · Manage**, never more than 6 items: when a client has Tires, Emails
+  *and* Pages, Emails and Pages share one "Emails/Pages" tab ("Emails" in the phone bar) and both pages
+  carry an Emails · Pages switch (`navMergesEmailsPages()` / `emailsPagesSwitchHtml()`). The client's bar is
+  unchanged (Home · Assets · [Tires] · Posts · [Emails] · [Pages] · Projects); the admin reaches Projects
+  from Home and Manage → Tools. The top bar carries "+ New" and the Appearance button on every admin page.
+- **Manage** (`manage.php`, admin only; `manageUrl()` / `manageNavHtml()` in `helpers.php`), four sections:
+  **Clients** (default — create / edit, logos, Settings, the module toggles), **Export** (approved-asset
+  zip + Recent exports + Image previews), **Drive** (`drive.php`) and **Tools** (New tire and each tire's
+  Manage series, AI Builder, Prompt / Vehicle Library, Projects, email import / export + Audiences, Pages
+  server rules, Send digest). Back links of the tool pages point at Manage → Tools (`adminToolsUrl()`).
+- **Tire series management** lives on the tire: Assets → a tire → ⋯ → **Manage series** (or the button on a
+  tire without series, `&manage=series` deep link): rename, reorder, delete, Google Drive link, add a series
+  (name + Drive link), FTP folder (copy), Rescan folders, Repair server rules (`static/js/series-manage.js`
+  → `tire-status.php` / `tire-upload.php`).
+- **Old URLs** all redirect (301, one hop; `legacyAdminTarget()` shared by `studio.php`, `admin.php` and
+  `legacy/admin.php`; `?msg=` kept):
+
+  | Old | Now |
+  |---|---|
+  | `studio.php`, `admin.php`, `legacy/admin.php` | `manage.php` (Clients) |
+  | `studio.php?client=…` | `manage.php?client=…` |
+  | `…&tab=clients[&edit=]` | `manage.php?…&section=clients[&edit=]` |
+  | `…&tab=export[&tire=&series=]` | `manage.php?…&section=export[&tire=&series=]` |
+  | `…&tab=posts` | `posts.php?client=…` |
+  | `…&tab=uploads`, `…&tab=batch`, `batch.php` | `posts.php?client=…&upload=1&dest=post&each=1` (Upload sheet) |
+  | `…&tab=compose`, `…&newpost=1` | `posts.php?client=…&newpost=1` (New post pop-up) |
+  | `…&tab=emails` / `…&tab=pages` | `emails.php` / `pages.php` |
+  | `…&tab=renders[&tire=&series=]` | `assets.php?…&view=collections[&item=&series=&manage=series]` |
+  | `…&upload=1[&dest=…]` | `posts.php?…&upload=1[&dest=…]` |
+  | `legacy/feed.php`, `legacy/library.php`, `legacy/features.php` | `posts.php`, `assets.php?view=library`, the module's page |
+  | `features.php?module=emails\|pages` | `emails.php` / `pages.php` |
+  | `tires.php`, `add-tire.php` (no client) | Home (Choose a client) |
+
+- **Classic admin → new UI** (the old `legacy/admin.php` dashboard is retired):
+
+  | Classic admin | Now |
+  |---|---|
+  | Client picker / Switch client | Home → Choose a client; Manage → Clients |
+  | Recent activity + Send digest now | Home activity feeds; Manage → Tools → Activity digest |
+  | Default hashtags | Manage → Clients → Settings |
+  | AI Builder profile (product type, industry) | Manage → Clients → Settings |
+  | Add a Post | "+ New → New post" |
+  | Add a Project | Home → Projects, Manage → Tools → Projects |
+  | AI Builder | Manage → Tools → AI Builder |
+  | Add a Tire / Email (module tiles) | Manage → Tools → New tire; "+ New → New email / New page" |
+  | Post list (oldest first, show posted) | Posts (segments incl. Scheduled, months) |
+  | Mark posted / Unmark | Post sheet → Mark Scheduled / Unmark Scheduled |
+  | Content type (Post / Story / Reel) | Post sheet → ⋯ → Edit post… |
+  | Edit | Post sheet → ⋯ → Edit post… |
+  | Delete | Post sheet → ⋯ → Delete |
+  | View | Posts deep link (`posts.php?post=<id>`) |
+  | Save (download the images) | Post sheet → ⋯ → Download media |
+  | 🚀 Post (copy caption + hashtags, open Facebook) | Post sheet → Copy caption |
+  | Prompt / Vehicle Library | Manage → Tools |
+
 ## Posts: drafts and carousels
 
 - **Draft** (`posts.status = 'draft'`, `migrate.php` step 35): a post Joust is still building.
   The client never sees it anywhere (lists, counts, badges, Home, activity, deep links;
-  `status.php` answers 404 to the client seat). Studio uploads and batch posts start as drafts
+  `status.php` answers 404 to the client seat). Uploads ("a draft post per file") and batch posts start as drafts
   with an empty caption. **Send for review** (Posts → Draft, or the post sheet;
   `status.php action=submit`) moves it to To Review and needs a caption first. Until step 35
   has run, those paths keep the old behaviour (To Review, placeholder caption).
@@ -60,9 +118,10 @@ the admin's "Needs changes" card).
 creates `emails`, `email_groups` and `email_group_map`, and seeds the `emails` row in
 `modules`. Until it has run, every page renders as if the client had no emails.
 
-**Enabling the tab for a client**: Studio → Emails → Enable (adds one
-`company_modules (company_id, module_id)` row; the same row by hand in phpMyAdmin works
-too). The Emails tab also appears automatically once a client has at least one email row.
+**Enabling the tab for a client**: Manage → Clients → the client's card → Emails tab → Turn on
+(`client-admin.php action=module_toggle`, one `company_modules (company_id, module_id)` row; the
+same row by hand in phpMyAdmin works too). Manage → Clients is the only place the portal switches
+modules. The Emails tab also appears automatically once a client has at least one email row.
 
 **URLs**
 
@@ -72,7 +131,7 @@ too). The Emails tab also appears automatically once a client has at least one e
 | `email-status.php` (POST) | Approve / deny (note of at least 3 characters required) / comment / send for review / reset / mark live / delete. Mirrors `status.php`. |
 | `add-email.php?client=<slug>[&edit=<id>]` | Admin create / edit form, including audiences. |
 | `emails-io.php?client=<slug>&format=csv\|json` | Admin export (GET) and import (POST `file`, optional `dry_run=1`). |
-| `studio.php?client=<slug>&tab=emails` | Counts, add / import / export, audience management, module enable. |
+| `manage.php?client=<slug>&section=tools` | Admin: email import (preview → apply), CSV / JSON export and audience management (rename / delete / add). (`studio.php?tab=emails` redirects to `emails.php`.) |
 | `assign.php` | Admin: move emails / pages to another client, add to a flow, set audiences, create from "+ New" — see **Assigning emails and pages** below. |
 
 **CSV contract** (header row, this order; matched case-insensitively on import):
@@ -108,7 +167,7 @@ trigger line). Clients only view flows and never see Draft / Needs-changes steps
 - **Migration**: `migrate.php` steps 23–24 create `email_flows` and `email_flow_steps`
   (idempotent, nothing existing is altered). Until they exist the Flows button, chips and
   page stay hidden ("Flows are not set up yet").
-- **First flows**: Studio → Emails → **Suggest flows from series** creates one flow per code
+- **First flows**: `flows.php` → **Suggest flows from series** creates one flow per code
   series present (F Free, N Essentials, P Pro, G Signature, L Lead, R Renewal, S System, … in the
   series order), each with that series' emails ordered by their number; a series whose flow
   already exists is skipped. "New flow" on `flows.php` starts an empty one.
@@ -163,16 +222,16 @@ filter is in SQL and re-checked on deep links, partials and the endpoint.
 
 - **Migration**: `migrate.php` steps 27–28 create `pages` and `page_files` and seed the
   `pages` row in `modules` (28b). Idempotent; until it has run there is no Pages tab, no
-  Studio tab, `pages.php` says "not set up yet" and the endpoints answer 404 / 409 / 503.
-- **Enabling the tab for a client**: Studio → Pages → "Enable Pages tab", or the Pages
-  toggle on the client's card in Studio → Clients (both write one `company_modules` row).
+  "+ New → New page", `pages.php` says "not set up yet" and the endpoints answer 404 / 409 / 503.
+- **Enabling the tab for a client**: the Pages toggle on the client's card in Manage → Clients
+  (one `company_modules` row; the only place the portal switches modules).
   The tab also appears automatically once the client has at least one page row.
 - **Two sources per page**: *Upload* — the HTML and its assets live in
   `media/pages/<client-slug>/<page-slug>/` (a sibling of `media/tires/` and
   `media/library/`, outside the app folder, never touched by deploys) and the portal frames
   `/media/pages/<client>/<slug>/<entry>`; *URL* — an external `http(s)://` address framed
   like an email's rendered link (hosts that refuse framing still get "Open in new tab").
-- **Uploading** (Studio → Pages → Edit, or right after "Create page"; `page-upload.php`,
+- **Uploading** (Pages → a page → Edit, or right after "Create page"; `page-upload.php`,
   admin + same-site only, one file per request, ≤ 10 MB in one request — bigger assets and
   videos go in pieces, see *Large uploads*): `html htm css js json png jpg
   jpeg gif webp svg ico woff woff2 ttf mp4 webm` only. Anything server-side is refused
@@ -196,8 +255,8 @@ filter is in SQL and re-checked on deep links, partials and the endpoint.
   uploader row says "Extracted 14 images · 5.4 MB → 180 KB". Why: cPanel's ModSecurity
   inspects `text/html` responses and rejects bodies over `SecResponseBodyLimit` (512 KB by
   default) with a **500** — images and video are not inspected. For pages already uploaded,
-  **Extract embedded images** sits on the sheet's Server check line and under the Studio →
-  Pages row whenever an HTML file is over ~400 KB (`page-upload.php` `action=extract_inline`);
+  **Extract embedded images** sits on the sheet's Server check line whenever an HTML file is
+  over ~400 KB (`page-upload.php` `action=extract_inline`);
   the sheet's preview is switched off (Open in new tab stays) while the entry is that large.
 - **Troubleshooting a 500 on an uploaded page**: cPanel → **Metrics → Errors** shows Apache's
   reason. `ModSecurity: Output filter: Response body too large` → the HTML is over the host's
@@ -213,7 +272,7 @@ filter is in SQL and re-checked on deep links, partials and the endpoint.
   outright, `nosniff`. A file without our marker is never touched. The portal no longer writes
   `media/.htaccess` at the parent level and deletes one that carries our marker. Stored files
   are `chmod 0644`, created folders `0755`, whatever the umask (Apache reads them as another
-  user on shared hosting). Studio → Pages → **Repair server rules** (`page-upload.php`
+  user on shared hosting). Manage → Tools → **Pages: repair server rules** (`page-upload.php`
   `action=repair_media`) rewrites the rules and fixes permissions under `media/pages/<client>/`;
   the admin sheet shows a **Server check** line (file / folder bits, rules version) with a
   *Repair* button when something is off. Details: `media-hardening/README.md`.
@@ -229,7 +288,7 @@ filter is in SQL and re-checked on deep links, partials and the endpoint.
 | `page-status.php` (POST) | Approve / deny (note required) / comment / `action=submit` / `toggle_live&to=0\|1` / `delete_page`. Mirrors `email-status.php`. |
 | `page-upload.php` (POST, admin) | `page_id`, `client`, `action=upload` (`file`, optional `subfolder`, `batch`) / `delete_file` / `set_entry` (`name`) / `extract_inline` (embedded `data:` assets of every HTML file → `assets/`) / `repair_media`. |
 | `add-page.php?client=<slug>[&edit=<id>]` | Admin create / edit form (title, slug, source, URL, entry file, description, status, live, notes) + the file uploader and delete on edit. |
-| `studio.php?client=<slug>&tab=pages` | Counts strip, New page, the list with Edit, the Pages-tab toggle. |
+| `manage.php?client=<slug>&section=tools` | Admin: Pages "repair server rules" (and the email tools). (`studio.php?tab=pages` redirects to `pages.php`.) |
 
 ## Tire render series
 
@@ -241,19 +300,19 @@ join Approved assets and the composer like any tire image.
 - **Folder layout** (a sibling of `portal/`, next to the library): `media/tires/<tire-slug>/<series-folder>/<file>`.
   The tire slug is the tire name lower-cased with runs of non-alphanumerics turned into `-`
   ("Klever R/T" → `klever-r-t`; two tires with the same slug: the older keeps it, the newer gets
-  `-<id>`); the edit screen in Studio and the Renders tab show the exact folder (with a Copy
-  button). Any subfolder becomes a series named after it (`series-1` → "Series 1");
+  `-<id>`); the tire's **Manage series** sheet (Assets → the tire → ⋯ → Manage series) shows the
+  exact folder (with a Copy button). Any subfolder becomes a series named after it (`series-1` → "Series 1");
   dot-folders, dotfiles, symlinks, non-media files and the `.mp4` twin of a `.mov` are ignored.
 - **Two ways in**:
   1. **FTP**: create `media/tires/<tire-slug>/<series-folder>/` (create `media/tires/` next to
      `media/library/` the first time), drop the files, then open Assets → Collections — the folder
      is rescanned on every collections view, throttled by folder mtimes + 60 s — or press
-     **Rescan folders** in Studio → Renders (`tire-status.php` `action=rescan`, admin; the page
-     falls back to `assets.php?…&rescan=1`, also admin-only). Existing rows are never touched; a
+     **Rescan folders** in the tire's Manage series sheet (`tire-status.php` `action=rescan`, admin;
+     `assets.php?…&rescan=1` does the same, also admin-only). Existing rows are never touched; a
      removed file only stops showing up (its decisions stay).
   2. **Upload in the portal**: the **Upload sheet** (see *Upload sheet* below) — the series
-     page's **Upload**, Studio → Renders' launcher, or "+ New → Upload" → Tire series → tire →
-     series or "New series…". One file at a time (`tire-upload.php`, admin, same-site; images
+     page's **Upload**, or "+ New → Upload" → Tire series → tire → series or "New series…" (with an
+     optional Google Drive link for the new series: `tire-upload.php` `new_series_drive`). One file at a time (`tire-upload.php`, admin, same-site; images
      50 MB, videos up to 4 GB — large files go in pieces, see *Large uploads* below; progress,
      Retry and Cancel per file), stored under the series folder as
      `<original stem>.<ext>` (de-duplicated `-2`, `-3` …; the folder is created with 0755),
@@ -298,14 +357,14 @@ join Approved assets and the composer like any tire image.
 - **Endpoints**: `tire-status.php` gains `approve_series` (client or admin; optional
   `type=photos|videos` limits it to that media type), `delete_image`,
   `set_reference`, `series_create` / `series_rename` / `series_delete` / `series_reorder`,
-  `rescan` (admin, same-site, scoped to the posted client). Reference images (the ≤6 in Studio)
+  `rescan` (admin, same-site, scoped to the posted client). Reference images (the ≤6 on the tire form)
   are the rows without a series; the 6-image cap counts only those.
 - **`media/` hardening**: the first upload or rescan writes `media/tires/.htaccess` (the
   `media-lib.php` text shared with Pages — `Options -Indexes`, then PHP engine off, script
   handlers removed and script-ish names refused, every directive `<IfModule>`-guarded) so
   nothing dropped by FTP or upload can ever execute; an older file of ours is rewritten, a
   foreign one never touched, and an old `media/.htaccess` of ours is removed. Uploads and
-  thumbs are `chmod 0644` / folders `0755`. Studio → Renders → **Repair server rules**
+  thumbs are `chmod 0644` / folders `0755`. A tire's Manage series sheet → **Repair server rules**
   (`tire-upload.php` `action=repair_media`) rewrites the rules and fixes permissions under
   `media/tires/`. The text and the by-hand steps are in `media-hardening/`.
 
@@ -334,7 +393,7 @@ frame. SVGs and videos get no previews. Code: `preview-lib.php`.
   serves it; the next page view links the static file. If a preview cannot be made (too large for
   the PHP memory limit even at 512 MB, damaged file, no GD) `preview.php` redirects to the
   original, so an image never breaks.
-- **Backfill**: Studio → **Export** → *Image previews* → **Build previews** (optionally *All
+- **Backfill**: Manage → **Export** → *Image previews* → **Build previews** (optionally *All
   clients*) walks every tire image, library file and post image in ~15-second steps
   (`preview-job.php`) and reports how many were made, already up to date, failed or missing, and
   the bytes of the small previews against the originals. Safe to run any time; it only makes what
@@ -355,7 +414,7 @@ frame. SVGs and videos get no previews. Code: `preview-lib.php`.
 
 ## Exporting approved assets
 
-Studio → **Export** (admin, scoped to the chosen client) builds one zip of everything the client
+Manage → **Export** (admin, scoped to the chosen client) builds one zip of everything the client
 has approved, categorised by tire, and hands it over as a single download:
 
 ```
@@ -404,13 +463,14 @@ One sheet builds and edits every post: `static/js/newpost.js` (`App.newPost`) + 
 server `post-compose.php`, booted on every admin page by `partials/layout-bottom.php`
 (`partials/components/new-post.php`). Nothing of it reaches the client seat.
 
-- **Open it from**: "+ New → New post" (`App.newMenu` calls `App.newPost.open`), "New post" on Posts,
-  Studio and Home, Assets → Select → "Create post with N" (approved items), the media viewer's ⋯ →
+- **Open it from**: "+ New → New post" on every admin page (`App.newMenu` calls `App.newPost.open`),
+  "New post" on Home, Assets → Select → "Create post with N" (approved items), the media viewer's ⋯ →
   "Use in post", the Posts detail ⋯ → "Edit post…" (edit mode), or any URL with `?newpost=1`
   (`=upload` opens the Upload pane, `=edit&post=<id>` edits, `&newpost_assets=tire:1,library:4`
-  preselects). Retired routes redirect here: `studio.php?tab=compose` → `studio.php?newpost=1`,
+  preselects). Retired routes redirect here: `studio.php?tab=compose` → `posts.php?newpost=1`,
   `add-post.php` → `posts.php?newpost=1`, `add-post.php?edit=<id>` → `posts.php?post=<id>&newpost=edit`,
-  `studio.php?tab=batch` and `batch.php` → Studio → Uploads with the Upload sheet open (a draft post per file).
+  `studio.php?tab=batch|uploads` and `batch.php` → Posts with the Upload sheet open (a draft post per file).
+  `add-post.php` keeps its POST handler as the documented `format=json` API (`media[]` above).
 - **Layout**: header (client, close) · the slide tray pinned under it (numbered, slide 1 = Cover,
   drag or Alt+←/→ to reorder, Delete / × to remove, a tap opens Move left / right · Make cover ·
   Replace · Remove, "N / 20", an amber badge on slides whose shape differs from the cover because
@@ -464,19 +524,18 @@ client seat.
   - "+ New → Upload" (`App.newMenu.handle('upload')`).
   - A contextual **Upload**, which arrives with the destination preselected (`uploadSheetAttrs()` →
     `data-upload-open data-upload-dest/-tire/-series/-each`). These are: the series header in Assets, the
-    Reference card ("Add reference images" too), Assets → Library, Studio → Uploads (a draft post per file)
-    and Studio → Renders (the picked tire + series).
+    Reference card ("Add reference images" too) and Assets → Library.
   - Home "Upload".
   - Launchers marked `data-upload-drop`, which also take dropped files.
   - Any URL with `?upload=1[&dest=series|reference|library|post][&tire=][&series=<id>|new][&each=1]`
     (`uploadSheetUrl()`; the no-JS fallback of every button).
-- **Retired** (redirect or link here): the Studio Uploads drop zone and Renders drop zone / queue,
-  `batch.php` and `studio.php?tab=batch` (→ `…&tab=uploads&upload=1&dest=post&each=1`), and the
+- **Retired** (redirect or link here): the Studio Uploads / Renders tabs and their launchers,
+  `batch.php` and `studio.php?tab=batch|uploads` (→ `posts.php?…&upload=1&dest=post&each=1`), and the
   "Add more images" file input on `add-feature.php` (→ Assets with the sheet on the tire's Reference). The
   New post pop-up keeps its own Upload pane (files straight into the post being edited).
 - **Assets → Select (admin, approved items)**: one bottom bar with **Create post with N**, **Download**
   and **Export**. Download is a zip of the selection; Export is its manifest CSV. Both use
-  `export.php` `scope=selection&items=tire:<id>,library:<id>,…`, with the same folder layout as Studio →
+  `export.php` `scope=selection&items=tire:<id>,library:<id>,…`, with the same folder layout as Manage →
   Export and approved files only.
 
 ## Large uploads (chunked, resumable)
@@ -495,8 +554,8 @@ request exactly as before. The surfaces and their endpoints:
 | Upload sheet → Library | `upload-chunk.php` `purpose=library` | videos 4 GB, images 50 MB |
 | Replace image / video (Posts detail, Assets viewer, `add-feature.php`) | `upload-chunk.php` `purpose=replace` (`replace_kind=post\|tire`, `replace_id`) — `replace-image.php` stays the single-request path | videos 4 GB, images 50 MB |
 | Upload sheet → Tire series | `tire-upload.php` | images 50 MB, videos 4 GB |
-| Studio → Pages | `page-upload.php` | HTML 64 MB, CSS / JS / JSON 10 MB, other assets 100 MB, MP4 / WebM 4 GB |
-| Studio → Clients logo | `client-admin.php` (single request) | **Logos unchanged: 2 MB**, resized to 512×512 |
+| Pages → Edit page | `page-upload.php` | HTML 64 MB, CSS / JS / JSON 10 MB, other assets 100 MB, MP4 / WebM 4 GB |
+| Manage → Clients logo | `client-admin.php` (single request) | **Logos unchanged: 2 MB**, resized to 512×512 |
 
 - **Protocol** (`action=`, every call admin + same-site, `upload_id` is 32 hex):
   `probe` (GET or POST) → `{chunk_size, max_file_bytes, ini_max, exts}` — `chunk_size` is
@@ -549,12 +608,14 @@ request exactly as before. The surfaces and their endpoints:
 
 ## Clients and logos
 
-- **Studio → Clients** (admin, `studio.php?tab=clients`, also the "Clients" link on the Studio
-  chooser) lists every company and is the one place that creates or edits one: name, slug
-  (auto from the name, `[a-z0-9-]{2,40}`, unique — the review link is `?client=<slug>`),
-  feature label (the Tires tab's name), logo upload / replace / remove, and the Tires /
-  Emails / Pages module toggles. Everything posts to `client-admin.php` (admin + same-site
-  only). Clients are never deleted from the portal.
+- **Manage → Clients** (admin, `manage.php?section=clients` — the default Manage section; scoped to a
+  client it opens that client's card, `&edit=0` shows the list) lists every company and is the one place
+  that creates or edits one: name, slug (auto from the name, `[a-z0-9-]{2,40}`, unique — the review link
+  is `?client=<slug>`), feature label (the Tires tab's name), logo upload / replace / remove,
+  **Settings** (default hashtags pre-filled on new posts; AI Builder product type + industry) and the
+  Tires / Emails / Pages module toggles — the only module toggles in the portal. Everything posts to
+  `client-admin.php` (admin + same-site only; `action=settings` for the Settings form). Clients are
+  never deleted from the portal.
 - **Logo upload**: an image by content (PNG / JPG / GIF / WebP, ≤ 2 MB), resized to fit
   512×512 and written to `uploads/logo_<slug>.png` (JPEG stays `.jpg`); `companies.logo_url`
   is set to that app-relative path. Renaming a slug renames the file with it and moves the
@@ -571,11 +632,11 @@ request exactly as before. The surfaces and their endpoints:
   and the activity feed; clients keep their own logo / initials as the other actor.
 - If a client's logo went missing after the folder rename, check that
   `portal/uploads/<file>` exists on the server (uploads are never deployed), or simply upload
-  it again in Studio → Clients.
+  it again in Manage → Clients.
 
 ## Drive storage view
 
-An admin-only page (`drive.php`) that shows how full the agency Google Drive is, which client folder
+An admin-only page (`drive.php`, Manage → Drive) that shows how full the agency Google Drive is, which client folder
 holds what, what has gone stale, and which files could be offboarded. The portal never talks to
 Google: a Google Apps Script in the Drive owner's account (`docs/drive-collector/`, metadata-only
 scope) measures the Drive every night and POSTs a snapshot to `drive-ingest.php` in parts; the page

@@ -241,7 +241,7 @@ test('admin lists carry the ⋯ menu + Select; the client seat gets none of it',
     has(get('?client=privacybee')['body'], 'window.AssignConfig');
 });
 
-test('Audiences wording: filter, detail, Studio, form; ?group= still works as an alias', function () {
+test('Audiences wording: filter, detail, Manage → Tools, form; ?group= still works as an alias', function () {
     $c = status(get('emails.php?client=privacybee&status=all', 'client'), 200)['body'];
     has($c, 'aria-label="Filter by audience"');
     has($c, '&amp;audience=free');
@@ -255,7 +255,7 @@ test('Audiences wording: filter, detail, Studio, form; ?group= still works as an
     }
     has(get('emails.php?client=privacybee&email=5&partial=1')['body'], '<dt>Audience</dt>');
     has(get('emails.php?client=privacybee&email=1&partial=1')['body'], '<dt>Audiences</dt>');
-    $s = status(get('studio.php?client=privacybee&tab=emails'), 200)['body'];
+    $s = status(get('manage.php?client=privacybee&section=tools'), 200)['body'];
     has($s, '<h3 class="ui-card-title">Audiences</h3>');
     has($s, 'Add audience');
     hasNot($s, '>Groups</h3>');
@@ -264,6 +264,7 @@ test('Audiences wording: filter, detail, Studio, form; ?group= still works as an
     hasNot($f, 'No groups yet');
     $r = post('add-email.php?client=privacybee', ['action' => 'group_add', 'name' => 'Partners']);
     has(urldecode($r['location']), 'Audience "Partners" added.');
+    has($r['location'], 'manage.php?client=privacybee&section=tools', 'back to Manage → Tools');
 });
 
 test('hosted email links pass the edit form; "+ New" items keep their fallback links', function () {

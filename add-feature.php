@@ -32,7 +32,7 @@ function h($s) {
 // --- Require client ---
 if (!$client) {
     http_response_code(400);
-    echo 'Missing ?client= — go to <a href="' . h(adminToolsUrl()) . '">Studio</a>.';
+    echo 'Missing ?client= — go to <a href="' . h(adminToolsUrl()) . '">Manage → Tools</a>.';
     exit;
 }
 
@@ -542,7 +542,7 @@ function selfUrl($extra = []) {
 ?>
 <?= renderAppChrome(($isEdit ? 'Edit ' : 'Add ') . $sLabel, [
       'subtitle' => $client['name'],
-      'active'   => 'studio',
+      'active'   => 'tires',
       'width'    => '900px',
       'back'     => ['href' => $parentUrl, 'label' => $parentLabel],
       'links'    => [

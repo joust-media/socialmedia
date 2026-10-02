@@ -1,8 +1,8 @@
 <?php
 /**
- * Studio → Pages: create / edit one page, plus the small admin actions the
- * Studio Pages tab posts here (Pages-tab toggle, delete). Admin only —
+ * Pages → New / Edit page: create / edit one page, plus delete. Admin only —
  * requireAdmin() redirects a client session to login before any output.
+ * (A client's Pages tab is turned on / off in Manage → Clients only.)
  *
  *   GET  add-page.php?client=<slug>             new page form
  *   GET  add-page.php?client=<slug>&edit=<id>   edit form (+ file uploader for upload pages, comment thread, delete)
@@ -11,10 +11,9 @@
  *     create | update   title*, slug (auto from the title when blank), source upload|url, url,
  *                       entry, description, status, live, notes
  *                       → create: add-page.php?client&edit=<id> (so files can be uploaded right away)
- *                       · update: studio?tab=pages&msg=
+ *                       · update: pages.php?client&status=all&msg= (toasted once)
  *     delete            id → folder (contained) + page_files + row removed, 'deleted' logged
- *     module_toggle     to=1|0          (company_modules row for the 'pages' module)
- *   Files are uploaded / removed / promoted to entry through page-upload.php (static/js/pages.js).
+ * *   Files are uploaded / removed / promoted to entry through page-upload.php (static/js/pages.js).
  *
  * Rules mirrored from page-status.php: live=1 only when status=approved (the 409 rule);
  * the slug is unique per company ([a-z0-9-], pageSlugify()). Renaming the slug of an upload
@@ -35,14 +34,14 @@ function h($s) {
 }
 
 if (!$client) {
-    header('Location: ' . clientUrl('studio.php', ['msg' => 'Pick a client first.']));
+    header('Location: ' . pagePath('pages'));   // the admin's client chooser
     exit;
 }
 $cid = (int)$client['id'];
 
 /** Back to the Studio Pages tab with a flash. */
 function pagesStudioRedirect(string $msg, array $extra = []): void {
-    header('Location: ' . clientUrl('studio.php', ['tab' => 'pages', 'msg' => $msg] + $extra));
+    header('Location: ' . clientUrl('pages.php', ['status' => 'all', 'msg' => $msg] + $extra));
     exit;
 }
 
@@ -79,13 +78,6 @@ function loadOwnPage(PDO $pdo, int $id, int $cid): ?array {
 // -------------------------------------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = (string)($_POST['action'] ?? '');
-
-    // ---- Pages tab toggle -------------------------------------------
-    if ($action === 'module_toggle') {
-        $on = (int)($_POST['to'] ?? 0) === 1;
-        if (!setPagesModuleEnabled($pdo, $cid, $on)) pagesStudioRedirect('The pages module row is missing — run migrate.php first.');
-        pagesStudioRedirect($on ? 'Pages tab enabled for ' . $client['name'] . '.' : 'Pages tab disabled for ' . $client['name'] . '.');
-    }
 
     // ---- Delete -------------------------------------------------------
     if ($action === 'delete') {
@@ -250,18 +242,18 @@ $isEdit     = $page !== null;
 $formAction = $isEdit ? 'update' : 'create';
 $formTitle  = $isEdit ? 'Edit ' . pageDisplayLabel($page) : 'New page';
 $selfUrl    = clientUrl('add-page.php', $isEdit ? ['edit' => (int)$page['id']] : []);
-$studioUrl  = clientUrl('studio.php', ['tab' => 'pages']);
+$studioUrl  = clientUrl('pages.php', ['status' => 'all']);   // Back / Cancel
 $thread     = $isEdit && hasActivityLog($pdo) ? commentThread($pdo, 'page', (int)$page['id']) : [];
 $files      = $isEdit ? pageFilesFor($pdo, (int)$page['id']) : [];
 $folderRel  = $isEdit ? pageFolderRel($client, $page) : 'media/pages/' . $client['slug'] . '/<slug>';
 $viewUrl    = $isEdit ? pageViewUrl($page, $client) : '';
 
 $pageTitle   = $formTitle;
-$navSubtitle = 'Studio · ' . $client['name'] . ' · Pages';
-$activeTab   = 'studio';
+$navSubtitle = $client['name'] . ' · Pages';
+$activeTab   = 'pages';
 $pageWide    = true;
 $navWide     = true;
-$navBack     = ['href' => $studioUrl, 'label' => 'Studio'];
+$navBack     = ['href' => $studioUrl, 'label' => 'Pages'];
 $navLinks    = [];
 if ($isEdit) $navLinks[] = ['label' => 'Open in Pages', 'href' => pageUrl($page)];
 if ($viewUrl !== '') $navLinks[] = ['label' => 'Open page', 'href' => $viewUrl, 'attrs' => ['target' => '_blank', 'rel' => 'noopener']];

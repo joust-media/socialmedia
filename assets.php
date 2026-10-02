@@ -59,6 +59,9 @@
  *                      comments, client vs Joust styling) for the viewer's Comments
  *                      panel, fetched lazily per image. Tenant-checked like the grid.
  *   &rescan=1          ask syncTireSeries() to rescan media/tires/<tire>/ now
+ *   &manage=series     (admin, an open tire) open the Manage series sheet on load — rename / reorder / delete
+ *                      series, their Google Drive links, add a series, the FTP folder, Rescan folders and
+ *                      Repair server rules (static/js/series-manage.js; the old Studio Renders tab lands here)
  */
 
 require __DIR__ . '/db.php';
@@ -76,7 +79,7 @@ if (!defined('ASSETS_PAGE')) { define('ASSETS_PAGE', 60); }              // tile
 // ---------------------------------------------------------------------
 if (!$client) {
     if ($isAdmin) {
-        header('Location: ' . clientUrl('admin.php'), true, 302);   // pick a client first
+        header('Location: ' . pagePath('index'), true, 302);   // pick a client first (Home: "Choose a client")
         exit;
     }
     http_response_code(400);
@@ -872,7 +875,8 @@ include __DIR__ . '/partials/layout-top.php';
             <div class="as-menu" data-series-menu-root>
               <button type="button" class="ui-btn ui-btn--sm ui-btn--gray as-menu-btn" data-series-menu aria-haspopup="menu" aria-expanded="false" aria-label="Series options"><?= icon('ellipsis') ?></button>
               <div class="as-menu-list" data-series-menu-list role="menu" hidden>
-                <a class="as-menu-item" role="menuitem" href="<?= esc(clientUrl('studio.php', ['tab' => 'export', 'tire' => $itemId, 'series' => $seriesActive ? (int)$seriesActive['id'] : null])) ?>" data-series-export title="Studio → Export with this tire preselected"><?= icon('download') ?>Export approved…</a>
+                <button type="button" class="as-menu-item" role="menuitem" data-series-manage><?= icon('checklist') ?>Manage series…</button>
+                <a class="as-menu-item" role="menuitem" href="<?= esc(manageUrl('export', ['tire' => $itemId, 'series' => $seriesActive ? (int)$seriesActive['id'] : null])) ?>" data-series-export title="Manage → Export with this tire preselected"><?= icon('download') ?>Export approved…</a>
                 <?php if ($seriesActive): ?>
                   <button type="button" class="as-menu-item" role="menuitem" data-series-rename><?= icon('wand') ?>Rename series…</button>
                   <button type="button" class="as-menu-item" role="menuitem" data-series-drive-edit><?= icon('drive') ?><?= $headDrive !== '' ? 'Edit Google Drive link…' : 'Add Google Drive link…' ?></button>
@@ -885,7 +889,8 @@ include __DIR__ . '/partials/layout-top.php';
       </section>
     <?php elseif ($seriesOn && $isAdmin): ?>
       <?php $hintUpload = ['dest' => 'series', 'tire' => $itemId, 'series' => 'new']; ?>
-      <p class="as-series-hint text-secondary" data-series-hint>No series yet — <a href="<?= esc(uploadSheetUrl('assets.php', $hintUpload, ['view' => 'collections', 'item' => $itemId])) ?>"<?= uploadSheetAttrs($hintUpload) ?>>upload renders</a> or drop a folder into <code><?= esc(function_exists('tireFolderRel') ? tireFolderRel($client, $collection) . '/' : 'media/tires/<tire>/') ?></code>.</p>
+      <p class="as-series-hint text-secondary" data-series-hint>No series yet — <a href="<?= esc(uploadSheetUrl('assets.php', $hintUpload, ['view' => 'collections', 'item' => $itemId])) ?>"<?= uploadSheetAttrs($hintUpload) ?>>upload renders</a> or drop a folder into <code><?= esc(function_exists('tireFolderRel') ? tireFolderRel($client, $collection) . '/' : 'media/tires/<tire>/') ?></code>.
+        <button type="button" class="ui-btn ui-btn--sm ui-btn--gray" data-series-manage>Manage series</button></p>
     <?php endif; ?>
   <?php endif; ?>
 
@@ -1019,5 +1024,59 @@ $assetsConfig = [
 $footExtra = '<script>window.AssetsPage = ' . json_encode($assetsConfig, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_UNESCAPED_SLASHES) . ';</script>' . "\n"
            . ($isAdmin ? '<script src="' . esc(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n" : '')   // App.chunkUpload for the viewer's Replace (admin only)
            . '<script src="' . esc(staticUrl('js/assets.js')) . '" defer></script>' . "\n";
+// Admin: Manage series (static/js/series-manage.js) — its own sheet, on every open tire once series exist (migrate.php).
+if ($isAdmin && $seriesOn && $collection) {
+    $smFolder  = function_exists('tireFolderRel') ? (string)tireFolderRel($client, $collection) : 'media/tires/' . safeFilenameStem((string)$collection['name']);
+    $smDriveOn = function_exists('tireSeriesHasDriveUrl') && tireSeriesHasDriveUrl($pdo);   // migrate.php 29
+    $smConfig  = [
+        'tire'      => ['id' => $itemId, 'name' => (string)$collection['name'], 'folder' => $smFolder],
+        'series'    => array_map(static function ($sr) {
+            return ['id' => (int)$sr['id'], 'name' => (string)$sr['name'], 'slug' => (string)($sr['slug'] ?? ''), 'folder' => (string)($sr['folder'] ?? ''),
+                    'drive_url' => !empty($sr['drive_url']) ? (string)$sr['drive_url'] : null,
+                    'counts' => ['pending' => (int)($sr['counts']['pending'] ?? 0), 'approved' => (int)($sr['counts']['approved'] ?? 0),
+                                 'denied' => (int)($sr['counts']['denied'] ?? 0), 'total' => (int)($sr['counts']['total'] ?? 0)]];
+        }, $seriesList),
+        'status'    => basePath() . '/tire-status.php',     // series_create / series_rename / series_drive / series_reorder / series_delete / rescan
+        'repair'    => basePath() . '/tire-upload.php?client=' . rawurlencode($slug),   // action=repair_media
+        'driveOn'   => $smDriveOn,
+        'seriesUrl' => clientUrl('assets.php', ['view' => 'collections', 'item' => $itemId, 'series' => '__SERIES__']),
+        'open'      => ($_GET['manage'] ?? '') === 'series',
+    ];
+    $footExtra .= '<script>window.SeriesManageConfig = ' . json_encode($smConfig, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_UNESCAPED_SLASHES) . ';</script>' . "\n"
+                . '<script src="' . esc(staticUrl('js/series-manage.js')) . '" defer></script>' . "\n";
+    ob_start(); ?>
+    <div class="sm" data-series-manager>
+      <p class="sm-intro text-secondary">What <?= esc($client['name']) ?> sees under <?= esc($collection['name']) ?>: rename, reorder or remove a series<?= $smDriveOn ? ', and paste a Google Drive share link to give the client an “Open in Google Drive” button on it' : '' ?>.</p>
+      <h3 class="as-series-label">Series · <span data-sm-count><?= count($seriesList) ?> series</span></h3>
+      <ul class="sm-list" data-sm-list role="list"></ul>
+      <p class="text-secondary sm-empty" data-sm-empty<?= $seriesList ? ' hidden' : '' ?>>No series yet — add one below, upload renders, or drop a folder by FTP and rescan.</p>
+      <form class="sm-add" data-sm-add novalidate>
+        <h3 class="as-series-label">Add a series</h3>
+        <label class="ui-visually-hidden" for="smNewName">New series name</label>
+        <input class="ui-input" type="text" id="smNewName" maxlength="80" placeholder="e.g. Series 3" data-sm-new-name required>
+        <?php if ($smDriveOn): ?>
+          <label class="ui-visually-hidden" for="smNewDrive">Google Drive link (optional)</label>
+          <input class="ui-input" type="url" id="smNewDrive" maxlength="512" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Google Drive link (optional)" data-sm-new-drive>
+        <?php endif; ?>
+        <button type="submit" class="ui-btn ui-btn--tinted">Add series</button>
+      </form>
+      <div class="sm-ftp">
+        <h3 class="as-series-label">FTP folder</h3>
+        <p class="sm-folder"><code data-sm-folder><?= esc($smFolder) ?>/</code> <button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-sm-copy title="Copy the folder path">Copy</button></p>
+        <p class="text-secondary sm-help">Drop a sub-folder per series (<code>…/Series 3/</code>), then rescan: new folders become series, new files land as “To Review”.</p>
+        <div class="sm-actions">
+          <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-sm-rescan>Rescan folders</button>
+          <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-sm-repair title="Rewrite the media/tires/ server rules (.htaccess) and make every render readable by the web server (0644 / 0755)">Repair server rules</button>
+        </div>
+      </div>
+    </div>
+    <?php
+    $sheetId    = 'seriesManageSheet';
+    $sheetTitle = 'Manage series · ' . (string)$collection['name'];
+    $sheetBody  = (string)ob_get_clean();
+    ob_start();
+    include __DIR__ . '/partials/sheet.php';   // after </main> (layout-bottom prints $footExtra there), like #uiSheet
+    $footExtra = (string)ob_get_clean() . $footExtra;
+}
 $includeSheet = $isAdmin && $seriesOn && $seriesActive !== null;   // only the admin's Rename / Delete series forms use the generic sheet
 include __DIR__ . '/partials/layout-bottom.php';

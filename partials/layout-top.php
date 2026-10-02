@@ -18,10 +18,12 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
  *   $navLeading   raw HTML for the leading slot
  *   $navTrailing  raw HTML for the top-right slot (default: client avatar)
  *   $navLinks     [['label', 'href', 'primary' => bool], …] small button row under the title
- *   $activeTab    'home'|'assets'|'tires'|'posts'|'emails'|'projects'|'studio' (default: from script name)
+ *   $activeTab    'home'|'assets'|'tires'|'posts'|'emails'|'pages'|'projects'|'manage' (default: from script name)
  *   $pageWide     true → 1200px content column (grids); default 720px
  *   $bodyClass    extra <body> classes
  *   $headExtra    raw HTML appended to <head> (page-specific <style>/<link>)
+ *   $pageFlash    one-shot message (e.g. ?msg= after a save elsewhere) → <body data-flash>; app.js toasts it once
+ *                 and drops msg= from the URL
  */
 $pageTitle = isset($pageTitle) ? (string)$pageTitle : (($client['name'] ?? null) ?: 'Joust');
 if (!isset($htmlTitle)) {
@@ -49,6 +51,6 @@ $uiRole = isAdmin() ? 'admin' : 'client';
 <?= isset($headExtra) ? $headExtra : '' ?>
 <?= avatarScriptTag($client ?? null) ?>
 </head>
-<body class="<?= esc(trim('ui-body ' . (isset($bodyClass) ? (string)$bodyClass : ''))) ?>" data-role="<?= $uiRole ?>" data-actor="<?= $uiRole ?>"<?= !empty($client['slug']) ? ' data-client="' . esc($client['slug']) . '"' : '' ?>>
+<body class="<?= esc(trim('ui-body ' . (isset($bodyClass) ? (string)$bodyClass : ''))) ?>" data-role="<?= $uiRole ?>" data-actor="<?= $uiRole ?>"<?= !empty($client['slug']) ? ' data-client="' . esc($client['slug']) . '"' : '' ?><?= isset($pageFlash) && is_string($pageFlash) && trim($pageFlash) !== '' ? ' data-flash="' . esc(mb_substr(trim($pageFlash), 0, 300)) . '"' : '' ?>>
 <?php include __DIR__ . '/navbar.php'; ?>
 <main class="ui-page<?= !empty($pageWide) ? ' ui-page--wide' : '' ?>" id="main">

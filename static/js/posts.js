@@ -913,6 +913,7 @@
         return;
       }
       if (t.closest('[data-replace-image]')) { closeMenu(root); var inp = $('[data-replace-input]', root); if (inp) inp.click(); return; }
+      if (t.closest('[data-download-media]')) { closeMenu(root); downloadMedia(root, id); return; }
 
       var when = t.closest('[data-when-toggle]');
       if (when) {
@@ -940,6 +941,22 @@
       if (view) { var img = $('img', view); if (img) openViewer(img.currentSrc || img.src, img.alt, view.getAttribute('data-original') || ''); return; }   // the lg preview on screen, the file behind "View original"
     });
 
+    /** Admin "Download media": every slide's file (data-src), saved one after another as <client>-<post id>-<n>.<ext>. */
+    function downloadMedia(root, id) {
+      var slides = $$('.pd-slide[data-src]', root);
+      if (!slides.length) { toast('This post has no media yet', 'error'); return; }
+      var stem = String(document.body.getAttribute('data-client') || 'post').replace(/[^a-z0-9-]/gi, '-');
+      slides.forEach(function (s, i) {
+        window.setTimeout(function () {
+          var src = s.getAttribute('data-src'), ext = s.getAttribute('data-ext') || (src.split('?')[0].split('.').pop() || 'jpg');
+          var a = document.createElement('a');
+          a.href = src; a.download = stem + '-' + id + '-' + (i + 1) + '.' + ext.toLowerCase().replace('jpeg', 'jpg');
+          a.rel = 'noopener'; a.hidden = true;
+          document.body.appendChild(a); a.click(); a.remove();
+        }, i * 300);   // browsers drop rapid-fire downloads
+      });
+      toast(slides.length === 1 ? 'Downloading 1 file' : 'Downloading ' + slides.length + ' files', 'success');
+    }
     function closeMenu(root) {
       var m = $('[data-menu]', root); if (m && !m.hidden) { m.hidden = true; var b = $('[data-menu-toggle]', root); if (b) b.setAttribute('aria-expanded', 'false'); }
     }

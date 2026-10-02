@@ -79,7 +79,7 @@ if (!$client) {
     if (!$hasTable) {
         echo '<div class="ui-empty">Emails are not set up yet — run <code>migrate.php</code> first.</div>';
     } elseif (!$companies) {
-        echo '<div class="ui-empty">No client has the Emails module yet. Enable it in Studio or add the first email.</div>';
+        echo '<div class="ui-empty">No client has the Emails module yet. Turn it on in Manage → Clients, or add the first email.</div>';
     } else {
         echo insetListOpen('Clients');
         foreach ($companies as $c) {
@@ -338,6 +338,7 @@ $segLabel = $segment === 'all' ? 'All' : $segments[$segment];
 // ---------------------------------------------------------------------
 $pageTitle   = 'Emails';
 $activeTab   = 'emails';
+$pageFlash   = $admin && is_string($_GET['msg'] ?? null) ? $_GET['msg'] : '';   // after a save in add-email.php (toasted once)
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">' . "\n"
              . '<link rel="stylesheet" href="' . h(staticUrl('css/emails.css')) . '">';
 $bodyClass   = 'page-emails';
@@ -371,6 +372,8 @@ $footExtra = '<script>window.EmailsConfig = ' . json_encode($emailsConfig, JSON_
 
 include __DIR__ . '/partials/layout-top.php';
 ?>
+
+<?= emailsPagesSwitchHtml('emails', $client, $pdo) // admin, merged Emails/Pages tab only ?>
 
 <div class="posts-toolbar emails-toolbar">
   <?= segmented($segItems, ['label' => 'Email status']) ?>

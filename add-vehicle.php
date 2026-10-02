@@ -357,7 +357,7 @@ $formSubmitText = $isEdit ? 'Save changes' : 'Create vehicle';
 
 <?= renderAppChrome($isEdit ? 'Edit vehicle' : 'New vehicle', [
       'subtitle' => 'Vehicle Library',
-      'active'   => 'studio',
+      'active'   => 'manage',
       'width'    => '860px',
       'trailing' => '',
       'back'     => ['href' => 'vehicles.php', 'label' => 'Vehicles'],

@@ -77,7 +77,7 @@ if (!$client) {
     if (!$hasTable) {
         echo '<div class="ui-empty">Pages are not set up yet — run <code>migrate.php</code> first.</div>';
     } elseif (!$companies) {
-        echo '<div class="ui-empty">No client has the Pages module yet. Enable it in Studio or add the first page.</div>';
+        echo '<div class="ui-empty">No client has the Pages module yet. Turn it on in Manage → Clients, or add the first page.</div>';
     } else {
         echo insetListOpen('Clients');
         foreach ($companies as $c) {
@@ -323,6 +323,7 @@ $segLabel = $segment === 'all' ? 'All' : $segments[$segment];
 // ---------------------------------------------------------------------
 $pageTitle   = 'Pages';
 $activeTab   = 'pages';
+$pageFlash   = $admin && is_string($_GET['msg'] ?? null) ? $_GET['msg'] : '';   // after a save in add-page.php (toasted once)
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">' . "\n"
              . '<link rel="stylesheet" href="' . h(staticUrl('css/pages.css')) . '">';
 $bodyClass   = 'page-pages';
@@ -344,6 +345,8 @@ $footExtra = '<script>window.PagesConfig = ' . json_encode($pagesConfig, JSON_UN
 
 include __DIR__ . '/partials/layout-top.php';
 ?>
+
+<?= emailsPagesSwitchHtml('pages', $client, $pdo) // admin, merged Emails/Pages tab only ?>
 
 <div class="posts-toolbar pages-toolbar">
   <?= segmented($segItems, ['label' => 'Page status']) ?>

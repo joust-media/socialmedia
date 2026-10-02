@@ -87,9 +87,111 @@ require_once __DIR__ . '/partials/components/new-menu.php';   // admin "+ New" (
 require_once __DIR__ . '/partials/components/upload-sheet.php'; // admin Upload sheet: boot tags (layout-bottom.php) + uploadSheetUrl() / uploadSheetAttrs()
 
 /** The admin's hub for the global tools (Prompt / Vehicle Library, AI Builder, Drive, Clients) — the parent
- *  their back links point at. Today the unscoped Studio page; the one place to repoint when it moves. */
+ *  their back links point at: Manage → Tools (manage.php, keeping the client scope when there is one).
+ *  The one place to repoint when it moves. */
 if (!function_exists('adminToolsUrl')) {
-    function adminToolsUrl(): string { return pagePath('studio'); }
+    function adminToolsUrl(): string { return manageUrl('tools'); }
+}
+
+/** Manage (manage.php) — the admin's settings hub. Sections: clients · export · drive (drive.php) · tools. */
+if (!defined('MANAGE_SECTIONS')) {
+    define('MANAGE_SECTIONS', ['clients' => 'Clients', 'export' => 'Export', 'drive' => 'Drive', 'tools' => 'Tools']);
+}
+
+if (!function_exists('manageUrl')) {
+    /** manageUrl('export', ['tire' => 3]) → manage.php?client=<scope>&section=export&tire=3 · 'drive' → drive.php (the view
+     *  itself is global; the scope rides along so the tab bar and the Manage switch keep the client). */
+    function manageUrl(string $section = '', array $extra = []): string {
+        if ($section === 'drive') return clientUrl('drive.php', $extra);
+        return clientUrl('manage.php', ($section !== '' ? ['section' => $section] : []) + $extra);
+    }
+}
+
+if (!function_exists('manageNavHtml')) {
+    /** The Manage section switch (a segmented row of links) shared by manage.php and drive.php. */
+    function manageNavHtml(string $active): string {
+        $items = [];
+        foreach (MANAGE_SECTIONS as $key => $label) {
+            $items[] = ['label' => $label, 'href' => manageUrl($key), 'active' => $key === $active, 'value' => $key,
+                        'attrs' => ['data-manage-section-link' => $key]];
+        }
+        return '<div class="manage-toolbar">' . segmented($items, ['label' => 'Manage sections', 'class' => 'manage-segmented']) . '</div>';
+    }
+}
+
+if (!function_exists('navMergesEmailsPages')) {
+    /** The admin tab bar holds at most 6 items (partials/tabbar.php): when a client has Tires, Emails AND Pages, Emails and
+     *  Pages share one "Emails/Pages" tab and both pages carry an Emails · Pages switch (emailsPagesSwitchHtml()). */
+    function navMergesEmailsPages(?array $client, ?PDO $pdo): bool {
+        if (empty($client['id']) || !$pdo || !isAdmin()) return false;
+        try {
+            return companyHasTires($client, $pdo)
+                && function_exists('companyHasEmails') && companyHasEmails($client, $pdo)
+                && function_exists('companyHasPages') && companyHasPages($client, $pdo);
+        } catch (Throwable $e) {
+            return false;
+        }
+    }
+}
+
+if (!function_exists('emailsPagesSwitchHtml')) {
+    /** "Emails · Pages" segmented links for the merged admin tab ('' when the tabs are separate). */
+    function emailsPagesSwitchHtml(string $active, ?array $client, ?PDO $pdo): string {
+        if (!navMergesEmailsPages($client, $pdo)) return '';
+        $items = [
+            ['label' => 'Emails', 'href' => clientUrl('emails.php'), 'active' => $active === 'emails', 'value' => 'emails', 'attrs' => ['data-mail-switch' => 'emails']],
+            ['label' => 'Pages',  'href' => clientUrl('pages.php'),  'active' => $active === 'pages',  'value' => 'pages',  'attrs' => ['data-mail-switch' => 'pages']],
+        ];
+        return '<div class="manage-toolbar mail-switch">' . segmented($items, ['label' => 'Emails or Pages']) . '</div>';
+    }
+}
+
+if (!function_exists('legacyAdminTarget')) {
+    /**
+     * Where an old admin URL lands now — shared by studio.php, admin.php and legacy/admin.php so every bookmark
+     * of the retired Studio / Classic admin keeps working ($q = the old query string, i.e. $_GET):
+     *   tab=posts → Posts · tab=uploads|batch → Posts with the Upload sheet (a draft post per file)
+     *   tab=compose or newpost=1 → Posts with the New post pop-up · tab=emails / pages → those pages
+     *   tab=renders[&tire=&series=] → the tire in Assets with Manage series open (no tire → the Tires list)
+     *   tab=export[&tire=&series=] → Manage → Export · tab=clients[&edit=] → Manage → Clients · no tab → Manage
+     *   upload=1[&dest=&tire=&series=&each=] → the same Upload sheet deep link on Posts. ?msg= is kept.
+     * Returns a root-rooted URL; the client scope comes from $q['client'].
+     */
+    function legacyAdminTarget(array $q): string {
+        $slug  = preg_replace('/[^a-z0-9\-]/', '', strtolower(trim(is_string($q['client'] ?? null) ? $q['client'] : '')));
+        $tab   = strtolower(trim(is_string($q['tab'] ?? null) ? $q['tab'] : ''));
+        $msg   = isset($q['msg']) && is_string($q['msg']) && trim($q['msg']) !== '' ? trim($q['msg']) : null;
+        $int   = static function (string $k) use ($q) { $v = is_scalar($q[$k] ?? null) ? (int)$q[$k] : 0; return $v > 0 ? $v : null; };
+        $build = static function (string $page, array $extra) use ($slug) {
+            $extra = array_filter(($slug !== '' ? ['client' => $slug] : []) + $extra, static function ($v) { return $v !== null && $v !== ''; });
+            return pagePath($page) . ($extra ? '?' . http_build_query($extra) : '');
+        };
+        if (!empty($q['upload'])) {   // an Upload sheet deep link keeps its destination
+            $keep = ['upload' => '1'];
+            foreach (['dest', 'tire', 'series', 'each'] as $k) {
+                if (isset($q[$k]) && is_scalar($q[$k]) && preg_match('/^[a-z0-9]{1,20}$/', (string)$q[$k])) $keep[$k] = (string)$q[$k];
+            }
+            if ($tab === 'uploads' || $tab === 'batch') $keep += ['dest' => 'post', 'each' => '1'];
+            return $build('posts', $keep);
+        }
+        if (!empty($q['newpost']) || $tab === 'compose') return $build('posts', ['newpost' => 1]);
+        switch ($tab) {
+            case 'posts':   return $build('posts', ['msg' => $msg]);
+            case 'uploads':
+            case 'batch':   return $build('posts', ['upload' => '1', 'dest' => 'post', 'each' => '1']);
+            case 'emails':  return $build('emails', ['msg' => $msg]);
+            case 'pages':   return $build('pages', ['msg' => $msg]);
+            case 'renders':
+                if ($slug === '') return $build('manage', ['section' => 'tools']);
+                $tire = $int('tire');
+                return $build('assets', ['view' => 'collections', 'item' => $tire, 'series' => $tire ? $int('series') : null, 'manage' => $tire ? 'series' : null]);
+            case 'export':  return $build('manage', ['section' => 'export', 'tire' => $int('tire'), 'series' => $int('series'), 'msg' => $msg]);
+            case 'clients': return $build('manage', ['section' => 'clients', 'edit' => $int('edit'), 'msg' => $msg]);
+            case 'tools':   return $build('manage', ['section' => 'tools', 'msg' => $msg]);
+            case 'drive':   return pagePath('drive');
+        }
+        return $build('manage', ['msg' => $msg]);
+    }
 }
 
 /** Return "client=hmf" or "" for building URLs */
@@ -279,14 +381,14 @@ function renderClientNav(array $items, $current = '', array $opts = []) {
     return renderAppChrome($title, $opts);
 }
 
-/** Map a legacy page key to a tab id ('home'|'assets'|'posts'|'projects'|'studio'|null). */
+/** Map a legacy page key to a tab id ('home'|'assets'|'posts'|'projects'|'manage'|null). */
 function appTabForPage(string $current) {
     if ($current === 'index')    return 'home';
     if ($current === 'feed')     return 'posts';
     if ($current === 'library')  return 'assets';
     if (strpos($current, 'module:') === 0) return 'assets';
     if ($current === 'projects') return 'projects';
-    if ($current === 'admin' || $current === 'studio') return 'studio';
+    if ($current === 'admin' || $current === 'studio' || $current === 'manage') return 'manage';
     return null;
 }
 
@@ -297,7 +399,7 @@ function appPageTitle(string $current, array $items, $client): string {
         case 'feed':     return 'Posts';
         case 'library':  return 'Assets';
         case 'projects': return 'Projects';
-        case 'admin':    return 'Studio';
+        case 'admin':    return 'Manage';
     }
     foreach ($items as $it) {
         if (($it['page'] ?? '') === $current && !empty($it['label'])) return (string)$it['label'];
@@ -1368,8 +1470,8 @@ if (!function_exists('activityDeepLink')) {
                     ? emailFlowUrl(['slug' => $flowSlug], $qs)
                     : clientUrl('flows', $qs + ($flowSlug !== '' ? ['flow' => $flowSlug] : []));
             case 'company':
-                // Studio → Clients with this client's card open (admin only; a client never sees company rows link there).
-                return clientUrl('studio', $qs + ['tab' => 'clients', 'edit' => $id]);
+                // Manage → Clients with this client's card open (admin only; a client never sees company rows link there).
+                return clientUrl('manage', $qs + ['section' => 'clients', 'edit' => $id]);
             case 'drive_snapshot':
                 // The Drive storage view (admin-only, unscoped — never carries a client).
                 return pagePath('drive') . '?' . http_build_query(['snapshot' => $id]);

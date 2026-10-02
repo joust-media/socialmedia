@@ -1,15 +1,9 @@
 /* =====================================================================
-   Studio (admin only) — extends the Foundation `App` (app.js loads first).
+   Manage (admin only; manage.php, add-email.php) — extends the Foundation `App` (app.js loads first).
+   The name is historical: this file served the Studio hub, which became Manage. Tire series management
+   (the old Renders tab) moved to static/js/series-manage.js (Assets → a tire → Manage series).
 
-   Uploading lives in the Upload sheet (static/js/upload-sheet.js, App.uploadSheet): the Uploads
-   tab and the Renders tab carry a launcher ([data-upload-drop]) that opens it with the destination
-   preselected (Uploads: a draft post per file; Renders: the tire + series picked here), and files
-   dropped on a launcher come along.
-   App.studio.renders(root)  Renders tab (tire series): tire + series pickers that steer the
-                             launcher, the FTP folder, rescan / repair, and the series list
-                             (rename / reorder / delete / Drive link → tire-status.php); a finished
-                             upload (event upload:done) updates the counts and adds a new series.
-   App.studio.export(root)   Export tab: scope + include options → live estimate
+   App.studio.export(root)   Manage → Export: scope + include options → live estimate
                              (export.php action=estimate), Build = start then
                              step until done (progress by bytes, ETA, Cancel),
                              Download (GET action=download, resumable), and the
@@ -57,227 +51,7 @@
   }
 
   var ICON = {
-    left:  '<svg class="ui-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg>',
-    right: '<svg class="ui-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg>',
-    download: '<svg class="ui-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5v11.5"/><path d="m7.5 10.5 4.5 4.5 4.5-4.5"/><path d="M4.5 16v2a2.5 2.5 0 0 0 2.5 2.5h10a2.5 2.5 0 0 0 2.5-2.5v-2"/></svg>',
-    drive: '<svg class="ui-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3.5h6l6.5 11.5-3 5.5H5.5l-3-5.5z"/><path d="M2.5 15h19M15 3.5 8.5 15"/></svg>'
-  };
-
-  /* ================================================================== */
-  /* Renders (tire series) → tire-upload.php, one XHR per file          */
-  /*   cfg.renders = {endpoint, status, assetsUrl, rescanUrl, tires:[{id,name,folder,series:[{id,name,slug,folder,counts}]}], tire, series, maxMb} */
-  /* ================================================================== */
-  var NEW_SERIES = '__new__';
-  function Renders(root) {
-    var self = this, rc = cfg.renders || {};
-    this.root = root; this.rc = rc;
-    this.endpoint = root.dataset.endpoint || rc.endpoint || 'tire-upload.php';         // repair_media
-    this.statusEndpoint = root.dataset.statusEndpoint || rc.status || 'tire-status.php';
-    this.tires = rc.tires || [];
-    this.tireSel = $('[data-renders-tire]', root); this.seriesSel = $('[data-renders-series]', root);
-    this.launch = $('[data-renders-launch]', root);                                       // opens the Upload sheet on the picked tire + series
-    this.seriesList = $('[data-renders-series-list]', root); this.seriesEmpty = $('[data-renders-series-empty]', root);
-    this.driveOn = !!rc.driveOn;
-    if (!this.tireSel || !this.seriesSel) return;
-    this.tireSel.addEventListener('change', function () { rc.series = 0; self.syncSeries(); });
-    this.seriesSel.addEventListener('change', function () { rc.series = parseInt(self.seriesSel.value, 10) || 0; self.syncTarget(); });
-    root.addEventListener('click', function (e) {
-      if (e.target.closest('[data-renders-copy]')) { self.copyFolder(); return; }
-      if (e.target.closest('[data-renders-rescan]')) { self.rescan(e.target.closest('[data-renders-rescan]')); return; }
-      if (e.target.closest('[data-renders-repair]')) { self.repair(e.target.closest('[data-renders-repair]')); return; }
-      var row = e.target.closest('[data-series-row]');
-      if (!row) return;
-      if (e.target.closest('[data-series-up]'))     { self.moveSeries(row, -1); }
-      else if (e.target.closest('[data-series-down]')) { self.moveSeries(row, 1); }
-      else if (e.target.closest('[data-series-delete]')) { self.deleteSeries(row); }
-      else if (e.target.closest('[data-series-rename-save]')) { self.renameSeries(row); }
-      else if (e.target.closest('[data-series-drive-save]')) { self.saveDrive(row); }
-    });
-    root.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && e.target.matches('[data-series-name]')) { e.preventDefault(); self.renameSeries(e.target.closest('[data-series-row]')); }
-      if (e.key === 'Enter' && e.target.matches('[data-series-drive]')) { e.preventDefault(); self.saveDrive(e.target.closest('[data-series-row]')); }
-    });
-    root.addEventListener('input', function (e) {
-      if (e.target.matches('[data-series-drive]')) { e.target.removeAttribute('aria-invalid'); var w = e.target.closest('[data-series-drive-wrap]'); if (w) w.classList.toggle('is-dirty', true); }
-    });
-    // The Upload sheet finished a tire-series run: count the new files, add a series it created, follow it here.
-    document.addEventListener('upload:done', function (e) { self.uploaded(e.detail || {}); });
-    this.syncSeries();
-  }
-  Renders.prototype.tire = function () {
-    var id = parseInt(this.tireSel.value, 10);
-    for (var i = 0; i < this.tires.length; i++) if (this.tires[i].id === id) return this.tires[i];
-    return this.tires[0] || null;
-  };
-  Renders.prototype.seriesOf = function (tire, id) {
-    for (var i = 0; tire && i < tire.series.length; i++) if (tire.series[i].id === id) return tire.series[i];
-    return null;
-  };
-  /** Series <select> for the current tire (+ "New series…"); folder hint, Open link and the series card follow. */
-  Renders.prototype.syncSeries = function () {
-    var tire = this.tire(), rc = this.rc, want = parseInt(rc.series, 10) || 0, self = this;
-    if (!tire) return;
-    var html = tire.series.map(function (s) {
-      return '<option value="' + s.id + '">' + esc(s.name) + ' · ' + esc(String(s.counts.total)) + (s.counts.total === 1 ? ' file' : ' files') + '</option>';
-    }).join('') + '<option value="' + NEW_SERIES + '">New series…</option>';
-    this.seriesSel.innerHTML = html;
-    var pick = this.seriesOf(tire, want) ? String(want) : (tire.series.length ? String(tire.series[tire.series.length - 1].id) : NEW_SERIES);
-    this.seriesSel.value = pick;
-    var folder = $('[data-renders-folder]', this.root); if (folder) folder.textContent = (tire.folder || '') + '/';
-    var name = $('[data-renders-tire-name]', this.root); if (name) name.textContent = tire.name;
-    var open = $('[data-renders-open]', this.root);
-    if (open) open.href = (rc.assetsUrl || '').replace('__TIRE__', String(tire.id)).replace(/([&?])series=__SERIES__/, '');
-    this.syncNewName();
-    this.renderSeriesList();
-    $$('[data-renders-tire] option', this.root).forEach(function (o) {
-      var t = self.tires.filter(function (x) { return String(x.id) === o.value; })[0];
-      if (t) o.textContent = t.name + (t.series.length ? ' · ' + t.series.length + ' series' : '');
-    });
-  };
-  Renders.prototype.syncNewName = function () { this.syncTarget(); };
-  /** The launcher opens the Upload sheet on the tire + series picked here ("New series…" → the sheet names it). */
-  Renders.prototype.syncTarget = function () {
-    var tire = this.tire(); if (!tire || !this.launch) return;
-    var sv = this.seriesSel.value, s = sv === NEW_SERIES ? null : this.seriesOf(tire, parseInt(sv, 10));
-    this.launch.setAttribute('data-upload-tire', String(tire.id));
-    this.launch.setAttribute('data-upload-series', s ? String(s.id) : 'new');
-    var el = $('[data-renders-target]', this.root);
-    if (el) el.textContent = tire.name + ' · ' + (s ? s.name : 'a new series');
-  };
-  /** upload:done {dest, ok, created} from the Upload sheet → counts + a created series in the pickers and the list. */
-  Renders.prototype.uploaded = function (d) {
-    if (!d.dest || d.dest.kind !== 'series' || !d.ok) return;
-    var tire = null, sid = d.dest.series === 'new' ? (d.created && d.created.id) : parseInt(d.dest.series, 10);
-    for (var i = 0; i < this.tires.length; i++) if (this.tires[i].id === parseInt(d.dest.tire, 10)) tire = this.tires[i];
-    if (!tire || !sid) return;
-    var s = this.seriesOf(tire, sid);
-    if (!s && d.created) { s = { id: d.created.id, name: d.created.name || 'Series', slug: '', folder: '', drive_url: null, counts: { pending: 0, approved: 0, denied: 0, total: 0 } }; tire.series.push(s); }
-    if (!s) return;
-    s.counts.pending += d.ok; s.counts.total += d.ok;
-    this.rc.series = s.id;
-    if (this.tireSel.value === String(tire.id)) this.syncSeries(); else this.renderSeriesList();
-  };
-  Renders.prototype.copyFolder = function () {
-    var code = $('[data-renders-folder]', this.root), text = code ? code.textContent : '';
-    if (!text) return;
-    var done = function () { toast('Folder path copied', { kind: 'success' }); };
-    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, function () { window.prompt('Copy the folder path', text); });
-    else window.prompt('Copy the folder path', text);
-  };
-  /** Rescan media/tires/<tire>/: tire-status.php action=rescan when the backend has it, else the assets.php &rescan=1 GET. */
-  Renders.prototype.rescan = function (btn) {
-    var self = this, tire = this.tire(), rc = this.rc;
-    if (!tire) return;
-    if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = 'Rescanning…'; }
-    var finish = function (ok, msg) {
-      if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); btn.textContent = 'Rescan folders'; }
-      if (ok) { toast(msg || 'Folders rescanned', { kind: 'success' }); window.location.href = (cfg.tabUrl || '').replace('__TAB__', 'renders') + '&tire=' + tire.id; }
-      else toast(msg || 'Rescan failed', { kind: 'error' });
-    };
-    App.post(this.statusEndpoint, { action: 'rescan', tire_id: tire.id, actor: App.actor }).then(function (res) {
-      if (res.ok) { var d = res.data || {}; finish(true, d.added !== undefined ? (d.added + ' new file' + (d.added === 1 ? '' : 's') + ' found') : ''); return; }
-      var url = (rc.rescanUrl || '').replace('__TIRE__', String(tire.id));
-      if (!url) { finish(false, res.error); return; }
-      fetch(url, { credentials: 'same-origin' }).then(function (r) { finish(r.ok, r.ok ? '' : 'Rescan failed (' + r.status + ')'); }, function () { finish(false, 'Network error'); });
-    });
-  };
-  /** "Repair server rules": tire-upload.php action=repair_media — media/tires/.htaccess rewritten when old / missing,
-   *  an old media/.htaccess of ours removed, every render made readable (0644 / 0755). The reply's summary is toasted. */
-  Renders.prototype.repair = function (btn) {
-    if (btn && btn.disabled) return;
-    if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = 'Repairing…'; }
-    App.post(this.endpoint, { action: 'repair_media', actor: App.actor }).then(function (res) {
-      if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); btn.textContent = 'Repair server rules'; }
-      var d = res.data || {};
-      if (res.ok) toast(d.summary || 'Server rules repaired', { kind: 'success' });
-      else toast(res.error || 'Repair failed', { kind: 'error' });
-    });
-  };
-  /* ---- series list: rename / reorder / delete (tire-status.php) ---- */
-  Renders.prototype.renderSeriesList = function () {
-    var tire = this.tire(), self = this;
-    if (!this.seriesList || !tire) return;
-    this.seriesList.innerHTML = tire.series.map(function (s, i) {
-      var c = s.counts || {};
-      var line = (c.pending || 0) + ' to review · ' + (c.approved || 0) + ' approved' + ((c.denied || 0) ? ' · ' + c.denied + ' needs changes' : '') + ' · ' + (c.total || 0) + (c.total === 1 ? ' file' : ' files');
-      var drive = self.driveOn
-        ? '<div class="studio-series-drive' + (s.drive_url ? ' is-set' : '') + '" data-series-drive-wrap>' + ICON.drive
-          + '<input class="ui-input studio-series-drive-input" type="url" maxlength="512" inputmode="url" autocomplete="off" spellcheck="false" value="' + esc(s.drive_url || '') + '" placeholder="Google Drive link (optional)" data-series-drive aria-label="Google Drive link for ' + esc(s.name) + '">'
-          + '<button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-series-drive-save>Save</button>'
-          + '<a class="ui-btn ui-btn--plain ui-btn--sm studio-series-drive-open" href="' + esc(s.drive_url || '#') + '" target="_blank" rel="noopener noreferrer" data-series-drive-open' + (s.drive_url ? '' : ' hidden') + '>Open</a>'
-          + '</div>'
-        : '';
-      return '<li class="studio-series-row' + (drive ? ' studio-series-row--drive' : '') + '" data-series-row="' + s.id + '">'
-        + '<div class="studio-series-main"><input class="ui-input studio-series-name" type="text" maxlength="80" value="' + esc(s.name) + '" data-series-name aria-label="Series name">'
-        + '<button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-series-rename-save>Rename</button></div>'
-        + '<div class="studio-series-meta text-secondary">' + esc(line) + (s.folder ? ' · <code>' + esc(s.folder) + '/</code>' : '') + '</div>'
-        + drive
-        + '<div class="studio-series-ctl">'
-        + '<a class="ui-btn ui-btn--plain ui-btn--sm" href="' + esc((self.rc.assetsUrl || '').replace('__TIRE__', String(tire.id)).replace('__SERIES__', String(s.id))) + '">Open</a>'
-        + '<button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-series-up aria-label="Move ' + esc(s.name) + ' up"' + (i === 0 ? ' disabled' : '') + '>' + ICON.left + '</button>'
-        + '<button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-series-down aria-label="Move ' + esc(s.name) + ' down"' + (i === tire.series.length - 1 ? ' disabled' : '') + '>' + ICON.right + '</button>'
-        + '<button type="button" class="ui-btn ui-btn--plain ui-btn--sm studio-danger-btn" data-series-delete>Delete</button>'
-        + '</div></li>';
-    }).join('');
-    if (this.seriesEmpty) this.seriesEmpty.hidden = tire.series.length > 0;
-  };
-  Renders.prototype.renameSeries = function (row) {
-    var self = this, tire = this.tire(), id = parseInt(row.dataset.seriesRow, 10), s = this.seriesOf(tire, id);
-    var input = $('[data-series-name]', row), name = (input.value || '').trim();
-    if (!s || !name || name === s.name) return;
-    App.post(this.statusEndpoint, { action: 'series_rename', series_id: id, name: name, actor: App.actor }).then(function (res) {
-      if (!res.ok) { toast(res.error || 'Could not rename', { kind: 'error' }); input.value = s.name; return; }
-      s.name = (res.data && res.data.series && res.data.series.name) || name;
-      toast('Series renamed', { kind: 'success' });
-      self.syncSeries();
-    });
-  };
-  /** Google Drive link of a series (tire-status.php series_drive): '' removes it; the server validates the host. */
-  Renders.prototype.saveDrive = function (row) {
-    var self = this, tire = this.tire(), id = parseInt(row.dataset.seriesRow, 10), s = this.seriesOf(tire, id);
-    var input = $('[data-series-drive]', row), url = input ? (input.value || '').trim() : '';
-    if (!s || !input || url === (s.drive_url || '')) return;
-    if (url && !/^https:\/\/(www\.)?(drive\.google\.com|docs\.google\.com|photos\.google\.com|photos\.app\.goo\.gl)\//i.test(url)) {
-      input.setAttribute('aria-invalid', 'true'); input.focus();
-      toast('Enter a Google Drive share link (https://drive.google.com/…)', { kind: 'error', duration: 5000 }); return;
-    }
-    var btn = $('[data-series-drive-save]', row); if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }
-    App.post(this.statusEndpoint, { action: 'series_drive', series_id: id, drive_url: url, actor: App.actor }).then(function (res) {
-      if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); }
-      if (!res.ok) { input.setAttribute('aria-invalid', 'true'); input.focus(); toast(res.error || 'Could not save the Google Drive link', { kind: 'error', duration: 6000 }); return; }
-      s.drive_url = (res.data && res.data.series && res.data.series.drive_url) || (url || null);
-      toast(s.drive_url ? 'Google Drive link saved' : 'Google Drive link removed', { kind: 'success' });
-      self.renderSeriesList();
-    });
-  };
-  Renders.prototype.moveSeries = function (row, dir) {
-    var self = this, tire = this.tire(), id = parseInt(row.dataset.seriesRow, 10), i = -1;
-    tire.series.forEach(function (s, k) { if (s.id === id) i = k; });
-    var j = i + dir;
-    if (i < 0 || j < 0 || j >= tire.series.length) return;
-    var moved = tire.series.splice(i, 1)[0]; tire.series.splice(j, 0, moved);
-    this.syncSeries();
-    var params = { action: 'series_reorder', tire_id: tire.id, actor: App.actor };
-    tire.series.forEach(function (s, k) { params['ids[' + k + ']'] = s.id; });
-    App.post(this.statusEndpoint, params).then(function (res) {
-      if (res.ok) return;
-      var back = tire.series.splice(j, 1)[0]; tire.series.splice(i, 0, back);   // roll back
-      self.syncSeries();
-      toast(res.error || 'Could not reorder', { kind: 'error' });
-    });
-  };
-  Renders.prototype.deleteSeries = function (row) {
-    var self = this, tire = this.tire(), id = parseInt(row.dataset.seriesRow, 10), s = this.seriesOf(tire, id);
-    if (!s) return;
-    if (!window.confirm('Remove “' + s.name + '” (' + (s.counts.total || 0) + ' files) from ' + tire.name + '? The client will no longer see it.')) return;
-    var files = window.confirm('Also delete the files on disk?\n\nOK = delete the files too · Cancel = keep them in ' + (tire.folder || 'the tire folder') + '/' + (s.folder || s.slug || ''));
-    App.post(this.statusEndpoint, { action: 'series_delete', series_id: id, delete_files: files ? 1 : 0, actor: App.actor }).then(function (res) {
-      if (!res.ok) { toast(res.error || 'Could not delete', { kind: 'error' }); return; }
-      tire.series = tire.series.filter(function (x) { return x.id !== id; });
-      if (String(self.rc.series) === String(id)) self.rc.series = 0;
-      toast('Series deleted', { kind: 'success' });
-      self.syncSeries();
-    });
+    download: '<svg class="ui-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5v11.5"/><path d="m7.5 10.5 4.5 4.5 4.5-4.5"/><path d="M4.5 16v2a2.5 2.5 0 0 0 2.5 2.5h10a2.5 2.5 0 0 0 2.5-2.5v-2"/></svg>'
   };
 
   /* ================================================================== */
@@ -555,47 +329,18 @@
   };
 
   /* ================================================================== */
-  /* Hub: segmented sections, reply form, confirm forms                 */
+  /* Confirm-first forms                                                 */
   /* ================================================================== */
+  /** Forms that ask first (Manage → Tools: delete an audience). */
   function initHub() {
-    var seg = $('.studio-segmented');
-    if (seg) {
-      seg.addEventListener('click', function (e) {
-        var item = e.target.closest('[data-studio-tab]');
-        if (!item) return;
-        e.preventDefault();
-        var tab = item.dataset.studioTab;
-        $$('[data-studio-section]').forEach(function (s) { s.hidden = s.dataset.studioSection !== tab; });
-        if (App.segmented && App.segmented.select) App.segmented.select(item);
-        if (item.href && window.history && history.replaceState) history.replaceState(null, '', item.href);
-        var section = $('[data-studio-section="' + tab + '"]');
-        if (section) section.classList.add('ui-enter');
-      });
-    }
-    var reply = $('[data-studio-reply]');
-    if (reply) {
-      reply.addEventListener('submit', function (e) {
-        e.preventDefault();
-        var input = $('[data-reply-input]', reply), text = (input.value || '').trim();
-        if (!text) { input.focus(); return; }
-        var actorEl = $('input[name="reply_actor"]:checked', reply);
-        var btn = $('[data-reply-send]', reply);
-        btn.disabled = true;
-        App.post(cfg.endpoint || 'status.php', { id: reply.dataset.id, comment: text, actor: actorEl ? actorEl.value : 'admin' }).then(function (r) {
-          if (r.ok) { window.location.reload(); return; }
-          btn.disabled = false;
-          toast(r.error || 'Could not send', { kind: 'error' });
-        });
-      });
-    }
     $$('[data-confirm-submit]').forEach(function (form) {
+      if (form.closest('[data-clients]')) return;   // the Clients forms confirm inside their own fetch submit
       form.addEventListener('submit', function (e) { if (!window.confirm(form.dataset.confirmSubmit)) e.preventDefault(); });
     });
   }
 
   /* ================================================================== */
   App.studio = {
-    renders:  function (root) { return new Renders(root); },
     export:   function (root) { return new Export(root); },
     linkTags: linkTags,
     formatWhen: formatWhen,
@@ -603,7 +348,6 @@
   };
 
   function init() {
-    $$('[data-renders]').forEach(function (root) { App.studio.instances.renders = new Renders(root); });
     $$('[data-export]').forEach(function (root) { App.studio.instances.export = new Export(root); });
     initHub();
   }
@@ -613,7 +357,7 @@
 })(window, document);
 
 /* =====================================================================
-   Emails (Studio → Emails, add-email.php): group chips + the Live guard.
+   Emails (add-email.php): audience chips + the Live guard.
    Live may only be ticked when the status is Approved (mirrors the
    email-status.php 409 rule); the server enforces it too.
    ===================================================================== */
@@ -648,7 +392,7 @@
 })(window, document);
 
 /* =====================================================================
-   Clients (Studio → Clients, partials/studio-clients.php → client-admin.php)
+   Clients (Manage → Clients, partials/manage-clients.php → client-admin.php)
    - slug auto-fills from the name until the admin edits it by hand
    - every [data-client-form] posts with fetch + FormData (Accept: JSON) and
      follows the reply's `redirect`; errors land in the form's status line +
@@ -735,8 +479,8 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initClients);
   else initClients();
 
-  /* Studio → Pages: "Repair server rules" → page-upload.php action=repair_media (media/pages/<client>/:
-     .htaccess rewritten when old / missing, files 0644 / folders 0755), then a reload so the row glyphs refresh. */
+  /* Manage → Tools: Pages "Repair" → page-upload.php action=repair_media (media/pages/<client>/:
+     .htaccess rewritten when old / missing, files 0644 / folders 0755); the summary is toasted. */
   document.addEventListener('click', function (e) {
     var btn = e.target.closest('[data-pages-repair]');
     if (!btn || btn.disabled) return;
@@ -747,25 +491,7 @@
       var d = res.data || {};
       if (!res.ok) { toast(res.error || 'Repair failed', { kind: 'error' }); return; }
       toast(d.summary || 'Server rules repaired', { kind: 'success' });
-      window.setTimeout(function () { window.location.reload(); }, 900);
     });
   });
 
-  /* Studio → Pages: "Extract embedded images" under a page whose HTML is over ~400 KB → page-upload.php
-     action=extract_inline (base64 data: URIs → assets/ files, references rewritten), then a reload. */
-  document.addEventListener('click', function (e) {
-    var btn = e.target.closest('[data-pages-extract]');
-    if (!btn || btn.disabled) return;
-    e.preventDefault();
-    var endpoint = btn.getAttribute('data-endpoint') || 'page-upload.php';
-    btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = 'Extracting…';
-    App.post(endpoint, { action: 'extract_inline', page_id: btn.getAttribute('data-pages-extract'), actor: App.actor }).then(function (res) {
-      btn.disabled = false; btn.removeAttribute('aria-busy'); btn.textContent = 'Extract embedded images';
-      var d = res.data || {};
-      if (!res.ok) { toast(res.error || 'Extraction failed', { kind: 'error' }); return; }
-      var t = d.totals || {};
-      toast(d.summary || 'Done', { kind: t.extracted > 0 || !(t.skipped || t.failed) ? 'success' : 'error' });
-      if (t.extracted > 0) window.setTimeout(function () { window.location.reload(); }, 900);
-    });
-  });
 })(window, document);

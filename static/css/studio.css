@@ -378,13 +378,8 @@
 .studio-pool-videos-toggle[hidden] { display: none; }
 
 /* ---------------------------------------------------------------------
-   Renders (tire series: pickers, FTP folder, series list — uploads open the Upload sheet, upload.css)
+   Upload rows (add-page.php files, resume banner); tire series management moved to assets.css (Manage series)
    --------------------------------------------------------------------- */
-.studio-renders-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; margin-bottom: 16px; }
-@media (min-width: 900px) { .studio-renders-grid { grid-template-columns: minmax(0, 1fr) minmax(320px, 460px); gap: 24px; } }
-.studio-renders-pick { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.studio-renders-folder code { font-family: var(--font-mono); font-size: var(--text-caption); color: var(--label); word-break: break-all; }
-.studio-renders-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .studio-upload-item .studio-upload-retry { align-self: center; flex: 0 0 auto; }
 .studio-upload-item .studio-upload-retry[hidden] { display: none; }
 .studio-renders-note { margin: 8px 0 0; }   /* add-page.php's upload note */
@@ -413,30 +408,6 @@
 .studio-resume-text { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
 .studio-resume-pick { cursor: pointer; }
 .studio-resume-pick input[hidden] { display: none; }
-.studio-series-card { margin-top: 20px; }
-.studio-series-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
-.studio-series-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; padding: 10px 0; }
-.studio-series-row + .studio-series-row { box-shadow: 0 -0.5px 0 var(--separator); }
-.studio-series-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.studio-series-name { flex: 1 1 160px; min-height: 36px; padding: 6px 10px; font-size: var(--text-subhead); }
-.studio-series-meta { grid-column: 1; font-size: var(--text-footnote); line-height: var(--lh-footnote); }
-.studio-series-meta code { font-family: var(--font-mono); font-size: var(--text-caption); }
-/* Google Drive link per series (tire_series.drive_url): inline url field + Save (+ Open once set) */
-.studio-series-drive { grid-column: 1; display: flex; align-items: center; gap: 8px; min-width: 0; margin-top: 2px; }
-.studio-series-drive .ui-icon { width: 16px; height: 16px; flex: 0 0 auto; color: var(--label-tertiary); }
-.studio-series-drive.is-set .ui-icon { color: var(--accent); }
-.studio-series-drive-input { flex: 1 1 200px; min-width: 0; min-height: 32px; padding: 4px 10px; font-size: var(--text-footnote); }
-.studio-series-drive-input[aria-invalid="true"] { box-shadow: inset 0 0 0 1.5px var(--deny); }
-.studio-series-drive-open[hidden] { display: none; }
-.studio-series-ctl { grid-column: 2; grid-row: 1 / span 2; display: flex; align-items: center; gap: 4px; }
-.studio-series-row--drive .studio-series-ctl { grid-row: 1 / span 3; }
-.studio-series-ctl .ui-btn[disabled] { opacity: .35; }
-.studio-series-ctl .ui-icon { width: 14px; height: 14px; }
-.studio-series-empty[hidden] { display: none; }
-@media (max-width: 600px) {
-  .studio-series-row { grid-template-columns: minmax(0, 1fr); }
-  .studio-series-ctl { grid-column: 1; grid-row: auto; flex-wrap: wrap; }
-}
 
 /* ---------------------------------------------------------------------
    Activity feed (helpers' renderActivityFeed markup — legacy class names)
@@ -539,7 +510,7 @@
 }
 
 /* ---------------------------------------------------------------------
-   Clients (partials/studio-clients.php)
+   Clients (partials/manage-clients.php — Manage → Clients)
    --------------------------------------------------------------------- */
 .studio-clients { display: flex; flex-direction: column; gap: 4px; }
 .studio-client-card { margin-bottom: 20px; }
@@ -555,7 +526,7 @@
 .studio-client-file input[type="file"] { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
 .studio-client-file:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
 .studio-clients .ui-btn[hidden] { display: none; }   /* the no-JS "Upload" button (studio.js submits on file pick) */
-.studio-client-logo, .studio-client-modules { margin-top: 20px; padding-top: 16px; box-shadow: inset 0 0.5px 0 var(--separator); }
+.studio-client-logo, .studio-client-modules, .studio-client-settings { margin-top: 20px; padding-top: 16px; box-shadow: inset 0 0.5px 0 var(--separator); }
 .studio-client-logo-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
 .studio-client-modlist { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
 .studio-client-mod-row { display: flex; align-items: center; gap: 12px; }
@@ -571,7 +542,7 @@
 }
 
 /* ---------------------------------------------------------------------
-   Export tab (Studio): options card + Recent exports (export.php)
+   Manage → Export: options card + Recent exports (export.php), Image previews
    --------------------------------------------------------------------- */
 .studio-export-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
 @media (min-width: 960px) { .studio-export-grid { grid-template-columns: minmax(0, 3fr) minmax(300px, 2fr); gap: 24px; } }
@@ -608,3 +579,11 @@
   .studio-export-job { flex-wrap: wrap; }
   .studio-export-job-actions { width: 100%; justify-content: flex-end; }
 }
+
+/* ---------------------------------------------------------------------
+   Manage (manage.php): Export & previews spacing, Tools
+   --------------------------------------------------------------------- */
+.manage-previews { margin-top: 16px; }
+.page-manage--export .manage-previews { max-width: 720px; }
+.page-manage .ui-row-trailing form { display: inline-flex; margin: 0; }
+.studio-client-settings .ui-textarea { min-height: 64px; }

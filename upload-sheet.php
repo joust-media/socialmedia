@@ -11,7 +11,8 @@
  *
  *   GET action=clients          → {ok, clients:[{slug, name, logo}]}                       (unscoped pages: the chooser)
  *   GET action=init&client=…    → {ok, client:{slug, name, logo, label}, tires:[{id, name, refs, series:[{id, name, total, pending}]}],
- *                                  features:{tires, series, library, draft}, limits:{image, video, reference, post, batch},
+ *                                  features:{tires, series, seriesDrive, library, draft}, limits:{image, video, reference, post, batch},
+ *                                  (seriesDrive: tire_series.drive_url exists → "New series…" offers a Google Drive link field)
  *                                  urls:{upload, tire, batch, series, reference, library, drafts}}
  *        urls.series / urls.reference carry __TIRE__ / __SERIES__ placeholders (clientUrl(): the host's .php
  *        handling and the ?client= scope stay in one place).
@@ -73,6 +74,7 @@ usOut(200, [
     'features' => [
         'tires'   => $tires || companyHasTires($client, $pdo),
         'series'  => $seriesOn,
+        'seriesDrive' => $seriesOn && function_exists('tireSeriesHasDriveUrl') && tireSeriesHasDriveUrl($pdo),   // migrate.php 29
         'library' => hasLibraryImagesTable($pdo),
         'draft'   => function_exists('postsHaveDraft') && postsHaveDraft($pdo),
     ],

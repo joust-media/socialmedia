@@ -60,7 +60,11 @@
 .ui-tab .ui-icon { width: 26px; height: 26px; }
 .ui-tab-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .ui-tab.is-active, .ui-tab[aria-current="page"] { color: var(--accent); }
-.ui-tab--studio.is-active, .ui-tab--studio[aria-current="page"] { color: var(--joust); }
+.ui-tab--manage.is-active, .ui-tab--manage[aria-current="page"] { color: var(--joust); }
+.ui-tab-label--long { display: none; }   /* merged Emails/Pages tab: short label in the phone bar, long one in the sidebar */
+@media (max-width: 359.98px) {   /* six tabs on a 320px phone: "Collections" / "Manage" still fit (≈ 48px each) */
+  .ui-tab { font-size: 9px; letter-spacing: -0.2px; }
+}
 .ui-tab-badge {
   position: absolute; top: 3px; left: calc(50% + 6px);
 }
@@ -95,7 +99,9 @@
   .ui-tab:hover { background: var(--fill-tertiary); }
   .ui-tab.is-active, .ui-tab[aria-current="page"] { background: var(--fill-tertiary); color: var(--label); }
   .ui-tab.is-active .ui-icon, .ui-tab[aria-current="page"] .ui-icon { color: var(--accent); }
-  .ui-tab--studio.is-active .ui-icon, .ui-tab--studio[aria-current="page"] .ui-icon { color: var(--joust); }
+  .ui-tab--manage.is-active .ui-icon, .ui-tab--manage[aria-current="page"] .ui-icon { color: var(--joust); }
+  .ui-tab-label--long { display: inline; }
+  .ui-tab-label--short { display: none; }
   .ui-tab-badge { position: static; margin-left: auto; }
   .ui-tabbar-footer {
     margin-top: auto; padding: 8px 12px 0;
@@ -638,3 +644,9 @@ html:not(:has(.ui-tabbar)) .ui-toast { bottom: calc(24px + env(safe-area-inset-b
   }
   .ui-newmenu-sub { white-space: normal; }
 }
+
+/* ---------------------------------------------------------------------
+   Manage section switch (manageNavHtml(): manage.php + drive.php)
+   --------------------------------------------------------------------- */
+.manage-toolbar { margin: 4px 0 18px; }
+.manage-toolbar .ui-segmented { max-width: 480px; }

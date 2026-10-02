@@ -1,11 +1,12 @@
 <?php
 /**
- * Studio → Composer (spec §4.5). Admin only. The composer PAGE is retired — the New post pop-up
+ * Posts → the old composer endpoint (spec §4.5). Admin only. The composer PAGE is retired — the New post pop-up
  * (static/js/newpost.js → post-compose.php) creates and edits posts now:
  *   GET add-post.php?client=…            → 302 posts.php?client=…&newpost=1            (pop-up open)
  *   GET add-post.php?client=…&edit=<id>  → 302 posts.php?client=…&post=<id>&newpost=edit (detail + pop-up in edit mode)
- * The POST handler below stays for the callers that still post here (legacy/admin.php delete, the
- * format=json contract); a non-JSON POST lands on the post (or back on Posts with its errors as the flash).
+ * The POST handler below stays: it is the documented format=json posting API (README "media[]" — scripts and
+ * the test suite post here; the retired Classic admin's Delete did too); a non-JSON POST lands on the post
+ * (or back on Posts with its errors as the flash). The portal UI itself saves through post-compose.php.
  *
  * Creates / edits a post + its post_images. Media can come from:
  *   1. the Approved Pool — assets[] = "library:<id>" | "tire:<id>" in carousel order.
@@ -86,7 +87,7 @@ function composerDone(bool $ok, string $msg, array $extra = [], int $code = 200)
 // -------------------------------------------------------------
 if (!$client) {
     if ($wantsJson) { composerDone(false, 'Pick a client first.', [], 400); }
-    header('Location: ' . clientUrl('studio.php', ['msg' => 'Pick a client first.']));
+    header('Location: ' . pagePath('posts'));   // the admin's client chooser
     exit;
 }
 $clientQs = 'client=' . urlencode($client['slug']);

@@ -109,6 +109,16 @@ hr { border: 0; height: 0.5px; background: var(--separator); margin: 16px 0; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ui-nav-trailing { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; align-self: center; }
+/* Phones, admin seat: "+ New" + Appearance + page buttons already fill the bar — the client avatar (decoration
+   here) gives its room to the large title. The client seat keeps its avatar. */
+@media (max-width: 599.98px) {
+  body[data-role="admin"] .ui-nav-trailing > .ui-avatar { display: none; }
+}
+/* Small phones (320–429px): the large title scales with the width (34px at 430 → ~27px at 320) so it keeps
+   its words next to the trailing buttons instead of collapsing to "Po…". */
+@media (max-width: 429.98px) {
+  .ui-nav-title { font-size: clamp(26px, 7.9vw, 34px); line-height: 1.2; }
+}
 .ui-nav-links {
   display: flex; gap: 6px; flex-wrap: nowrap;
   margin-top: 8px; padding-bottom: 2px;

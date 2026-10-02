@@ -39,6 +39,7 @@
   var IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
   var MAX_FILES = 50;
   var ACCEPT = 'image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime,.mov';
+  var DRIVE_RE = /^https:\/\/(www\.)?(drive\.google\.com|docs\.google\.com|photos\.google\.com|photos\.app\.goo\.gl)\//i;   // the hosts tire-status.php accepts for a series link
 
   function $(sel, root) { return (root || document).querySelector(sel); }
   function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
@@ -95,7 +96,7 @@
     return {
       opts: opts, slug: '', init: null, step: 'files',
       files: [],                                   // {id, file, url, video, error}
-      dest: { kind: opts.dest || '', tire: opts.tire ? parseInt(opts.tire, 10) || 0 : 0, series: opts.series || '', newSeries: '', each: !!opts.each },
+      dest: { kind: opts.dest || '', tire: opts.tire ? parseInt(opts.tire, 10) || 0 : 0, series: opts.series || '', newSeries: '', newDrive: '', each: !!opts.each },
       jobs: [], busy: false, batch: '', created: null, started: false, handedOff: false, confirming: false,
       resume: [], lastFocus: document.activeElement
     };
@@ -388,6 +389,7 @@
   }
   function onInput(e) {
     if (e.target.matches('[data-us-new-series]')) { S.dest.newSeries = e.target.value; renderNote(); renderFooter(); }
+    if (e.target.matches('[data-us-new-drive]')) { S.dest.newDrive = e.target.value; renderFooter(); }
   }
 
   /* ------------------------------------------------------------------ */
@@ -511,6 +513,7 @@
         + (t ? t.series.map(function (s) { return '<option value="' + s.id + '"' + (String(s.id) === String(d.series) ? ' selected' : '') + '>' + esc(s.name) + ' · ' + plural(s.total, 'file') + '</option>'; }).join('') : '')
         + '<option value="new"' + (d.series === 'new' ? ' selected' : '') + '>New series…</option></select></div>'
         + (d.series === 'new' ? '<div class="us-field"><label class="us-label" for="usNewSeries">New series name</label><input class="ui-input" type="text" id="usNewSeries" maxlength="80" data-us-new-series value="' + esc(d.newSeries) + '" placeholder="e.g. Series 3"></div>' : '')
+        + (d.series === 'new' && (S.init.features || {}).seriesDrive ? '<div class="us-field"><label class="us-label" for="usNewDrive">Google Drive link <span class="us-optional">optional</span></label><input class="ui-input" type="url" id="usNewDrive" maxlength="512" inputmode="url" autocomplete="off" spellcheck="false" data-us-new-drive value="' + esc(d.newDrive) + '" placeholder="https://drive.google.com/drive/folders/…"></div>' : '')
         + '</div>';
     }
     if (k === 'reference') {
@@ -547,6 +550,7 @@
     if (!d.kind) return 'Choose where the files go';
     if ((d.kind === 'series' || d.kind === 'reference') && !tireById(d.tire)) return 'Choose a tire';
     if (d.kind === 'series' && d.series === 'new' && !String(d.newSeries || '').trim()) return 'Name the new series';
+    if (d.kind === 'series' && d.series === 'new' && String(d.newDrive || '').trim() && !DRIVE_RE.test(String(d.newDrive).trim())) return 'Enter a Google Drive share link';
     if (!plan().take.length) return 'None of these files can go there';
     return '';
   }
@@ -637,7 +641,10 @@
     var u = S.init.urls, f = { client: S.slug, actor: 'admin' };
     if (d.kind === 'series') {
       f.tire_id = d.tire; f.batch = S.batch;
-      if (d.series === 'new') f.new_series = String(d.newSeries || '').trim(); else f.series_id = parseInt(d.series, 10);
+      if (d.series === 'new') {
+        f.new_series = String(d.newSeries || '').trim();
+        if (String(d.newDrive || '').trim()) f.new_series_drive = String(d.newDrive).trim();   // the new series' Google Drive link (tire-upload.php)
+      } else f.series_id = parseInt(d.series, 10);
       return { endpoint: u.tire, fields: f };
     }
     if (d.kind === 'reference') { f.purpose = 'feature'; f.feature_id = d.tire; return { endpoint: u.upload, fields: f }; }
@@ -663,13 +670,13 @@
     if (!j) { renderFooter(); settle(); return; }
     S.busy = true; j.state = 'uploading'; j.error = ''; j.text = '';
     var slug = S.slug, file = j.f.file;
-    if (j.dest.kind === 'series' && S.created) { delete j.fields.new_series; j.fields.series_id = S.created.id; }   // the first file created the series
+    if (j.dest.kind === 'series' && S.created) { delete j.fields.new_series; delete j.fields.new_series_drive; j.fields.series_id = S.created.id; }   // the first file created the series
     var label = destLabel(j.dest);
     j.ctl = App.chunkUpload.upload({
       endpoint: j.endpoint, file: file, fields: j.fields, uploadId: j.uploadId,
       onInit: function (d) {
         j.uploadId = d.upload_id;
-        if (d.series && d.series.id && j.dest.kind === 'series') { noteSeries(d.series); j.fields.series_id = d.series.id; delete j.fields.new_series; }
+        if (d.series && d.series.id && j.dest.kind === 'series') { noteSeries(d.series); j.fields.series_id = d.series.id; delete j.fields.new_series; delete j.fields.new_series_drive; }
         App.chunkUpload.remember({ id: d.upload_id, kind: 'sheet', endpoint: j.endpoint, client: slug, name: file.name, size: file.size, type: file.type || '',
                                    fields: j.fields, dest: j.dest, label: label });
       },

@@ -311,9 +311,8 @@ test('admin entry points are server-gated', function () {
     has(get('assets.php?client=kenda&view=collections&item=1', 'admin')['body'], 'data-viewer-use-in-post');
     hasNot(get('assets.php?client=kenda&view=collections&item=1', 'client')['body'], 'data-viewer-use-in-post');
     has(get('?client=kenda', 'admin')['body'], 'data-newpost');
-    has(get('studio.php?client=kenda', 'admin')['body'], 'data-newpost');
-    hasNot(get('studio.php?client=kenda', 'admin')['body'], 'data-studio-tab="compose"', 'no Compose tab');
-    hasNot(get('studio.php?client=kenda', 'admin')['body'], 'data-studio-tab="batch"', 'no Batch tab');
+    has(get('manage.php?client=kenda', 'admin')['body'], 'window.NewPostConfig', 'Manage boots the pop-up for "+ New"');
+    hasNot(get('manage.php?client=kenda', 'admin')['body'], 'data-studio-tab', 'no Studio tabs left');
 });
 
 finish();

@@ -210,3 +210,4 @@
 .us-launch .ui-icon { width: 30px; height: 30px; color: var(--accent); }
 .us-launch-label { font-weight: 600; color: var(--accent); }
 .us-launch-hint { font-size: var(--text-footnote); color: var(--label-secondary); max-width: 480px; }
+.us-optional { font-weight: 400; color: var(--label-tertiary); }

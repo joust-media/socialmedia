@@ -1,5 +1,5 @@
 /* Compose = the New post pop-up now (the Studio Compose tab is retired → studio.php?tab=compose opens the
-   pop-up): the unsaved-work guard (in-sheet confirm + beforeunload), no guard when untouched, and a 3-image
+   pop-up on Posts): the unsaved-work guard (in-sheet confirm + beforeunload), no guard when untouched, and a 3-image
    carousel that lands on its post with 3 slides and a working counter. Full pop-up coverage: 04-newpost.js. */
 'use strict';
 const { run } = require('./lib');
@@ -14,11 +14,11 @@ async function pick(page, n) {
 
 (async () => {
   await run('compose', async ({ test, url, expect }) => {
-    await test('Studio ?tab=compose opens the pop-up on Studio', async (page) => {
+    await test('old Studio ?tab=compose opens the pop-up on Posts', async (page) => {
       await page.goto(url('studio.php?client=kenda&tab=compose'));
       await page.waitForSelector('.np-root.is-visible');
-      expect(/studio\.php\?client=kenda$/.test(page.url()), 'landed on Studio: ' + page.url());
-      expect.eq(await page.$$eval('[data-studio-tab="compose"], [data-studio-section="compose"]', (e) => e.length), 0, 'no Compose tab');
+      expect(/posts\.php\?client=kenda$/.test(page.url()), 'landed on Posts: ' + page.url());
+      expect.eq(await page.$$eval('[data-studio-tab], [data-studio-section]', (e) => e.length), 0, 'no Studio tabs');
     });
     await test('leaving with unsaved picks asks first (beforeunload)', async (page) => {
       await page.goto(url('studio.php?client=kenda&tab=compose'));

@@ -1,8 +1,8 @@
 <?php
 /**
- * Studio → Emails: create / edit one email, plus the small admin actions the
- * Studio Emails tab posts here (groups, Emails-tab toggle, delete). Admin only —
- * requireAdmin() redirects a client session to login before any output.
+ * Emails → New / Edit email: create / edit one email, plus the small admin actions posted here
+ * (audiences from Manage → Tools, delete). Admin only — requireAdmin() redirects a client session
+ * to login before any output. (A client's Emails tab is turned on / off in Manage → Clients only.)
  *
  *   GET  add-email.php?client=<slug>             new email form
  *   GET  add-email.php?client=<slug>&edit=<id>   edit form (+ comment thread, delete)
@@ -10,13 +10,13 @@
  *   POST (requireSameSiteFetch on every action; hidden `action` + `id` like add-post.php)
  *     create | update   code*, title, html_url, subject, preview_text, trigger_text, send_at,
  *                       priority, status, live, groups[], new_groups, notes
- *                       → create: emails.php?client&email=<id> · update: studio?tab=emails&msg=
+ *                       → create: emails.php?client&email=<id> · update: emails.php?client&status=all&msg=
  *     delete            id → map rows + row removed, 'deleted' logged
  *     group_add         name            (ensureEmailGroup) — email_groups are "Audiences" in the UI
  *     group_rename      id, name
  *     group_delete      id              (removes email_group_map rows too)
- *     module_toggle     to=1|0          (company_modules row for the 'emails' module)
- *   Non-form actions always redirect to studio.php?client=…&tab=emails&msg=….
+ *     Audience actions redirect to manage.php?client=…&section=tools&msg=…#audiences, everything else to
+ *   emails.php?client=…&status=all&msg=… (the flash is toasted once).
  *
  * Rules mirrored from email-status.php: live=1 only when status=approved (the 409 rule);
  * the code is unique per company (case-insensitive, normalised via emailNormalizeCode()).
@@ -36,14 +36,20 @@ function h($s) {
 }
 
 if (!$client) {
-    header('Location: ' . clientUrl('studio.php', ['msg' => 'Pick a client first.']));
+    header('Location: ' . pagePath('emails'));   // the admin's client chooser
     exit;
 }
 $cid = (int)$client['id'];
 
-/** Back to the Studio Emails tab with a flash. */
+/** Back to the Emails list (every status) with a flash. */
 function emailsStudioRedirect(string $msg, array $extra = []): void {
-    header('Location: ' . clientUrl('studio.php', ['tab' => 'emails', 'msg' => $msg] + $extra));
+    header('Location: ' . clientUrl('emails.php', ['status' => 'all', 'msg' => $msg] + $extra));
+    exit;
+}
+
+/** Back to Manage → Tools (Audiences) with a flash. */
+function emailsToolsRedirect(string $msg): void {
+    header('Location: ' . manageUrl('tools', ['msg' => $msg]) . '#audiences');
     exit;
 }
 
@@ -81,31 +87,24 @@ function loadOwnEmail(PDO $pdo, int $id, int $cid): ?array {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = (string)($_POST['action'] ?? '');
 
-    // ---- Emails tab toggle ------------------------------------------
-    if ($action === 'module_toggle') {
-        $on = (int)($_POST['to'] ?? 0) === 1;
-        if (!setEmailsModuleEnabled($pdo, $cid, $on)) emailsStudioRedirect('The emails module row is missing — run migrate.php first.');
-        emailsStudioRedirect($on ? 'Emails tab enabled for ' . $client['name'] . '.' : 'Emails tab disabled for ' . $client['name'] . '.');
-    }
-
     // ---- Groups -------------------------------------------------------
     if ($action === 'group_add') {
         $name = trim(preg_replace('/\s+/', ' ', (string)($_POST['name'] ?? '')));
-        if ($name === '' || emailSlugify($name) === '') emailsStudioRedirect('Audience name is required.');
+        if ($name === '' || emailSlugify($name) === '') emailsToolsRedirect('Audience name is required.');
         $before = count(emailGroupsForCompany($pdo, $cid));
         $gid = ensureEmailGroup($pdo, $cid, $name);
         $after = count(emailGroupsForCompany($pdo, $cid));
-        emailsStudioRedirect($gid && $after > $before ? 'Audience "' . $name . '" added.' : 'Audience "' . $name . '" already exists.');
+        emailsToolsRedirect($gid && $after > $before ? 'Audience "' . $name . '" added.' : 'Audience "' . $name . '" already exists.');
     }
     if ($action === 'group_rename') {
         $err = renameEmailGroup($pdo, $cid, (int)($_POST['id'] ?? 0), (string)($_POST['name'] ?? ''));
-        emailsStudioRedirect($err !== '' ? $err : 'Audience renamed.');
+        emailsToolsRedirect($err !== '' ? $err : 'Audience renamed.');
     }
     if ($action === 'group_delete') {
         $gid = (int)($_POST['id'] ?? 0);
         $g   = emailGroupById($pdo, $cid, $gid);
-        if (!$g || !deleteEmailGroup($pdo, $cid, $gid)) emailsStudioRedirect('Audience not found.');
-        emailsStudioRedirect('Audience "' . $g['name'] . '" deleted.');
+        if (!$g || !deleteEmailGroup($pdo, $cid, $gid)) emailsToolsRedirect('Audience not found.');
+        emailsToolsRedirect('Audience "' . $g['name'] . '" deleted.');
     }
 
     // ---- Delete -------------------------------------------------------
@@ -289,15 +288,15 @@ $groups     = emailGroupsForCompany($pdo, $cid);
 $formAction = $isEdit ? 'update' : 'create';
 $formTitle  = $isEdit ? 'Edit ' . emailDisplayLabel($email) : 'New email';
 $selfUrl    = clientUrl('add-email.php', $isEdit ? ['edit' => (int)$email['id']] : []);
-$studioUrl  = clientUrl('studio.php', ['tab' => 'emails']);
+$studioUrl  = $isEdit ? emailUrl($email) : clientUrl('emails.php', ['status' => 'all']);   // Back / Cancel
 $thread     = $isEdit && hasActivityLog($pdo) ? commentThread($pdo, 'email', (int)$email['id']) : [];
 
 $pageTitle   = $formTitle;
-$navSubtitle = 'Studio · ' . $client['name'] . ' · Emails';
-$activeTab   = 'studio';
+$navSubtitle = $client['name'] . ' · Emails';
+$activeTab   = 'emails';
 $pageWide    = true;
 $navWide     = true;
-$navBack     = ['href' => $studioUrl, 'label' => 'Studio'];
+$navBack     = ['href' => $studioUrl, 'label' => 'Emails'];
 $navLinks    = [];
 if ($isEdit) $navLinks[] = ['label' => 'Open in Emails', 'href' => emailUrl($email)];
 if ($vals['html_url'] !== '' && emailValidUrl($vals['html_url'])) $navLinks[] = ['label' => 'Open HTML', 'href' => $vals['html_url'], 'attrs' => ['target' => '_blank', 'rel' => 'noopener']];

@@ -219,10 +219,10 @@ function libUrl($cat = null, $tag = null, $q = null) {
 <body>
 
 <?= renderAppChrome('Prompt Library', [
-      'active'   => 'studio',
+      'active'   => 'manage',
       'width'    => '980px',
       'trailing' => '',
-      'back'     => ['href' => adminToolsUrl(), 'label' => 'Studio'],
+      'back'     => ['href' => adminToolsUrl(), 'label' => 'Manage'],
       'links'    => [
         ['label' => 'New prompt', 'href' => 'add-prompt.php', 'primary' => true],
         ['label' => 'Sign out',   'href' => 'logout.php', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],

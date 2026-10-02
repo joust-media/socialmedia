@@ -2,13 +2,13 @@
 /**
  * Legacy shim — 301s to add-feature.php for the tires module.
  * Preserves ?client= and maps ?edit_tire= to ?edit_item=.
- * Old unscoped bookmarks go to the Studio (admin) client picker.
+ * Old unscoped bookmarks go to Home (its "Choose a client" list).
  */
 require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';
 
 if (!$client) {
-    header('Location: ' . clientUrl('studio.php'), true, 301);
+    header('Location: ' . pagePath('index'), true, 301);
     exit;
 }
 
