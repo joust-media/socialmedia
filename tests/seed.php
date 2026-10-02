@@ -69,6 +69,17 @@ function fixtureVideo(string $path): void {
     file_put_contents($path, $ftyp . $mdat);
 }
 
+// Start from no image previews (<dir>/.thumbs/) and no export / preview-job state, so preview tests see the lazy path.
+foreach ([$app . '/uploads', $media] as $root) {
+    if (!is_dir($root)) continue;
+    $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
+    foreach ($it as $f) {
+        $p = $f->getPathname();
+        if (strpos($p, '/.thumbs/') !== false || strpos($p, '/.exports/') !== false) { $f->isDir() ? @rmdir($p) : @unlink($p); }
+    }
+    foreach (['.thumbs', '.exports'] as $d) { foreach (glob($root . '/{,*/,*/*/,*/*/*/}' . $d, GLOB_BRACE | GLOB_ONLYDIR) ?: [] as $dd) @rmdir($dd); }
+}
+
 $colors = [[30, 60, 110], [110, 40, 30], [30, 90, 50], [90, 60, 120], [120, 100, 20], [40, 100, 110], [140, 60, 90], [60, 60, 60]];
 
 // ---- companies + modules ---------------------------------------------------------------

@@ -15,6 +15,26 @@ Social Media Builder
   its query string intact. That folder is excluded from deploys. See
   `redirect-old-folder/README.md`.
 
+## Tests
+
+`tests/run.sh` builds a local copy (MariaDB + PHP's built-in server, a fresh database migrated
+with `migrate.php`, deterministic fixtures) and runs the HTTP smoke suites and the Playwright
+checks. See `tests/README.md`. `tests/` is never deployed.
+
+## Posts: drafts and carousels
+
+- **Draft** (`posts.status = 'draft'`, `migrate.php` step 35): a post Joust is still building.
+  The client never sees it anywhere (lists, counts, badges, Home, activity, deep links;
+  `status.php` answers 404 to the client seat). Studio uploads and batch posts start as drafts
+  with an empty caption. **Send for review** (Posts → Drafts, or the post sheet;
+  `status.php action=submit`) moves it to To Review and needs a caption first. Until step 35
+  has run, those paths keep the old behaviour (To Review, placeholder caption).
+- **Carousels**: up to `POST_MAX_MEDIA` (20, `helpers.php`) images / videos per post.
+  `add-post.php` takes them as `assets[]` / `claimed[]`, or as one ordered `media[]` list
+  (`image:<id>`, `library:<id>`, `tire:<id>`, `claim:<token>`) that also reorders and
+  removes current media on edit.
+- **+ New** (admin, top right of every page): New post · Upload · New email · New page.
+
 ## Daily digest cron (cPanel > Cron Jobs)
 
 ```
@@ -360,7 +380,7 @@ request exactly as before. The surfaces and their endpoints:
 
 | Surface | Endpoint | Caps |
 | --- | --- | --- |
-| Studio → Compose (one-offs) | `upload-chunk.php` `purpose=post` → `claimed[]` tokens to `add-post.php` | videos 4 GB, images 50 MB, 10 media per post |
+| Studio → Compose (one-offs) | `upload-chunk.php` `purpose=post` → `claimed[]` tokens to `add-post.php` | videos 4 GB, images 50 MB, 20 media per post (`POST_MAX_MEDIA`) |
 | Studio → Uploads tab, Batch (direct files) | `upload-chunk.php` `purpose=batch` → `claimed[]` tokens to `batch-process.php` | videos 4 GB, images 50 MB, 50 files per batch |
 | Tire reference images (`add-feature.php`, "Add more images") | `upload-chunk.php` `purpose=feature` (`feature_id`) | images 50 MB, 6 per item, images only |
 | Replace image / video (Posts detail, Assets viewer, `add-feature.php`) | `upload-chunk.php` `purpose=replace` (`replace_kind=post\|tire`, `replace_id`) — `replace-image.php` stays the single-request path | videos 4 GB, images 50 MB |
@@ -498,6 +518,7 @@ reads only from the `drive_*` tables (`migrate.php` steps 30–34; helpers in `d
 ## Not deployed
 
 `config.php` (live DB credentials), `uploads/`, `.htaccess` files, `error_log`, this README,
-`redirect-old-folder/`, `media-hardening/` and `docs/` (the Drive collector source) are excluded from
+`redirect-old-folder/`, `media-hardening/`, `docs/` (the Drive collector source) and `tests/` (the local
+test harness) are excluded from
 both workflows and must be managed on the server. `media/` lives outside the app folder, so deploys
 never touch it.

@@ -476,13 +476,17 @@
       if (item) item.classList.remove('is-busy');
       if (!res.ok) {
         toast(res.error || 'Could not send', 'error');
-        // 422 "Add a caption first": open the caption editor when this post's sheet is showing
-        var art = pd();
-        if (res.field === 'caption' && art && art.getAttribute('data-id') === id) {
-          var form = $('[data-edit-form="caption"]', sheetRoot());
-          if (form) { form.hidden = false; var ta = $('textarea', form); if (ta) ta.focus(); }
-        } else if (res.field === 'caption' && !P.current) {
-          P.open(id);
+        // 422 "Add a caption first": open this post's sheet (if needed) with the caption editor showing
+        if (res.data && res.data.field === 'caption') {
+          var showEditor = function () {
+            var root = sheetRoot(), art = pd(root);
+            if (!art || art.getAttribute('data-id') !== id) return;
+            var form = $('[data-edit-form="caption"]', root);
+            if (form) { form.hidden = false; $$('textarea', form).forEach(syncCount); var ta = $('textarea', form); if (ta) ta.focus(); }
+          };
+          var open = pd();
+          if (open && open.getAttribute('data-id') === id) showEditor();
+          else P.open(id).then(showEditor);
         }
       } else {
         applyStatus(id, 'pending', false);

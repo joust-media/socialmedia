@@ -1,10 +1,11 @@
 /* Test harness only — tiny Playwright runner for tests/e2e/NN-*.js.
  *
  *   const { run } = require('./lib');
- *   run('new menu', async ({ test, page, ctx, url, expect }) => {
- *     await test('opens', async () => { await page.goto(url('posts.php?client=kenda')); … });
+ *   run('new menu', async ({ test, url, expect }) => {
+ *     await test('opens', async (page) => { await page.goto(url('posts.php?client=kenda')); … });
  *   }, { role: 'admin', viewports: ['desktop', 'phone'] });
  *
+ * opts: role 'admin' | 'client', viewports ['desktop', 'phone'], reseed 'viewport' | 'test' (tests that write).
  * Every test gets a fresh page per viewport; a failing test saves a screenshot to
  * $PORTAL_TEST_ROOT/shots/. Uncaught page errors (pageerror) fail the test they happen in.
  */
@@ -26,6 +27,13 @@ const VIEWPORTS = { desktop: { width: 1440, height: 900 }, phone: { width: 390, 
 
 const url = (p) => BASE + '/' + String(p || '').replace(/^\//, '');
 
+/** Re-run tests/seed.php (same fixtures + ids) — opts.reseed: 'viewport' (before each viewport) | 'test' (before each test). */
+function reseed() {
+  const app = process.env.APP_DIR || path.join(ROOT, 'site/portal');
+  const media = process.env.MEDIA_DIR || path.join(ROOT, 'site/media');
+  require('child_process').execFileSync('php', [path.join(__dirname, '..', 'seed.php'), app, media], { stdio: 'ignore' });
+}
+
 function expect(cond, msg) { if (!cond) throw new Error(msg || 'expectation failed'); }
 expect.eq = (a, b, msg) => { if (a !== b) throw new Error((msg ? msg + ': ' : '') + 'expected ' + JSON.stringify(b) + ', got ' + JSON.stringify(a)); };
 
@@ -38,6 +46,7 @@ async function run(suite, body, opts = {}) {
   const browser = await chromium.launch();
   try {
     for (const vp of viewports) {
+      if (opts.reseed === 'viewport') reseed();
       const ctx = await browser.newContext({ viewport: VIEWPORTS[vp] || vp, deviceScaleFactor: 1 });
       await ctx.addCookies([{ name: 'portal_test_role', value: role, url: BASE.replace(/\/portal$/, '') }]);
       const errors = [];
@@ -51,6 +60,7 @@ async function run(suite, body, opts = {}) {
       };
       const test = async (name, fn) => {
         const label = `${vp}: ${name}`;
+        if (opts.reseed === 'test') reseed();
         await fresh();
         errors.length = 0;
         try {
@@ -74,7 +84,7 @@ async function run(suite, body, opts = {}) {
   }
   console.log(`${(path.basename(process.argv[1] || suite, '.js')).padEnd(28)} ${String(pass).padStart(3)} passed, ${fail} failed`);
   if (process.env.SMOKE_TALLY) fs.appendFileSync(process.env.SMOKE_TALLY, `${pass} ${fail}\n`);
-  process.exitCode = fail ? 1 : 0;
+  if (fail) process.exitCode = 1;   // several run() calls in one script: any failure fails the script
 }
 
-module.exports = { run, url, expect, BASE };
+module.exports = { run, url, expect, reseed, BASE };

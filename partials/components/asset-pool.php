@@ -34,7 +34,7 @@
  *       post's current MAX, media_type when the column exists). Throws
  *       StudioAssetException (code 400/403) on an invalid pick so the caller's
  *       transaction rolls back; files copied before the failure are unlinked.
- *       Returns the inserted rows [['image_url','sort_order','media_type','asset'], …].
+ *       Returns the inserted rows [['id','key','image_url','sort_order','media_type','asset'], …] (id = post_images.id).
  *
  * Rendering (markup only; wired by static/js/studio.js)
  *   studioPickerHtml(array $pool, array $opts = []): string
@@ -446,7 +446,7 @@ if (!function_exists('studioAttachAssetsToPost')) {
                     $ins = $pdo->prepare("INSERT INTO post_images (post_id, image_url, sort_order) VALUES (?, ?, ?)");
                     $ins->execute([$postId, $rel, $sortOrder]);
                 }
-                $rows[] = ['image_url' => $rel, 'sort_order' => $sortOrder, 'media_type' => $a['media'], 'asset' => $a];
+                $rows[] = ['id' => (int)$pdo->lastInsertId(), 'key' => (string)$a['key'], 'image_url' => $rel, 'sort_order' => $sortOrder, 'media_type' => $a['media'], 'asset' => $a];
             }
         } catch (Throwable $e) {
             foreach ($copied as $f) { if (is_file($f)) @unlink($f); }

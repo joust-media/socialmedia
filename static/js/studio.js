@@ -462,12 +462,17 @@
     this.update();
   }
   Preview.prototype.setFiles = function (files) {
-    this.files.forEach(function (f) { if (f.url) URL.revokeObjectURL(f.url); });
+    // Keep each File's object URL while it stays in the list (the queue calls this on every progress change;
+    // revoking + re-creating them aborted the slides still loading — "ERR_FILE_NOT_FOUND" in the console).
+    var prev = this.files;
     this.files = files.map(function (file) {
+      for (var i = 0; i < prev.length; i++) if (prev[i].file === file) return prev[i];
       var vid = isVideoFile(file);
       // A local video is never decoded for the preview (it may be gigabytes): a poster-less tile with name + size.
       return { file: file, url: vid ? '' : URL.createObjectURL(file), media: vid ? 'video' : 'image', type: file.type || '', local: true, name: file.name, size: file.size };
     });
+    var kept = this.files;
+    prev.forEach(function (f) { if (f.url && kept.indexOf(f) < 0) URL.revokeObjectURL(f.url); });
     this.update();
   };
   Preview.prototype.value = function (name) {

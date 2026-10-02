@@ -19,7 +19,17 @@
  *
  * Form POST actions (unchanged): delete (id) · create / update (name, caption*,
  * hashtags, scheduled_date*, status, post_type, categories[], remove_images[],
- * images[], claimed[], assets[]) · batch_create (spacing_days, batch_images[]).
+ * images[], claimed[], assets[], media[]) · batch_create (spacing_days, batch_images[]).
+ *
+ * media[] (optional) — ONE ordered list for the whole carousel, so approved images, new uploads and
+ * (on update) the post's current media can be interleaved and reordered freely:
+ *     image:<post_images.id>   keep this current media item (update only; must belong to the post)
+ *     library:<id> | tire:<id> an Approved Pool pick (validated + copied like assets[])
+ *     claim:<token>            a file already sent to upload-chunk.php (purpose=post), like claimed[]
+ * When media[] is sent it is authoritative: assets[] / claimed[] / remove_images[] are ignored, every
+ * current item NOT listed is removed, and sort_order = the list order (1…n). More than POST_MAX_MEDIA
+ * items, an unknown image id or a bad token → 422 / 400 and nothing is saved. images[] (no-JS
+ * direct files) still append after the list.
  * Add format=json to any action for a JSON reply instead of the redirect.
  * Successful saves land on the post itself: posts.php?client=…&post=<id>&msg=… (a delete → the Posts list).
  * status may be 'draft' once migrate.php step 35 ran (postsHaveDraft()): a draft may be saved without a
@@ -90,6 +100,37 @@ $hasDraft    = postsHaveDraft($pdo);
 
 /** The size cap for a direct (single-request) upload of this type — the same numbers upload-chunk.php enforces. */
 function composerMaxBytes(bool $isVideo): int { return uploadMaxBytes($isVideo ? 'video' : 'image'); }
+
+/**
+ * media[] → normalised tokens in order (image:<id> | library:<id> | tire:<id> | claim:<token>), duplicates
+ * dropped. Accepts an array or a JSON array string. Returns [$tokens, $error].
+ */
+function composerMediaOrder($raw, int $cap): array {
+    if (is_string($raw)) {
+        $raw = trim($raw);
+        $decoded = $raw !== '' && $raw[0] === '[' ? json_decode($raw, true) : null;
+        $raw = is_array($decoded) ? $decoded : ($raw === '' ? [] : preg_split('/[\s,]+/', $raw));
+    }
+    if (!is_array($raw)) return [[], 'media[] must be a list.'];
+    $out = []; $seen = [];
+    foreach ($raw as $item) {
+        if (!is_string($item)) return [[], 'media[] must be a list of strings.'];
+        $item = trim($item);
+        if ($item === '') continue;
+        if (preg_match('/^(image|library|tire):(\d+)$/i', $item, $m) && (int)$m[2] > 0) {
+            $tok = strtolower($m[1]) . ':' . (int)$m[2];
+        } elseif (preg_match('/^claim:([A-Za-z0-9_\-]{8,128})$/', $item, $m)) {
+            $tok = 'claim:' . $m[1];
+        } else {
+            return [[], 'Unknown media item "' . mb_substr($item, 0, 40) . '".'];
+        }
+        if (isset($seen[$tok])) continue;
+        $seen[$tok] = true;
+        $out[] = $tok;
+    }
+    if (count($out) > $cap) return [[], "Up to {$cap} media per post — remove " . (count($out) - $cap) . '.'];
+    return [$out, ''];
+}
 
 /**
  * claimed[] tokens → validated claims (upload-lib.php) in posted order. Any bad token (wrong format,
@@ -165,6 +206,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         [$claims, $claimErr] = composerClaims($_POST['claimed'] ?? [], (string)$client['slug'], $maxImages);
         if ($claimErr !== '') { $errors[] = $claimErr; $errorCode = 400; }
 
+        // media[]: one ordered list (see the header) — it replaces assets[] / claimed[] / remove_images[].
+        $mediaOrder = null;
+        if (array_key_exists('media', $_POST)) {
+            [$mediaOrder, $mediaErr] = composerMediaOrder($_POST['media'], $maxImages);
+            $errors = array_values(array_filter($errors, static fn($e) => $e !== $claimErr));   // claimed[] is not used
+            if ($mediaErr !== '') {
+                $errors[] = $mediaErr; $errorCode = 422; $mediaOrder = [];
+            }
+            $picks = studioParsePicks(array_values(array_filter($mediaOrder, static fn($t) => strpos($t, 'library:') === 0 || strpos($t, 'tire:') === 0)), $maxImages);
+            $claimTokens = array_map(static fn($t) => substr($t, 6), array_values(array_filter($mediaOrder, static fn($t) => strpos($t, 'claim:') === 0)));
+            [$claims, $claimErr] = composerClaims($claimTokens, (string)$client['slug'], $maxImages);
+            if ($claimErr !== '') { $errors[] = $claimErr; $errorCode = 400; }
+            if ($action === 'create' && array_filter($mediaOrder, static fn($t) => strpos($t, 'image:') === 0)) {
+                $errors[] = 'A new post has no current media to keep.'; $errorCode = 422;
+            }
+        }
+
         $allowedStatus = $hasDraft ? ['draft', 'pending', 'approved', 'denied'] : ['pending', 'approved', 'denied'];
         if (!in_array($status, $allowedStatus, true)) {
             $status = 'pending';
@@ -189,6 +247,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$errors) {
             $postId = 0;
             $previewQueue = [];   // stored image paths → previewAfterStore() after the commit
+            $mediaIds = [];       // media[] token → post_images.id (for the final ordering)
+            $unlinkAfter = [];    // removed media files — unlinked only once the transaction has committed
             try {
                 $pdo->beginTransaction();
                 $supportsName = hasPostsNameColumn($pdo);
@@ -306,8 +366,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 if ($action === 'update') {
-                    if (!empty($_POST['remove_images']) && is_array($_POST['remove_images'])) {
-                        $toRemove = array_values(array_filter(array_map('intval', $_POST['remove_images'])));
+                    $removeIds = !empty($_POST['remove_images']) && is_array($_POST['remove_images']) ? $_POST['remove_images'] : [];
+                    if ($mediaOrder !== null) {
+                        // media[] is authoritative: keep exactly the listed current items, remove the rest.
+                        $cur = $pdo->prepare("SELECT id FROM post_images WHERE post_id = ?");
+                        $cur->execute([$postId]);
+                        $currentIds = array_map('intval', $cur->fetchAll(PDO::FETCH_COLUMN));
+                        $keepIds = array_map(static fn($t) => (int)substr($t, 6), array_values(array_filter($mediaOrder, static fn($t) => strpos($t, 'image:') === 0)));
+                        $unknown = array_diff($keepIds, $currentIds);
+                        if ($unknown) {
+                            throw new StudioAssetException('Media item #' . reset($unknown) . ' is not part of this post.', 422);
+                        }
+                        $removeIds = array_values(array_diff($currentIds, $keepIds));
+                    }
+                    if ($removeIds) {
+                        $toRemove = array_values(array_filter(array_map('intval', $removeIds)));
                         if ($toRemove) {
                             $ph  = implode(',', array_fill(0, count($toRemove), '?'));
                             $sel = $pdo->prepare("
@@ -317,7 +390,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $sel->execute(array_merge([$postId], $toRemove));
                             foreach ($sel->fetchAll() as $row) {
                                 $path = uploadsPathOrNull((string)$row['image_url']);   // realpath-contained in uploads/
-                                if ($path !== null) { if (function_exists('previewDelete')) previewDelete($path); @unlink($path); }
+                                if ($path !== null) { $unlinkAfter[] = $path; }   // deleted after the commit (a rollback keeps the files)
                             }
                             $del = $pdo->prepare("
                                 DELETE FROM post_images WHERE post_id = ? AND id IN ($ph)
@@ -339,6 +412,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $errors[] = "Max {$maxImages} media per post — only the first {$slots} picked assets were added.";
                     }
                     $attached = studioAttachAssetsToPost($pdo, $client, $postId, $picks, ['slots' => $slots, 'uploadsDir' => $uploadsDir]);
+                    foreach ($attached as $att) { $mediaIds[(string)$att['key']] = (int)$att['id']; }
                     foreach ($attached as $att) {   // copies whose source had no fresh previews yet
                         $attPath = uploadsPathOrNull((string)($att['image_url'] ?? ''));
                         if ($attPath !== null) $previewQueue[] = $attPath;
@@ -373,10 +447,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $ins = $pdo->prepare("INSERT INTO post_images (post_id, image_url, sort_order) VALUES (?, ?, ?)");
                             $ins->execute([$postId, $uploadsUrl . '/' . $newName, $sortOrder]);
                         }
+                        $mediaIds['claim:' . (string)($claim['token'] ?? '')] = (int)$pdo->lastInsertId();
                         if (!$isVideo) $previewQueue[] = $dest;   // sm + lg previews, made after the commit
                         $claimedCount++;
                     }
                     $slots -= $claimedCount;
+                }
+
+                // ---- media[]: the final order of everything (current items, picks, uploads) ----
+                if ($mediaOrder) {
+                    $setSort = $pdo->prepare("UPDATE post_images SET sort_order = ? WHERE id = ? AND post_id = ?");
+                    $pos = 0;
+                    foreach ($mediaOrder as $tok) {
+                        $imgId = strpos($tok, 'image:') === 0 ? (int)substr($tok, 6) : (int)($mediaIds[$tok] ?? 0);
+                        if ($imgId > 0) { $setSort->execute([++$pos, $imgId, $postId]); }
+                    }
                 }
 
                 // ---- Direct uploads (one-offs; the no-JS path) ---------------------
@@ -473,13 +558,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 $pdo->commit();
+                foreach ($unlinkAfter as $gone) { if (function_exists('previewDelete')) previewDelete($gone); @unlink($gone); }
                 // Previews outside the transaction: sm + lg within the request budget (preview-lib.php), the rest lazily.
                 if (function_exists('previewAfterStore')) { foreach ($previewQueue as $pq) previewAfterStore($pq); }
                 $msg = $action === 'create' ? ($status === 'draft' ? 'Draft saved — only you can see it.' : 'Post created.') : 'Post updated.';
                 if ($errors) {
                     $msg .= ' (Some warnings: ' . implode(' ', $errors) . ')';
                 }
-                composerDone(true, $msg, ['post_id' => $postId, 'status' => $status, 'warnings' => $errors]);
+                // JSON callers get the saved carousel in order (id / url / type) and the post's link.
+                $mediaOut = [];
+                if ($wantsJson) {
+                    $mt = hasMediaTypeColumn($pdo) ? 'media_type' : "'' AS media_type";
+                    $ms = $pdo->prepare("SELECT id, image_url, {$mt} FROM post_images WHERE post_id = ? ORDER BY sort_order ASC, id ASC");
+                    $ms->execute([$postId]);
+                    foreach ($ms->fetchAll() as $m) {
+                        $mediaOut[] = ['id' => (int)$m['id'], 'url' => (string)$m['image_url'],
+                                       'type' => ($m['media_type'] ?? '') !== '' ? (string)$m['media_type'] : mediaTypeFromUrl((string)$m['image_url'])];
+                    }
+                }
+                composerDone(true, $msg, ['post_id' => $postId, 'status' => $status, 'warnings' => $errors,
+                                          'media' => $mediaOut, 'post_url' => clientUrl('posts.php', ['post' => $postId])]);
             } catch (StudioAssetException $e) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
                 $errorCode = $e->getCode() >= 400 ? (int)$e->getCode() : 400;
