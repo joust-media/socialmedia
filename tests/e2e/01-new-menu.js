@@ -45,11 +45,14 @@ const { run } = require('./lib');
       await page.waitForTimeout(200);
       expect.eq(await page.evaluate(() => window.__np), 'post');
     });
-    await test('Upload follows its link (Studio → Uploads)', async (page) => {
+    await test('Upload opens the Upload sheet in place (App.newMenu.handle("upload"))', async (page) => {
       await page.goto(url('posts.php?client=kenda'));
+      const before = page.url();
       await page.click('[data-new-menu-toggle]');
-      await Promise.all([page.waitForNavigation(), page.click('[data-new-action="upload"]')]);
-      expect(/studio\.php\?client=kenda&tab=uploads/.test(page.url()), page.url());
+      await page.click('[data-new-action="upload"]');
+      await page.waitForSelector('.us-root.is-visible [data-us-file]', { state: 'attached' });
+      expect.eq(page.url(), before, 'no navigation');
+      expect(!(await page.isVisible('[data-new-menu-panel]')), 'menu closed after the action');
     });
   }, { role: 'admin', viewports: ['desktop', 'phone'] });
 

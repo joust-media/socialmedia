@@ -224,10 +224,11 @@ join the Approved Pool and the composer like any tire image.
      **Rescan folders** in Studio → Renders (`tire-status.php` `action=rescan`, admin; the page
      falls back to `assets.php?…&rescan=1`, also admin-only). Existing rows are never touched; a
      removed file only stops showing up (its decisions stay).
-  2. **Upload in the portal**: Studio → **Renders** → pick the tire → pick a series or "New
-     series…" → drop files. One file at a time (`tire-upload.php`, admin, same-site; 10 MB
-     images, videos up to 4 GB — large files go in pieces, see *Large uploads* below; sequential
-     queue with progress, Retry and Cancel), stored under the series folder as
+  2. **Upload in the portal**: the **Upload sheet** (see *Upload sheet* below) — the series
+     page's **Upload**, Studio → Renders' launcher, or "+ New → Upload" → Tire series → tire →
+     series or "New series…". One file at a time (`tire-upload.php`, admin, same-site; images
+     50 MB, videos up to 4 GB — large files go in pieces, see *Large uploads* below; progress,
+     Retry and Cancel per file), stored under the series folder as
      `<original stem>.<ext>` (de-duplicated `-2`, `-3` …; the folder is created with 0755),
      falling back to `uploads/` when `media/tires` is not writable. Every file is sniffed:
      images must decode as the format their extension claims, videos must carry the container
@@ -382,7 +383,7 @@ server `post-compose.php`, booted on every admin page by `partials/layout-bottom
   (`=upload` opens the Upload pane, `=edit&post=<id>` edits, `&newpost_assets=tire:1,library:4`
   preselects). Retired routes redirect here: `studio.php?tab=compose` → `studio.php?newpost=1`,
   `add-post.php` → `posts.php?newpost=1`, `add-post.php?edit=<id>` → `posts.php?post=<id>&newpost=edit`,
-  `studio.php?tab=batch` and `batch.php` → Studio → Uploads.
+  `studio.php?tab=batch` and `batch.php` → Studio → Uploads with the Upload sheet open (a draft post per file).
 - **Layout**: header (client, close) · the slide tray pinned under it (numbered, slide 1 = Cover,
   drag or Alt+←/→ to reorder, Delete / × to remove, a tap opens Move left / right · Make cover ·
   Replace · Remove, "N / 20", an amber badge on slides whose shape differs from the cover because
@@ -408,6 +409,49 @@ server `post-compose.php`, booted on every admin page by `partials/layout-bottom
   "Slide" picker; the comment is stored as `[Slide 3] …` (no schema change) and the thread shows a
   slide chip (thumb + "Slide 3") that jumps the carousel there.
 
+## Upload sheet (admin)
+
+One uploader for every destination: `static/js/upload-sheet.js` (`App.uploadSheet`) + `static/css/upload.css`,
+server `upload-sheet.php` (`clients`, `init`: tires + series + reference slots, limits, URLs), booted on every
+admin page by `partials/layout-bottom.php` (`partials/components/upload-sheet.php`). Nothing of it reaches the
+client seat.
+
+- **Steps**: 1 Files (drop or pick; images 50 MB, videos 4 GB, up to 50 at a time; picking moves on) →
+  2 Destination (radio cards: **Tire series** — tire, then series or "New series…" · **Tire reference** —
+  tire, images only, 6 per tire · **Library** · **New post** — one post with the files as slides, or a
+  draft post per file; files a destination cannot take are listed with the reason) → 3 Upload (one file at
+  a time, progress, Cancel and Retry per file, "Retry all", a "Stop uploading?" guard, Resume after a
+  reload). When everything is in the sheet closes with a toast and a link to where the files landed (already
+  on that page → it reloads onto the destination's To Review list). **New post** hands the parked files to
+  `App.newPost.open({preselect: [{ref: 'upload:<token>', …}]})`, so they arrive as slides.
+- **Unscoped pages** ask for the client first.
+- **Where each destination's files go:**
+  - Tire series: `tire-upload.php`, stored in `media/tires/<tire>/<series>/`, a `pending` row.
+  - Reference: `upload-chunk.php` `purpose=feature`, stored as `uploads/feat_*`, `pending`.
+  - Library: `upload-chunk.php` `purpose=library`, stored in `media/library/<slug>/`, a `pending` row (the
+    status an FTP drop gets). A name already used on disk or by an old row gets `-2`.
+  - New post: `upload-chunk.php` `purpose=post` claims, then a Draft from the pop-up; or `purpose=batch`,
+    then `batch-process.php`, one Draft per file.
+  - Previews are made right after each store (`previewAfterStore`).
+- **Open it from**:
+  - "+ New → Upload" (`App.newMenu.handle('upload')`).
+  - A contextual **Upload**, which arrives with the destination preselected (`uploadSheetAttrs()` →
+    `data-upload-open data-upload-dest/-tire/-series/-each`). These are: the series header in Assets, the
+    Reference card ("Add reference images" too), Assets → Library, Studio → Uploads (a draft post per file)
+    and Studio → Renders (the picked tire + series).
+  - Home "Upload".
+  - Launchers marked `data-upload-drop`, which also take dropped files.
+  - Any URL with `?upload=1[&dest=series|reference|library|post][&tire=][&series=<id>|new][&each=1]`
+    (`uploadSheetUrl()`; the no-JS fallback of every button).
+- **Retired** (redirect or link here): the Studio Uploads drop zone and Renders drop zone / queue,
+  `batch.php` and `studio.php?tab=batch` (→ `…&tab=uploads&upload=1&dest=post&each=1`), and the
+  "Add more images" file input on `add-feature.php` (→ Assets with the sheet on the tire's Reference). The
+  New post pop-up keeps its own Upload pane (files straight into the post being edited).
+- **Assets → Select (admin, approved items)**: one bottom bar with **Create post with N**, **Download**
+  and **Export**. Download is a zip of the selection; Export is its manifest CSV. Both use
+  `export.php` `scope=selection&items=tire:<id>,library:<id>,…`, with the same folder layout as Studio →
+  Export and approved files only.
+
 ## Large uploads (chunked, resumable)
 
 Shared hosting caps one request at `upload_max_filesize` / `post_max_size` (often 64 MB or
@@ -419,10 +463,11 @@ request exactly as before. The surfaces and their endpoints:
 | Surface | Endpoint | Caps |
 | --- | --- | --- |
 | New post pop-up → Upload | `upload-chunk.php` `purpose=post` → `upload:<token>` (or `claim:<token>`) slides to `post-compose.php`; `claim:<token>` in `media[]` / `claimed[]` to `add-post.php` for its JSON callers | videos 4 GB, images 50 MB, 20 slides per post (`POST_MAX_MEDIA`) |
-| Studio → Uploads tab ("+ New → Upload") | `upload-chunk.php` `purpose=batch` → `claimed[]` tokens to `batch-process.php` | videos 4 GB, images 50 MB, 50 files per batch |
-| Tire reference images (`add-feature.php`, "Add more images") | `upload-chunk.php` `purpose=feature` (`feature_id`) | images 50 MB, 6 per item, images only |
+| Upload sheet → New post · a draft per file | `upload-chunk.php` `purpose=batch` → `claimed[]` tokens to `batch-process.php` | videos 4 GB, images 50 MB, 50 files per batch |
+| Upload sheet → Tire reference | `upload-chunk.php` `purpose=feature` (`feature_id`) | images 50 MB, 6 per item, images only |
+| Upload sheet → Library | `upload-chunk.php` `purpose=library` | videos 4 GB, images 50 MB |
 | Replace image / video (Posts detail, Assets viewer, `add-feature.php`) | `upload-chunk.php` `purpose=replace` (`replace_kind=post\|tire`, `replace_id`) — `replace-image.php` stays the single-request path | videos 4 GB, images 50 MB |
-| Studio → Renders | `tire-upload.php` | images 10 MB, videos 4 GB |
+| Upload sheet → Tire series | `tire-upload.php` | images 50 MB, videos 4 GB |
 | Studio → Pages | `page-upload.php` | HTML 64 MB, CSS / JS / JSON 10 MB, other assets 100 MB, MP4 / WebM 4 GB |
 | Studio → Clients logo | `client-admin.php` (single request) | **Logos unchanged: 2 MB**, resized to 512×512 |
 
@@ -459,8 +504,7 @@ request exactly as before. The surfaces and their endpoints:
   otherwise init → sequential pieces (progress bar with bytes, %, speed and ETA, "piece n of
   m") → finish. A failed piece is retried up to 3 times (1 s / 2 s / 4 s back-off, asking the
   server where it is first). Cancel aborts and deletes the spool. Every in-flight upload is
-  noted in `localStorage`, so after a reload the Renders tab, the composer, the Uploads tab and
-  Batch offer **Resume N unfinished uploads**: pick the same files again (name + size must
+  noted in `localStorage`, so after a reload the Upload sheet (step 1) offers **Resume N unfinished uploads**: pick the same files again (name + size must
   match), the client asks `chunk_status` and continues from `received`; Discard aborts them on
   the server. Local videos are never decoded for a thumbnail or the live preview (a poster-less
   tile with the name and size instead).

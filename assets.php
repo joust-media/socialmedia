@@ -17,7 +17,11 @@
  * Tapping a thumbnail opens the media viewer (partials/components/media-viewer.php
  * + App.viewer in static/js/assets.js): Approve / Deny-with-note / more, swipe to
  * navigate, auto-advance after each decision. Multi-select ("Select" in the nav
- * bar) batch-approves only — denials always need a reason.
+ * bar) batch-approves (denials always need a reason); for the admin, approved
+ * tiles add "Create post with N" (the New post pop-up), "Download" (a zip of the
+ * selection — export.php scope=selection) and "Export" (its manifest CSV).
+ * Admin "Upload" buttons (Library controls, the series head, the Reference card)
+ * open the Upload sheet with the destination preselected (upload-sheet.js).
  *
  * Role is enforced here in PHP (isAdmin()): admin-only markup is never rendered
  * for a client, and client queries exclude denied rows in SQL.
@@ -60,6 +64,7 @@
 require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';
 require_once __DIR__ . '/partials/components/comment-thread.php';   // commentThreadHtml() for the viewer's Comments panel
+require_once __DIR__ . '/export-lib.php';                            // exportZipSupported(): the admin select bar's Download
 if (is_file(__DIR__ . '/tire-series-lib.php')) { require_once __DIR__ . '/tire-series-lib.php'; }
 
 $isAdmin  = isAdmin();
@@ -299,7 +304,8 @@ if (!function_exists('assetsTileHtml')) {
  * Tap a tile → the viewer over the strip's tiles (assets.js initRefStrip). When some reference images still
  * wait (pending, + denied for admin) a "+ M to review" link switches the grid to the Reference view.
  * $ctx: rows (reference tire_images the seat may see, sort_order order, each with 'src'), counts
- * (pending/approved/denied), admin, tire (name), reviewUrl, allUrl, addUrl, endpoint, manage, adminHtml.
+ * (pending/approved/denied), admin, tire (name), reviewUrl, allUrl, addUrl (+ addAttrs: the Upload sheet's data-upload-*), endpoint,
+ * manage, adminHtml.
  */
 if (!function_exists('assetsRefStripHtml')) {
     function assetsRefStripHtml(array $ctx): string {
@@ -335,7 +341,7 @@ if (!function_exists('assetsRefStripHtml')) {
         if ($mode === 'empty') {
             if ($admin) {
                 $out .= '<div class="as-refstrip-empty" data-ref-empty><p>Add photos of the real tire so every render can be compared to them.</p>'
-                      . '<a class="ui-btn ui-btn--sm ui-btn--tinted" href="' . esc($ctx['addUrl']) . '" data-ref-add>' . icon('plus') . '<span>Add reference images</span></a></div>';
+                      . '<a class="ui-btn ui-btn--sm ui-btn--tinted" href="' . esc($ctx['addUrl']) . '"' . (string)($ctx['addAttrs'] ?? '') . ' data-ref-add>' . icon('plus') . '<span>Add reference images</span></a></div>';
             }
             return $out . '</section>';
         }
@@ -710,6 +716,10 @@ include __DIR__ . '/partials/layout-top.php';
        'active' => $view === 'collections', 'count' => $tireCounts['pending'] > 0 ? $tireCounts['pending'] : null],
   ], ['label' => 'Assets view']) ?>
 
+  <?php if ($isAdmin && $view === 'library'): // admin: the Upload sheet with the Library preselected ?>
+    <a class="ui-btn ui-btn--sm ui-btn--tinted as-library-upload" href="<?= esc(uploadSheetUrl('assets.php', ['dest' => 'library'], ['view' => 'library'])) ?>"<?= uploadSheetAttrs(['dest' => 'library']) ?> data-library-upload><?= icon('upload') ?><span>Upload</span></a>
+  <?php endif; ?>
+
   <?php if ($isGrid): ?>
     <nav class="as-filters" aria-label="Filter">
       <?php foreach ($filters as $f): ?>
@@ -765,7 +775,9 @@ include __DIR__ . '/partials/layout-top.php';
     // Admin Edit / Delete for the tire (never rendered for clients) — in the Reference card either way
     $refAdminHtml = '';
     if ($isAdmin) {
+        $refUpload = ['dest' => 'reference', 'tire' => $itemId];   // the Upload sheet with this tire's Reference preselected
         $refAdminHtml = '<div class="as-reference-admin">'
+            . '<a class="ui-btn ui-btn--sm ui-btn--tinted" href="' . esc(uploadSheetUrl('assets.php', $refUpload, ['view' => 'collections', 'item' => $itemId, 'series' => 'ref'])) . '"' . uploadSheetAttrs($refUpload) . ' data-ref-upload>' . icon('upload') . '<span>Upload</span></a>'
             . '<a class="ui-btn ui-btn--sm ui-btn--gray" href="' . esc(clientUrl('add-feature.php', ['module' => 'tires', 'edit_item' => $itemId])) . '">Edit</a>'
             . '<button type="button" class="ui-btn ui-btn--sm ui-btn--deny ui-btn--tinted"'
             . ' data-action="delete_tire" data-endpoint="' . esc(basePath() . '/tire-status.php') . '"'
@@ -784,7 +796,8 @@ include __DIR__ . '/partials/layout-top.php';
           'tire'      => (string)$collection['name'],
           'reviewUrl' => $refView($refCounts['pending'] > 0 || !$isAdmin ? 'pending' : 'denied'),
           'allUrl'    => $refView('approved'),
-          'addUrl'    => clientUrl('add-feature.php', ['module' => 'tires', 'edit_item' => $itemId]),
+          'addUrl'    => uploadSheetUrl('assets.php', ['dest' => 'reference', 'tire' => $itemId], ['view' => 'collections', 'item' => $itemId, 'series' => 'ref']),
+          'addAttrs'  => uploadSheetAttrs(['dest' => 'reference', 'tire' => $itemId]),
           'endpoint'  => basePath() . '/tire-status.php',
           'manage'    => $isAdmin ? clientUrl('add-feature.php', ['module' => 'tires', 'edit_item' => $itemId]) : '',
           'adminHtml' => $refAdminHtml,
@@ -823,7 +836,8 @@ include __DIR__ . '/partials/layout-top.php';
       <?php
         $headCounts = $seriesActive ? ($seriesActive['counts'] ?? []) + ['total' => 0] : $refCounts;
         $headPending = (int)($headCounts['pending'] ?? 0);
-        $studioUploadUrl = clientUrl('studio.php', ['tab' => 'renders', 'tire' => $itemId, 'series' => $seriesActive ? (int)$seriesActive['id'] : null]);
+        // Admin "Upload": the Upload sheet on this series (the Reference view → the tire's Reference)
+        $headUpload = $seriesActive ? ['dest' => 'series', 'tire' => $itemId, 'series' => (int)$seriesActive['id']] : ['dest' => 'reference', 'tire' => $itemId];
         $headDrive = $seriesActive ? (string)($seriesActive['drive_url'] ?? '') : '';   // the series' Google Drive share link ('' = none)
         // Photos · Videos: "Approve all remaining" follows the view (photos | videos → posts type=; the plain series when all)
         $typeNoun    = $typeEff === 'videos' ? 'video' : ($typeEff === 'photos' ? 'photo' : 'render');
@@ -854,10 +868,10 @@ include __DIR__ . '/partials/layout-top.php';
                     data-toast="<?= esc($seriesActive['name'] . ($typeEff !== 'all' ? ' ' . $typeNoun . 's' : '') . ' approved') ?>" data-reload><?= icon('checkmark') ?><span>Approve all remaining</span></button>
           <?php endif; ?>
           <?php if ($isAdmin): // admin-only: never rendered for clients ?>
+            <a class="ui-btn ui-btn--sm ui-btn--tinted as-series-upload" href="<?= esc(uploadSheetUrl('assets.php', $headUpload, ['view' => 'collections', 'item' => $itemId, 'series' => $seriesKey])) ?>"<?= uploadSheetAttrs($headUpload) ?> data-series-upload><?= icon('upload') ?><span>Upload</span></a>
             <div class="as-menu" data-series-menu-root>
               <button type="button" class="ui-btn ui-btn--sm ui-btn--gray as-menu-btn" data-series-menu aria-haspopup="menu" aria-expanded="false" aria-label="Series options"><?= icon('ellipsis') ?></button>
               <div class="as-menu-list" data-series-menu-list role="menu" hidden>
-                <a class="as-menu-item" role="menuitem" href="<?= esc($studioUploadUrl) ?>" data-series-upload><?= icon('plus') ?>Upload more…</a>
                 <a class="as-menu-item" role="menuitem" href="<?= esc(clientUrl('studio.php', ['tab' => 'export', 'tire' => $itemId, 'series' => $seriesActive ? (int)$seriesActive['id'] : null])) ?>" data-series-export title="Studio → Export with this tire preselected"><?= icon('download') ?>Export approved…</a>
                 <?php if ($seriesActive): ?>
                   <button type="button" class="as-menu-item" role="menuitem" data-series-rename><?= icon('wand') ?>Rename series…</button>
@@ -870,7 +884,8 @@ include __DIR__ . '/partials/layout-top.php';
         </div>
       </section>
     <?php elseif ($seriesOn && $isAdmin): ?>
-      <p class="as-series-hint text-secondary" data-series-hint>No series yet — <a href="<?= esc(clientUrl('studio.php', ['tab' => 'renders', 'tire' => $itemId])) ?>">upload renders in Studio</a> or drop a folder into <code><?= esc(function_exists('tireFolderRel') ? tireFolderRel($client, $collection) . '/' : 'media/tires/<tire>/') ?></code>.</p>
+      <?php $hintUpload = ['dest' => 'series', 'tire' => $itemId, 'series' => 'new']; ?>
+      <p class="as-series-hint text-secondary" data-series-hint>No series yet — <a href="<?= esc(uploadSheetUrl('assets.php', $hintUpload, ['view' => 'collections', 'item' => $itemId])) ?>"<?= uploadSheetAttrs($hintUpload) ?>>upload renders</a> or drop a folder into <code><?= esc(function_exists('tireFolderRel') ? tireFolderRel($client, $collection) . '/' : 'media/tires/<tire>/') ?></code>.</p>
     <?php endif; ?>
   <?php endif; ?>
 
@@ -907,10 +922,15 @@ include __DIR__ . '/partials/layout-top.php';
 <?php if ($isGrid && $items): ?>
   <div class="as-selectbar ui-glass ui-glass--top" data-assets-selectbar hidden>
     <span class="as-selectbar-count" data-select-count>0 selected</span>
-    <button type="button" class="ui-btn ui-btn--approve" data-select-approve disabled><?= icon('checkmark') ?>Approve</button>
-    <?php if ($isAdmin): // approved selection → the New post pop-up (newpost.js); never rendered for clients ?>
-      <button type="button" class="ui-btn ui-btn--filled" data-select-post disabled>Create post</button>
-    <?php endif; ?>
+    <div class="as-selectbar-actions">
+      <button type="button" class="ui-btn ui-btn--approve" data-select-approve disabled><?= icon('checkmark') ?>Approve</button>
+      <?php if ($isAdmin): // approved selection → the New post pop-up (newpost.js), a zip, a manifest CSV (export.php scope=selection); never rendered for clients
+        $selExport = basePath() . '/export.php?client=' . rawurlencode($client['slug']); ?>
+        <button type="button" class="ui-btn ui-btn--filled" data-select-post disabled>Create post</button>
+        <button type="button" class="ui-btn ui-btn--gray" data-select-download data-endpoint="<?= esc($selExport) ?>" data-zip="<?= exportZipSupported() ? '1' : '0' ?>" disabled title="A zip of the selected approved files"><?= icon('download') ?><span>Download</span></button>
+        <button type="button" class="ui-btn ui-btn--gray" data-select-export data-endpoint="<?= esc($selExport) ?>" disabled title="A spreadsheet (CSV) of the selected approved files: tire, series, file name, approval date, comments, Drive link">Export</button>
+      <?php endif; ?>
+    </div>
   </div>
 <?php endif; ?>
 

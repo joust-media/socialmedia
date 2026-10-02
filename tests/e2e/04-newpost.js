@@ -93,7 +93,7 @@ async function load(page, url, id) {
         }
         for (const p of ['posts.php?client=kenda&newpost=1', 'studio.php?client=kenda&tab=compose', 'add-post.php?client=kenda', 'batch.php?client=kenda']) {
           await page.goto(url(p));
-          if (p.indexOf('batch') !== -1) { expect(/tab=uploads/.test(page.url()), 'batch → Uploads: ' + page.url()); continue; }
+          if (p.indexOf('batch') !== -1) { expect(/tab=uploads/.test(page.url()), 'batch → Uploads: ' + page.url()); await page.waitForSelector('.us-root'); continue; }   // the Upload sheet (a draft post per file)
           await page.waitForSelector(sel.root);
           expect(!/newpost=/.test(page.url()), 'param stripped: ' + page.url());
           await page.keyboard.press('Escape');

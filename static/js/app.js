@@ -1,7 +1,7 @@
 /* =====================================================================
    Joust client portal — app.js  (vanilla, no dependencies)
 
-   App.toast(message, {kind, duration})
+   App.toast(message, {kind, duration, link: {href, label}})
    App.sheet.open(target, {title, html, footer}) / .close() / .current
    App.post(endpoint, params) → {ok, status, data, error}
    App.actions  — delegated poster for [data-action][data-endpoint]
@@ -64,6 +64,13 @@
       document.body.appendChild(el);
     }
     el.textContent = message;
+    // opts.link = {href, label}: a tappable link after the message ("5 files uploaded · View") — the toast takes taps then
+    if (opts.link && opts.link.href) {
+      var a = document.createElement('a');
+      a.className = 'ui-toast-link'; a.href = opts.link.href; a.textContent = opts.link.label || 'View';
+      el.appendChild(document.createTextNode(' ')); el.appendChild(a);
+    }
+    el.classList.toggle('has-link', !!(opts.link && opts.link.href));
     el.classList.remove('ui-toast--error', 'ui-toast--success');
     if (opts.kind) el.classList.add('ui-toast--' + opts.kind);
     // restart the transition even when a toast is already showing

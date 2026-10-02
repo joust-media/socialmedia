@@ -14,10 +14,7 @@ require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/upload-lib.php';
 requireAdmin();
 
-$uploadsDir    = __DIR__ . '/uploads';
-$uploadsUrl    = 'uploads';
-$allowedExt    = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-$maxFileSize   = uploadMaxBytes('image');   // 50 MB (upload-lib.php) — with JS the files go through upload-chunk.php purpose=feature (in pieces when large); this form path is the no-JS fallback
+$maxFileSize   = uploadMaxBytes('image');   // 50 MB (upload-lib.php) — Replace goes through upload-chunk.php purpose=replace; new reference images through the Upload sheet
 $maxFileMb     = (int)($maxFileSize / (1024 * 1024));
 $maxItemImages = uploadFeatureMaxImages();  // 6 reference images per item (renders in a series never count)
 
@@ -219,80 +216,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
 
-                if (!empty($_FILES['item_images']) && is_array($_FILES['item_images']['name'])) {
-                    $cnt = $pdo->prepare("SELECT COUNT(*) FROM tire_images WHERE tire_id = ?{$refOnly}");
-                    $cnt->execute([$itemId]);
-                    $existing = (int)$cnt->fetchColumn();
-
-                    $sortQ = $pdo->prepare("SELECT COALESCE(MAX(sort_order), 0) FROM tire_images WHERE tire_id = ?{$refOnly}");
-                    $sortQ->execute([$itemId]);
-                    $sortOrder = (int)$sortQ->fetchColumn();
-
-                    $slots = $maxItemImages - $existing;
-                    if (!is_dir($uploadsDir)) { @mkdir($uploadsDir, 0755, true); }
-
-                    // Cache once: do we have the display_name column to seed?
-                    $hasDisplayName = $pdo->query("SHOW COLUMNS FROM tire_images LIKE 'display_name'")->rowCount() > 0;
-
-                    $uploadedCount = 0;
-                    foreach ($_FILES['item_images']['name'] as $i => $origName) {
-                        if ($uploadedCount >= $slots) {
-                            $errors[] = "Max {$maxItemImages} images per {$sLower} — some were skipped.";
-                            break;
-                        }
-                        $err = $_FILES['item_images']['error'][$i] ?? UPLOAD_ERR_NO_FILE;
-                        if ($err === UPLOAD_ERR_NO_FILE) { continue; }
-                        if ($err !== UPLOAD_ERR_OK) {
-                            $errors[] = "Upload error on '{$origName}' (code {$err}).";
-                            continue;
-                        }
-                        if ($_FILES['item_images']['size'][$i] > $maxFileSize) {
-                            $errors[] = "'{$origName}' exceeds {$maxFileMb} MB.";
-                            continue;
-                        }
-                        $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
-                        if (!in_array($ext, $allowedExt, true)) {
-                            $errors[] = "'{$origName}' has an unsupported file type.";
-                            continue;
-                        }
-                        $finfo = @getimagesize($_FILES['item_images']['tmp_name'][$i]);
-                        if ($finfo === false) {
-                            $errors[] = "'{$origName}' is not a valid image.";
-                            continue;
-                        }
-
-                        // On-disk we still use a uniqid to dodge collisions, but seed
-                        // display_name from the original upload filename's stem so the
-                        // admin/user sees their own name and downloads recover it.
-                        $newName = uniqid('feat_', true) . '.' . $ext;
-                        $newName = preg_replace('/[^a-zA-Z0-9_.\-]/', '', $newName);
-                        $dest    = $uploadsDir . '/' . $newName;
-                        $seedName = safeFilenameStem(pathinfo($origName, PATHINFO_FILENAME));
-                        if ($seedName === '') { $seedName = null; }
-
-                        if (move_uploaded_file($_FILES['item_images']['tmp_name'][$i], $dest)) {
-                            $sortOrder++;
-                            if ($hasDisplayName) {
-                                $ins = $pdo->prepare("
-                                    INSERT INTO tire_images (tire_id, image_url, caption, sort_order, display_name)
-                                    VALUES (?, ?, '', ?, ?)
-                                ");
-                                $ins->execute([$itemId, $uploadsUrl . '/' . $newName, $sortOrder, $seedName]);
-                            } else {
-                                $ins = $pdo->prepare("
-                                    INSERT INTO tire_images (tire_id, image_url, caption, sort_order)
-                                    VALUES (?, ?, '', ?)
-                                ");
-                                $ins->execute([$itemId, $uploadsUrl . '/' . $newName, $sortOrder]);
-                            }
-                            if (function_exists('mediaChmodPath')) mediaChmodPath($dest);
-                            if (function_exists('previewAfterStore')) previewAfterStore($dest);   // sm + lg previews
-                            $uploadedCount++;
-                        } else {
-                            $errors[] = "Failed to save '{$origName}'. Check uploads/ permissions.";
-                        }
-                    }
-                }
+                // Reference images are uploaded through the Upload sheet (Assets → this tire → Upload; upload-chunk.php purpose=feature).
 
                 $pdo->commit();
                 $msg = $action === 'item_create' ? $sLabel . ' created.' : $sLabel . ' updated.';
@@ -434,7 +358,7 @@ function selfUrl($extra = []) {
   .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .form-grid .full { grid-column: 1 / -1; }
   .field { display: flex; flex-direction: column; gap: 6px; }
-  .field label { font-size: 13px; font-weight: 600; color: var(--text-muted);
+  .field label, .field .field-label { font-size: 13px; font-weight: 600; color: var(--text-muted);
                  text-transform: uppercase; letter-spacing: 0.5px; }
   .field input[type="text"], .field select, .field textarea {
     background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
@@ -445,14 +369,6 @@ function selfUrl($extra = []) {
   }
   .field .help { font-size: 12px; color: var(--text-muted); }
 
-  .file-drop { border: 2px dashed var(--border); border-radius: 8px;
-               padding: 24px; text-align: center; background: var(--surface-2); cursor: pointer;
-               transition: border-color 0.15s, background 0.15s; }
-  .file-drop:hover { border-color: var(--accent); background: var(--surface); }
-  .file-drop input[type="file"] { display: none; }
-  .file-drop-label { font-weight: 600; color: var(--accent); display: block; margin-bottom: 4px; }
-  .file-drop-hint { font-size: 12px; color: var(--text-muted); }
-  .file-list { margin-top: 10px; font-size: 13px; color: var(--text-muted); }
 
   .form-actions { display: flex; gap: 10px; justify-content: flex-end;
                   margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
@@ -784,20 +700,16 @@ function selfUrl($extra = []) {
 
           <?php if ($isEdit): ?>
             <div class="field full">
-              <label for="item_images">Add more images</label>
-              <label class="file-drop">
-                <input type="file" name="item_images[]" id="item_images"
-                       accept="image/jpeg,image/png,image/gif,image/webp" multiple>
-                <span class="file-drop-label">Click to choose files</span>
-                <span class="file-drop-hint">
-                  Max <?= $maxItemImages ?> per <?= h($sLower) ?>, <?= $maxFileMb ?> MB each (large files go up in pieces). Captions editable after upload.
-                </span>
-              </label>
-              <div class="file-list" id="itemFileList" data-feature-id="<?= (int)$editItem['id'] ?>" data-feature-count="<?= count($editImages) ?>" data-feature-max="<?= $maxItemImages ?>"></div>
+              <span class="field-label">Add reference images</span>
+              <?php // The Upload sheet (upload-sheet.js) is the one uploader: Assets opens it on this tire's Reference ?>
+              <a class="btn" href="<?= h(uploadSheetUrl('assets.php', ['dest' => 'reference', 'tire' => (int)$editItem['id']], ['view' => 'collections', 'item' => (int)$editItem['id'], 'series' => 'ref'])) ?>" data-reference-upload>⬆ Upload reference images</a>
+              <span class="help">
+                Opens the Upload sheet in Assets with this <?= h($sLower) ?>'s Reference preselected · max <?= $maxItemImages ?> per <?= h($sLower) ?>, <?= $maxFileMb ?> MB each (large files go up in pieces). Save your changes here first.
+              </span>
             </div>
           <?php else: ?>
             <div class="field full">
-              <span class="help">Create the <?= h($sLower) ?> first, then add images on the edit screen.</span>
+              <span class="help">Create the <?= h($sLower) ?> first, then add images from Assets → Upload.</span>
             </div>
           <?php endif; ?>
         </div>
@@ -847,84 +759,18 @@ function selfUrl($extra = []) {
 
 <script src="<?= h(staticUrl('js/chunk-upload.js')) ?>"></script>
 <script>
-  // Uploads go through upload-chunk.php (purpose=feature / replace): one request for a small file, pieces
-  // for a large one (chunk-upload.js), so the host's upload_max_filesize no longer caps them. Without JS
-  // the form still posts item_images[] to this page.
+  // Replace goes through upload-chunk.php (purpose=replace): one request for a small file, pieces for a large one
+  // (chunk-upload.js), so the host's upload_max_filesize no longer caps it. New reference images: the Upload sheet (Assets).
   const UPLOAD_ENDPOINT = 'upload-chunk.php?client=<?= rawurlencode($client['slug']) ?>';
   const CLIENT_SLUG     = <?= json_encode($client['slug']) ?>;
   const MAX_IMAGE_MB    = <?= (int)$maxFileMb ?>;
   const chunkUp = window.App && window.App.chunkUpload;
-  function fmtMb(n) { return (n / 1024 / 1024).toFixed(n > 10 * 1024 * 1024 ? 0 : 2) + ' MB'; }
   function uploadOne(file, fields, onProgress) {
     if (!chunkUp || !chunkUp.upload) {
       return { promise: Promise.reject({ error: 'Uploads need chunk-upload.js' }), abort: function () {} };
     }
     return chunkUp.upload({ endpoint: UPLOAD_ENDPOINT, file: file, fields: Object.assign({ client: CLIENT_SLUG, actor: 'admin' }, fields), onProgress: onProgress });
   }
-
-  const itemFileInput = document.getElementById('item_images');
-  const itemFileList  = document.getElementById('itemFileList');
-  if (itemFileInput && itemFileList) {
-    let queue = [], busy = false;
-    const featureId = itemFileList.getAttribute('data-feature-id');
-    let count = parseInt(itemFileList.getAttribute('data-feature-count'), 10) || 0;
-    const max = parseInt(itemFileList.getAttribute('data-feature-max'), 10) || 6;
-    const next = () => {
-      if (busy || !queue.length) return;
-      const job = queue.shift(); busy = true;
-      job.row.textContent = '• ' + job.file.name + ' — uploading… 0%';
-      const ctl = uploadOne(job.file, { purpose: 'feature', feature_id: featureId }, p => { job.row.textContent = '• ' + job.file.name + ' — uploading… ' + p.text; });
-      ctl.promise.then(d => {
-        count++;
-        // No automatic reload: the admin may have unsaved edits in the form. The row is in the DB already and
-        // shows in the list after Save (which comes back here) or a reload.
-        job.row.textContent = '✓ ' + job.file.name + ' — added (' + count + ' of ' + max + '); it appears in the list after you save or reload';
-        busy = false; next();
-      }, e => {
-        job.row.textContent = '✗ ' + job.file.name + ' — ' + ((e && e.error) || 'upload failed');
-        busy = false; next();
-      });
-    };
-    itemFileInput.addEventListener('change', () => {
-      const files = [...itemFileInput.files];
-      if (!files.length) return;
-      if (!chunkUp || !chunkUp.upload) {   // no chunk support: leave the files in the form (posted with Save)
-        itemFileList.innerHTML = '<strong>Selected:</strong>';
-        files.forEach(f => { const div = document.createElement('div'); div.textContent = '• ' + f.name + ' (' + fmtMb(f.size) + ')'; itemFileList.appendChild(div); });
-        return;
-      }
-      itemFileInput.value = '';   // the files go up now; the form must not post them again
-      if (!itemFileList.querySelector('strong')) itemFileList.innerHTML = '<strong>Uploading now (large files go in pieces):</strong>';
-      files.forEach(f => {
-        const row = document.createElement('div');
-        itemFileList.appendChild(row);
-        const ext = (f.name.toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
-        if (['jpg', 'jpeg', 'png', 'gif', 'webp'].indexOf(ext) === -1) { row.textContent = '✗ ' + f.name + ' — images only (JPG, PNG, GIF, WebP)'; return; }
-        if (f.size > MAX_IMAGE_MB * 1024 * 1024) { row.textContent = '✗ ' + f.name + ' — over ' + MAX_IMAGE_MB + ' MB'; return; }
-        if (count + queue.length + (busy ? 1 : 0) >= max) { row.textContent = '✗ ' + f.name + ' — max ' + max + ' images per item'; return; }
-        row.textContent = '• ' + f.name + ' (' + fmtMb(f.size) + ') — waiting…';
-        queue.push({ file: f, row: row });
-      });
-      next();
-    });
-  }
-
-  document.querySelectorAll('.file-drop').forEach(drop => {
-    const input = drop.querySelector('input[type="file"]');
-    if (!input) return;
-    ['dragenter','dragover'].forEach(ev =>
-      drop.addEventListener(ev, e => { e.preventDefault(); drop.style.borderColor = 'var(--accent)'; })
-    );
-    ['dragleave','drop'].forEach(ev =>
-      drop.addEventListener(ev, e => { e.preventDefault(); drop.style.borderColor = ''; })
-    );
-    drop.addEventListener('drop', e => {
-      if (e.dataTransfer.files.length) {
-        input.files = e.dataTransfer.files;
-        input.dispatchEvent(new Event('change'));
-      }
-    });
-  });
 
   document.querySelectorAll('[data-tire-remove]').forEach(cb => {
     cb.addEventListener('change', () => {

@@ -69,6 +69,15 @@ function fixtureVideo(string $path): void {
     file_put_contents($path, $ftyp . $mdat);
 }
 
+// media/tires/ and media/library/ hold only fixtures: a suite that uploaded into them (the Upload sheet) must not leave
+// files behind that the next suite's folder scan (syncLibraryImages / syncTireSeries) would register as new rows.
+foreach (['tires', 'library'] as $sub) {
+    $dir = $media . '/' . $sub;
+    if (!is_dir($dir)) continue;
+    $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
+    foreach ($it as $f) { $f->isDir() && !$f->isLink() ? @rmdir($f->getPathname()) : @unlink($f->getPathname()); }
+}
+
 // Start from no image previews (<dir>/.thumbs/) and no export / preview-job state, so preview tests see the lazy path.
 foreach ([$app . '/uploads', $media] as $root) {
     if (!is_dir($root)) continue;

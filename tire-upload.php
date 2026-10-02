@@ -41,6 +41,7 @@
 require __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/chunk-upload-lib.php';
+require_once __DIR__ . '/upload-lib.php';   // uploadMaxBytes(): the one image / video cap every upload path shares
 if (!function_exists('currentAdmin')) { require_once __DIR__ . '/auth.php'; }
 
 header('Content-Type: application/json');
@@ -80,7 +81,7 @@ if ($action === 'repair_media') {
 
 if (!hasTireSeries($pdo)) { tireUploadFail(409, 'Render series are not set up yet — run migrate.php.'); }
 
-$maxImageBytes   = 10 * 1024 * 1024;          // matches add-feature.php
+$maxImageBytes   = uploadMaxBytes('image');   // 50 MB — the same cap as upload-chunk.php (the Upload sheet sends every destination's files)
 $maxVideoBytes   = 200 * 1024 * 1024;         // single request — bounded by upload_max_filesize / post_max_size anyway
 $maxChunkedVideo = 4 * 1024 * 1024 * 1024;    // chunked — the total size cap
 $iniMax          = (string)(ini_get('upload_max_filesize') ?: '?');

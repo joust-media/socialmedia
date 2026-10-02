@@ -3,7 +3,7 @@
    from approved assets and / or fresh uploads, and to edit an existing
    post's slides, caption, date and type. Server: post-compose.php.
 
-   App.newPost.open({client, preselect: ['tire:12', 'library:3'], postId, pane: 'approved'|'upload'})
+   App.newPost.open({client, preselect: ['tire:12', 'library:3', {ref: 'upload:<token>', media, thumb, name}], postId, pane: 'approved'|'upload'})
                                   → Promise; client defaults to the page's scope (<body data-client>),
                                     no client → a client chooser first. postId → edit mode.
    App.newPost.close(force)       close (asks first when there are unsaved changes, unless force)
@@ -605,21 +605,44 @@
     markDirty(); clearErrors('slides'); renderAll();
     if (S.slides.length && i === -1) scrollTrayTo(S.slides.length - 1);
   }
-  /** Preselected refs (Assets selection, viewer "Use in post", deep links): fetched by ref, added in order. */
+  /** Preselected refs (Assets selection, viewer "Use in post", deep links): fetched by ref, added in order.
+   *  Files the Upload sheet parked (upload-chunk.php purpose=post) come as {ref: 'upload:<token>', media, thumb, name}
+   *  (or the bare 'upload:<token>' string): they join as finished uploads — removing one discards its claim. */
   function addRefs(refs) {
-    refs = refs.filter(function (r) { return /^(tire|library):\d+$/.test(r); });
-    if (!refs.length) return Promise.resolve();
-    return getJson(S.slug, 'picker', { refs: refs.join(','), limit: MAX }).then(function (res) {
+    var list = (refs || []).map(function (r) {
+      if (r && typeof r === 'object') return /^(?:upload|claim):[a-f0-9]{32}$/.test(String(r.ref || '')) ? r : null;
+      r = String(r || '');
+      if (/^(tire|library):\d+$/.test(r)) return r;
+      return /^(?:upload|claim):[a-f0-9]{32}$/.test(r) ? { ref: r } : null;
+    }).filter(Boolean);
+    if (!list.length) return Promise.resolve();
+    var assets = list.filter(function (r) { return typeof r === 'string'; });
+    var got = assets.length ? getJson(S.slug, 'picker', { refs: assets.join(','), limit: MAX }) : Promise.resolve({ ok: true, data: { items: [] } });
+    return got.then(function (res) {
       if (!S) return;
       if (!res.ok) { toast(res.data.error || 'Could not add those images', 'error'); return; }
-      var added = 0;
-      res.data.items.forEach(function (it) {
-        if (slideIndexByRef(it.ref) !== -1 || S.slides.length >= MAX) return;
-        S.slides.push(slideFromItem(it)); added++;
+      var byRef = {}, added = 0, missing = 0;
+      res.data.items.forEach(function (it) { byRef[it.ref] = it; });
+      list.forEach(function (r) {
+        if (S.slides.length >= MAX) return;
+        if (typeof r === 'string') {
+          var it = byRef[r];
+          if (!it) { missing++; return; }
+          if (slideIndexByRef(it.ref) !== -1) return;
+          S.slides.push(slideFromItem(it)); added++;
+          return;
+        }
+        var token = String(r.ref).split(':')[1], ref = 'upload:' + token;
+        if (slideIndexByRef(ref) !== -1) return;
+        var media = r.media === 'video' ? 'video' : 'image', name = r.name || (media === 'video' ? 'video' : 'image');
+        var u = { id: 'u' + (++uid), file: { name: name }, state: 'done', pct: 100, token: token, url: media === 'image' ? (r.thumb || '') : '', media: media, error: '' };
+        S.uploads.push(u);
+        S.slides.push({ uid: ++uid, ref: ref, upload: u.id, media: media, thumb: r.thumb || '', large: r.thumb || '', src: r.thumb || '', name: name, label: name });
+        added++;
       });
-      if (res.data.items.length < refs.length) toast((refs.length - res.data.items.length) + ' of the selected images are not approved — left out', 'error', 4000);
+      if (missing) toast(missing + ' of the selected images are not approved — left out', 'error', 4000);
       if (added) markDirty();
-      renderAll();
+      renderAll(); renderUploads();
     });
   }
 

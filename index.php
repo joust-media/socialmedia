@@ -733,9 +733,9 @@ if ($pendingCollections > 0) {
 <section class="home-section" aria-labelledby="home-studio">
   <h2 class="ui-list-header" id="home-studio">Studio</h2>
   <div class="home-quick">
-    <?php // New post = the pop-up (newpost.js; the href is the no-JS deep link). Batch is retired: Upload makes one draft per file. ?>
+    <?php // New post = the pop-up (newpost.js), Upload = the Upload sheet (upload-sheet.js); the hrefs are the no-JS deep links ?>
     <a class="ui-btn ui-btn--filled" href="<?= h(clientUrl('posts.php', ['newpost' => 1])) ?>" data-newpost><?= icon('plus') ?><span>New post</span></a>
-    <a class="ui-btn ui-btn--gray" href="<?= h(clientUrl('studio.php', ['tab' => 'uploads'])) ?>"><?= icon('photo') ?><span>Upload</span></a>
+    <a class="ui-btn ui-btn--gray" href="<?= h(uploadSheetUrl('studio.php', [], ['tab' => 'uploads'])) ?>"<?= uploadSheetAttrs([]) ?>><?= icon('upload') ?><span>Upload</span></a>
   </div>
 </section>
 <?php endif; ?>
