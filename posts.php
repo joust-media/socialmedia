@@ -251,7 +251,7 @@ if ($monthParam === 'all') {
 // ---------------------------------------------------------------------
 // Segment
 // ---------------------------------------------------------------------
-$segments = ($hasDraft ? ['draft' => 'Drafts'] : [])
+$segments = ($hasDraft ? ['draft' => 'Draft'] : [])
           + ['pending' => 'To Review', 'approved' => 'Approved', 'scheduled' => 'Scheduled'];
 if ($admin) { $segments['denied'] = 'Needs changes'; }
 

@@ -27,6 +27,8 @@
  *   not upload; external URLs get their own origin anyway.
  */
 
+require_once __DIR__ . '/assign.php';
+
 if (!function_exists('pgEsc')) {
     function pgEsc($s): string { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 }
@@ -104,6 +106,10 @@ if (!function_exists('renderPageDetail')) {
         $out .= '<span class="pg-source pg-source--' . $source . '">' . ($source === 'url' ? 'URL' : 'Upload') . '</span>';
         if (!empty($page['updated_at']) && function_exists('relativeTime') && relativeTime($page['updated_at']) !== '') {
             $out .= '<span class="pd-edited text-tertiary" title="' . pgEsc(absoluteTime($page['updated_at'])) . '">edited ' . pgEsc(relativeTime($page['updated_at'])) . '</span>';
+        }
+        // Admin ⋯: Move to client… (assign.js sheet → assign.php; the folder moves with it)
+        if ($admin && function_exists('assignMenuHtml')) {
+            $out .= assignMenuHtml('page', $id, $label, ['admin' => true]);
         }
         $out .= '</div>';
 

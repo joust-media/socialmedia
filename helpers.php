@@ -1120,12 +1120,12 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
 function actionLabel($action) {
     static $map = [
         'approved'             => 'approved',
-        'denied'               => 'denied',
-        'reset_pending'        => 'reset to pending',
+        'denied'               => 'changes requested',
+        'reset_pending'        => 'moved back to To Review',
         'drafted'              => 'started a draft of',
         'moved_to_draft'       => 'moved back to drafts',
-        'posted'               => 'marked posted',
-        'unposted'             => 'unmarked posted',
+        'posted'               => 'marked scheduled',
+        'unposted'             => 'unmarked scheduled',
         'commented'            => 'commented',
         'uncommented'          => 'cleared comment',
         'edited_caption'       => 'edited caption',
@@ -1154,6 +1154,8 @@ function actionLabel($action) {
         'edited_send_at'       => 'changed send date',
         'edited_html_url'      => 'changed email link',
         'edited_code'          => 'changed ID',
+        'edited_groups'        => 'edited audiences',
+        'moved'                => 'moved to another client',
         // pages (entity_type = 'page'; 'uploaded' is shared with tire series below)
         'deleted_file'         => 'removed a file from',
         'extracted_assets'     => 'extracted embedded images from',
@@ -1405,7 +1407,7 @@ if (!function_exists('activityPrimaryAction')) {
  * Turn recentActivity() entries into humanized rows.
  *
  *   humanizeActivityRows($entries, $role, $client)  → array of rows:
- *     text        plain sentence         "You denied 3 images in Warhawk renders"
+ *     text        plain sentence         "You requested changes on 3 images in Warhawk renders"
  *     html        escaped HTML sentence, names wrapped in <em>
  *     href        deep link (see activityDeepLink)
  *     icon        icon() name            checkmark | xmark | ellipsis | calendar | plus | grid | photo | checklist
@@ -1458,7 +1460,8 @@ if (!function_exists('humanizeActivityRows')) {
             }
             $edits = [];
             foreach ($actions as $a) {
-                if (strpos($a, 'edited_') === 0) $edits[] = str_replace('_', ' ', substr($a, 7));
+                if ($a === 'edited_groups') $edits[] = 'audiences';   // email_groups = Audiences in the UI
+                elseif (strpos($a, 'edited_') === 0) $edits[] = str_replace('_', ' ', substr($a, 7));
                 elseif (strpos($a, 'renamed_') === 0) $edits[] = 'name';
                 elseif ($a === 'type_changed') $edits[] = 'type';
             }
@@ -1596,8 +1599,8 @@ if (!function_exists('activityFinalizeRows')) {
                     $verb = 'approved'; $icon = 'checkmark'; $tone = 'approve';
                     $t = "$who approved $objT"; $hh = "$whoH approved $objH"; break;
                 case 'denied':
-                    $verb = 'denied'; $icon = 'xmark'; $tone = 'deny';
-                    $t = "$who denied $objT"; $hh = "$whoH denied $objH"; break;
+                    $verb = 'requested changes'; $icon = 'xmark'; $tone = 'deny';
+                    $t = "$who requested changes on $objT"; $hh = "$whoH requested changes on $objH"; break;
                 case 'reset_pending':
                     $verb = 'reopened'; $icon = 'grid'; $tone = 'accent';
                     $t = "$who reopened $objT for review"; $hh = "$whoH reopened $objH for review"; break;
@@ -1688,6 +1691,11 @@ if (!function_exists('activityFinalizeRows')) {
                 case 'seeded':
                     $verb = 'created'; $icon = 'plus'; $tone = 'accent';
                     $t = "$who created $objT from the email series"; $hh = "$whoH created $objH from the email series"; break;
+                case 'moved':
+                    // Move to client… (assign.php): logged on the client the item now belongs to
+                    $verb = 'moved'; $icon = 'grid'; $tone = 'accent';
+                    $dest = trim((string)($r['company_name'] ?? ''));
+                    $t = "$who moved $objT" . ($dest !== '' ? " to $dest" : ''); $hh = "$whoH moved $objH" . ($dest !== '' ? ' to <em>' . $h($dest) . '</em>' : ''); break;
                 case 'drafted':
                     $verb = 'started a draft'; $icon = 'plus'; $tone = 'neutral';
                     $t = "$who started a draft: $objT"; $hh = "$whoH started a draft: $objH"; break;

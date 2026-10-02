@@ -25,6 +25,7 @@ require __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/partials/components/comment-thread.php';
 require_once __DIR__ . '/partials/components/page-detail.php';
+require_once __DIR__ . '/partials/components/assign.php';
 
 /** Escape helper (page-local by convention; partials use esc()). */
 function h($s) {
@@ -374,8 +375,9 @@ include __DIR__ . '/partials/layout-top.php';
 <?php endif; ?>
 
 <section class="ui-list-group posts-group pages-group" data-pages-list data-segment="<?= h($segment) ?>"<?= !$pages ? ' hidden' : '' ?>>
-  <h2 class="ui-list-header">
-    <span data-segment-count><?= (int)$counts[$segment] ?></span> <?= h(strtolower($segLabel)) ?><?= $segment === 'all' ? ' pages' : '' ?>
+  <h2 class="ui-list-header<?= $admin ? ' asg-list-header' : '' ?>">
+    <span<?= $admin ? ' class="asg-list-title"' : '' ?>><span data-segment-count><?= (int)$counts[$segment] ?></span> <?= h(strtolower($segLabel)) ?><?= $segment === 'all' ? ' pages' : '' ?></span>
+    <?php if ($admin): ?><?= assignSelectButtonHtml('page') ?><?php endif; ?>
   </h2>
   <ul class="ui-list posts-list pages-list" role="list" data-pages-items>
     <?php foreach ($pages as $page):
@@ -441,6 +443,9 @@ include __DIR__ . '/partials/layout-top.php';
           </div>
           <?= icon('chevron-right', 'ui-row-chevron') ?>
         </a>
+        <?php if ($admin): // ⋯ Move to client… (assign.js) ?>
+          <?= assignMenuHtml('page', $pid, $rowTitle, ['admin' => true, 'class' => 'asg-row-more', 'editUrl' => clientUrl('add-page.php', ['edit' => $pid])]) ?>
+        <?php endif; ?>
         <?php if ($queue): ?>
           <div class="pl-queue-actions">
             <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-page-open="<?= $pid ?>">Open</button>

@@ -117,8 +117,8 @@ try {
                 : 'reset_pending');
         // Human summary — never the raw on-disk filename (it used to leak into the activity feed).
         $summary = ($action === 'approved') ? 'Approved an image in Library'
-                 : (($action === 'denied')  ? 'Denied an image in Library'
-                 : 'Reset an image in Library to pending');
+                 : (($action === 'denied')  ? 'Requested changes on an image in Library'
+                 : 'Moved an image in Library back to To Review');
         logActivity($pdo, $companyId, 'library_image', $id, $action, $actor, $summary, null, $batchId);
     }
 

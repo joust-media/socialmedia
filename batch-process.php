@@ -247,7 +247,7 @@ foreach ($rows as $i => $row) {
         $postId = batchInsertPost($pdo, $companyId, $caption, $hashtags, $scheduledDate, $type, $hasType, $status);
         $attached = studioAttachAssetsToPost($pdo, $client, $postId, $picks, ['uploadsDir' => $uploadDir, 'max' => POST_MAX_MEDIA]);
         logActivity($pdo, $companyId, 'post', $postId, $status === 'draft' ? 'drafted' : 'created', 'admin',
-            ($status === 'draft' ? 'Started draft post #' : 'Created post #') . $postId . ' via batch (' . count($attached) . ' from the Approved Pool)');
+            ($status === 'draft' ? 'Started draft post #' : 'Created post #') . $postId . ' via batch (' . count($attached) . ' from Approved assets)');
         $pdo->commit();
         $created[] = [
             'filename'   => $attached ? (string)$attached[0]['asset']['label'] : $label,

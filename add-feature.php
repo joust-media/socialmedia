@@ -637,11 +637,11 @@ function selfUrl($extra = []) {
                         <span class="tire-edit-status-label">Status</span>
                         <div class="tire-edit-status-buttons" role="group" aria-label="Approval status">
                           <button type="button" class="status-btn pending <?= $imgStatus === 'pending' ? 'active' : '' ?>"
-                                  data-status-set="pending" title="Mark as pending review">⏳ Pending</button>
+                                  data-status-set="pending" title="Move back to To Review">⏳ To Review</button>
                           <button type="button" class="status-btn approved <?= $imgStatus === 'approved' ? 'active' : '' ?>"
-                                  data-status-set="approved" title="Approve this image">✓ Approve</button>
+                                  data-status-set="approved" title="Approve this image">✓ Approved</button>
                           <button type="button" class="status-btn denied <?= $imgStatus === 'denied' ? 'active' : '' ?>"
-                                  data-status-set="denied" title="Deny this image">✕ Deny</button>
+                                  data-status-set="denied" title="Request changes on this image">✕ Needs changes</button>
                         </div>
                         <span class="tire-edit-status-hint" data-status-hint></span>
                       </div>

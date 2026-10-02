@@ -45,8 +45,9 @@ checks. See `tests/README.md`. `tests/` is never deployed.
 
 A per-client module for reviewing lifecycle / marketing emails the same way posts are
 reviewed: each email has a code (the spreadsheet's "ID", e.g. `C1`, `R3`, `CX-017`), a title,
-subject line, preview text, trigger, optional send date, priority, groups (sequences such as
-Free / Pro / Renewal) and a link to the rendered HTML. Statuses: **Draft** (admin only),
+subject line, preview text, trigger, optional send date, priority, **Audiences** (who it is for:
+Free / Pro / Renewal …; `email_groups` in the database) and a link to the rendered HTML (an
+external URL, or HTML hosted by the portal under `media/emails/<client>/`). Statuses: **Draft** (admin only),
 **To Review** (waiting on the client), **Approved**, **Needs changes** (denied with a note,
 admin work queue) and **Live** (marked active by Joust; wins over the status for display).
 Clients see To Review / Approved / Live rows and can approve, deny with a note, or comment;
@@ -67,11 +68,12 @@ too). The Emails tab also appears automatically once a client has at least one e
 
 | URL | What it does |
 |-----|--------------|
-| `emails.php?client=<slug>[&status=pending\|approved\|live\|denied\|draft\|all][&group=<slug>][&q=…][&email=<id>]` | List + detail sheet. Default segment is To Review; `email=<id>` deep-links one email (the segment follows the row). `denied` / `draft` are admin only. |
+| `emails.php?client=<slug>[&status=pending\|approved\|live\|denied\|draft\|all][&audience=<slug>][&q=…][&email=<id>]` | List + detail sheet. Default segment is To Review; `email=<id>` deep-links one email (the segment follows the row). `denied` / `draft` are admin only. `&group=<slug>` (the old name) still filters the same way. |
 | `email-status.php` (POST) | Approve / deny (note of at least 3 characters required) / comment / send for review / reset / mark live / delete. Mirrors `status.php`. |
-| `add-email.php?client=<slug>[&edit=<id>]` | Admin create / edit form, including groups. |
+| `add-email.php?client=<slug>[&edit=<id>]` | Admin create / edit form, including audiences. |
 | `emails-io.php?client=<slug>&format=csv\|json` | Admin export (GET) and import (POST `file`, optional `dry_run=1`). |
-| `studio.php?client=<slug>&tab=emails` | Counts, add / import / export, group management, module enable. |
+| `studio.php?client=<slug>&tab=emails` | Counts, add / import / export, audience management, module enable. |
+| `assign.php` | Admin: move emails / pages to another client, add to a flow, set audiences, create from "+ New" — see **Assigning emails and pages** below. |
 
 **CSV contract** (header row, this order; matched case-insensitively on import):
 
@@ -87,8 +89,9 @@ Status, ID, Title, Sequence, Trigger, Subject Line, Preview Text, View Email, UR
   new code = create. A blank `ID` skips the row (reported); a duplicate `ID` later in the same
   file is ignored (reported as `duplicate`; the first occurrence wins).
 - `#ERROR!` and `Active 👍` cells are treated as blank in every column except `Status`.
-- `Sequence` = the first group; `Groups` = all groups, pipe-separated (`Free|Pro`). On import
-  the sequence is added to the groups when missing; unknown group names are created.
+- `Sequence` = the first audience; `Groups` = all audiences, pipe-separated (`Free|Pro`). The
+  column keeps its name so the client's sheet round-trips (an `Audiences` header imports too). On
+  import the sequence is added to the audiences when missing; unknown names are created.
 - `Trigger` keeps line breaks. `Priority` = Low / Medium / High (anything else = blank).
 - `View Email`, `Latest Note` and `Updated` are export-only and ignored on import.
 - Only the columns present are updated; a present-but-blank cell clears that field.
@@ -120,6 +123,30 @@ trigger line). Clients only view flows and never see Draft / Needs-changes steps
   `format=flows-csv` downloads `<slug>-flows-YYYY-MM-DD.csv`, one row per step
   (`Flow, Position, ID, Title, Timing, Trigger, Subject Line, Preview Text, Status, URL`, Position 1-based).
 - Deleting an email removes it from every flow; an email's detail sheet lists the flows it is in.
+
+### Assigning emails and pages
+
+Admin only (the client seat never gets the markup, and `assign.php` answers it with a JSON 403).
+
+- **⋯ menu** on every email / page row and in the detail sheet: **Move to client…**, and for emails
+  **Add to flow…** and **Set audiences…**. **Select** in the list header turns on multi-select; the
+  bulk bar (above the tab bar on phones) runs the same three actions on the selection.
+- **Move to client** moves the rows and their files: every file is copied into the new client's
+  folder (`media/pages/<client>/<slug>/`, `media/emails/<client>/`), each copy is verified (size +
+  SHA-1), the rows change in one transaction, and only then are the old files deleted; any failure
+  removes the copies and changes nothing. A code / slug the new client already uses gets a `-2`
+  suffix (reported in the toast). Emails keep their audiences (by name, created when missing) and
+  leave the old client's flows; comments and history follow the item; a "moved" row is logged.
+- **Add to flow**: pick a flow (or name a new one) and a position (end by default, first, or after
+  any step). **Set audiences**: tick / clear, a dash = mixed in a selection (left as it is).
+- **+ New → New email / New page** opens a sheet in place: client, title, then the HTML as a file,
+  pasted, or a link (or nothing yet). It is saved as a Draft and its detail opens. Pasted / uploaded
+  email HTML is stored as `media/emails/<client>/<code>-<id>.html` (shared media `.htaccess`, every
+  directive guarded, plus a guarded `script-src 'none'` CSP); page HTML becomes the page's
+  `index.html`. "Full form" (and the menu item's link without JavaScript) is the old form.
+- `assign.php`: `GET ?action=options&client=&kind=email|page[&ids=]` and `POST action=move | add_to_flow |
+  set_audiences | create_email | create_page` — contract in the file header. Tests:
+  `tests/smoke/09-assign.php`, `tests/e2e/06-assign.js`.
 
 ## Pages
 
@@ -209,7 +236,7 @@ filter is in SQL and re-checked on deep links, partials and the endpoint.
 Each tire ("collection" in Assets) can carry any number of **series** — folders of generated
 real-life renders (images and MP4/WebM/MOV videos, typically ~200 per series) that the client
 reviews with the same approve / deny-with-note flow as the reference images. Approved renders
-join the Approved Pool and the composer like any tire image.
+join Approved assets and the composer like any tire image.
 
 - **Folder layout** (a sibling of `portal/`, next to the library): `media/tires/<tire-slug>/<series-folder>/<file>`.
   The tire slug is the tire name lower-cased with runs of non-alphanumerics turned into `-`
@@ -239,7 +266,7 @@ join the Approved Pool and the composer like any tire image.
   approves every pending render of the open series in one request. The admin "…" menu renames /
   deletes the series (optionally deleting the files); in the viewer the admin can **Set as
   reference** (moves the image to the tire's reference set, sort_order 0) and **Delete image…**
-  (row + file + thumb). Series renders show in the Approved Pool grouped per collection with
+  (row + file + thumb). Series renders show under Approved assets grouped per collection with
   series chips.
 - **Photos · Videos**: videos are a load on the server, so a series never puts them on the page
   unasked. A series that holds at least one video gets a small **Photos N · Videos N** control under
@@ -250,7 +277,7 @@ join the Approved Pool and the composer like any tire image.
   tiles with the file size — no `<video>` element, never a probe of the file; the viewer streams
   the one video on screen (`preload="metadata"`) and unloads it the moment you navigate away, and
   its "…" menu offers a direct **Download** link. The switcher chips show a subtle "3▶" for series
-  with videos. In the Approved Pool, **Photos / Videos** chips filter client-side and videos start
+  with videos. In Approved assets, **Photos / Videos** chips filter client-side and videos start
   collapsed behind **Show N videos** so no posters are fetched for them by default.
 - **Comments** (every Assets image — library and tire, any status, both seats): the viewer has a
   "Comments (N)" panel under Approve / Deny with the image's thread (deny notes and replies, client
@@ -300,7 +327,7 @@ applied; transparency kept in WebP (flattened onto white in JPEG); animated GIFs
 frame. SVGs and videos get no previews. Code: `preview-lib.php`.
 
 - **When they are made**: right after each upload (renders, reference images, Compose / Uploads /
-  Batch files, Approved Pool picks — copied from the source's previews when it has them, Replace
+  Batch files, Approved assets picks — copied from the source's previews when it has them, Replace
   regenerates), within a per-request time budget. Anything not made yet — FTP drops into
   `media/library/` or `media/tires/`, big batches — is made on first view by **`preview.php`**:
   the page links `preview.php?f=<signed path>&s=sm|lg&v=<mtime>`, which makes the file once and
