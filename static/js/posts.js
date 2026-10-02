@@ -9,13 +9,18 @@
    App.posts.open(id, {deny})     open the post detail sheet (inline template or partial fetch)
    App.posts.close()
    App.posts.decide(id, status, note, {toast})   optimistic approve / deny (+ required note) / reset
-   App.posts.resubmit(id)         admin work queue: denied → pending (status.php status=pending), row leaves the queue
+   App.posts.resubmit(id)         admin work queue: denied → pending ("Send for review", status.php status=pending), row leaves the queue
+   App.posts.refresh(id)          after a save elsewhere (the New post pop-up: create / edit / draft / send for review): fetch the
+                                  row as the server renders it now (posts.php &partial=row) and swap it in, insert it, or let it
+                                  leave this segment; the segment counts follow. → Promise {segment, month, inView}
    App.posts.submit(id)           admin: draft → pending ("Send for review", status.php action=submit; 422 → "Add a caption first"
                                   and the caption editor opens when the sheet shows that post)
    App.posts.comment(id, text)
    App.posts.togglePosted(id, to) (admin)   App.posts.remove(id) (admin)
    App.posts.videoFallback(root)  swaps a non-playable <video> for the "Open / Download" card
-   Events: 'posts:decided' {id, status, ok}, 'posts:submitted' {id, ok}, 'posts:open' {id}, 'posts:close' {id}
+   App.posts.approveForClient(id) admin ⋯ "Approve for client…": asks first, then approves on the client's behalf
+   Events: 'posts:decided' {id, status, ok}, 'posts:submitted' {id, ok}, 'posts:open' {id}, 'posts:close' {id},
+           'posts:refreshed' {id, segment, inView}
    ===================================================================== */
 (function (window, document) {
   'use strict';
@@ -330,11 +335,19 @@
       'approved':        status === 'approved' && !posted,
       'scheduled':       posted,
       'denied':          status === 'denied' && !posted,
+      'note':            status === 'denied' && !posted,
+      'admin-waiting':   status === 'pending' && !posted,
+      'admin-pending':   status === 'pending' && !posted,
       'admin-approved':  status === 'approved' && !posted,
       'admin-denied':    status === 'denied' && !posted,
       'draft':           status === 'draft',
       'admin-draft':     status === 'draft',
-      'admin-scheduled': posted
+      'admin-scheduled': posted,
+      // ⋯ "For the client" (admin): the client's decisions, on purpose only
+      'menu-approve':    !posted && (status === 'pending' || status === 'denied'),
+      'menu-deny':       !posted && (status === 'pending' || status === 'approved'),
+      'menu-resubmit':   !posted && status === 'denied',
+      'menu-decide':     !posted && status !== 'draft'
     };
     $$('[data-state]', root).forEach(function (el) {
       var k = el.getAttribute('data-state');
@@ -438,12 +451,13 @@
             if (line) line.textContent = 'Approved ' + fmtDay(new Date()) + ' · Joust will schedule this';
           }
           if (note) appendComment(art, note, App.actor);
+          if (note && status === 'denied') fillNote(art, note, App.actor);
           var form = $('[data-deny-form]', sheetRoot()); if (form) { form.hidden = true; var ta = $('[data-deny-note]', form); if (ta) ta.value = ''; }
         }
         if (opts.toast) toast(opts.toast, 'success');
         else if (status === 'approved') toast('Approved', 'success');
         else if (status === 'denied') toast(App.role === 'admin' ? 'Marked as needs changes' : 'Sent to Joust', 'success');
-        else toast('Back in To Review');
+        else toast('Sent for review — back in To Review', 'success');
         if (status === 'denied' && App.role !== 'admin' && P.current && P.current.id === id) setTimeout(P.close, 700);
       }
       document.dispatchEvent(new CustomEvent('posts:decided', { detail: { id: id, status: status, ok: res.ok } }));
@@ -458,7 +472,7 @@
     var btns = item ? $$('[data-resubmit]', item) : [];
     btns.forEach(function (b) { b.disabled = true; });
     if (P.current && P.current.id === id) P.close();
-    return P.decide(id, 'pending', null, { toast: 'Resubmitted — back in To Review' }).then(function (res) {
+    return P.decide(id, 'pending', null, { toast: 'Sent for review — back in To Review' }).then(function (res) {
       if (!res || !res.ok) btns.forEach(function (b) { b.disabled = false; });
       return res;
     });
@@ -501,6 +515,89 @@
       return res;
     });
   };
+
+  /* ---- admin: the client's Approve, on their behalf (⋯ → Approve for client…) ---- */
+  P.approveForClient = function (id) {
+    id = String(id);
+    var who = cfg.clientName || 'the client';
+    if (!window.confirm('Approve this post for ' + who + '?\n\nOnly do this when ' + who + ' has approved it outside the portal — they won\'t be asked.')) return Promise.resolve(null);
+    return P.decide(id, 'approved', null, { toast: 'Approved for ' + who });
+  };
+
+  /* ---- refresh one row after a save elsewhere (New post pop-up) ------- */
+  function rowDate(li) { var t = li && $('.pl-date', li); return (t && t.getAttribute('datetime')) || ''; }
+  function insertRow(li) {
+    var list = $('[data-posts-items]'); if (!list) return false;
+    var rows = $$('[data-posts-items] > [data-post-item]');
+    var at = null;
+    if (!cfg.queue) {   // the queue is newest client activity first → top; every other segment: date, then id
+      var d = rowDate(li), id = parseInt(li.getAttribute('data-id'), 10) || 0;
+      for (var i = 0; i < rows.length; i++) {
+        var rd = rowDate(rows[i]), rid = parseInt(rows[i].getAttribute('data-id'), 10) || 0;
+        if (rd > d || (rd === d && rid > id)) { at = rows[i]; break; }
+      }
+      var more = $('[data-posts-more-wrap]');
+      if (!at && more && !more.hidden) return false;   // it sorts after rows not loaded yet — "Load more" brings it
+    } else at = rows[0] || null;
+    list.insertBefore(li, at);
+    var group = $('[data-posts-list]'); if (group) group.hidden = false;
+    var empty = $('[data-posts-empty]'); if (empty) empty.hidden = true;
+    return true;
+  }
+  P.refresh = function (id, opts) {
+    opts = opts || {};
+    id = String(id);
+    var old = itemEl(id);
+    if (old) { var stale = $('template[data-post-template]', old); if (stale) stale.remove(); }   // never reopen the pre-save detail
+    var loose = $('template[data-post-template="' + id + '"]'); if (loose) loose.remove();
+    var fromSeg = old ? segmentOf(old.getAttribute('data-status'), old.getAttribute('data-posted') === '1') : null;
+    if (!cfg.rowUrl) return Promise.reject(new Error('No row URL'));
+    return fetch(cfg.rowUrl.replace('__ID__', encodeURIComponent(id)), { credentials: 'same-origin', headers: { 'Accept': 'text/html' } })
+      .then(function (res) {
+        if (!res.ok) throw new Error('Could not refresh the list');
+        var seg = res.headers.get('X-Post-Segment') || '', month = res.headers.get('X-Post-Month') || '';
+        return res.text().then(function (html) { return { html: html, segment: seg, month: month }; });
+      })
+      .then(function (r) {
+        var inMonth = !cfg.month || r.month === cfg.month;
+        var inView = inMonth && r.segment === P.segment;
+        if (fromSeg) bumpCount(fromSeg, -1);          // a row in the list is always counted in this view
+        if (inMonth) bumpCount(r.segment, +1);
+        var tpl = document.createElement('template'); tpl.innerHTML = r.html.trim();
+        var li = $('[data-post-item]', tpl.content);
+        if (old && document.contains(old)) {
+          if (inView && li) {
+            if (old.classList.contains('is-open')) li.classList.add('is-open');
+            old.parentNode.replaceChild(li, old);
+          } else { leaveList(id); delete removed[id]; li = null; }
+        } else if (inView && li) {
+          li.classList.add('ui-enter');
+          if (!insertRow(li)) li = null;
+        } else li = null;
+        if (li) {
+          if (App.video && App.video.enhance) App.video.enhance(li);
+          if (P.current && P.current.id === id) { li.classList.add('is-open'); P.current.item = li; }
+        }
+        syncMore();
+        var out = { id: id, segment: r.segment, month: r.month, inView: inView, label: LABELS[r.segment] || r.segment };
+        document.dispatchEvent(new CustomEvent('posts:refreshed', { detail: out }));
+        return out;
+      });
+  };
+  P.label = function (seg) { return LABELS[seg] || seg; };
+
+  /* "Kenda Tires asked for changes · just now" + the note, after an in-place Needs changes (admin ⋯). */
+  function fillNote(art, text, actor) {
+    var root = art.closest('.ui-sheet-root') || document;
+    var box = $('[data-pd-note]', root); if (!box) return;
+    var m = /^\[Slide (\d{1,2})\]\s*/.exec(text), slide = m ? parseInt(m[1], 10) : 0;
+    if (m) text = text.slice(m[0].length);
+    var who = actor === 'client' ? (cfg.clientName || 'The client') : 'Joust';
+    var w = $('[data-pd-note-who]', box); if (w) w.textContent = who + ' asked for changes';
+    var when = $('[data-pd-note-when]', box); if (when) when.textContent = ' · just now';
+    var p = $('[data-pd-note-text]', box);
+    if (p) p.innerHTML = (slide ? '<span class="pd-note-slide">On slide ' + slide + ':</span> ' : '') + escapeHtml(text);
+  }
 
   P.togglePosted = function (id, to) {
     id = String(id);
@@ -866,7 +963,7 @@
       P.submit(btn.getAttribute('data-submit-post'));
     });
 
-    // work queue: Resubmit for review (admin-only markup; status.php enforces the role)
+    // work queue: Send for review (admin-only markup; status.php enforces the role)
     document.addEventListener('click', function (e) {
       var btn = e.target.closest('[data-resubmit]');
       if (!btn || btn.disabled) return;
@@ -884,9 +981,13 @@
       var decide = t.closest('[data-decide]');
       if (decide) {
         var st = decide.getAttribute('data-decide');
-        if (st === 'denied') openDeny(root); else P.decide(id, st);
+        closeMenu(root);
+        if (st === 'denied') openDeny(root);
+        else if (st === 'pending') P.decide(id, 'pending', null, { toast: 'Sent for review — back in To Review' });
+        else P.decide(id, st);
         return;
       }
+      if (t.closest('[data-approve-for-client]')) { closeMenu(root); P.approveForClient(id); return; }
       if (t.closest('[data-deny-cancel]')) { var f = $('[data-deny-form]', root); if (f) f.hidden = true; return; }
 
       var tp = t.closest('[data-toggle-posted]');

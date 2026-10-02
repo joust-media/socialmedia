@@ -358,6 +358,7 @@ if ($flowCount > 0 || ($admin && function_exists('hasEmailFlowsTable'))) {
 $emailsConfig = [
     'base'        => basePath(),
     'endpoint'    => basePath() . '/email-status.php',
+    'clientName'  => (string)($client['name'] ?? ''),   // ⋯ Approve for client… confirm
     'partialUrl'  => $pageUrl(['status' => $segment, 'email' => '__ID__', 'partial' => 1]),
     'segment'     => $segment,
     'counts'      => $counts,
@@ -454,8 +455,8 @@ include __DIR__ . '/partials/layout-top.php';
     ?>
       <li class="pl-item el-item<?= $queue ? ' pl-item--queue' : '' ?><?= $isPast ? ' pl-item--past' : '' ?>" id="email-<?= $eid ?>" data-email-item="<?= $eid ?>" data-id="<?= $eid ?>"
           data-status="<?= h($email['status']) ?>" data-live="<?= $live ? '1' : '0' ?>" data-key="<?= h($key) ?>"<?= $isPast ? ' data-past="1"' : '' ?>
-          data-title="<?= h($rowTitle) ?>"<?= $queue ? ' data-queue' : ' data-swipe' ?>>
-        <?php if (!$queue): ?>
+          data-title="<?= h($rowTitle) ?>"<?= $queue ? ' data-queue' : ($admin ? '' : ' data-swipe') ?>>
+        <?php if (!$queue && !$admin): /* swipe = the client's decision; Joust decides for the client only via ⋯ → Approve for client… */ ?>
         <div class="pl-swipe pl-swipe--approve" aria-hidden="true"><?= icon('checkmark') ?><span>Approve</span></div>
         <div class="pl-swipe pl-swipe--deny" aria-hidden="true"><?= icon('xmark') ?><span>Needs changes</span></div>
         <?php endif; ?>
@@ -508,7 +509,7 @@ include __DIR__ . '/partials/layout-top.php';
         <?php if ($queue): ?>
           <div class="pl-queue-actions">
             <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-email-open="<?= $eid ?>">Open</button>
-            <button type="button" class="ui-btn ui-btn--tinted ui-btn--sm" data-resubmit="<?= $eid ?>" title="Move this email back to the client's To Review list">Resubmit for review</button>
+            <button type="button" class="ui-btn ui-btn--tinted ui-btn--sm" data-resubmit="<?= $eid ?>" title="Move this email back to the client's To Review list">Send for review</button>
           </div>
         <?php endif; ?>
         <?php if ($inlineDetails): ?>
@@ -517,10 +518,10 @@ include __DIR__ . '/partials/layout-top.php';
       </li>
     <?php endforeach; ?>
   </ul>
-  <?php if ($segment === 'pending'): ?>
-    <p class="ui-list-footer posts-hint">Swipe right to approve, left to request changes. Tap an email for the full preview.</p>
+  <?php if ($segment === 'pending' && !$admin): ?>
+    <p class="ui-list-footer posts-hint">Swipe right to approve, left for needs changes. Tap an email for the full preview.</p>
   <?php elseif ($isQueue): ?>
-    <p class="ui-list-footer">Newest client activity first. Open an email for the full thread; Resubmit sends it back to the client's To Review list.</p>
+    <p class="ui-list-footer">Newest client activity first. Open an email for the full thread; Send for review puts it back on the client's To Review list.</p>
   <?php endif; ?>
 </section>
 

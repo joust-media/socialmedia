@@ -189,6 +189,34 @@ li + li > .pl-card::before { left: 100px; }
 .pd-menu button:hover, .pd-menu button:focus-visible { background: var(--fill-tertiary); outline: none; }
 .pd-menu button:disabled { opacity: .4; }
 .pd-menu button.is-destructive { color: var(--deny); }
+.pd-menu button[hidden], .pd-menu-group[hidden] { display: none; }
+.pd-menu-sep { height: 0.5px; margin: 5px 8px; background: var(--separator); }
+.pd-menu a.pd-menu-link, .asg-menu > a.pd-menu-link {
+  display: block; padding: 10px 12px; margin: 0; border: 0; border-radius: 8px;
+  color: var(--label); text-decoration: none;
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead);
+}
+.pd-menu a.pd-menu-link:hover, .pd-menu a.pd-menu-link:focus-visible { background: var(--fill-tertiary); outline: none; }
+
+/* Needs changes (admin): the client's note pinned above the media — the fix starts from it */
+.pd-note {
+  margin: 0 0 12px; padding: 12px 14px; border-radius: 12px;
+  background: rgba(255,59,48,.10);
+  box-shadow: inset 0 0 0 0.5px rgba(255,59,48,.28);
+}
+.pd-note[hidden] { display: none; }
+.pd-note-head {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  color: var(--deny); font-weight: 600;
+  font-size: var(--text-footnote); line-height: var(--lh-footnote);
+}
+.pd-note-head .ui-icon { width: 16px; height: 16px; stroke-width: 2.6; }
+.pd-note-when { font-weight: 400; }
+.pd-note-text {
+  margin: 6px 0 0; color: var(--label); white-space: pre-line; overflow-wrap: anywhere;
+  font-size: var(--text-body); line-height: var(--lh-body); letter-spacing: var(--ls-body);
+}
+.pd-note-slide { font-weight: 600; }
 
 /* 1. Media carousel */
 .pd-media {
@@ -397,6 +425,7 @@ li + li > .pl-card::before { left: 100px; }
 .pd-state--scheduled { color: var(--scheduled); background: rgba(88,86,214,.15); }
 .pd-state--denied    { color: var(--deny);      background: rgba(255,59,48,.14); }
 .pd-state--draft     { color: var(--label-secondary); background: var(--fill-tertiary); }
+.pd-state--pending   { color: var(--pending);   background: rgba(255,149,0,.13); }
 .pd-state:not([hidden]) ~ .pd-actions:has(> :not([hidden])) { margin-top: 8px; }
 .pd-actions > [hidden] { display: none; }
 .pd-actions .ui-btn-group > .ui-btn { min-width: 0; }

@@ -1222,8 +1222,8 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
 function actionLabel($action) {
     static $map = [
         'approved'             => 'approved',
-        'denied'               => 'changes requested',
-        'reset_pending'        => 'moved back to To Review',
+        'denied'               => 'requested changes',     // the "Needs changes" button (one word per action)
+        'reset_pending'        => 'sent for review',       // a resubmit reads like the first send
         'drafted'              => 'started a draft of',
         'moved_to_draft'       => 'moved back to drafts',
         'posted'               => 'marked scheduled',
@@ -1703,9 +1703,9 @@ if (!function_exists('activityFinalizeRows')) {
                 case 'denied':
                     $verb = 'requested changes'; $icon = 'xmark'; $tone = 'deny';
                     $t = "$who requested changes on $objT"; $hh = "$whoH requested changes on $objH"; break;
-                case 'reset_pending':
-                    $verb = 'reopened'; $icon = 'grid'; $tone = 'accent';
-                    $t = "$who reopened $objT for review"; $hh = "$whoH reopened $objH for review"; break;
+                case 'reset_pending':   // a resubmit: the same words as the first "Send for review"
+                    $verb = 'sent for review'; $icon = 'grid'; $tone = 'accent';
+                    $t = "$who sent $objT for review"; $hh = "$whoH sent $objH for review"; break;
                 case 'posted':
                     $verb = 'scheduled'; $icon = 'calendar'; $tone = 'scheduled';
                     $t = "$who scheduled $objT"; $hh = "$whoH scheduled $objH"; break;

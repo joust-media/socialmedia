@@ -159,6 +159,10 @@ try {
             pageFail(403, 'This page can no longer be changed here — add a comment instead');
         }
     }
+    // A draft goes to the client before anyone decides on it (posts' rule, status.php): Send for review first.
+    if ($hasStat && $prevStat === 'draft' && in_array($status, ['approved', 'denied'], true)) {
+        pageFail(409, 'Send this draft for review first');
+    }
     if ($hasStat && $isAdminSession && $prevLive && $status !== $prevStat) {
         // Status changes on a live row would silently hide it from the client's Live list; unmark first.
         pageFail(409, 'Unmark live before changing the status');
@@ -172,10 +176,10 @@ try {
         if ($status === 'approved') {
             $logAction = 'approved';  $summary = "Page {$label} approved";  $detail = null;
         } elseif ($status === 'denied') {
-            $logAction = 'denied';    $summary = "Page {$label} denied";    $detail = null;
+            $logAction = 'denied';    $summary = "Changes requested on page {$label}";    $detail = null;
         } elseif ($status === 'pending') {
             $logAction = $prevStat === 'draft' ? 'submitted' : 'reset_pending';
-            $summary   = "Page {$label} " . ($prevStat === 'draft' ? 'sent for review' : 'reset to review');
+            $summary   = "Page {$label} sent for review";
             $detail    = null;
         } else {
             $logAction = 'edited_status'; $summary = "Status edited on {$label}"; $detail = $prevStat . ' → ' . $status;

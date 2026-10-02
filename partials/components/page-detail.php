@@ -28,6 +28,7 @@
  */
 
 require_once __DIR__ . '/assign.php';
+require_once __DIR__ . '/review-actions.php';   // admin footer + ⋯ review items + the Needs changes note
 
 if (!function_exists('pgEsc')) {
     function pgEsc($s): string { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
@@ -63,6 +64,8 @@ if (!function_exists('renderPageDetail')) {
         $desc     = trim(str_replace(["\r\n", "\r"], "\n", (string)($page['description'] ?? '')));
         $notes    = trim((string)($page['notes'] ?? ''));
         $comments = is_array($opts['comments'] ?? null) ? $opts['comments'] : (is_array($page['comments'] ?? null) ? $page['comments'] : []);
+        $clientName = trim((string)($opts['clientName'] ?? $company['name'] ?? ($GLOBALS['client']['name'] ?? '')));   // "Waiting on …" / the note banner
+        if ($clientName === '') $clientName = 'the client';
         $files    = is_array($page['files'] ?? null) ? $page['files'] : [];
         $viewUrl  = function_exists('pageViewUrl') ? pageViewUrl($page, $company) : '';
         $folder   = ($source === 'upload' && function_exists('pageFolderRel')) ? pageFolderRel($company, $page) : '';
@@ -109,9 +112,14 @@ if (!function_exists('renderPageDetail')) {
         }
         // Admin ⋯: Move to client… (assign.js sheet → assign.php; the folder moves with it)
         if ($admin && function_exists('assignMenuHtml')) {
-            $out .= assignMenuHtml('page', $id, $label, ['admin' => true]);
+            $out .= assignMenuHtml('page', $id, $label, ['admin' => true, 'extra' => reviewMenuItemsHtml('page', $key, $editUrl, 'data-delete-page')]);
         }
         $out .= '</div>';
+
+        // ---- 0. Needs changes (admin): the client's note first, above the preview ---------------
+        if ($admin) {
+            $out .= reviewNoteBanner(reviewLatestNote($comments, $clientName), $key === 'denied');
+        }
 
         // ---- 1. Preview frame -----------------------------------------------------------
         $out .= '<section class="pg-preview" data-preview' . (!$hasEntry ? ' data-preview-empty' : '') . '>';
@@ -239,7 +247,7 @@ if (!function_exists('renderPageDetail')) {
               . '<textarea class="ui-textarea" id="pg-deny-' . $id . '" data-deny-note placeholder="What should change?" minlength="3" maxlength="2000" rows="2" required></textarea>'
               . '<p class="pd-editor-hint" data-deny-hint>A short note is required so Joust knows what to fix.</p>'
               . '<div class="ui-btn-group"><button type="button" class="ui-btn ui-btn--gray" data-deny-cancel>Cancel</button>'
-              . '<button type="submit" class="ui-btn ui-btn--deny ui-btn--primary" data-deny-submit disabled>Send &amp; request changes</button></div>'
+              . '<button type="submit" class="ui-btn ui-btn--deny ui-btn--primary" data-deny-submit disabled>Send</button></div>'
               . '</form>';
 
         // State rows (all rendered; pages.js toggles [data-state] from data-status / data-live)
@@ -248,50 +256,23 @@ if (!function_exists('renderPageDetail')) {
         $out .= '<div class="pd-state pd-state--scheduled" data-state="live"' . ($live ? '' : ' hidden') . '>'
               . $ico('checkmark') . '<span>Live</span></div>';
         if ($admin) {
-            $out .= '<div class="pd-state pd-state--denied" data-state="denied"' . ($key === 'denied' ? '' : ' hidden') . '>'
-                  . $ico('xmark') . '<span>Needs changes</span></div>';
+            $out .= '<div class="pd-state pd-state--pending" data-state="admin-waiting"' . ($key === 'pending' ? '' : ' hidden') . '>'
+                  . '<span>Waiting on ' . pgEsc($clientName) . ' to review</span></div>';
             $out .= '<div class="pd-state pd-state--draft" data-state="draft"' . ($key === 'draft' ? '' : ' hidden') . '>'
                   . $ico('page') . '<span>Draft · not visible to the client</span></div>';
         }
 
-        // Action bar
+        // Action bar — one primary per state (the post sheet's shape, review-actions.php).
+        //   Client: To Review → Needs changes · Approve.   Admin: Joust's own next step; the client's decisions
+        //   (Approve for client…, Needs changes…) and Move to Draft / Delete live in the ⋯ menu — no status override.
         $out .= '<div class="pd-actions" data-actions>';
-        // Client + admin: decide while pending
-        $out .= '<div class="ui-btn-group pd-decide" data-state="decide"' . ($key === 'pending' ? '' : ' hidden') . '>'
-              . '<button type="button" class="ui-btn ui-btn--large ui-btn--deny ui-btn--tinted" data-decide="denied">Needs changes</button>'
-              . '<button type="button" class="ui-btn ui-btn--large ui-btn--approve ui-btn--primary" data-decide="approved">Approve</button>'
-              . '</div>';
-        if ($admin) {
-            // Status control (any non-live page): Draft · To Review · Approved · Needs changes
-            $out .= '<div class="pg-status-ctl" data-state="admin-status"' . ($live ? ' hidden' : '') . '>'
-                  . '<span class="pg-status-ctl-label">Status</span>'
-                  . '<div class="ui-segmented ui-segmented--dense" role="group" aria-label="Set status">';
-            foreach (['draft' => 'Draft', 'pending' => 'To Review', 'approved' => 'Approved', 'denied' => 'Needs changes'] as $k => $l) {
-                $out .= '<button type="button" class="ui-segmented-item' . ($status === $k ? ' is-active' : '') . '" data-set-status="' . $k . '" aria-pressed="' . ($status === $k ? 'true' : 'false') . '">' . $l . '</button>';
-            }
-            $out .= '</div></div>';
-            // Draft: Send for review (primary)
-            $out .= '<div class="ui-btn-group pd-admin-draft" data-state="admin-draft"' . ($key === 'draft' ? '' : ' hidden') . '>'
-                  . '<button type="button" class="ui-btn ui-btn--large ui-btn--filled ui-btn--primary" data-submit>Send for review</button>'
-                  . '</div>';
-            // Approved + not live: Mark live (primary)
-            $out .= '<div class="ui-btn-group pd-admin-approved" data-state="admin-approved"' . ($key === 'approved' ? '' : ' hidden') . '>'
-                  . '<button type="button" class="ui-btn ui-btn--large ui-btn--filled ui-btn--primary" data-toggle-live="1">Mark live</button>'
-                  . '</div>';
-            // Denied: Resubmit for review · Approve
-            $out .= '<div class="ui-btn-group pd-admin-denied" data-state="admin-denied"' . ($key === 'denied' ? '' : ' hidden') . '>'
-                  . '<button type="button" class="ui-btn ui-btn--large ui-btn--gray" data-resubmit-detail>Resubmit for review</button>'
+        if (!$admin) {
+            $out .= '<div class="ui-btn-group pd-decide" data-state="decide"' . ($key === 'pending' ? '' : ' hidden') . '>'
+                  . '<button type="button" class="ui-btn ui-btn--large ui-btn--deny ui-btn--tinted" data-decide="denied">Needs changes</button>'
                   . '<button type="button" class="ui-btn ui-btn--large ui-btn--approve ui-btn--primary" data-decide="approved">Approve</button>'
                   . '</div>';
-            // Live: Unmark live
-            $out .= '<div class="ui-btn-group pd-admin-live" data-state="admin-live"' . ($live ? '' : ' hidden') . '>'
-                  . '<button type="button" class="ui-btn ui-btn--gray" data-toggle-live="0">Unmark live</button>'
-                  . '</div>';
-            // Edit · Delete (always for admin)
-            $out .= '<div class="pg-admin-tools">'
-                  . '<a class="ui-btn ui-btn--gray ui-btn--sm" href="' . pgEsc($editUrl) . '" data-edit-page>' . $ico('wand') . 'Edit</a>'
-                  . '<button type="button" class="ui-btn ui-btn--gray ui-btn--sm pg-delete" data-delete-page>' . $ico('xmark') . 'Delete</button>'
-                  . '</div>';
+        } else {
+            $out .= reviewAdminFooterHtml('page', $key, $editUrl);
         }
         $out .= '</div>'; // /.pd-actions
         $out .= '</div>'; // /.pd-footer
