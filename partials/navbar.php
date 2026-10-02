@@ -11,7 +11,9 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
  *   $navBack      array|null  ['href' => …, 'label' => …] → leading back button (optional)
  *   $navLeading   string      raw HTML for the leading slot (used when $navBack is not set)
  *   $navTrailing  string|null raw HTML for the top-right slot; null → client avatar; '' → nothing
- *                             (the Appearance sun/moon button always precedes it — every page has it)
+ *                             (the Appearance sun/moon button always precedes it — every page has it — and,
+ *                             for the admin only, the "+ New" create menu before that)
+ *   $navNewMenu   bool        false → no "+ New" menu on this page (default: shown to the admin)
  *   $navLinks     array       [['label' => …, 'href' => …, 'primary' => bool, 'attrs' => []], …] (optional)
  *   $navLinksExtra string     raw HTML appended at the end of the links row (e.g. appearanceControl())
  *   $navWide      bool        match a wide (1200px) content column
@@ -36,6 +38,11 @@ if ($navTrailing === null) {
 // Appearance toggle (Light → Dark → Auto) on every page, left of the avatar / page buttons.
 if (function_exists('themeToggleButton')) {
     $navTrailing = themeToggleButton() . $navTrailing;
+}
+// Admin only: the "+ New" create menu leads the trailing slot (partials/components/new-menu.php;
+// '' for the client seat — server-side). A page may opt out with $navNewMenu = false.
+if ((!isset($navNewMenu) || $navNewMenu !== false) && function_exists('newMenuHtml')) {
+    $navTrailing = newMenuHtml($client ?? null, (isset($pdo) && $pdo instanceof PDO) ? $pdo : null) . $navTrailing;
 }
 $navLinksExtra = isset($navLinksExtra) ? (string)$navLinksExtra : '';
 ?>

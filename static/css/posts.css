@@ -151,6 +151,10 @@ li + li > .pl-card::before { left: 100px; }
 .pl-queue-actions .ui-btn { flex: 0 0 auto; }
 @media (max-width: 479px) { .pl-queue-actions { padding-left: 16px; } }
 .pl-item--queue.is-busy .pl-queue-actions { opacity: .6; pointer-events: none; }
+/* Drafts (admin): Open · Send for review under the row; "No caption yet" leads when the caption is empty */
+.pl-draft-actions { align-items: center; }
+.pl-draft-hint { font-size: var(--text-caption); margin-right: auto; }
+[data-draft].is-busy .pl-draft-actions { opacity: .6; pointer-events: none; }
 
 /* ---------------------------------------------------------------------
    Post detail — sheet body
@@ -341,6 +345,7 @@ li + li > .pl-card::before { left: 100px; }
 .pd-state--approved  { color: var(--approve);   background: rgba(52,199,89,.15); }
 .pd-state--scheduled { color: var(--scheduled); background: rgba(88,86,214,.15); }
 .pd-state--denied    { color: var(--deny);      background: rgba(255,59,48,.14); }
+.pd-state--draft     { color: var(--label-secondary); background: var(--fill-tertiary); }
 .pd-state:not([hidden]) ~ .pd-actions:has(> :not([hidden])) { margin-top: 8px; }
 .pd-actions > [hidden] { display: none; }
 .pd-actions .ui-btn-group > .ui-btn { min-width: 0; }

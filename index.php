@@ -732,7 +732,7 @@ if ($pendingCollections > 0) {
   <div class="home-quick">
     <a class="ui-btn ui-btn--gray" href="<?= h(clientUrl('add-post.php')) ?>"><?= icon('plus') ?><span>Compose</span></a>
     <a class="ui-btn ui-btn--gray" href="<?= h(clientUrl('batch.php')) ?>"><?= icon('grid') ?><span>Batch</span></a>
-    <a class="ui-btn ui-btn--gray" href="<?= h(clientUrl('admin.php')) ?>"><?= icon('photo') ?><span>Upload</span></a>
+    <a class="ui-btn ui-btn--gray" href="<?= h(clientUrl('studio.php', ['tab' => 'uploads'])) ?>"><?= icon('photo') ?><span>Upload</span></a>
   </div>
 </section>
 <?php endif; ?>

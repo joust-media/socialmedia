@@ -49,6 +49,7 @@ jobs:
           #   - uploads/ holds client-uploaded images and is not tracked in git
           #   - .htaccess lives on the server (controls site routing/PHP config) and is not tracked in the repo
           #   - redirect-old-folder/ is the kit for the OLD socialmedia/ folder, placed there by hand
+          #   - tests/ is the local test harness (tests/README.md) and must never be served
           exclude: |
             **/.git*
             **/.git*/**
@@ -62,3 +63,4 @@ jobs:
             redirect-old-folder/**
             media-hardening/**
             docs/**
+            tests/**

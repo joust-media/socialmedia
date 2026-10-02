@@ -35,7 +35,7 @@ function h($s) {
 // --- Require client ---
 if (!$client) {
     http_response_code(400);
-    echo 'Missing ?client= — go to <a href="admin.php">admin</a>.';
+    echo 'Missing ?client= — go to <a href="' . h(adminToolsUrl()) . '">Studio</a>.';
     exit;
 }
 
@@ -617,17 +617,20 @@ function selfUrl($extra = []) {
 
 <?php
   // When editing a specific tire, point at its review page (detail view) instead of the gallery.
-  $viewQs = ['client' => $client['slug'], 'module' => $module['slug']];
+  // Parent = the collection in Assets (this tire when editing, else the Tires list) — not Studio's Compose tab.
+  $viewQs = ['view' => 'collections'];
   if ($isEdit) { $viewQs['item'] = (int)$editItem['id']; }
   $viewLabel = $isEdit ? 'Review on site' : 'View ' . $pLower;
+  $parentUrl   = clientUrl('assets.php', $viewQs);
+  $parentLabel = trim((string)($client['feature_label'] ?? '')) !== '' ? trim((string)$client['feature_label']) : $pLabel;
 ?>
 <?= renderAppChrome(($isEdit ? 'Edit ' : 'Add ') . $sLabel, [
       'subtitle' => $client['name'],
       'active'   => 'studio',
       'width'    => '900px',
-      'back'     => ['href' => 'admin.php?client=' . rawurlencode($client['slug']), 'label' => 'Studio'],
+      'back'     => ['href' => $parentUrl, 'label' => $parentLabel],
       'links'    => [
-        ['label' => $viewLabel, 'href' => 'features.php?' . http_build_query($viewQs), 'attrs' => ['target' => '_blank']],
+        ['label' => $viewLabel, 'href' => $parentUrl, 'attrs' => ['target' => '_blank']],
         ['label' => 'Sign out', 'href' => 'logout.php', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],
       ],
     ]) ?>
@@ -800,7 +803,7 @@ function selfUrl($extra = []) {
         </div>
 
         <div class="form-actions">
-          <a class="btn" href="admin.php?client=<?= h($client['slug']) ?>">Cancel</a>
+          <a class="btn" href="<?= h(clientUrl('assets.php', array_filter(['view' => 'collections', 'item' => $isEdit ? (int)$editItem['id'] : null]))) ?>">Cancel</a>
           <button type="submit" class="btn primary"><?= h($formSubmit) ?></button>
         </div>
       </form>

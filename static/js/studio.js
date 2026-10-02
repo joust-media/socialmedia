@@ -45,6 +45,9 @@
   var $$ = function (sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); };
   var toast = function (msg, opts) { if (App.toast) App.toast(msg, opts); else if (msg) window.alert(msg); };
 
+  /* Most media one post may carry (helpers.php POST_MAX_MEDIA → StudioConfig.maxImages). */
+  var MAX_MEDIA = parseInt(cfg.maxImages, 10) || 20;
+
   function esc(s) {
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -108,7 +111,7 @@
   /* ================================================================== */
   function Picker(root) {
     this.root     = root;
-    this.max      = parseInt(root.dataset.max, 10) || 10;
+    this.max      = parseInt(root.dataset.max, 10) || MAX_MEDIA;
     this.name     = root.dataset.name != null ? root.dataset.name : 'assets[]';
     this.grid     = $('[data-pool-grid]', root);
     this.strip    = $('[data-pick-strip]', root);
@@ -480,7 +483,7 @@
     });
     if (this.picker) this.picker.getSelection().forEach(function (a) { out.push({ src: a.media === 'video' ? a.src : (a.large || a.src), media: a.media }); });
     this.files.forEach(function (f) { out.push({ src: f.url, media: f.media, type: f.type, local: f.local, name: f.name, size: f.size }); });
-    return out.slice(0, 10);
+    return out.slice(0, MAX_MEDIA);
   };
   Preview.prototype.update = function () {
     var name = this.brand.name, caption = this.value('caption'), tags = (this.value('hashtags') || '').trim();
@@ -753,7 +756,7 @@
   function Composer(form) {
     var self = this;
     this.form = form;
-    this.max = parseInt(form.dataset.max, 10) || 10;
+    this.max = parseInt(form.dataset.max, 10) || MAX_MEDIA;
     this.slots = parseInt(form.dataset.slots, 10);
     if (isNaN(this.slots)) this.slots = this.max;
     var pickerRoot = $('[data-picker]', form);
@@ -823,7 +826,27 @@
     if (this.picker) this.picker.onChange(function () { self.syncSlots(); });
     form.addEventListener('submit', function (e) { self.onSubmit(e); });
     this.syncSlots();
+    // Leaving with unsaved picks / caption / uploads asks first (the selection lives only in this page).
+    this.initial = this.snapshot();
+    this.submitting = false;
+    window.addEventListener('beforeunload', function (e) {
+      if (self.submitting || !self.dirty()) return;
+      e.preventDefault();
+      e.returnValue = '';   // the browser shows its own "Leave site?" text
+      return '';
+    });
   }
+  /** What the admin has put into the form that a page change would lose. */
+  Composer.prototype.snapshot = function () {
+    var cap = $('[data-field="caption"]', this.form), tags = $('[data-field="hashtags"]', this.form), name = $('[name="name"]', this.form);
+    return [cap ? cap.value.trim() : '', tags ? tags.value.trim() : '', name ? name.value.trim() : ''].join('\u0001');
+  };
+  Composer.prototype.dirty = function () {
+    if (this.picker && this.picker.getSelection().length) return true;
+    if (this.validFiles().length) return true;
+    if ($$('[data-remove-image]:checked', this.form).length) return true;
+    return this.snapshot() !== this.initial;
+  };
   Composer.prototype.keptExisting = function () {
     return $$('[data-existing-item]', this.form).filter(function (el) { var cb = $('[data-remove-image]', el); return !(cb && cb.checked); }).length;
   };
@@ -881,6 +904,7 @@
       return;
     }
     if (this.queue && this.fileInput) this.fileInput.value = '';   // belt and braces: only claimed[] tokens travel
+    this.submitting = true;   // no "Leave site?" for our own submit
     var btn = $('[data-composer-submit]', this.form);
     if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = 'Saving…'; }
   };
@@ -921,7 +945,7 @@
     var job = this.queue.add(file, { hold: hold });
     if (hold && job.state === 'held') $('[data-upload-warning]', job.item).hidden = false;
   };
-  /** The token is in: one pending post for it (batch-process.php keeps its per-row contract: created[0] / errors[0]). */
+  /** The token is in: one draft post for it (batch-process.php keeps its per-row contract: created[0] / errors[0]). */
   Uploads.prototype.createPost = function (job, data) {
     var status = $('[data-upload-status]', job.item), prog = $('[data-upload-progress]', job.item);
     status.textContent = 'Creating the draft post…';
@@ -931,8 +955,9 @@
       else if (!created) err = (d.errors && d.errors[0]) || 'Not accepted';
       if (err) { status.textContent = err; status.classList.remove('is-ok'); status.classList.add('is-error'); if (prog) prog.hidden = true; return; }
       var when = created.date ? formatWhen(String(created.date).replace(' ', 'T')) : '';
-      status.innerHTML = 'Draft post #' + esc(created.post_id) + (when ? ' · ' + esc(when) : '')
-        + ' — <a href="' + esc(postUrl(cfg, created.post_id)) + '">finish it in Posts</a>';
+      var draft = created.status === 'draft';
+      status.innerHTML = (draft ? 'Draft' : 'Post') + ' #' + esc(created.post_id) + (when ? ' · ' + esc(when) : '')
+        + ' — <a href="' + esc(postUrl(cfg, created.post_id)) + '">' + (draft ? 'add a caption, then Send for review' : 'finish it in Posts') + '</a>';
       status.classList.add('is-ok');
     });
   };
@@ -1491,7 +1516,7 @@
   Batch.prototype.addRow = function (assets) {
     if (!assets.length || this.rows.length >= this.maxRows) { if (this.rows.length >= this.maxRows) toast('Up to ' + this.maxRows + ' posts per batch.'); return; }
     var li = this.tpl.content.firstElementChild.cloneNode(true);
-    var row = { el: li, assets: assets.slice(0, 10), dateTouched: false };
+    var row = { el: li, assets: assets.slice(0, MAX_MEDIA), dateTouched: false };
     li._row = row;
     var media = $('[data-row-media]', li), shown = row.assets.slice(0, 4);
     media.innerHTML = shown.map(function (a, i) {
@@ -1500,7 +1525,7 @@
     }).join('');
     media.title = row.assets.map(function (a) { return a.label; }).join(', ');
     var caption = $('[data-row-caption]', li);
-    if (caption && cfg.defaults) caption.placeholder = 'Please insert caption here';
+    if (caption) caption.placeholder = 'Caption (optional for a draft)';
     this.rows.push(row);
     this.rowsEl.appendChild(li);
     li.classList.add('ui-enter');

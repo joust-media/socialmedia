@@ -47,7 +47,7 @@ $studioConfig = [
     'upload'     => basePath() . '/upload-chunk.php?client=' . rawurlencode($client['slug']),   // direct files go up as they are picked (purpose=batch, in pieces when large) → claimed[] tokens
     'client'     => $client['slug'],
     'brand'      => ['name' => $client['name'], 'logo' => brandLogoUrl($client['logo_url'] ?? '')],
-    'maxImages'  => 10,
+    'maxImages'  => POST_MAX_MEDIA,
     'maxRows'    => 20,
     'maxBatchFiles' => 50,
     'maxImageMb' => 50,
@@ -57,7 +57,7 @@ $studioConfig = [
     'spacing'    => 3,
     'defaults'   => $defaultTags,
     'categories' => array_map(fn($c) => ['id' => (int)$c['id'], 'name' => $c['name']], $categories),
-    'postsUrl'   => clientUrl('posts.php', ['status' => 'pending', 'month' => 'all']),
+    'postsUrl'   => clientUrl('posts.php', ['status' => postsHaveDraft($pdo) ? 'draft' : 'pending', 'month' => 'all']),
     'postUrl'    => clientUrl('posts.php', ['post' => '__ID__']),   // studio.js: per-post result links
 ];
 
@@ -80,7 +80,7 @@ include __DIR__ . '/partials/layout-top.php';
 <div class="studio-batch" data-batch data-max-rows="20" data-max-files="50" data-upload-endpoint="<?= h($studioConfig['upload']) ?>">
 
   <div class="studio-batch-pool">
-    <?= studioPickerHtml($pool, ['max' => 10, 'id' => 'batchPicker', 'name' => '', 'title' => 'Approved Pool',
+    <?= studioPickerHtml($pool, ['max' => POST_MAX_MEDIA, 'id' => 'batchPicker', 'name' => '', 'title' => 'Approved Pool',
                                  'assetsUrl' => clientUrl('assets.php', ['view' => 'library', 'filter' => 'approved'])]) ?>
     <div class="studio-batch-pickactions">
       <button type="button" class="ui-btn ui-btn--tinted" data-batch-add-row disabled>Add as one post</button>
@@ -139,7 +139,7 @@ include __DIR__ . '/partials/layout-top.php';
             <input class="ui-input" type="number" id="batchSpacing" data-batch-spacing value="3" min="1" max="30">
           </div>
         </div>
-        <p class="studio-help">Rows without a date are spaced from the latest post. Captions default to a placeholder you can finish in Compose.</p>
+        <p class="studio-help">Rows without a date are spaced from the latest post. <?= postsHaveDraft($pdo) ? 'Every post is saved as a Draft only you can see: finish captions in Posts → Drafts, then Send for review.' : 'Captions default to a placeholder you can finish in Posts.' ?></p>
       </div>
     </section>
 
@@ -151,7 +151,7 @@ include __DIR__ . '/partials/layout-top.php';
         <li class="studio-row" data-batch-row>
           <div class="studio-row-media" data-row-media></div>
           <div class="studio-row-body">
-            <textarea class="ui-textarea studio-row-caption" rows="2" maxlength="10000" placeholder="Please insert caption here" data-row-caption aria-label="Caption"></textarea>
+            <textarea class="ui-textarea studio-row-caption" rows="2" maxlength="10000" placeholder="Caption (optional for a draft)" data-row-caption aria-label="Caption"></textarea>
             <div class="studio-row-fields">
               <input class="ui-input" type="datetime-local" data-row-date aria-label="Scheduled date">
               <?php if ($supportsType): ?>
@@ -181,7 +181,7 @@ include __DIR__ . '/partials/layout-top.php';
     <section class="studio-results" data-batch-results hidden>
       <h2 class="studio-section-title">Results</h2>
       <ul class="ui-list" data-batch-results-list role="list"></ul>
-      <p class="studio-help"><a href="<?= h(clientUrl('posts.php', ['status' => 'pending', 'month' => 'all'])) ?>">Open Posts to finish captions</a></p>
+      <p class="studio-help"><a href="<?= h(clientUrl('posts.php', ['status' => postsHaveDraft($pdo) ? 'draft' : 'pending', 'month' => 'all'])) ?>">Open <?= postsHaveDraft($pdo) ? 'Drafts' : 'Posts' ?> to finish captions</a></p>
     </section>
   </div>
 </div>

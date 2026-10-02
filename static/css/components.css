@@ -555,3 +555,57 @@ html:not(:has(.ui-tabbar)) .ui-toast { bottom: calc(24px + env(safe-area-inset-b
 .ui-bubble--joust  { background: var(--fill-tertiary); }
 .ui-bubble-meta { margin-top: 3px; font-size: var(--text-caption); line-height: var(--lh-caption); color: var(--label-tertiary); }
 .ui-thread { display: flex; flex-direction: column; gap: 6px; }
+
+/* A [hidden] button stays hidden: .ui-btn's display would otherwise win over the UA rule
+   (Studio's "Clear" showed with nothing selected). */
+.ui-btn[hidden] { display: none !important; }
+
+/* ---------------------------------------------------------------------
+   "+ New" — admin create menu in the nav bar (partials/components/new-menu.php, App.newMenu)
+   --------------------------------------------------------------------- */
+.ui-newmenu { position: relative; display: inline-flex; }
+.ui-newmenu-btn { gap: 4px; padding-left: 10px; padding-right: 12px; }
+.ui-newmenu-btn .ui-icon { width: 18px; height: 18px; }
+.ui-newmenu-panel {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 850;
+  width: min(360px, calc(100vw - 24px));
+  padding: 6px;
+  background: var(--bg-elevated); border-radius: 14px;
+  box-shadow: var(--shadow-card), 0 0 0 0.5px var(--separator);
+  transform-origin: top right;
+}
+.ui-newmenu-panel[hidden] { display: none; }
+.ui-newmenu-panel.is-open { animation: ui-newmenu-in var(--dur-base, 200ms) var(--ease-out, ease-out); }
+@keyframes ui-newmenu-in { from { opacity: 0; transform: scale(.96) translateY(-4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .ui-newmenu-panel.is-open { animation: none; } }
+.ui-newmenu-item {
+  display: flex; align-items: center; gap: 12px;
+  min-height: 52px; padding: 8px 10px; border-radius: 10px;
+  color: var(--label); text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.ui-newmenu-item:hover, .ui-newmenu-item:focus-visible { background: var(--fill-tertiary); outline: none; }
+.ui-newmenu-item:active { opacity: .6; }
+.ui-newmenu-icon {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  width: 32px; height: 32px; border-radius: 8px;
+  background: rgba(0,122,255,.12); color: var(--accent);
+}
+.ui-newmenu-icon .ui-icon { width: 18px; height: 18px; }
+.ui-newmenu-text { display: flex; flex-direction: column; min-width: 0; }
+.ui-newmenu-title { font-size: var(--text-body); line-height: var(--lh-body); font-weight: 600; }
+.ui-newmenu-sub {
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Phones: icon-only button (the nav row is tight); the panel spans the screen under the nav bar
+   (the button is not at the right edge, so a right-aligned dropdown would run off the left side) */
+@media (max-width: 599px) {
+  .ui-newmenu-label { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .ui-newmenu-btn { width: 36px; padding: 0; }
+  .ui-newmenu-panel {
+    position: fixed; top: calc(env(safe-area-inset-top) + 60px); left: 12px; right: 12px;
+    width: auto; transform-origin: top center;
+  }
+  .ui-newmenu-sub { white-space: normal; }
+}

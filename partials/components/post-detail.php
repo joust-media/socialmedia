@@ -133,7 +133,7 @@ if (!function_exists('renderCaptionPreview')) {
 if (!function_exists('renderPostMedia')) {
     function renderPostMedia(array $images, array $opts = []): string
     {
-        $images = array_slice(array_values($images), 0, 10);
+        $images = array_slice(array_values($images), 0, defined('POST_MAX_MEDIA') ? POST_MAX_MEDIA : 20);
         $n = count($images);
         if ($n === 0) {
             return '<div class="pd-media pd-media--empty"><span class="text-tertiary">No media yet</span></div>';
@@ -189,7 +189,8 @@ if (!function_exists('renderPostDetail')) {
 
         $id       = (int)($post['id'] ?? 0);
         $status   = strtolower((string)($post['status'] ?? 'pending'));
-        if (!in_array($status, ['pending', 'approved', 'denied'], true)) $status = 'pending';
+        if (!in_array($status, ['draft', 'pending', 'approved', 'denied'], true)) $status = 'pending';
+        if ($status === 'draft' && !$admin) $status = 'pending';   // never reached (posts.php filters drafts for clients in SQL)
         $posted   = !empty($post['posted']);
         $images   = is_array($post['images'] ?? null) ? $post['images'] : [];
         $comments = is_array($post['comments'] ?? null) ? $post['comments'] : [];
@@ -314,6 +315,8 @@ if (!function_exists('renderPostDetail')) {
         $out .= '<div class="pd-state pd-state--scheduled" data-state="scheduled"' . ($posted ? '' : ' hidden') . '>'
               . (function_exists('icon') ? icon('checkmark') : '') . '<span>Scheduled</span></div>';
         if ($admin) {
+            $out .= '<div class="pd-state pd-state--draft" data-state="draft"' . ($status === 'draft' ? '' : ' hidden') . '>'
+                  . '<span>Draft — the client can\'t see this yet</span></div>';
             $out .= '<div class="pd-state pd-state--denied" data-state="denied"' . (($status === 'denied' && !$posted) ? '' : ' hidden') . '>'
                   . (function_exists('icon') ? icon('xmark') : '') . '<span>Needs changes</span></div>';
         }
@@ -330,6 +333,10 @@ if (!function_exists('renderPostDetail')) {
             $out .= '<div class="ui-btn-group pd-admin-approved" data-state="admin-approved"' . (($status === 'approved' && !$posted) ? '' : ' hidden') . '>'
                   . '<button type="button" class="ui-btn ui-btn--large ui-btn--deny ui-btn--tinted" data-decide="denied">Needs changes</button>'
                   . ($hasPosted ? '<button type="button" class="ui-btn ui-btn--large ui-btn--filled ui-btn--primary" data-toggle-posted="1">Mark Scheduled</button>' : '')
+                  . '</div>';
+            // Draft: Send for review (status.php action=submit; 422 until the caption is filled in)
+            $out .= '<div class="ui-btn-group pd-admin-draft" data-state="admin-draft"' . ($status === 'draft' ? '' : ' hidden') . '>'
+                  . '<button type="button" class="ui-btn ui-btn--large ui-btn--filled ui-btn--primary" data-submit-post="' . $id . '">Send for review</button>'
                   . '</div>';
             // Denied: back to review · Approve
             $out .= '<div class="ui-btn-group pd-admin-denied" data-state="admin-denied"' . (($status === 'denied' && !$posted) ? '' : ' hidden') . '>'

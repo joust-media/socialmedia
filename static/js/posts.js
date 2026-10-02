@@ -10,10 +10,12 @@
    App.posts.close()
    App.posts.decide(id, status, note, {toast})   optimistic approve / deny (+ required note) / reset
    App.posts.resubmit(id)         admin work queue: denied → pending (status.php status=pending), row leaves the queue
+   App.posts.submit(id)           admin: draft → pending ("Send for review", status.php action=submit; 422 → "Add a caption first"
+                                  and the caption editor opens when the sheet shows that post)
    App.posts.comment(id, text)
    App.posts.togglePosted(id, to) (admin)   App.posts.remove(id) (admin)
    App.posts.videoFallback(root)  swaps a non-playable <video> for the "Open / Download" card
-   Events: 'posts:decided' {id, status, ok}, 'posts:open' {id}, 'posts:close' {id}
+   Events: 'posts:decided' {id, status, ok}, 'posts:submitted' {id, ok}, 'posts:open' {id}, 'posts:close' {id}
    ===================================================================== */
 (function (window, document) {
   'use strict';
@@ -25,7 +27,7 @@
 
   var ENDPOINT = cfg.endpoint || 'status.php';
   var DESKTOP  = window.matchMedia ? window.matchMedia('(min-width: 1024px)') : { matches: false };
-  var LABELS   = { pending: 'To Review', approved: 'Approved', denied: 'Needs changes', scheduled: 'Scheduled' };
+  var LABELS   = { draft: 'Drafts', pending: 'To Review', approved: 'Approved', denied: 'Needs changes', scheduled: 'Scheduled' };
 
   function toast(msg, kind) { if (App.toast) App.toast(msg, { kind: kind }); }
   function segmentOf(status, posted) { return posted ? 'scheduled' : status; }
@@ -189,7 +191,8 @@
       empty.className = 'ui-empty posts-empty ui-enter';
       empty.setAttribute('data-posts-empty', '');
       empty.textContent = P.segment === 'pending' ? 'All caught up — nothing left to review.'
-                        : (P.segment === 'denied' ? 'Nothing needs changes — the queue is clear.' : 'Nothing here.');
+                        : (P.segment === 'denied' ? 'Nothing needs changes — the queue is clear.'
+                        : (P.segment === 'draft' ? 'No drafts left.' : 'Nothing here.'));
       group.parentNode.insertBefore(empty, group);
     }
     empty.hidden = false;
@@ -329,6 +332,8 @@
       'denied':          status === 'denied' && !posted,
       'admin-approved':  status === 'approved' && !posted,
       'admin-denied':    status === 'denied' && !posted,
+      'draft':           status === 'draft',
+      'admin-draft':     status === 'draft',
       'admin-scheduled': posted
     };
     $$('[data-state]', root).forEach(function (el) {
@@ -455,6 +460,40 @@
     if (P.current && P.current.id === id) P.close();
     return P.decide(id, 'pending', null, { toast: 'Resubmitted — back in To Review' }).then(function (res) {
       if (!res || !res.ok) btns.forEach(function (b) { b.disabled = false; });
+      return res;
+    });
+  };
+
+  /* ---- drafts (admin): draft → pending ------------------------------ */
+  P.submit = function (id) {
+    id = String(id);
+    var item = itemEl(id);
+    var btns = $$('[data-submit-post="' + id + '"]');
+    btns.forEach(function (b) { b.disabled = true; });
+    if (item) item.classList.add('is-busy');
+    return App.post(ENDPOINT, { action: 'submit', id: id, actor: App.actor }).then(function (res) {
+      btns.forEach(function (b) { b.disabled = false; });
+      if (item) item.classList.remove('is-busy');
+      if (!res.ok) {
+        toast(res.error || 'Could not send', 'error');
+        // 422 "Add a caption first": open the caption editor when this post's sheet is showing
+        var art = pd();
+        if (res.field === 'caption' && art && art.getAttribute('data-id') === id) {
+          var form = $('[data-edit-form="caption"]', sheetRoot());
+          if (form) { form.hidden = false; var ta = $('textarea', form); if (ta) ta.focus(); }
+        } else if (res.field === 'caption' && !P.current) {
+          P.open(id);
+        }
+      } else {
+        applyStatus(id, 'pending', false);
+        bumpCount('draft', -1); bumpCount('pending', +1);
+        if (P.segment === 'draft') {
+          if (P.current && P.current.id === id) P.close();
+          leaveList(id);
+        }
+        toast('Sent for review — the client can see it now', 'success');
+      }
+      document.dispatchEvent(new CustomEvent('posts:submitted', { detail: { id: id, ok: !!res.ok } }));
       return res;
     });
   };
@@ -763,7 +802,7 @@
         card: '.pl-card',
         canSwipe: function (item, dir) {
           var status = item.getAttribute('data-status'), posted = item.getAttribute('data-posted') === '1';
-          if (posted) return false;
+          if (posted || status === 'draft') return false;   // drafts are sent with Send for review, never swiped
           if (dir === 'right') return status !== 'approved';
           return status !== 'denied';
         },
@@ -788,6 +827,26 @@
       if (e.metaKey || e.ctrlKey || e.shiftKey) return;
       e.preventDefault();
       P.open(opener.getAttribute('data-post-open'));
+    });
+
+    // One-shot flash from a save elsewhere (add-post.php → posts.php?post=…&msg=…): toast it once, drop it from the URL.
+    // (App.toast lives in app.js, which runs after this deferred script → wait for app:ready like the deep link.)
+    if (cfg.flash) {
+      try {
+        var u = new URL(window.location.href); u.searchParams.delete('msg');
+        history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+      } catch (err) {}
+      var showFlash = function () { toast(cfg.flash, 'success'); };
+      if (App._inited && App.toast) showFlash();
+      else document.addEventListener('app:ready', showFlash, { once: true });
+    }
+
+    // drafts: Send for review (row button or the sheet's footer; admin-only markup, status.php enforces the role)
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-submit-post]');
+      if (!btn || btn.disabled) return;
+      e.preventDefault();
+      P.submit(btn.getAttribute('data-submit-post'));
     });
 
     // work queue: Resubmit for review (admin-only markup; status.php enforces the role)

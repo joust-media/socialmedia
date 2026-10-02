@@ -1342,6 +1342,24 @@ try {
     } else {
         $steps[] = "• `drive_alerts` already exists — skipped.";
     }
+
+    // 35. posts.status 'draft' — a post Joust is still building: never shown to the client (lists,
+    //     counts, badges, Home, activity, deep links) until "Send for review" (status.php
+    //     action=submit → pending). Studio uploads / batch files land here instead of To Review.
+    //     Gated on the live column type, so re-running is a no-op; postsHaveDraft() (helpers.php)
+    //     keeps every page working before this has run.
+    $s = $pdo->prepare("
+        SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'posts' AND COLUMN_NAME = 'status'
+    ");
+    $s->execute();
+    $postStatusType = strtolower((string)$s->fetchColumn());
+    if ($postStatusType !== '' && strpos($postStatusType, "'draft'") === false) {
+        $pdo->exec("ALTER TABLE posts MODIFY status ENUM('draft','pending','approved','denied') NOT NULL DEFAULT 'pending'");
+        $steps[] = "✓ Added the Draft status to posts.status.";
+    } else {
+        $steps[] = "• posts.status already has Draft — skipped.";
+    }
 } catch (Exception $e) {
     $errors[] = $e->getMessage();
 }

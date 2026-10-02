@@ -203,7 +203,7 @@
   /* Status language (DB value → client-facing label)                  */
   /* ---------------------------------------------------------------- */
   App.status = {
-    labels: { pending: 'To Review', approved: 'Approved', denied: 'Needs changes', posted: 'Scheduled', scheduled: 'Scheduled' },
+    labels: { draft: 'Draft', pending: 'To Review', approved: 'Approved', denied: 'Needs changes', posted: 'Scheduled', scheduled: 'Scheduled' },
     label: function (status, posted) {
       if (posted) return this.labels.posted;
       return this.labels[status] || (status ? status.charAt(0).toUpperCase() + status.slice(1) : '');
@@ -515,6 +515,79 @@
     window.addEventListener('scroll', function () { if (!ticking) { ticking = true; requestAnimationFrame(update); } }, { passive: true });
     update();
   }
+
+  /* ---------------------------------------------------------------- */
+  /* "+ New" create menu (admin; partials/components/new-menu.php)     */
+  /*   App.newMenu.open() / close() / toggle()                          */
+  /*   App.newMenu.handle(action, fn)  fn(detail) → true = handled      */
+  /*     (the item's href is then NOT followed). detail = {action, href, */
+  /*     item, client}. Every item click also dispatches a cancelable    */
+  /*     `app:new` event on document (preventDefault() = handled).      */
+  /*   Built-in: action "post" → App.newPost.open(detail) when defined. */
+  /* ---------------------------------------------------------------- */
+  App.newMenu = (function () {
+    var handlers = {};
+    function root() { return $('[data-new-menu]'); }
+    function panel() { var r = root(); return r ? $('[data-new-menu-panel]', r) : null; }
+    function btn() { var r = root(); return r ? $('[data-new-menu-toggle]', r) : null; }
+    function items() { var p = panel(); return p ? $$('[data-new-action]', p) : []; }
+    var api = {
+      isOpen: function () { var p = panel(); return !!(p && !p.hidden); },
+      open: function (focusFirst) {
+        var p = panel(), b = btn(); if (!p) return;
+        p.hidden = false; p.classList.add('is-open');
+        if (b) b.setAttribute('aria-expanded', 'true');
+        if (focusFirst) { var first = items()[0]; if (first) first.focus(); }
+      },
+      close: function (refocus) {
+        var p = panel(), b = btn(); if (!p || p.hidden) return;
+        p.hidden = true; p.classList.remove('is-open');
+        if (b) { b.setAttribute('aria-expanded', 'false'); if (refocus) b.focus(); }
+      },
+      toggle: function () { if (api.isOpen()) api.close(); else api.open(); },
+      handle: function (action, fn) { handlers[action] = fn; return api; },
+      /** Run an action as if its item was clicked (true = handled in-page, false = caller should navigate). */
+      run: function (action, item) {
+        item = item || $('[data-new-action="' + action + '"]', panel() || document);
+        var r = root();
+        var detail = { action: action, href: item ? item.getAttribute('href') : '', item: item || null, client: r ? (r.getAttribute('data-client') || '') : '' };
+        var ev = new CustomEvent('app:new', { detail: detail, cancelable: true });
+        var handled = !document.dispatchEvent(ev);
+        if (!handled && handlers[action]) handled = handlers[action](detail) === true;
+        if (!handled && action === 'post' && App.newPost && typeof App.newPost.open === 'function') { App.newPost.open(detail); handled = true; }
+        return handled;
+      }
+    };
+    document.addEventListener('click', function (e) {
+      var r = root(); if (!r) return;
+      if (e.target.closest('[data-new-menu-toggle]')) { e.preventDefault(); api.toggle(); return; }
+      var item = e.target.closest('[data-new-action]');
+      if (item && r.contains(item)) {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) { api.close(); return; }   // new tab: plain link
+        if (api.run(item.getAttribute('data-new-action'), item)) e.preventDefault();
+        api.close();
+        return;
+      }
+      if (api.isOpen() && !r.contains(e.target)) api.close();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (!api.isOpen()) {
+        var b = btn();
+        if (b && document.activeElement === b && (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); api.open(true); }
+        return;
+      }
+      if (e.key === 'Escape') { e.preventDefault(); api.close(true); return; }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        var list = items(), i = list.indexOf(document.activeElement);
+        if (!list.length) return;
+        e.preventDefault();
+        i = e.key === 'ArrowDown' ? (i + 1) % list.length : (i <= 0 ? list.length - 1 : i - 1);
+        list[i].focus();
+      }
+      if (e.key === 'Tab') api.close();
+    });
+    return api;
+  })();
 
   /* ---------------------------------------------------------------- */
   /* Init                                                              */

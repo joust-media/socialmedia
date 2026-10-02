@@ -21,7 +21,9 @@
  * hashtags, scheduled_date*, status, post_type, categories[], remove_images[],
  * images[], claimed[], assets[]) · batch_create (spacing_days, batch_images[]).
  * Add format=json to any action for a JSON reply instead of the redirect.
- * Successful saves redirect to studio?client=…&msg=….
+ * Successful saves land on the post itself: posts.php?client=…&post=<id>&msg=… (a delete → the Posts list).
+ * status may be 'draft' once migrate.php step 35 ran (postsHaveDraft()): a draft may be saved without a
+ * caption; every other status needs one. Up to POST_MAX_MEDIA media per post (helpers.php).
  */
 
 require __DIR__ . '/db.php';
@@ -54,7 +56,12 @@ function composerDone(bool $ok, string $msg, array $extra = [], int $code = 200)
         exit;
     }
     if ($ok) {
-        header('Location: ' . clientUrl('studio.php', array_merge(['tab' => 'posts', 'msg' => $msg], $extra['redirect'] ?? [])));
+        // Land on the post that was just saved (its sheet opens on load); a delete goes to the list.
+        $pid = (int)($extra['post_id'] ?? 0);
+        $to  = !empty($extra['deleted']) || $pid <= 0
+            ? clientUrl('posts.php', ['msg' => $msg])
+            : clientUrl('posts.php', ['post' => $pid, 'msg' => $msg]);
+        header('Location: ' . $to);
         exit;
     }
 }
@@ -78,7 +85,8 @@ $allowedExt  = array_merge(imageExts(), videoExts()); // jpg/png/gif/webp + mp4/
 $rejectedExt = ['m4v', 'avi', 'mkv'];        // common but unsupported by web browsers
 $maxImageMb  = (int)(uploadMaxBytes('image') / (1024 * 1024));          // 50 MB (upload-lib.php)
 $maxVideoGb  = (int)(uploadMaxBytes('video') / (1024 * 1024 * 1024));   // 4 GB — large files arrive through upload-chunk.php in pieces
-$maxImages   = 10;               // applies to combined images + videos + pool picks per post
+$maxImages   = POST_MAX_MEDIA;   // applies to combined images + videos + pool picks per post (helpers.php)
+$hasDraft    = postsHaveDraft($pdo);
 
 /** The size cap for a direct (single-request) upload of this type — the same numbers upload-chunk.php enforces. */
 function composerMaxBytes(bool $isVideo): int { return uploadMaxBytes($isVideo ? 'video' : 'image'); }
@@ -133,7 +141,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 logActivity($pdo, (int)$client['id'], 'post', $postId,
                     'deleted', 'admin', "Deleted post #{$postId}");
                 $pdo->commit();
-                composerDone(true, 'Post deleted.', ['post_id' => $postId]);
+                composerDone(true, 'Post deleted.', ['post_id' => $postId, 'deleted' => true]);
             } catch (Exception $e) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
                 error_log('add-post delete: ' . $e->getMessage());
@@ -157,11 +165,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         [$claims, $claimErr] = composerClaims($_POST['claimed'] ?? [], (string)$client['slug'], $maxImages);
         if ($claimErr !== '') { $errors[] = $claimErr; $errorCode = 400; }
 
-        if ($caption === '')       { $errors[] = 'Caption is required.'; }
-        if ($scheduled_date === ''){ $errors[] = 'Scheduled date is required.'; }
-        if (!in_array($status, ['pending', 'approved', 'denied'], true)) {
+        $allowedStatus = $hasDraft ? ['draft', 'pending', 'approved', 'denied'] : ['pending', 'approved', 'denied'];
+        if (!in_array($status, $allowedStatus, true)) {
             $status = 'pending';
         }
+        // A draft may wait for its caption; anything the client can see needs one.
+        if ($caption === '' && $status !== 'draft') {
+            $errors[] = $hasDraft ? 'Add a caption first (or save it as a Draft).' : 'Caption is required.';
+            $errorCode = 422;
+        }
+        if ($scheduled_date === ''){ $errors[] = 'Scheduled date is required.'; }
         if (!in_array($postType, allowedPostTypes(), true)) {
             $postType = 'post';
         }
@@ -198,8 +211,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt->execute($vals);
                     $postId = (int)$pdo->lastInsertId();
                     $createdLabel = $postName !== '' ? $postName : mb_substr($caption, 0, 200);
-                    logActivity($pdo, $company_id, 'post', $postId, 'created', 'admin',
-                        "Created post #{$postId}: " . $createdLabel);
+                    logActivity($pdo, $company_id, 'post', $postId, $status === 'draft' ? 'drafted' : 'created', 'admin',
+                        ($status === 'draft' ? "Started draft post #{$postId}" : "Created post #{$postId}") . ($createdLabel !== '' ? ': ' . $createdLabel : ''));
                 } else {
                     $postId = (int)($_POST['id'] ?? 0);
                     if ($postId <= 0) { throw new Exception('Invalid post id.'); }
@@ -264,7 +277,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                         if ($prev['status'] !== $status) {
                             $stAction = ($status === 'approved') ? 'approved'
-                                      : (($status === 'denied')  ? 'denied' : 'reset_pending');
+                                      : (($status === 'denied')  ? 'denied'
+                                      : (($status === 'draft')   ? 'moved_to_draft'
+                                      : ($prev['status'] === 'draft' ? 'submitted' : 'reset_pending')));
                             logActivity($pdo, $company_id, 'post', $postId,
                                 $stAction, 'admin',
                                 "Post #{$postId} " . actionLabel($stAction),
@@ -460,11 +475,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->commit();
                 // Previews outside the transaction: sm + lg within the request budget (preview-lib.php), the rest lazily.
                 if (function_exists('previewAfterStore')) { foreach ($previewQueue as $pq) previewAfterStore($pq); }
-                $msg = $action === 'create' ? 'Post created.' : 'Post updated.';
+                $msg = $action === 'create' ? ($status === 'draft' ? 'Draft saved — only you can see it.' : 'Post created.') : 'Post updated.';
                 if ($errors) {
                     $msg .= ' (Some warnings: ' . implode(' ', $errors) . ')';
                 }
-                composerDone(true, $msg, ['post_id' => $postId, 'warnings' => $errors]);
+                composerDone(true, $msg, ['post_id' => $postId, 'status' => $status, 'warnings' => $errors]);
             } catch (StudioAssetException $e) {
                 if ($pdo->inTransaction()) $pdo->rollBack();
                 $errorCode = $e->getCode() >= 400 ? (int)$e->getCode() : 400;
@@ -581,14 +596,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 try {
                     $pdo->beginTransaction();
                     $defaultHashtags = trim((string)($client['default_hashtags'] ?? ''));
+                    // Draft with no caption once posts have Draft (migrate.php step 35); before that the old
+                    // client-visible placeholder.
                     $ins = $pdo->prepare("
                         INSERT INTO posts (company_id, caption, hashtags, scheduled_date, status)
-                        VALUES (?, 'Please insert caption here', ?, ?, 'pending')
+                        VALUES (?, ?, ?, ?, ?)
                     ");
-                    $ins->execute([$company_id, $defaultHashtags, $scheduledDate]);
+                    $ins->execute([$company_id, $hasDraft ? '' : 'Please insert caption here', $defaultHashtags, $scheduledDate, $hasDraft ? 'draft' : 'pending']);
                     $postId = (int)$pdo->lastInsertId();
-                    logActivity($pdo, $company_id, 'post', $postId, 'created', 'admin',
-                        "Created post #{$postId} via batch upload");
+                    logActivity($pdo, $company_id, 'post', $postId, $hasDraft ? 'drafted' : 'created', 'admin',
+                        ($hasDraft ? 'Started draft post #' : 'Created post #') . $postId . ' via batch upload');
 
                     if (hasMediaTypeColumn($pdo)) {
                         $imgIns = $pdo->prepare("
@@ -712,6 +729,7 @@ $composerHtml = studioComposerHtml([
     'categories'      => $allCategories,
     'supportsType'    => hasPostTypeColumn($pdo),
     'maxImages'       => $maxImages,
+    'hasDraft'        => $hasDraft,
     'maxImageMb'      => $maxImageMb,
     'maxVideoGb'      => $maxVideoGb,
     'submitText'      => $isEdit ? 'Save changes' : 'Create post',

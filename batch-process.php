@@ -4,7 +4,11 @@
  *
  * POST batch-process.php?client=<slug>   (multipart or urlencoded)
  *
- *   images[]        files — one pending post per file (existing contract; the no-JS path).
+ *   Every post this endpoint creates is a DRAFT (posts.status = 'draft', migrate.php step 35): only
+ *   Joust sees it until "Send for review" (status.php action=submit). Before that migration has run
+ *   the old behaviour stays (pending, with the placeholder caption for captionless files).
+ *
+ *   images[]        files — one draft post per file, empty caption (existing contract; the no-JS path).
  *                   Images must pass getimagesize(); MP4/WebM/MOV accepted
  *                   (same rules as add-post.php, spec §6 — .mov is kept as-is);
  *                   .m4v/.avi/.mkv rejected with the "convert to MP4" message.
@@ -12,17 +16,19 @@
  *                   in pieces when large: videos up to 4 GB, images up to 50 MB). Each
  *                   is validated (format, sidecar purpose + client, file present, < 24 h;
  *                   a bad one is an entry in `errors`), renamed to its batch_ / batch_vid_
- *                   name and becomes one pending post exactly like a file in images[].
+ *                   name and becomes one draft post exactly like a file in images[].
  *                   Up to 50 files (images[] + claimed[]) per batch.
  *   rows            JSON array — one post per row, media from the Approved Pool:
  *                   [{ "caption": "…", "hashtags": "…", "scheduled_date": "2026-09-12T10:00",
- *                      "post_type": "post|story|reel", "assets": ["library:12", "tire:34"] }, …]
+ *                      "post_type": "post|story|reel", "assets": ["library:12", "tire:34"],
+ *                      "status": "draft|pending" (optional, default draft; pending needs a caption) }, …]
  *                   Each asset is validated (this company + status='approved') and
- *                   COPIED into uploads/ as a post_images row in the given order.
+ *                   COPIED into uploads/ as a post_images row in the given order (up to
+ *                   POST_MAX_MEDIA per row — a carousel).
  *   spacing_days    1–30 (default 3) — used for rows/files without a date.
  *
- * Response (unchanged shape):
- *   {"ok":true,"created":[{"filename","post_id","date","categories":[…]}],"errors":[…],"count":N}
+ * Response (same shape; each created item also carries "status"):
+ *   {"ok":true,"created":[{"filename","post_id","date","categories":[…],"status"}],"errors":[…],"count":N}
  *
  * Client scoping comes from helpers.php ($client from ?client=) — the previous
  * resolveClient() call did not exist and fataled on every request.
@@ -93,6 +99,9 @@ $rejectedExt = ['m4v', 'avi', 'mkv'];
 $hasMedia    = hasMediaTypeColumn($pdo);
 $hasType     = hasPostTypeColumn($pdo);
 $defaultTags = trim((string)($client['default_hashtags'] ?? ''));
+$hasDraft    = postsHaveDraft($pdo);
+// Before migrate.php step 35 a file post is client-visible at once, so it keeps the old placeholder.
+$fileCaption = $hasDraft ? '' : 'Please insert caption here';
 
 // Load all categories for filename matching
 $catStmt = $pdo->query('SELECT id, name FROM categories ORDER BY sort_order');
@@ -145,28 +154,30 @@ if (!is_dir($uploadDir)) { mediaMkdir($uploadDir); }
 $created = [];
 $errors  = [];
 
-/** Insert a pending post and return its id. */
-function batchInsertPost(PDO $pdo, int $companyId, string $caption, string $hashtags, string $date, string $type, bool $hasType): int {
+/** Insert a post (draft or pending) and return its id. */
+function batchInsertPost(PDO $pdo, int $companyId, string $caption, string $hashtags, string $date, string $type, bool $hasType, string $status = 'pending'): int {
     if ($hasType) {
         $st = $pdo->prepare('INSERT INTO posts (company_id, caption, hashtags, scheduled_date, status, post_type) VALUES (?, ?, ?, ?, ?, ?)');
-        $st->execute([$companyId, $caption, $hashtags, $date, 'pending', $type]);
+        $st->execute([$companyId, $caption, $hashtags, $date, $status, $type]);
     } else {
         $st = $pdo->prepare('INSERT INTO posts (company_id, caption, hashtags, scheduled_date, status) VALUES (?, ?, ?, ?, ?)');
-        $st->execute([$companyId, $caption, $hashtags, $date, 'pending']);
+        $st->execute([$companyId, $caption, $hashtags, $date, $status]);
     }
     return (int)$pdo->lastInsertId();
 }
 
 /**
- * One pending post for a stored file (uploads/<safeName>, already validated + moved): the post, its
+ * One draft post for a stored file (uploads/<safeName>, already validated + moved): the post, its
  * post_images row, filename-matched categories, the activity line. Appends to $created / $errors.
  */
 function batchCreateFromFile(PDO $pdo, int $companyId, string $name, string $safeName, bool $isVideo, string $scheduledDate, array $matchedCatIds, bool $hasMedia, bool $hasType, string $defaultTags, array &$created, array &$errors): void {
+    global $hasDraft, $fileCaption;
     $destPath = __DIR__ . '/uploads/' . $safeName;
     $imageUrl = 'uploads/' . $safeName;
+    $status   = $hasDraft ? 'draft' : 'pending';
     try {
         $pdo->beginTransaction();
-        $postId = batchInsertPost($pdo, $companyId, 'Please insert caption here', $defaultTags, $scheduledDate, 'post', $hasType);
+        $postId = batchInsertPost($pdo, $companyId, $fileCaption, $defaultTags, $scheduledDate, 'post', $hasType, $status);
         if ($hasMedia) {
             $imgStmt = $pdo->prepare('INSERT INTO post_images (post_id, image_url, media_type, sort_order) VALUES (?, ?, ?, 1)');
             $imgStmt->execute([$postId, $imageUrl, $isVideo ? 'video' : 'image']);
@@ -178,7 +189,8 @@ function batchCreateFromFile(PDO $pdo, int $companyId, string $name, string $saf
             $catInsert = $pdo->prepare('INSERT IGNORE INTO post_categories (post_id, category_id) VALUES (?, ?)');
             foreach ($matchedCatIds as $catId) { $catInsert->execute([$postId, $catId]); }
         }
-        logActivity($pdo, $companyId, 'post', $postId, 'created', 'admin', "Created post #{$postId} via batch upload");
+        logActivity($pdo, $companyId, 'post', $postId, $status === 'draft' ? 'drafted' : 'created', 'admin',
+            ($status === 'draft' ? 'Started draft post #' : 'Created post #') . $postId . ' from an upload');
         $pdo->commit();
         if (!$isVideo && function_exists('previewAfterStore')) previewAfterStore($destPath);   // sm + lg previews (per-request budget; the rest lazily)
         $created[] = [
@@ -188,6 +200,7 @@ function batchCreateFromFile(PDO $pdo, int $companyId, string $name, string $saf
             'categories' => $matchedCatIds,
             'image_url'  => $imageUrl,
             'media_type' => $isVideo ? 'video' : 'image',
+            'status'     => $status,
         ];
     } catch (Exception $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
@@ -204,13 +217,19 @@ foreach ($rows as $i => $row) {
     if (!is_array($row)) { $errors[] = 'Row ' . ($i + 1) . ': invalid'; continue; }
     $label    = 'Row ' . ($i + 1);
     $caption  = trim((string)($row['caption'] ?? ''));
-    if ($caption === '') $caption = 'Please insert caption here';
     if (mb_strlen($caption) > 10000) $caption = mb_substr($caption, 0, 10000);
+    // Draft unless the row asks for review AND has a caption (Send for review needs one).
+    $status   = $hasDraft ? 'draft' : 'pending';
+    if ($hasDraft && ($row['status'] ?? '') === 'pending') {
+        if ($caption !== '') { $status = 'pending'; }
+        else { $errors[] = "$label: saved as a draft — add a caption before sending it for review"; }
+    }
+    if ($caption === '' && $status === 'pending') $caption = 'Please insert caption here';   // pre-migration only
     $hashtags = array_key_exists('hashtags', $row) ? trim((string)$row['hashtags']) : $defaultTags;
     if (mb_strlen($hashtags) > 2000) $hashtags = mb_substr($hashtags, 0, 2000);
     $type     = strtolower(trim((string)($row['post_type'] ?? 'post')));
     if (!in_array($type, allowedPostTypes(), true)) $type = 'post';
-    $picks    = studioParsePicks($row['assets'] ?? [], 10);
+    $picks    = studioParsePicks($row['assets'] ?? [], POST_MAX_MEDIA);
     if (!$picks) { $errors[] = "$label: pick at least one approved asset"; continue; }
 
     $dateIn = trim((string)($row['scheduled_date'] ?? ''));
@@ -225,10 +244,10 @@ foreach ($rows as $i => $row) {
 
     try {
         $pdo->beginTransaction();
-        $postId = batchInsertPost($pdo, $companyId, $caption, $hashtags, $scheduledDate, $type, $hasType);
-        $attached = studioAttachAssetsToPost($pdo, $client, $postId, $picks, ['uploadsDir' => $uploadDir]);
-        logActivity($pdo, $companyId, 'post', $postId, 'created', 'admin',
-            "Created post #{$postId} via batch (" . count($attached) . ' from the Approved Pool)');
+        $postId = batchInsertPost($pdo, $companyId, $caption, $hashtags, $scheduledDate, $type, $hasType, $status);
+        $attached = studioAttachAssetsToPost($pdo, $client, $postId, $picks, ['uploadsDir' => $uploadDir, 'max' => POST_MAX_MEDIA]);
+        logActivity($pdo, $companyId, 'post', $postId, $status === 'draft' ? 'drafted' : 'created', 'admin',
+            ($status === 'draft' ? 'Started draft post #' : 'Created post #') . $postId . ' via batch (' . count($attached) . ' from the Approved Pool)');
         $pdo->commit();
         $created[] = [
             'filename'   => $attached ? (string)$attached[0]['asset']['label'] : $label,
@@ -237,6 +256,7 @@ foreach ($rows as $i => $row) {
             'categories' => [],
             'assets'     => count($attached),
             'caption'    => $caption,
+            'status'     => $status,
         ];
     } catch (StudioAssetException $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();

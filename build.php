@@ -33,7 +33,7 @@ function buildMediaUrl(string $url): string {
 
 // A client must be in scope.
 if (!$client) {
-    header('Location: admin.php?msg=' . urlencode('Pick a client to open the AI Builder.'));
+    header('Location: ' . adminToolsUrl() . '?msg=' . urlencode('Pick a client to open the AI Builder.'));
     exit;
 }
 $clientQs     = 'client=' . urlencode($client['slug']);
@@ -356,7 +356,7 @@ $profileIncomplete = ($ctx['product_type'] === '' || $ctx['industry'] === '');
       'subtitle' => $client['name'],
       'active'   => 'studio',
       'width'    => '1100px',
-      'back'     => ['href' => 'admin.php?' . $clientQs, 'label' => 'Studio'],
+      'back'     => ['href' => adminToolsUrl(), 'label' => 'Studio'],
       'links'    => [
         ['label' => 'Prompt Library',  'href' => 'prompts.php'],
         ['label' => 'Vehicle Library', 'href' => 'vehicles.php'],
@@ -388,7 +388,7 @@ $profileIncomplete = ($ctx['product_type'] === '' || $ctx['industry'] === '');
     <div class="notice warn">
       ⚠ This client is missing <strong>product type</strong> and/or <strong>industry</strong>.
       Those variables will be skipped until you set them on the
-      <a href="admin.php?<?= h($clientQs) ?>">client admin page</a>.
+      <a href="<?= h(clientUrl('studio.php', ['tab' => 'clients', 'edit' => (int)$client['id']])) ?>">client settings</a>.
     </div>
   <?php endif; ?>
 

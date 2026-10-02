@@ -222,7 +222,7 @@ function libUrl($cat = null, $tag = null, $q = null) {
       'active'   => 'studio',
       'width'    => '980px',
       'trailing' => '',
-      'back'     => ['href' => 'admin.php', 'label' => 'Studio'],
+      'back'     => ['href' => adminToolsUrl(), 'label' => 'Studio'],
       'links'    => [
         ['label' => 'New prompt', 'href' => 'add-prompt.php', 'primary' => true],
         ['label' => 'Sign out',   'href' => 'logout.php', 'attrs' => ['title' => 'Signed in as ' . currentAdmin()]],

@@ -83,6 +83,13 @@ require_once __DIR__ . '/partials/components/segmented.php';
 require_once __DIR__ . '/partials/components/inset-list.php';
 require_once __DIR__ . '/partials/components/card.php';
 require_once __DIR__ . '/partials/components/video.php';
+require_once __DIR__ . '/partials/components/new-menu.php';   // admin "+ New" (navbar.php)
+
+/** The admin's hub for the global tools (Prompt / Vehicle Library, AI Builder, Drive, Clients) — the parent
+ *  their back links point at. Today the unscoped Studio page; the one place to repoint when it moves. */
+if (!function_exists('adminToolsUrl')) {
+    function adminToolsUrl(): string { return pagePath('studio'); }
+}
 
 /** Return "client=hmf" or "" for building URLs */
 function clientQs() {
@@ -340,6 +347,39 @@ if (!function_exists('hasPostedColumn')) {
         ");
         $s->execute();
         return $cached = (int)$s->fetchColumn() > 0;
+    }
+}
+
+/** Most media (images + videos) one post may carry — a carousel. The one number every create /
+ *  edit path (add-post.php, batch-process.php, the pool helpers, the post-detail carousel) and the
+ *  JS config (StudioConfig.maxImages / PostsConfig.maxMedia) use. */
+if (!defined('POST_MAX_MEDIA')) { define('POST_MAX_MEDIA', 20); }
+
+/** Does posts.status accept 'draft' yet? (migrate.php step 35.) Cached for the request. Before the
+ *  migration every create path falls back to 'pending' and the Drafts segment is not offered. */
+if (!function_exists('postsHaveDraft')) {
+    function postsHaveDraft(PDO $pdo): bool {
+        static $cached = null;
+        if ($cached !== null) return $cached;
+        try {
+            $s = $pdo->prepare("
+                SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'posts' AND COLUMN_NAME = 'status'
+            ");
+            $s->execute();
+            return $cached = strpos(strtolower((string)$s->fetchColumn()), "'draft'") !== false;
+        } catch (Throwable $e) {
+            return $cached = false;
+        }
+    }
+}
+
+/** SQL condition (alias p) for the posts the CLIENT seat may see: never drafts (Joust is still
+ *  building them) and never denied work (Joust's queue). Callers add it only for non-admins. */
+if (!function_exists('postsClientVisibleSql')) {
+    function postsClientVisibleSql(string $alias = 'p'): string {
+        $a = $alias !== '' ? $alias . '.' : '';
+        return "{$a}status IN ('pending','approved')";
     }
 }
 
@@ -848,7 +888,7 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
     $grouped = array_slice($grouped, 0, $limit);
 
     // -------------------------------------------------------------------
-    // Enrich tire / tire_image rows so activityLink() can deep-link to the
+    // Enrich tire / tire_image rows so activityDeepLink() can deep-link to the
     // exact item (and image anchor) instead of dumping the user on a gallery.
     // Two batched lookups — only fire when we actually have rows that need them.
     // -------------------------------------------------------------------
@@ -976,12 +1016,13 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
         $ph = implode(',', array_fill(0, count($postIds), '?'));
         // posts.name is optional — degrade gracefully if migrate hasn't run.
         $nameSel = hasPostsNameColumn($pdo) ? 'name' : "'' AS name";
-        $s = $pdo->prepare("SELECT id, {$nameSel}, caption FROM posts WHERE id IN ($ph)");
+        $s = $pdo->prepare("SELECT id, {$nameSel}, caption, status FROM posts WHERE id IN ($ph)");
         $s->execute($postIds);
         foreach ($s->fetchAll() as $r) {
             $postMeta[(int)$r['id']] = [
                 'name'    => $r['name'] ?? '',
                 'caption' => $r['caption'] ?? '',
+                'status'  => (string)($r['status'] ?? ''),
             ];
         }
     }
@@ -1061,6 +1102,16 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
     }
     unset($g);
 
+    // Drafts are Joust's work in progress: the client seat never sees a row about a post that is
+    // a draft right now, nor the draft bookkeeping rows themselves (drafted / moved back to drafts).
+    if (!(function_exists('isAdmin') && isAdmin())) {
+        $grouped = array_values(array_filter($grouped, static function ($g) {
+            if (($g['entity_type'] ?? '') !== 'post') return true;
+            if (($g['_meta']['status'] ?? '') === 'draft') return false;
+            return (bool)array_diff((array)($g['actions'] ?? []), ['drafted', 'moved_to_draft']);
+        }));
+    }
+
     return $grouped;
 }
 
@@ -1070,6 +1121,8 @@ function actionLabel($action) {
         'approved'             => 'approved',
         'denied'               => 'denied',
         'reset_pending'        => 'reset to pending',
+        'drafted'              => 'started a draft of',
+        'moved_to_draft'       => 'moved back to drafts',
         'posted'               => 'marked posted',
         'unposted'             => 'unmarked posted',
         'commented'            => 'commented',
@@ -1135,85 +1188,6 @@ function dayBucket($datetime) {
     if ($ts >= $today)              return 'Today';
     if ($ts >= $today - 86400)      return 'Yesterday';
     return date(date('Y') === date('Y', $ts) ? 'D M j' : 'M j, Y', $ts);
-}
-
-/** Build a deep-link URL for an activity row.
- *  Root-rooted via pagePath() so it resolves the same from any page. Aims to land the
- *  user *on the exact entity* — the post editor, the specific tire's review with the
- *  image anchored, the task highlighted in the project list — never a generic gallery. */
-function activityLink($entry) {
-    $slug = $entry['company_slug'] ?? '';
-    $meta = $entry['_meta'] ?? null;
-
-    $clientPair = $slug !== '' ? ['client' => $slug] : [];
-
-    switch ($entry['entity_type']) {
-        case 'post':
-            // Land in the post editor with the comment thread visible.
-            $qs = http_build_query(array_merge($clientPair, ['edit' => (int)$entry['entity_id']]));
-            return pagePath('add-post') . '?' . $qs;
-
-        case 'tire_image':
-            // Per-image review: features?client=X&module=<slug>&item=<tire_id>#image-<id>
-            $moduleSlug = $meta['module_slug'] ?? 'tires';
-            $tireId     = (int)($meta['tire_id'] ?? 0);
-            $params     = array_merge($clientPair, ['module' => $moduleSlug]);
-            if ($tireId > 0) { $params['item'] = $tireId; }
-            $url = pagePath('features') . '?' . http_build_query($params);
-            if ($tireId > 0) { $url .= '#image-' . (int)$entry['entity_id']; }
-            return $url;
-
-        case 'tire':
-            // Per-tire review (catch the tire entity itself: created/deleted/etc.)
-            $moduleSlug = $meta['module_slug'] ?? 'tires';
-            $params     = array_merge($clientPair, [
-                'module' => $moduleSlug,
-                'item'   => (int)$entry['entity_id'],
-            ]);
-            return pagePath('features') . '?' . http_build_query($params);
-
-        case 'task':
-            // Anchor straight to the task in the project list.
-            $url = pagePath('projects');
-            if ($clientPair) { $url .= '?' . http_build_query($clientPair); }
-            return $url . '#task-' . (int)$entry['entity_id'];
-
-        case 'library_image':
-            // Anchor straight to the tile in the brand's library gallery.
-            $url = pagePath('library');
-            if ($clientPair) { $url .= '?' . http_build_query($clientPair); }
-            return $url . '#lib-' . (int)$entry['entity_id'];
-
-        case 'email':
-            // Emails list with the row's detail open.
-            $qs = http_build_query(array_merge($clientPair, ['email' => (int)$entry['entity_id']]));
-            return pagePath('emails') . '?' . $qs;
-
-        case 'page':
-            // Pages list with the row's detail sheet open.
-            $qs = http_build_query(array_merge($clientPair, ['page' => (int)$entry['entity_id']]));
-            return pagePath('pages') . '?' . $qs;
-
-        case 'email_flow':
-            // The flow page (slug from _meta; the list when the flow is gone).
-            $params = $clientPair;
-            if (!empty($meta['slug'])) { $params['flow'] = (string)$meta['slug']; }
-            return pagePath('flows') . ($params ? '?' . http_build_query($params) : '');
-
-        case 'tire_series':
-            // The collection in Assets with the series selected.
-            $tireId = (int)($meta['tire_id'] ?? 0);
-            $params = array_merge($clientPair, ['view' => 'collections']);
-            if ($tireId > 0) { $params['item'] = $tireId; $params['series'] = (int)$entry['entity_id']; }
-            return pagePath('assets') . '?' . http_build_query($params);
-
-        case 'drive_snapshot':
-            // The Drive storage view (admin-only, unscoped) at that snapshot.
-            return pagePath('drive') . '?' . http_build_query(['snapshot' => (int)$entry['entity_id']]);
-
-        default:
-            return pagePath('admin') . ($clientPair ? '?' . http_build_query($clientPair) : '');
-    }
 }
 
 // =====================================================================
@@ -1387,7 +1361,7 @@ if (!function_exists('activityDeepLink')) {
 if (!function_exists('activityPrimaryAction')) {
     function activityPrimaryAction(array $actions): string {
         static $rank = [
-            'denied' => 1, 'approved' => 2, 'reset_pending' => 3, 'submitted' => 3,
+            'denied' => 1, 'approved' => 2, 'reset_pending' => 3, 'submitted' => 3, 'moved_to_draft' => 3, 'drafted' => 6,
             'posted' => 4, 'unposted' => 5, 'marked_live' => 4, 'unmarked_live' => 5,
             'seeded' => 5, 'scanned' => 5, 'uploaded' => 5, 'created' => 6, 'deleted' => 7, 'imported' => 7,
             'set_reference' => 12, 'drive_linked' => 23, 'drive_unlinked' => 23,
@@ -1690,8 +1664,14 @@ if (!function_exists('activityFinalizeRows')) {
                 case 'seeded':
                     $verb = 'created'; $icon = 'plus'; $tone = 'accent';
                     $t = "$who created $objT from the email series"; $hh = "$whoH created $objH from the email series"; break;
+                case 'drafted':
+                    $verb = 'started a draft'; $icon = 'plus'; $tone = 'neutral';
+                    $t = "$who started a draft: $objT"; $hh = "$whoH started a draft: $objH"; break;
+                case 'moved_to_draft':
+                    $verb = 'moved back to drafts'; $icon = 'grid'; $tone = 'neutral';
+                    $t = "$who moved $objT back to drafts"; $hh = "$whoH moved $objH back to drafts"; break;
                 case 'submitted':
-                    $verb = 'sent for review'; $icon = 'mail'; $tone = 'accent';
+                    $verb = 'sent for review'; $icon = $r['thing'] === 'post' ? 'plus' : 'mail'; $tone = 'accent';
                     $t = "$who sent $objT for review"; $hh = "$whoH sent $objH for review"; break;
                 case 'marked_live':
                     $verb = 'marked live'; $icon = 'mail'; $tone = 'scheduled';

@@ -3,7 +3,7 @@
  * Posts — Stage 3 review (spec §4.3). Replaces feed.php.
  *
  *   ?client=kenda                 scope (helpers.php)
- *   &status=pending|approved|scheduled   segment (admin also: denied) — default pending
+ *   &status=pending|approved|scheduled   segment (admin also: draft, denied) — default pending
  *   &month=YYYY-MM|all            default: current month if it has posts, else all (feed.php semantics)
  *   &post=<id>                    open that post's detail on load (segment/month follow the post)
  *   &post=<id>&partial=1          return ONLY the detail partial HTML (for lists > 40 items)
@@ -18,7 +18,9 @@
  *   Approved  = status approved AND posted = 0
  *   Scheduled = posted = 1                      (label only; DB value stays `posted`)
  *   Needs changes (admin only) = status denied AND posted = 0
- * Clients never receive denied rows — filtered in SQL (AND p.status <> 'denied').
+ *   Drafts (admin only, first) = status draft (migrate.php step 35; postsHaveDraft())
+ * Clients never receive denied or draft rows — filtered in SQL (postsClientVisibleSql(): status
+ * IN pending / approved), so a deep link to a draft is a 404 partial / a plain list for them.
  *
  * The Needs changes segment is Joust's work queue: each row also carries the
  * client's latest note (deny note or newest comment — both are activity_log
@@ -127,8 +129,9 @@ if ($client) {
     $scopeParams[] = (int)$client['id'];
 }
 if (!$admin) {
-    $scopeWhere[] = "p.status <> 'denied'";     // clients never see denied work (SQL, not CSS)
+    $scopeWhere[] = postsClientVisibleSql('p');   // clients never see denied work or drafts (SQL, not CSS)
 }
+$hasDraft = $admin && postsHaveDraft($pdo);
 
 /** Load images + comments + approved_at + the latest copy edit for a set of post rows (4 queries total). */
 function postsAttachRelations(PDO $pdo, array &$posts, bool $hasMedia, bool $hasLog): void {
@@ -247,7 +250,8 @@ if ($monthParam === 'all') {
 // ---------------------------------------------------------------------
 // Segment
 // ---------------------------------------------------------------------
-$segments = ['pending' => 'To Review', 'approved' => 'Approved', 'scheduled' => 'Scheduled'];
+$segments = ($hasDraft ? ['draft' => 'Drafts'] : [])
+          + ['pending' => 'To Review', 'approved' => 'Approved', 'scheduled' => 'Scheduled'];
 if ($admin) { $segments['denied'] = 'Needs changes'; }
 
 $segment = strtolower(trim((string)($_GET['status'] ?? 'pending')));
@@ -257,6 +261,7 @@ if ($directPost) {
 if (!isset($segments[$segment])) { $segment = 'pending'; }
 
 $segmentWhere = [
+    'draft'     => "p.status = 'draft'",
     'pending'   => "p.status = 'pending' AND $postedExpr = 0",
     'approved'  => "p.status = 'approved' AND $postedExpr = 0",
     'scheduled' => "$postedExpr = 1",
@@ -272,7 +277,7 @@ if ($selectedMonth !== '') {
     $viewWhere[]  = "DATE_FORMAT(p.scheduled_date, '%Y-%m') = ?";
     $viewParams[] = $selectedMonth;
 }
-$counts = ['pending' => 0, 'approved' => 0, 'scheduled' => 0, 'denied' => 0];
+$counts = ['draft' => 0, 'pending' => 0, 'approved' => 0, 'scheduled' => 0, 'denied' => 0];
 $st = $pdo->prepare("SELECT p.status, ($postedExpr) AS posted, COUNT(*) AS n FROM posts p"
     . ($viewWhere ? ' WHERE ' . implode(' AND ', $viewWhere) : '') . ' GROUP BY p.status' . ($hasPosted ? ', p.posted' : ''));
 $st->execute($viewParams);
@@ -413,6 +418,7 @@ foreach ($segments as $key => $label) {
 }
 
 $emptyCopy = [
+    'draft'     => 'No drafts. Uploads and posts you have not sent to the client yet wait here.',
     'pending'   => 'Nothing to review' . ($selectedMonth !== '' ? ' in ' . date('F', strtotime($selectedMonth . '-01')) : '') . '.',
     'approved'  => 'No approved posts waiting to be scheduled.',
     'scheduled' => $hasPosted ? 'Nothing scheduled yet.' : 'Scheduling is not enabled yet.',
@@ -448,6 +454,9 @@ $postsConfig = [
     'openPost'    => $postParam > 0 ? $postParam : 0,
     'queue'       => $isQueue,
     'segmentUrls' => array_combine(array_keys($segments), array_map($segmentUrl, array_keys($segments))),
+    'maxMedia'    => POST_MAX_MEDIA,   // most media one post may carry (helpers.php)
+    // One-shot flash after a save elsewhere (add-post.php lands here with &msg=…): posts.js toasts it and drops it from the URL.
+    'flash'       => $admin && isset($_GET['msg']) && is_string($_GET['msg']) ? mb_substr(trim($_GET['msg']), 0, 300) : '',
 ];
 $footExtra = '<script>window.PostsConfig = ' . json_encode($postsConfig, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n"
            . ($admin ? '<script src="' . h(staticUrl('js/chunk-upload.js')) . '" defer></script>' . "\n" : '')   // App.chunkUpload for Replace (admin only)
@@ -478,11 +487,13 @@ $renderRow = function (array $post, int $rowIndex = 0) use ($client, $segment, $
         $qWhen    = $queue && $queue['note_at'] !== '' ? relativeTime($queue['note_at']) : '';
         $qAbs     = $queue && $queue['note_at'] !== '' ? absoluteTime($queue['note_at']) : '';
         $qCount   = $queue ? (int)$queue['client_count'] : 0;
+        $isDraft  = $admin && $post['status'] === 'draft';   // admin-only rows: no swipe, Send for review
+        $noCaption = $isDraft && $caption === '';
     ?>
       <li class="pl-item<?= $queue ? ' pl-item--queue' : '' ?><?= $isPast ? ' pl-item--past' : '' ?>" id="post-<?= $pid ?>" data-post-item="<?= $pid ?>" data-id="<?= $pid ?>"
           data-status="<?= h($post['status']) ?>" data-posted="<?= $posted ? '1' : '0' ?>"<?= $isPast ? ' data-past="1"' : '' ?>
-          data-title="<?= h($title) ?>"<?= $queue ? ' data-queue' : ' data-swipe' ?>>
-        <?php if (!$queue): ?>
+          data-title="<?= h($title) ?>"<?= $queue ? ' data-queue' : ($isDraft ? ' data-draft' : ' data-swipe') ?>>
+        <?php if (!$queue && !$isDraft): ?>
         <div class="pl-swipe pl-swipe--approve" aria-hidden="true"><?= icon('checkmark') ?><span>Approve</span></div>
         <div class="pl-swipe pl-swipe--deny" aria-hidden="true"><?= icon('xmark') ?><span>Deny</span></div>
         <?php endif; ?>
@@ -529,6 +540,13 @@ $renderRow = function (array $post, int $rowIndex = 0) use ($client, $segment, $
           </div>
           <?= icon('chevron-right', 'ui-row-chevron') ?>
         </a>
+        <?php if ($isDraft): ?>
+          <div class="pl-queue-actions pl-draft-actions">
+            <?php if ($noCaption): ?><span class="pl-draft-hint text-tertiary">No caption yet</span><?php endif; ?>
+            <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-post-open="<?= $pid ?>">Open</button>
+            <button type="button" class="ui-btn ui-btn--tinted ui-btn--sm" data-submit-post="<?= $pid ?>" title="Send this draft to the client's To Review list">Send for review</button>
+          </div>
+        <?php endif; ?>
         <?php if ($queue): ?>
           <div class="pl-queue-actions">
             <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-post-open="<?= $pid ?>">Open</button>

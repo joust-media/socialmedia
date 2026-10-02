@@ -207,7 +207,7 @@ $defaultTags  = trim((string)($client['default_hashtags'] ?? ''));
 $categories   = $pdo->query("SELECT id, name FROM categories ORDER BY sort_order, name")->fetchAll();
 
 // Posts segment counts (same rules as posts.php)
-$counts = ['pending' => 0, 'approved' => 0, 'scheduled' => 0, 'denied' => 0];
+$counts = ['draft' => 0, 'pending' => 0, 'approved' => 0, 'scheduled' => 0, 'denied' => 0];
 $st = $pdo->prepare("SELECT p.status, ($postedExpr) AS posted, COUNT(*) AS n FROM posts p WHERE p.company_id = ? GROUP BY p.status" . ($hasPosted ? ', p.posted' : ''));
 $st->execute([(int)$client['id']]);
 foreach ($st->fetchAll() as $row) {
@@ -233,7 +233,8 @@ $composerHtml = studioComposerHtml([
     'editImages'      => [],
     'categories'      => $categories,
     'supportsType'    => $supportsType,
-    'maxImages'       => 10,
+    'maxImages'       => POST_MAX_MEDIA,
+    'hasDraft'        => postsHaveDraft($pdo),
     'maxImageMb'      => 50,
     'maxVideoGb'      => 4,
     'submitText'      => 'Create post',
@@ -263,7 +264,7 @@ $studioConfig = [
     'upload'    => basePath() . '/upload-chunk.php?client=' . rawurlencode($client['slug']),   // Uploads tab / Compose one-offs: files go up in pieces when large (chunk-upload-lib.php) and come back as claimed[] tokens
     'client'    => $client['slug'],
     'brand'     => ['name' => $client['name'], 'logo' => brandLogoUrl($client['logo_url'] ?? '')],
-    'maxImages' => 10,
+    'maxImages' => POST_MAX_MEDIA,
     'maxImageMb' => 50,
     'maxVideoMb' => 4096,
     'maxBatchFiles' => 50,
@@ -346,7 +347,7 @@ include __DIR__ . '/partials/layout-top.php';
       <input type="file" data-upload-input accept="image/*,video/mp4,video/quicktime,.mov" multiple>
       <span class="studio-dropzone-icon"><?= icon('download') ?></span>
       <span class="studio-dropzone-label">Drop images or video here</span>
-      <span class="studio-dropzone-hint">image/*, MP4, QuickTime · up to 4 GB per video, 50 MB per image (large files go up in pieces and can resume) · up to 50 files at a time · each file becomes a draft post in <?= h($client['name']) ?>'s queue (placeholder caption, spaced 3 days apart) that you can finish in Compose or Posts.</span>
+      <span class="studio-dropzone-hint">image/*, MP4, QuickTime · up to 4 GB per video, 50 MB per image (large files go up in pieces and can resume) · up to 50 files at a time · each file becomes a <?= postsHaveDraft($pdo) ? 'Draft' : 'To Review' ?> post (spaced 3 days apart)<?= postsHaveDraft($pdo) ? ' that only you can see — add a caption in Posts → Drafts, then Send for review' : '' ?>.</span>
     </label>
     <div class="studio-resume" data-upload-resume hidden role="status">
       <span class="studio-resume-text" data-upload-resume-text>Resume unfinished uploads</span>
@@ -382,6 +383,9 @@ include __DIR__ . '/partials/layout-top.php';
 <section class="studio-section" data-studio-section="posts"<?= $tab === 'posts' ? '' : ' hidden' ?>>
   <?php $queueUrl = clientUrl('posts.php', ['status' => 'denied', 'month' => 'all']);   // the admin work queue ?>
   <?= insetListOpen(h($client['name']) . '\'s posts', ['raw' => true]) ?>
+    <?php if (postsHaveDraft($pdo)): ?>
+    <?= insetRow(['href' => clientUrl('posts.php', ['status' => 'draft', 'month' => 'all']), 'icon' => 'plus', 'title' => 'Drafts', 'subtitle' => 'Only you can see these', 'trailing' => '<span class="studio-count">' . $counts['draft'] . '</span>']) ?>
+    <?php endif; ?>
     <?= insetRow(['href' => clientUrl('posts.php', ['status' => 'pending', 'month' => 'all']),  'icon' => 'grid',      'iconStyle' => 'color:var(--pending)',   'title' => 'To Review', 'subtitle' => 'Waiting for the client', 'trailing' => '<span class="studio-count">' . $counts['pending'] . '</span>']) ?>
     <?= insetRow(['href' => clientUrl('posts.php', ['status' => 'approved', 'month' => 'all']), 'icon' => 'checkmark', 'iconStyle' => 'color:var(--approve)',   'title' => 'Approved',  'subtitle' => 'Ready to schedule',       'trailing' => '<span class="studio-count">' . $counts['approved'] . '</span>']) ?>
     <?= insetRow(['href' => clientUrl('posts.php', ['status' => 'scheduled', 'month' => 'all']),'icon' => 'calendar',  'iconStyle' => 'color:var(--scheduled)', 'title' => 'Scheduled', 'subtitle' => 'Pushed to the scheduler', 'trailing' => '<span class="studio-count">' . $counts['scheduled'] . '</span>']) ?>

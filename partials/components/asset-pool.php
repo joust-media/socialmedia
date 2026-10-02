@@ -16,7 +16,7 @@
  *       Tires    = tire_images JOIN tires ON tires.id = tire_images.tire_id
  *                  WHERE tires.company_id = ? AND tire_images.status = 'approved'
  *
- *   studioParsePicks($raw, int $max = 10): array
+ *   studioParsePicks($raw, int $max = POST_MAX_MEDIA): array
  *       Normalises the form value assets[] ("library:12", "tire:34") → [['kind','id'], …]
  *       in the order given, de-duplicated, capped at $max.
  *
@@ -271,7 +271,7 @@ if (!function_exists('studioApprovedPool')) {
 }
 
 if (!function_exists('studioParsePicks')) {
-    function studioParsePicks($raw, int $max = 10): array
+    function studioParsePicks($raw, int $max = 0): array
     {
         if (is_string($raw)) {
             $raw = trim($raw);
@@ -281,6 +281,7 @@ if (!function_exists('studioParsePicks')) {
             $raw = is_array($decoded) ? $decoded : preg_split('/[\s,]+/', $raw);
         }
         if (!is_array($raw)) return [];
+        if ($max <= 0) $max = defined('POST_MAX_MEDIA') ? POST_MAX_MEDIA : 20;
         $out = []; $seen = [];
         foreach ($raw as $item) {
             if (is_array($item)) {
@@ -406,7 +407,7 @@ if (!function_exists('studioCopyAssetToUploads')) {
 if (!function_exists('studioAttachAssetsToPost')) {
     function studioAttachAssetsToPost(PDO $pdo, array $client, int $postId, array $picks, array $opts = []): array
     {
-        $picks = studioParsePicks($picks, (int)($opts['max'] ?? 10));
+        $picks = studioParsePicks($picks, (int)($opts['max'] ?? (defined('POST_MAX_MEDIA') ? POST_MAX_MEDIA : 20)));
         if (!$picks) return [];
         $uploadsDir = (string)($opts['uploadsDir'] ?? studioUploadsDir());
         $slots      = array_key_exists('slots', $opts) ? (int)$opts['slots'] : count($picks);
@@ -585,13 +586,13 @@ if (!function_exists('studioPoolPartial')) {
 
 if (!function_exists('studioPickerHtml')) {
     /**
-     * Approved Pool picker. $opts: 'max' (10), 'id', 'selected' (array of keys),
+     * Approved Pool picker. $opts: 'max' (POST_MAX_MEDIA), 'id', 'selected' (array of keys),
      * 'name' (form field, default 'assets[]'), 'title', 'assetsUrl' (link when empty).
      */
     function studioPickerHtml(array $pool, array $opts = []): string
     {
         $esc      = 'studioEsc';
-        $max      = (int)($opts['max'] ?? 10);
+        $max      = (int)($opts['max'] ?? (defined('POST_MAX_MEDIA') ? POST_MAX_MEDIA : 20));
         $id       = (string)($opts['id'] ?? 'studioPicker');
         $name     = (string)($opts['name'] ?? 'assets[]');
         $title    = (string)($opts['title'] ?? 'Approved Pool');
@@ -721,7 +722,7 @@ if (!function_exists('studioComposerHtml')) {
      * $ctx keys: client (array), pool (studioApprovedPool), action (form URL), isEdit (bool),
      *   post (values: id, name, caption, hashtags, scheduled (Y-m-d\TH:i), status, post_type, categories[]),
      *   editImages ([['id','url','type'], …]), categories ([['id','name'], …]), supportsType (bool),
-     *   maxImages (10), maxImageMb (50), maxVideoGb (4), submitText, cancelUrl, assetsUrl, selected (keys), errors ([]),
+     *   maxImages (POST_MAX_MEDIA), hasDraft (offer Draft; caption optional), maxImageMb (50), maxVideoGb (4), submitText, cancelUrl, assetsUrl, selected (keys), errors ([]),
      *   defaultHashtags (string), replaceEndpoint.
      * One-offs: the file input keeps the images[] contract for the no-JS path; with JS (studio.js Composer +
      * chunk-upload.js) every picked file goes straight to upload-chunk.php (purpose=post — in pieces when large)
@@ -738,7 +739,8 @@ if (!function_exists('studioComposerHtml')) {
         $cats     = $ctx['categories'] ?? [];
         $postCats = array_map('intval', (array)($post['categories'] ?? []));
         $editImgs = $ctx['editImages'] ?? [];
-        $max      = (int)($ctx['maxImages'] ?? 10);
+        $max      = (int)($ctx['maxImages'] ?? (defined('POST_MAX_MEDIA') ? POST_MAX_MEDIA : 20));
+        $hasDraft = !empty($ctx['hasDraft']);   // posts.status has 'draft' (migrate.php step 35) → the Draft option, caption optional
         $maxImgMb = (int)($ctx['maxImageMb'] ?? 50);
         $maxVidGb = (int)($ctx['maxVideoGb'] ?? 4);
         $selected = (array)($ctx['selected'] ?? []);
@@ -823,7 +825,7 @@ if (!function_exists('studioComposerHtml')) {
         }
 
         $out .= '<div class="studio-field"><label class="studio-label" for="' . $formId . '-caption">Caption</label>'
-              . '<textarea class="ui-textarea studio-caption" id="' . $formId . '-caption" name="caption" rows="5" maxlength="10000" required placeholder="What does the post say?" data-field="caption">' . $esc($post['caption'] ?? '') . '</textarea></div>';
+              . '<textarea class="ui-textarea studio-caption" id="' . $formId . '-caption" name="caption" rows="5" maxlength="10000"' . ($hasDraft ? '' : ' required') . ' placeholder="' . ($hasDraft ? 'What does the post say? (optional while it is a draft)' : 'What does the post say?') . '" data-field="caption">' . $esc($post['caption'] ?? '') . '</textarea></div>';
 
         $out .= '<div class="studio-field"><label class="studio-label" for="' . $formId . '-hashtags">Hashtags</label>'
               . '<textarea class="ui-textarea studio-tags" id="' . $formId . '-hashtags" name="hashtags" rows="2" maxlength="2000" placeholder="#Brand #Campaign" data-field="hashtags">' . $esc($post['hashtags'] ?? '') . '</textarea>';
@@ -844,7 +846,8 @@ if (!function_exists('studioComposerHtml')) {
             $out .= '</select></div>';
         }
         $out .= '<div class="studio-field"><label class="studio-label" for="' . $formId . '-status">Status</label><select class="ui-select" id="' . $formId . '-status" name="status" data-field="status">';
-        foreach (['pending' => 'To Review', 'approved' => 'Approved', 'denied' => 'Needs changes'] as $v => $l) {
+        $statusOpts = ($hasDraft ? ['draft' => 'Draft — only you can see it'] : []) + ['pending' => 'To Review', 'approved' => 'Approved', 'denied' => 'Needs changes'];
+        foreach ($statusOpts as $v => $l) {
             $out .= '<option value="' . $v . '"' . (($post['status'] ?? 'pending') === $v ? ' selected' : '') . '>' . $l . '</option>';
         }
         $out .= '</select></div>';

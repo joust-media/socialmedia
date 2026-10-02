@@ -1,6 +1,7 @@
 <?php
 /**
  * Status language (spec §5) — DB strings never change, only the copy:
+ *   draft    → "Draft" (posts / emails / pages; neutral pill — never shown to the client for posts)
  *   pending  → "To Review"
  *   approved → "Approved"
  *   denied   → "Needs changes"
@@ -18,6 +19,7 @@ if (!function_exists('statusLabel')) {
     {
         if ($posted) return 'Scheduled';
         static $map = [
+            'draft'    => 'Draft',
             'pending'  => 'To Review',
             'approved' => 'Approved',
             'denied'   => 'Needs changes',

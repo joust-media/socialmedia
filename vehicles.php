@@ -190,7 +190,7 @@ function vehicleLabel($v) {
       'active'   => 'studio',
       'width'    => '980px',
       'trailing' => '',
-      'back'     => ['href' => 'admin.php', 'label' => 'Studio'],
+      'back'     => ['href' => adminToolsUrl(), 'label' => 'Studio'],
       'links'    => [
         ['label' => 'New vehicle', 'href' => 'add-vehicle.php', 'primary' => true],
         ['label' => 'Prompts',     'href' => 'prompts.php'],
