@@ -194,6 +194,14 @@ $pdo->exec("INSERT INTO pages (id, company_id, title, slug, source, url, status,
     (2, 2, 'Pricing', 'pricing', 'url', 'https://example.com/pricing', 'approved', 1, 2),
     (3, 2, 'Webinar signup', 'webinar', 'url', 'https://example.com/webinar', 'draft', 0, 3)");
 @mkdir("$media/pages", 0777, true);
+// Page folders + portal-hosted email HTML written by earlier runs (assign.php / page-upload.php) go, so
+// slugs and file names come out the same on every run.
+foreach (array_merge(glob("$media/pages/*", GLOB_ONLYDIR) ?: [], ["$media/emails"]) as $dir) {
+    if (!is_dir($dir) || is_link($dir)) continue;
+    $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS), RecursiveIteratorIterator::CHILD_FIRST);
+    foreach ($it as $f) { $f->isDir() && !$f->isLink() ? @rmdir($f->getPathname()) : @unlink($f->getPathname()); }
+    @rmdir($dir);
+}
 
 // ---- tasks + activity ------------------------------------------------------------------------------
 $pdo->exec("INSERT INTO tasks (company_id, title, status, priority, created_by) VALUES (1, 'Q4 render batch', 'open', 'normal', 'admin'), (1, 'Holiday posts', 'in_progress', 'high', 'client')");

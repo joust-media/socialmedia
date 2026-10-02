@@ -12,7 +12,7 @@
  *                       priority, status, live, groups[], new_groups, notes
  *                       → create: emails.php?client&email=<id> · update: studio?tab=emails&msg=
  *     delete            id → map rows + row removed, 'deleted' logged
- *     group_add         name            (ensureEmailGroup)
+ *     group_add         name            (ensureEmailGroup) — email_groups are "Audiences" in the UI
  *     group_rename      id, name
  *     group_delete      id              (removes email_group_map rows too)
  *     module_toggle     to=1|0          (company_modules row for the 'emails' module)
@@ -91,21 +91,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // ---- Groups -------------------------------------------------------
     if ($action === 'group_add') {
         $name = trim(preg_replace('/\s+/', ' ', (string)($_POST['name'] ?? '')));
-        if ($name === '' || emailSlugify($name) === '') emailsStudioRedirect('Group name is required.');
+        if ($name === '' || emailSlugify($name) === '') emailsStudioRedirect('Audience name is required.');
         $before = count(emailGroupsForCompany($pdo, $cid));
         $gid = ensureEmailGroup($pdo, $cid, $name);
         $after = count(emailGroupsForCompany($pdo, $cid));
-        emailsStudioRedirect($gid && $after > $before ? 'Group "' . $name . '" added.' : 'Group "' . $name . '" already exists.');
+        emailsStudioRedirect($gid && $after > $before ? 'Audience "' . $name . '" added.' : 'Audience "' . $name . '" already exists.');
     }
     if ($action === 'group_rename') {
         $err = renameEmailGroup($pdo, $cid, (int)($_POST['id'] ?? 0), (string)($_POST['name'] ?? ''));
-        emailsStudioRedirect($err !== '' ? $err : 'Group renamed.');
+        emailsStudioRedirect($err !== '' ? $err : 'Audience renamed.');
     }
     if ($action === 'group_delete') {
         $gid = (int)($_POST['id'] ?? 0);
         $g   = emailGroupById($pdo, $cid, $gid);
-        if (!$g || !deleteEmailGroup($pdo, $cid, $gid)) emailsStudioRedirect('Group not found.');
-        emailsStudioRedirect('Group "' . $g['name'] . '" deleted.');
+        if (!$g || !deleteEmailGroup($pdo, $cid, $gid)) emailsStudioRedirect('Audience not found.');
+        emailsStudioRedirect('Audience "' . $g['name'] . '" deleted.');
     }
 
     // ---- Delete -------------------------------------------------------
@@ -147,7 +147,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $errors[] = 'ID "' . $code . '" is already used by ' . emailDisplayLabel($dup) . ' — pick another.';
             }
         }
-        if (!emailValidUrl($vals['html_url'])) $errors[] = 'HTML URL must be a full http:// or https:// address.';
+        if (!emailValidUrl($vals['html_url'])) $errors[] = 'HTML URL must be a full http:// or https:// address (or a portal-hosted /media/emails/… file).';
         if (mb_strlen($vals['html_url']) > 512) $errors[] = 'HTML URL is too long (512 characters max).';
         if (mb_strlen($vals['title']) > 255)    $errors[] = 'Title is too long (255 characters max).';
         if (mb_strlen($vals['subject']) > 255)  $errors[] = 'Subject line is too long (255 characters max).';
@@ -358,7 +358,7 @@ include __DIR__ . '/partials/layout-top.php';
       </div>
       <div class="studio-field">
         <label class="studio-label" for="email-url">HTML URL <span class="text-tertiary">— the hosted email the client reviews</span></label>
-        <input class="ui-input" type="url" id="email-url" name="html_url" maxlength="512" value="<?= h($vals['html_url']) ?>" placeholder="https://assets.privacybee.com/emails/c1.html" pattern="https?://.*">
+        <input class="ui-input" type="text" inputmode="url" id="email-url" name="html_url" maxlength="512" value="<?= h($vals['html_url']) ?>" placeholder="https://assets.privacybee.com/emails/c1.html" pattern="(https?://|/media/emails/).*">
       </div>
       <div class="studio-field">
         <label class="studio-label" for="email-subject">Subject line</label>
@@ -389,14 +389,14 @@ include __DIR__ . '/partials/layout-top.php';
       </div>
 
       <div class="studio-field">
-        <span class="studio-label">Groups <span class="text-tertiary">— sequences the client can filter by</span></span>
+        <span class="studio-label">Audiences <span class="text-tertiary">— who it is for; the client can filter by them</span></span>
         <div class="studio-chips studio-chips--wrap" data-email-groups>
           <?php foreach ($groups as $g): $on = in_array((int)$g['id'], $vals['groups'], true); ?>
             <label class="studio-chip<?= $on ? ' is-active' : '' ?>" data-email-group-chip><input type="checkbox" name="groups[]" value="<?= (int)$g['id'] ?>"<?= $on ? ' checked' : '' ?>><?= h($g['name']) ?></label>
           <?php endforeach; ?>
-          <?php if (!$groups): ?><span class="studio-chip studio-chip--static">No groups yet</span><?php endif; ?>
+          <?php if (!$groups): ?><span class="studio-chip studio-chip--static">No audiences yet</span><?php endif; ?>
         </div>
-        <input class="ui-input" type="text" name="new_groups" maxlength="400" value="<?= h($vals['new_groups']) ?>" placeholder="New group — comma-separate several (e.g. Leads, Renewal)" aria-label="New group">
+        <input class="ui-input" type="text" name="new_groups" maxlength="400" value="<?= h($vals['new_groups']) ?>" placeholder="New audience — comma-separate several (e.g. Leads, Renewal)" aria-label="New audience">
       </div>
 
       <div class="studio-field">

@@ -27,7 +27,7 @@
 
   var ENDPOINT = cfg.endpoint || 'status.php';
   var DESKTOP  = window.matchMedia ? window.matchMedia('(min-width: 1024px)') : { matches: false };
-  var LABELS   = { draft: 'Drafts', pending: 'To Review', approved: 'Approved', denied: 'Needs changes', scheduled: 'Scheduled' };
+  var LABELS   = { draft: 'Draft', pending: 'To Review', approved: 'Approved', denied: 'Needs changes', scheduled: 'Scheduled' };
 
   function toast(msg, kind) { if (App.toast) App.toast(msg, { kind: kind }); }
   function segmentOf(status, posted) { return posted ? 'scheduled' : status; }

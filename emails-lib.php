@@ -7,6 +7,10 @@
  * Emails tab per client. Every query is gated on hasEmailsTable() so a deploy
  * that has not run migrate.php renders "no emails" instead of a 500.
  *
+ * Audiences: email_groups / email_group_map are shown as "Audiences" everywhere a user sees them
+ * (labels, filters, toasts, digest, client view). The DB, form field and JSON names stay "groups";
+ * emails.php reads ?audience= and keeps ?group= as an alias for old links.
+ *
  * Status vocabulary (display key = what pages branch on):
  *   draft | pending | approved | denied  — emails.status while live = 0
  *   live                                 — emails.live = 1, whatever the status
@@ -589,7 +593,7 @@ if (!function_exists('emailFieldLabel')) {
         static $map = [
             'code' => 'ID', 'title' => 'Title', 'html_url' => 'HTML URL', 'subject' => 'Subject line',
             'preview_text' => 'Preview text', 'trigger_text' => 'Trigger', 'send_at' => 'Send date',
-            'priority' => 'Priority', 'notes' => 'Notes', 'status' => 'Status', 'groups' => 'Groups', 'live' => 'Live',
+            'priority' => 'Priority', 'notes' => 'Notes', 'status' => 'Status', 'groups' => 'Audiences', 'live' => 'Live',
         ];
         return $map[$key] ?? ucfirst(str_replace('_', ' ', $key));
     }
@@ -621,7 +625,7 @@ if (!function_exists('emailCsvHeaderMap')) {
             'view email' => null,
             'url' => 'html_url', 'html url' => 'html_url', 'html_url' => 'html_url',
             'priority' => 'priority',
-            'groups' => 'groups',
+            'groups' => 'groups', 'audiences' => 'groups', 'audience' => 'groups',
             'latest note' => null, 'updated' => null,
             'send date' => 'send_at', 'send_at' => 'send_at', 'send at' => 'send_at',
             'notes' => 'notes',
@@ -1103,10 +1107,10 @@ if (!function_exists('renameEmailGroup')) {
     function renameEmailGroup(PDO $pdo, int $companyId, int $groupId, string $name): string {
         $name = trim(preg_replace('/\s+/', ' ', $name));
         $slug = emailSlugify($name);
-        if ($slug === '') return 'Group name is required.';
-        if (!emailGroupById($pdo, $companyId, $groupId)) return 'Group not found.';
+        if ($slug === '') return 'Audience name is required.';
+        if (!emailGroupById($pdo, $companyId, $groupId)) return 'Audience not found.';
         foreach (emailGroupsForCompany($pdo, $companyId) as $g) {
-            if ($g['slug'] === $slug && (int)$g['id'] !== $groupId) return 'A group called "' . $g['name'] . '" already exists.';
+            if ($g['slug'] === $slug && (int)$g['id'] !== $groupId) return 'An audience called "' . $g['name'] . '" already exists.';
         }
         $pdo->prepare("UPDATE email_groups SET name = ?, slug = ? WHERE id = ? AND company_id = ?")->execute([mb_substr($name, 0, 80), $slug, $groupId, $companyId]);
         return '';
@@ -1139,11 +1143,122 @@ if (!function_exists('deleteEmail')) {
 }
 
 if (!function_exists('emailValidUrl')) {
-    /** '' or an absolute http(s) URL → true. */
+    /** '' or an absolute http(s) URL or a portal-hosted email ('/media/emails/<client>/<file>.html', emailHostedRel()) → true. */
     function emailValidUrl(string $url): bool {
         $url = trim($url);
         if ($url === '') return true;
+        if (emailHostedRel($url) !== '') return true;
         return (bool)preg_match('#^https?://[^\s]+$#i', $url) && filter_var($url, FILTER_VALIDATE_URL) !== false;
+    }
+}
+
+// ---------------------------------------------------------------------
+// Portal-hosted email HTML (+ New → Email with an HTML file or pasted HTML; assign.php)
+//
+// The file lives at media/emails/<client-slug>/<code>-<id>.html (docroot sibling, like media/pages)
+// and emails.html_url holds the root-relative '/media/emails/<client-slug>/<file>.html'. The folder
+// carries the shared media .htaccess (every directive guarded) plus a guarded CSP that switches
+// scripts off — an email never needs JavaScript. Moving an email to another client moves the file.
+// ---------------------------------------------------------------------
+
+if (!function_exists('emailHtmlRootPath')) {
+    /** media/emails on disk (docroot sibling of the app folder). */
+    function emailHtmlRootPath(): string {
+        $root = function_exists('mediaRootPath') ? mediaRootPath() : __DIR__ . '/../media';
+        return $root . '/emails';
+    }
+}
+
+if (!function_exists('emailHostedRel')) {
+    /** 'media/emails/<client>/<file>.html' when $url is a portal-hosted email path, '' otherwise. */
+    function emailHostedRel(string $url): string {
+        if (preg_match('#^/media/emails/([a-z0-9\-]+)/([a-z0-9][a-z0-9_\-]*\.html)$#', trim($url), $m)) {
+            return 'media/emails/' . $m[1] . '/' . $m[2];
+        }
+        return '';
+    }
+}
+
+if (!function_exists('emailHostedSlug')) {
+    /** The client slug inside a hosted email path ('' when not hosted). */
+    function emailHostedSlug(string $url): string {
+        $rel = emailHostedRel($url);
+        return $rel === '' ? '' : explode('/', $rel)[2];
+    }
+}
+
+if (!function_exists('emailHostedPath')) {
+    /**
+     * Filesystem path of a hosted email file, or null when $url is not hosted, a segment is a symlink
+     * or the resolved file sits outside media/emails/<client>/. Existence is not required.
+     */
+    function emailHostedPath(string $url): ?string {
+        $rel = emailHostedRel($url);
+        if ($rel === '') return null;
+        [, , $slug, $file] = explode('/', $rel);
+        $dir  = emailHtmlRootPath() . '/' . $slug;
+        $path = $dir . '/' . $file;
+        if (is_link($dir) || is_link($path)) return null;
+        $rootReal = realpath(emailHtmlRootPath());
+        $dirReal  = is_dir($dir) ? realpath($dir) : false;
+        if ($rootReal !== false && $dirReal !== false && $dirReal !== rtrim($rootReal, '/') . '/' . $slug) return null;
+        return $path;
+    }
+}
+
+if (!function_exists('emailHostedFileName')) {
+    /** '<code-slug>-<id>.html' (e.g. 'w1-12.html') — the id keeps it unique whatever the code. */
+    function emailHostedFileName(string $code, int $id): string {
+        $c = trim(preg_replace('/[^a-z0-9]+/', '-', strtolower($code)), '-');
+        return ($c !== '' ? mb_substr($c, 0, 40) . '-' : 'email-') . max(0, $id) . '.html';
+    }
+}
+
+if (!function_exists('emailHtmlHtaccessText')) {
+    /** media/emails/.htaccess: the shared media text + a guarded script-off CSP (emails never run JavaScript). */
+    function emailHtmlHtaccessText(): string {
+        $base = function_exists('mediaHtaccessText') ? mediaHtaccessText('emails-lib.php') : "Options -Indexes\n";
+        return $base . "<IfModule mod_headers.c>\n    Header set Content-Security-Policy \"script-src 'none'; object-src 'none'; base-uri 'none'\"\n</IfModule>\n";
+    }
+}
+
+if (!function_exists('emailHtmlBodyAllowed')) {
+    /** '' when the HTML may be stored, else the reason (empty, too large, server-side code). */
+    function emailHtmlBodyAllowed(string $html, int $maxBytes = 10485760): string {
+        if (trim($html) === '') return 'The HTML is empty.';
+        if (strlen($html) > $maxBytes) return 'The HTML is over ' . (int)($maxBytes / 1048576) . ' MB.';
+        if (preg_match('/<\?php|<\?=/i', $html)) return 'PHP code is not allowed in email HTML.';
+        return '';
+    }
+}
+
+if (!function_exists('emailWriteHostedHtml')) {
+    /**
+     * Store HTML for an email of $companySlug as media/emails/<slug>/<file> (temp file + rename, 0644;
+     * folders 0755) and return the root-relative URL for emails.html_url. Throws RuntimeException.
+     */
+    function emailWriteHostedHtml(string $companySlug, string $fileName, string $html): string {
+        if (!preg_match('/^[a-z0-9\-]+$/', $companySlug) || !preg_match('/^[a-z0-9][a-z0-9_\-]*\.html$/', $fileName)) {
+            throw new RuntimeException('Invalid email file name');
+        }
+        $root = emailHtmlRootPath();
+        $dir  = $root . '/' . $companySlug;
+        if (function_exists('mediaMkdir')) mediaMkdir($dir, function_exists('mediaRootPath') ? mediaRootPath() : null);
+        else @mkdir($dir, 0755, true);
+        if (!is_dir($dir) || is_link($dir) || !is_writable($dir)) {
+            throw new RuntimeException('media/emails/ is not writable on the server');
+        }
+        if (function_exists('mediaEnsureHtaccess')) mediaEnsureHtaccess($root, 'emails-lib.php', emailHtmlHtaccessText());
+        $url  = '/media/emails/' . $companySlug . '/' . $fileName;
+        $path = emailHostedPath($url);
+        if ($path === null) throw new RuntimeException('Email file resolves outside media/emails/');
+        $tmp = $path . '.tmp-' . bin2hex(random_bytes(4));
+        if (@file_put_contents($tmp, $html) === false || !@rename($tmp, $path)) {
+            @unlink($tmp);
+            throw new RuntimeException('Failed to save the email HTML (check folder permissions)');
+        }
+        if (function_exists('mediaChmodPath')) mediaChmodPath($path); else @chmod($path, 0644);
+        return $url;
     }
 }
 

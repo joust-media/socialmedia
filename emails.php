@@ -7,7 +7,8 @@
  *   &status=pending|approved|live          segment — default pending
  *          |draft|denied                   admin only (client → falls back to pending)
  *          |all                            every row the viewer may see (Studio's "Open emails")
- *   &group=free,pro  (or group[]=free)     group filter chips (ANY of); persists across segments
+ *   &audience=free,pro (or audience[]=free) Audience filter chips (ANY of); persists across segments.
+ *                                          (email_groups in the DB; &group= is the old name and still works)
  *   &q=welcome                             substring over code / title / subject
  *   &email=<id>                            open that email's detail on load (segment follows the row)
  *   &email=<id>&partial=1                  return ONLY the detail partial HTML (lists > 40 items)
@@ -26,6 +27,7 @@ require __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/partials/components/comment-thread.php';
 require_once __DIR__ . '/partials/components/email-detail.php';
+require_once __DIR__ . '/partials/components/assign.php';
 
 /** Escape helper (page-local by convention; partials use esc()). */
 function h($s) {
@@ -103,12 +105,15 @@ $cid       = (int)$client['id'];
 $visibleTo = $admin ? 'admin' : 'client';
 
 // ---------------------------------------------------------------------
-// Filters: group chips (multi, `group=a,b` or repeated) + q search
+// Filters: Audience chips (multi, `audience=a,b` or repeated; `group=` is the old alias) + q search
 // ---------------------------------------------------------------------
 $allGroups  = $hasTable ? emailGroupsForCompany($pdo, $cid) : [];
 $knownSlugs = array_map(static function ($g) { return (string)$g['slug']; }, $allGroups);
-$rawGroups  = $_GET['group'] ?? [];
-if (!is_array($rawGroups)) $rawGroups = [$rawGroups];
+$rawGroups  = [];
+foreach (['audience', 'group'] as $gParam) {
+    $v = $_GET[$gParam] ?? [];
+    foreach (is_array($v) ? $v : [$v] as $one) $rawGroups[] = $one;
+}
 $groupSlugs = [];
 foreach ($rawGroups as $g) {
     if (!is_string($g)) continue;
@@ -293,7 +298,7 @@ $inlineDetails = count($emails) <= $inlineLimit;
 // ---------------------------------------------------------------------
 $groupParam = $groupSlugs ? implode(',', $groupSlugs) : null;
 $pageUrl = function (array $extra = []) use ($groupParam, $q) {
-    return emailsUrl(array_merge(['group' => $groupParam, 'q' => $q !== '' ? $q : null], $extra));
+    return emailsUrl(array_merge(['audience' => $groupParam, 'q' => $q !== '' ? $q : null], $extra));
 };
 $segmentUrl = function (string $seg) use ($pageUrl) {
     return $pageUrl(['status' => $seg]);
@@ -302,7 +307,7 @@ $chipUrl = function (string $slug) use ($groupSlugs, $segment, $q) {
     $set = in_array($slug, $groupSlugs, true)
         ? array_values(array_diff($groupSlugs, [$slug]))
         : array_merge($groupSlugs, [$slug]);
-    return emailsUrl(['status' => $segment, 'group' => $set ? implode(',', $set) : null, 'q' => $q !== '' ? $q : null]);
+    return emailsUrl(['status' => $segment, 'audience' => $set ? implode(',', $set) : null, 'q' => $q !== '' ? $q : null]);
 };
 
 $segItems = [];
@@ -374,10 +379,10 @@ include __DIR__ . '/partials/layout-top.php';
 <?php if ($allGroups || $q !== ''): ?>
 <div class="emails-filters" data-emails-filters>
   <?php if ($allGroups): ?>
-  <div class="emails-chips" role="group" aria-label="Filter by group" data-group-chips>
+  <div class="emails-chips" role="group" aria-label="Filter by audience" data-group-chips data-audience-chips>
     <?php foreach ($allGroups as $g):
         $on = in_array((string)$g['slug'], $groupSlugs, true); ?>
-      <a class="em-chip<?= $on ? ' is-active' : '' ?>" href="<?= h($chipUrl((string)$g['slug'])) ?>" data-group-chip="<?= h($g['slug']) ?>" aria-pressed="<?= $on ? 'true' : 'false' ?>"><?= h($g['name']) ?></a>
+      <a class="em-chip<?= $on ? ' is-active' : '' ?>" href="<?= h($chipUrl((string)$g['slug'])) ?>" data-group-chip="<?= h($g['slug']) ?>" data-audience-chip="<?= h($g['slug']) ?>" aria-pressed="<?= $on ? 'true' : 'false' ?>"><?= h($g['name']) ?></a>
     <?php endforeach; ?>
     <?php if ($groupSlugs): ?>
       <a class="em-chip em-chip--clear" href="<?= h(emailsUrl(['status' => $segment, 'q' => $q !== '' ? $q : null])) ?>" data-group-clear><?= icon('xmark') ?>Clear</a>
@@ -387,11 +392,11 @@ include __DIR__ . '/partials/layout-top.php';
   <form class="emails-search" method="get" action="<?= h(pagePath('emails')) ?>" role="search" data-emails-search>
     <?php if (!empty($clientSlug)): ?><input type="hidden" name="client" value="<?= h($clientSlug) ?>"><?php endif; ?>
     <input type="hidden" name="status" value="<?= h($segment) ?>">
-    <?php if ($groupParam !== null): ?><input type="hidden" name="group" value="<?= h($groupParam) ?>"><?php endif; ?>
+    <?php if ($groupParam !== null): ?><input type="hidden" name="audience" value="<?= h($groupParam) ?>"><?php endif; ?>
     <label class="ui-visually-hidden" for="emails-q">Search emails</label>
     <input class="ui-input emails-search-input" type="search" id="emails-q" name="q" value="<?= h($q) ?>" placeholder="Search code, title or subject" autocomplete="off" enterkeyhint="search">
     <?php if ($q !== ''): ?>
-      <a class="ui-btn ui-btn--gray ui-btn--sm" href="<?= h(emailsUrl(['status' => $segment, 'group' => $groupParam])) ?>">Clear</a>
+      <a class="ui-btn ui-btn--gray ui-btn--sm" href="<?= h(emailsUrl(['status' => $segment, 'audience' => $groupParam])) ?>">Clear</a>
     <?php endif; ?>
   </form>
 </div>
@@ -409,12 +414,13 @@ include __DIR__ . '/partials/layout-top.php';
 <?php endif; ?>
 
 <section class="ui-list-group posts-group emails-group" data-emails-list data-segment="<?= h($segment) ?>"<?= !$emails ? ' hidden' : '' ?>>
-  <h2 class="ui-list-header">
-    <span data-segment-count><?= (int)$counts[$segment] ?></span> <?= h(strtolower($segLabel)) ?><?= $segment === 'all' ? ' emails' : '' ?>
+  <h2 class="ui-list-header<?= $admin ? ' asg-list-header' : '' ?>">
+    <span<?= $admin ? ' class="asg-list-title"' : '' ?>><span data-segment-count><?= (int)$counts[$segment] ?></span> <?= h(strtolower($segLabel)) ?><?= $segment === 'all' ? ' emails' : '' ?>
     <?php if ($groupSlugs): ?> · <?= h(implode(', ', array_map(static function ($s) use ($allGroups) {
         foreach ($allGroups as $g) if ($g['slug'] === $s) return $g['name'];
         return $s;
-    }, $groupSlugs))) ?><?php endif; ?>
+    }, $groupSlugs))) ?><?php endif; ?></span>
+    <?php if ($admin): ?><?= assignSelectButtonHtml('email') ?><?php endif; ?>
   </h2>
   <ul class="ui-list posts-list emails-list" role="list" data-emails-items>
     <?php foreach ($emails as $email):
@@ -493,6 +499,9 @@ include __DIR__ . '/partials/layout-top.php';
           </div>
           <?= icon('chevron-right', 'ui-row-chevron') ?>
         </a>
+        <?php if ($admin): // ⋯ Move to client… · Add to flow… · Set audiences… (assign.js) ?>
+          <?= assignMenuHtml('email', $eid, emailDisplayLabel($email), ['admin' => true, 'class' => 'asg-row-more', 'editUrl' => clientUrl('add-email.php', ['edit' => $eid])]) ?>
+        <?php endif; ?>
         <?php if ($queue): ?>
           <div class="pl-queue-actions">
             <button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-email-open="<?= $eid ?>">Open</button>

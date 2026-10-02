@@ -4,12 +4,14 @@
  * (mirrors partials/components/post-detail.php; see scratchpad emails-design.md).
  *
  *   renderEmailDetail(array $email, array $opts = []): string
- *     $email: an emails row (+ 'groups' from emails-lib.php) with optional
+ *     $email: an emails row (+ 'groups' = its Audiences, from emails-lib.php) with optional
  *             comments    => activity_log 'commented' rows [['actor','detail','created_at'], …]
  *             approved_at => datetime for the "Approved Sep 5" line
  *     $opts:  'admin'     bool   — default isAdmin(). Admin-only markup is NEVER emitted otherwise.
  *             'endpoint'  string — status endpoint (default 'email-status.php', resolved against basePath())
  *             'editUrl'   string — admin Edit link (default add-email.php?client=…&edit=ID)
+ *     Admin: a ⋯ menu in the head row (partials/components/assign.php — Move to client…, Add to flow…,
+ *     Set audiences…); never emitted for the client seat.
  *     Output: <article class="pd ed" data-email-detail="ID" data-status data-live data-key data-past>
  *               <div class="pd-body" data-pd-body>…</div>       preview frame · meta list · thread
  *               <div class="pd-footer" data-pd-footer>…</div>   composer · deny note · state rows · actions
@@ -37,13 +39,16 @@ if (!function_exists('edUrl')) {
 }
 
 if (!function_exists('edSafeHttpUrl')) {
-    /** Only http(s) URLs may be framed / linked; anything else renders the empty placeholder. */
+    /** Only http(s) URLs and portal-hosted emails (/media/emails/<client>/<file>.html) may be framed / linked; anything else renders the empty placeholder. */
     function edSafeHttpUrl(string $url): string
     {
         $url = trim($url);
+        if (preg_match('#^/media/emails/[a-z0-9\-]+/[a-z0-9][a-z0-9_\-]*\.html$#', $url)) return $url;
         return preg_match('#^https?://[^\s"\'<>]+$#i', $url) ? $url : '';
     }
 }
+
+require_once __DIR__ . '/assign.php';
 
 if (!function_exists('edFormatDate')) {
     /** "Saturday, Oct 25" for a DATE column; '' when empty / invalid. */
@@ -100,6 +105,10 @@ if (!function_exists('renderEmailDetail')) {
         if (!empty($email['updated_at']) && function_exists('relativeTime') && relativeTime($email['updated_at']) !== '') {
             $out .= '<span class="pd-edited text-tertiary" title="' . edEsc(absoluteTime($email['updated_at'])) . '">edited ' . edEsc(relativeTime($email['updated_at'])) . '</span>';
         }
+        // Admin ⋯: Move to client… · Add to flow… · Set audiences… (assign.js sheets → assign.php)
+        if ($admin && function_exists('assignMenuHtml')) {
+            $out .= assignMenuHtml('email', $id, function_exists('emailDisplayLabel') ? emailDisplayLabel($email) : ($code !== '' ? $code : 'Email'), ['admin' => true]);
+        }
         $out .= '</div>';
 
         // ---- 1. Preview frame -----------------------------------------------------------
@@ -146,7 +155,7 @@ if (!function_exists('renderEmailDetail')) {
             foreach ($groups as $g) {
                 $chips .= '<span class="el-tag">' . edEsc((string)($g['name'] ?? '')) . '</span>';
             }
-            $out .= $row(count($groups) === 1 ? 'Group' : 'Groups', '<span class="el-groups">' . $chips . '</span>');
+            $out .= $row(count($groups) === 1 ? 'Audience' : 'Audiences', '<span class="el-groups" data-email-audiences>' . $chips . '</span>');
         }
         // In flows (flows.php): "Free · step 3 of 7" chips linking to the card in each flow — flows-lib.php may not be deployed yet.
         $flowsPdo = $GLOBALS['pdo'] ?? null;

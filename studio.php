@@ -330,7 +330,7 @@ include __DIR__ . '/partials/layout-top.php';
   <?php $queueUrl = clientUrl('posts.php', ['status' => 'denied', 'month' => 'all']);   // the admin work queue ?>
   <?= insetListOpen(h($client['name']) . '\'s posts', ['raw' => true]) ?>
     <?php if (postsHaveDraft($pdo)): ?>
-    <?= insetRow(['href' => clientUrl('posts.php', ['status' => 'draft', 'month' => 'all']), 'icon' => 'plus', 'title' => 'Drafts', 'subtitle' => 'Only you can see these', 'trailing' => '<span class="studio-count">' . $counts['draft'] . '</span>']) ?>
+    <?= insetRow(['href' => clientUrl('posts.php', ['status' => 'draft', 'month' => 'all']), 'icon' => 'plus', 'title' => 'Draft', 'subtitle' => 'Only you can see these', 'trailing' => '<span class="studio-count">' . $counts['draft'] . '</span>']) ?>
     <?php endif; ?>
     <?= insetRow(['href' => clientUrl('posts.php', ['status' => 'pending', 'month' => 'all']),  'icon' => 'grid',      'iconStyle' => 'color:var(--pending)',   'title' => 'To Review', 'subtitle' => 'Waiting for the client', 'trailing' => '<span class="studio-count">' . $counts['pending'] . '</span>']) ?>
     <?= insetRow(['href' => clientUrl('posts.php', ['status' => 'approved', 'month' => 'all']), 'icon' => 'checkmark', 'iconStyle' => 'color:var(--approve)',   'title' => 'Approved',  'subtitle' => 'Ready to schedule',       'trailing' => '<span class="studio-count">' . $counts['approved'] . '</span>']) ?>
@@ -572,7 +572,7 @@ include __DIR__ . '/partials/layout-top.php';
     <?php endif; ?>
     <span class="ui-spacer"></span>
     <a class="ui-btn ui-btn--gray ui-btn--sm" href="<?= h(clientUrl('emails-io.php', ['format' => 'csv'])) ?>" data-emails-export="csv" title="Download the spreadsheet (Status, ID, Title, Sequence, Trigger, …)"><?= icon('download') ?><span>Export CSV</span></a>
-    <a class="ui-btn ui-btn--gray ui-btn--sm" href="<?= h(clientUrl('emails-io.php', ['format' => 'json'])) ?>" data-emails-export="json" title="Download everything incl. groups and comment threads"><?= icon('download') ?><span>Export JSON</span></a>
+    <a class="ui-btn ui-btn--gray ui-btn--sm" href="<?= h(clientUrl('emails-io.php', ['format' => 'json'])) ?>" data-emails-export="json" title="Download everything incl. audiences and comment threads"><?= icon('download') ?><span>Export JSON</span></a>
   </div>
 
   <?php if (!$emailsOn): ?>
@@ -599,7 +599,7 @@ include __DIR__ . '/partials/layout-top.php';
     <?php endif; ?>
     <?php foreach ($emailRows as $em):
         $gNames = array_map(static function ($g) { return $g['name']; }, $em['groups'] ?? []);
-        $sub = ($gNames ? '<span class="studio-email-groups">' . h(implode(' · ', $gNames)) . '</span>' : '<span class="studio-email-groups">No group</span>')
+        $sub = ($gNames ? '<span class="studio-email-groups">' . h(implode(' · ', $gNames)) . '</span>' : '<span class="studio-email-groups">No audience</span>')
              . (trim((string)($em['trigger_text'] ?? '')) !== '' ? ' · ' . h(mb_strimwidth(preg_replace('/\s+/', ' ', (string)$em['trigger_text']), 0, 70, '…')) : '');
     ?>
       <?= insetRow([
@@ -624,26 +624,26 @@ include __DIR__ . '/partials/layout-top.php';
         <input type="file" name="file" accept=".csv,.json,text/csv,application/json" required aria-label="CSV or JSON file">
         <button type="submit" class="ui-btn ui-btn--tinted">Preview import</button>
       </form>
-      <p class="studio-help">Blank IDs are skipped, duplicate IDs keep the first row, “#ERROR!” and thumbs-up “Active” placeholder cells are treated as blank, and unknown statuses land in Draft. Sequence + Groups become groups (created when missing).</p>
+      <p class="studio-help">Blank IDs are skipped, duplicate IDs keep the first row, “#ERROR!” and thumbs-up “Active” placeholder cells are treated as blank, and unknown statuses land in Draft. Sequence + Groups become audiences (created when missing).</p>
     </div>
   </section>
 
   <section class="ui-card studio-groups-card" data-emails-groups>
-    <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Groups</h3>
-      <p class="ui-card-subtitle">Sequences the client can filter by (Free, Pro, Renewal…). Deleting a group only unlinks its emails.</p></div></div>
+    <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Audiences</h3>
+      <p class="ui-card-subtitle">Who an email is for (Free, Pro, Renewal…) — the client filters by them. Deleting an audience only unlinks its emails. The order an email sends in lives in Flows.</p></div></div>
     <div class="ui-card-body">
-      <?php if (!$emailGroups): ?><p class="text-secondary">No groups yet.</p><?php endif; ?>
+      <?php if (!$emailGroups): ?><p class="text-secondary">No audiences yet.</p><?php endif; ?>
       <ul class="studio-groups" role="list">
         <?php foreach ($emailGroups as $g): $n = (int)($emailGroupN[(int)$g['id']] ?? 0); ?>
           <li class="studio-group" data-email-group="<?= (int)$g['id'] ?>">
             <form method="POST" action="<?= h($emailFormUrl) ?>" class="studio-group-form">
               <input type="hidden" name="action" value="group_rename">
               <input type="hidden" name="id" value="<?= (int)$g['id'] ?>">
-              <input class="ui-input" type="text" name="name" value="<?= h($g['name']) ?>" maxlength="80" required aria-label="Group name">
+              <input class="ui-input" type="text" name="name" value="<?= h($g['name']) ?>" maxlength="80" required aria-label="Audience name">
               <span class="studio-group-n"><?= $n ?> email<?= $n === 1 ? '' : 's' ?></span>
               <button type="submit" class="ui-btn ui-btn--gray ui-btn--sm">Rename</button>
             </form>
-            <form method="POST" action="<?= h($emailFormUrl) ?>" class="studio-inline-form" data-confirm-submit="Delete the group “<?= h($g['name']) ?>”? Its <?= $n ?> email<?= $n === 1 ? '' : 's' ?> stay, just without this group.">
+            <form method="POST" action="<?= h($emailFormUrl) ?>" class="studio-inline-form" data-confirm-submit="Delete the audience “<?= h($g['name']) ?>”? Its <?= $n ?> email<?= $n === 1 ? '' : 's' ?> stay, just without this audience.">
               <input type="hidden" name="action" value="group_delete">
               <input type="hidden" name="id" value="<?= (int)$g['id'] ?>">
               <button type="submit" class="ui-btn ui-btn--plain ui-btn--sm studio-danger-btn">Delete</button>
@@ -653,8 +653,8 @@ include __DIR__ . '/partials/layout-top.php';
       </ul>
       <form method="POST" action="<?= h($emailFormUrl) ?>" class="studio-group-add">
         <input type="hidden" name="action" value="group_add">
-        <input class="ui-input" type="text" name="name" maxlength="80" required placeholder="New group, e.g. Leads" aria-label="New group name">
-        <button type="submit" class="ui-btn ui-btn--tinted">Add group</button>
+        <input class="ui-input" type="text" name="name" maxlength="80" required placeholder="New audience, e.g. Leads" aria-label="New audience name">
+        <button type="submit" class="ui-btn ui-btn--tinted">Add audience</button>
       </form>
     </div>
   </section>
