@@ -6,6 +6,8 @@
      sees it
    - Joust replies are marked read from the client's Needs-changes notice (renderPostHiddenNotice) and from asset
      deep links (assets.php [data-seen-on-load]: a library image, a tire series) — the Home "Joust replied" card empties
+   - the client's tab badges count unread Joust replies on top of To Review (never twice) and move live when an item is
+     opened (App.tabBadgeSeen) or decided (App.bumpTabBadge); the admin's are unchanged
    - screenshots for review: Manage → Clients banner, Manage → Notifications (client emails held / allow mail(), clients
      without a Slack channel, quiet hours, a "Failed sender check" reply), My notifications, the Inbox "Mine" filter, the
      client Home "Joust replied" card, the gentle reminder email
@@ -258,4 +260,72 @@ async function seenStored(page, viewerType, type, id) {
       expect.eq(await page.locator('[data-home-replied]').count(), 0, 'card empty');
     });
   }, { role: 'client:kenda', viewports: ['desktop', 'phone'], reseed: 'test' });
+  // ---------------------------------------------------------------------------------------------------------------------
+  await run('nfix: client tab badge = To Review + unread Joust replies, live (client)', async ({ test, expect, viewport, ctx }) => {
+    const w = viewport === 'desktop' ? '1440' : '390';
+    await theme(ctx, 'light');
+    const badge = async (page, tab) => page.evaluate((t) => {
+      const a = document.querySelector('.ui-tab[data-tab="' + t + '"]');
+      const b = a && a.querySelector('.ui-tab-badge');
+      return { n: b ? b.textContent.trim() : '', aria: b ? b.getAttribute('aria-label') : '', replies: a ? a.getAttribute('data-badge-replies') : null };
+    }, tab);
+    await test('a Joust reply on approved post 3: Posts shows 3 ("2 to review, 1 new reply"); opening it from the list drops it to 2 without a reload', async (page) => {
+      joustSays('post', 3, 1, 'Trail day is scheduled — shout if the caption needs a tweak.');
+      joustSays('post', 1, 1, 'New crop on the hero.');   // post 1 is To Review already: not counted twice
+      await page.goto(url('posts.php?client=kenda&status=approved'));
+      let b = await badge(page, 'posts');
+      expect.eq(b.n, '3', 'two to review + one reply');
+      expect.eq(b.aria, '2 to review, 1 new reply');
+      expect.eq(b.replies, 'post:3');
+      await page.screenshot({ path: shot(`client-tab-badge-reply-${w}.png`), fullPage: false });
+      await page.evaluate(() => { window.__samePage = 1; });
+      await page.locator('[data-post-open="3"]').first().click();
+      await page.waitForSelector('#uiSheet.is-open [data-seen-entity="post:3"]');
+      expect(await seenStored(page, 'contact', 'post', 3), 'seen stored');
+      await page.waitForFunction(() => { const b = document.querySelector('.ui-tab[data-tab="posts"] .ui-tab-badge'); return b && b.textContent.trim() === '2'; }, null, { timeout: 5000 });
+      b = await badge(page, 'posts');
+      expect.eq(b.aria, '2 to review', 'label back to the review part only');
+      expect.eq(b.replies, '', 'key dropped');
+      expect.eq(await page.evaluate(() => window.__samePage), 1, 'no reload — the badge moved live');
+      await page.screenshot({ path: shot(`client-tab-badge-read-${w}.png`), fullPage: false });
+      await page.goto(url('posts.php?client=kenda'));
+      expect.eq((await badge(page, 'posts')).n, '2', 'the server agrees after a reload');
+    });
+    await test('Needs-changes post 4 opened by deep link: the badge settles at 2 on that page load', async (page) => {
+      joustSays('post', 4, 1, 'Darker render is coming tomorrow.');
+      await page.goto(url('posts.php?client=kenda'));
+      expect.eq((await badge(page, 'posts')).aria, '2 to review, 1 new reply');
+      await page.goto(url('posts.php?client=kenda&post=4'));
+      expect(await seenStored(page, 'contact', 'post', 4), 'seen stored');
+      await page.waitForFunction(() => { const b = document.querySelector('.ui-tab[data-tab="posts"] .ui-tab-badge'); return b && b.textContent.trim() === '2'; }, null, { timeout: 5000 });
+    });
+    await test('a reply-only tab (an approved library image): the badge appears, then disappears once the image is opened', async (page) => {
+      joustSays('library_image', 1, 1, 'Swapped the background.');
+      await page.goto(url('posts.php?client=kenda'));
+      const b = await badge(page, 'assets');
+      expect.eq(b.n, '3', 'library 7 + 8 to review + 1 reply');
+      expect.eq(b.aria, '2 to review, 1 new reply');
+      await page.goto(url('assets.php?client=kenda&asset=1&kind=library'));
+      expect(await seenStored(page, 'contact', 'library_image', 1), 'seen');
+      await page.waitForFunction(() => { const b = document.querySelector('.ui-tab[data-tab="assets"] .ui-tab-badge'); return b && b.textContent.trim() === '2'; }, null, { timeout: 5000 });
+      expect.eq((await badge(page, 'assets')).aria, '2 to review');
+    });
+    await test('a decision still moves the To Review part and keeps the reply part', async (page) => {
+      joustSays('post', 4, 1, 'Another update.');
+      await page.goto(url('posts.php?client=kenda'));
+      await page.evaluate(() => App.bumpTabBadge('posts', -1));
+      const b = await badge(page, 'posts');
+      expect.eq(b.n, '2'); expect.eq(b.aria, '1 to review, 1 new reply');
+      await page.evaluate(() => App.tabBadgeSeen('post:4'));
+      expect.eq((await badge(page, 'posts')).aria, '1 to review');
+    });
+  }, { role: 'client:kenda', viewports: ['desktop', 'phone'], reseed: 'test' });
+  await run('nfix: admin tab badges unchanged', async ({ test, expect }) => {
+    await test('Posts = Needs changes, "1 need changes", no reply part', async (page) => {
+      joustSays('post', 4, 1, 'Admin-side reply.');
+      await page.goto(url('posts.php?client=kenda'));
+      const r = await page.evaluate(() => { const a = document.querySelector('.ui-tab[data-tab="posts"]'); const b = a.querySelector('.ui-tab-badge'); return [b.textContent.trim(), b.getAttribute('aria-label'), a.hasAttribute('data-badge-replies')]; });
+      expect.eq(JSON.stringify(r), JSON.stringify(['1', '1 need changes', false]));
+    });
+  }, { role: 'admin', viewports: ['desktop'], reseed: 'test' });
 })();

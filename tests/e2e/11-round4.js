@@ -194,7 +194,9 @@ async function pickDest(page, files, kind) {
       const t = await page.textContent('#uiSheet [data-hidden-post]');
       expect(/Your note/.test(t) && /Please use the darker render/.test(t), 'my note');
       expect(/Joust replied/.test(t) && /Darker render coming Friday/.test(t), 'Joust\'s reply');
-      expect.eq(await badge(page, 'posts'), 2, 'the client\'s Posts badge still counts To Review');
+      // the badge also counts unread Joust replies (notif round 3): opening the notice reads the reply, so it settles at To Review
+      await page.waitForFunction(() => { const b = document.querySelector('.ui-tab[data-tab="posts"] .ui-tab-badge'); return b && b.textContent.trim() === '2'; }, null, { timeout: 5000 }).catch(() => {});
+      expect.eq(await badge(page, 'posts'), 2, 'the client\'s Posts badge counts To Review once the reply is read');
     });
   }, { role: 'client', viewports: ['desktop', 'phone'], reseed: 'test' });
 })();

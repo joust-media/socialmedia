@@ -314,7 +314,7 @@ if (!function_exists('adminPrefKinds')) {
         return [
             'dm'      => ['Slack DM reminders', 'A direct message when a client of yours has waited past the Slack reminder time'],
             'email'   => ['Reminder emails', 'An email when a client of yours has waited past the email reminder time'],
-            'summary' => ['Morning summary & weekly report', 'The daily digest of client activity and the Monday report'],
+            'summary' => ['Morning summary & weekly report', 'The daily digest of client activity and the Monday report — for the clients you own (every client if you own none)'],
         ];
     }
 }
@@ -1505,8 +1505,8 @@ if (!function_exists('notifyDeliver')) {
                 $owner = adminUserById($pdo, (int)($p['owner_user_id'] ?? 0));
                 $mention = $owner && $owner['slack_user_id'] ? '<@' . $owner['slack_user_id'] . '> ' : '';
                 $r = slackApi('chat.postMessage', ['channel' => $thread['channel'], 'thread_ts' => $thread['ts'], 'reply_broadcast' => true,
-                    'text' => $mention . ':alarm_clock: Still unanswered after ' . notifyAgeLabel((int)$p['minutes']) . ' — '
-                            . notifySlackEscape($info['company_name']) . ' is waiting on a reply.']);
+                    'text' => $mention . ':alarm_clock: Still unanswered after ' . notifyAgeLabel((int)($p['waited'] ?? $p['minutes'])) . ' — '
+                            . notifySlackEscape($info['company_name']) . ' is waiting on a reply.' . notifyEscalationHeldNote($p)]);
                 if (!empty($r['ok'])) notifySlackUpdateParent($pdo, (string)$p['entity_type'], (int)$p['entity_id']);
                 return notifySlackResult($r, 'escalation');
             }
@@ -1520,9 +1520,9 @@ if (!function_exists('notifyDeliver')) {
                 if (empty($open['ok'])) return notifySlackResult($open, 'conversations.open');
                 $dm = (string)($open['data']['channel']['id'] ?? '');
                 $last = notifyLastClientMessage($pdo, $p);
-                $text = ':alarm_clock: *' . notifySlackEscape($info['company_name']) . '* has been waiting ' . notifyAgeLabel((int)$p['minutes'])
+                $text = ':alarm_clock: *' . notifySlackEscape($info['company_name']) . '* has been waiting ' . notifyAgeLabel((int)($p['waited'] ?? $p['minutes']))
                       . ' for a reply on *<' . $info['url'] . '|' . notifySlackEscape($info['title']) . '>*'
-                      . ($last !== '' ? ":\n" . notifyQuote($last, 600) : '.');
+                      . ($last !== '' ? ":\n" . notifyQuote($last, 600) : '.') . notifyEscalationHeldNote($p);
                 return notifySlackResult(slackApi('chat.postMessage', ['channel' => $dm, 'text' => $text, 'unfurl_links' => false]), 'DM');
             }
             case 'escalate_email': {
@@ -1534,18 +1534,20 @@ if (!function_exists('notifyDeliver')) {
                 if ($to === '') return ['ok' => false, 'skip' => true, 'error' => 'no recipient'];
                 $last = notifyLastClientMessage($pdo, $p);
                 [$slide, $body] = commentSlideSplit($last);
-                $age = notifyAgeLabel((int)$p['minutes']);
+                $age = notifyAgeLabel((int)($p['waited'] ?? $p['minutes']));
+                $held = notifyEscalationHeldNote($p);
                 $info['url'] = notifyItemLinkFor($pdo, $info, $to);   // the admin link for Joust; clientLink() for a client
                 $subject = "Waiting {$age}: {$info['company_name']} — {$info['title']}";
                 $text = "{$info['company_name']} has been waiting {$age} for a reply on {$info['title']}.\n\n"
-                      . ($slide > 0 ? "On slide {$slide}: " : '') . "\"{$body}\"\n\nOpen it: {$info['url']}\n";
+                      . ($slide > 0 ? "On slide {$slide}: " : '') . "\"{$body}\"\n\nOpen it: {$info['url']}\n" . ($held !== '' ? "\n" . trim($held) . "\n" : '');
                 $e = static function ($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); };
                 $html = '<div style="font:15px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#1c1c1e;max-width:560px">'
                       . '<p><strong>' . $e($info['company_name']) . '</strong> has been waiting <strong>' . $e($age) . '</strong> for a reply on '
                       . '<a href="' . $e($info['url']) . '">' . $e($info['title']) . '</a>.</p>'
                       . '<blockquote style="margin:12px 0;padding:8px 12px;border-left:3px solid #ff9500;background:#f2f2f7">'
                       . ($slide > 0 ? '<span style="color:#8e8e93">On slide ' . $slide . ':</span> ' : '') . nl2br($e($body)) . '</blockquote>'
-                      . '<p><a href="' . $e($info['url']) . '" style="display:inline-block;background:#007aff;color:#fff;padding:10px 16px;border-radius:10px;text-decoration:none;font-weight:600">Open in portal</a></p></div>';
+                      . '<p><a href="' . $e($info['url']) . '" style="display:inline-block;background:#007aff;color:#fff;padding:10px 16px;border-radius:10px;text-decoration:none;font-weight:600">Open in portal</a></p>'
+                      . ($held !== '' ? '<p data-escalation-held style="color:#8e8e93;font-size:13px">' . $e(trim($held)) . '</p>' : '') . '</div>';
                 $res = notifyEmail(['to' => $to, 'subject' => $subject, 'text' => $text, 'html' => $html,
                                     'thread' => ['entity_type' => $info['entity_type'], 'entity_id' => (int)$info['entity_id'], 'company_id' => (int)$info['company_id']]]);
                 return $res['ok'] ? ['ok' => true, 'provider_id' => $res['message_id']] : ['ok' => false, 'error' => 'email: ' . $res['error']];
@@ -1570,6 +1572,8 @@ if (!function_exists('notifyDeliver')) {
                 return notifyDeliverNoChannel($pdo, $p, (string)($row['target'] ?? ''));
             case 'summary':
                 return notifyDeliverSummary($pdo, $p);
+            case 'summary_member':   // a teammate's own Morning summary (notifyMemberSummaries())
+                return notifyDeliverMemberSummary($pdo, $p);
             case 'client_email':   // client-notify-lib.php: Ready for review / Joust replied / Live & scheduled (rendered now, per recipient)
                 return function_exists('clientEmailDeliver') ? clientEmailDeliver($pdo, $p) : ['ok' => false, 'permanent' => true, 'error' => 'client emails are not available'];
             case 'weekly':         // tracking-lib.php: the Monday owner report
@@ -1636,6 +1640,14 @@ if (!function_exists('notifySendEmailNow')) {
     }
 }
 
+if (!function_exists('notifyEscalationHeldNote')) {
+    /** The line a combined post-quiet-hours reminder carries ('' for an ordinary one). */
+    function notifyEscalationHeldNote(array $p): string {
+        if (empty($p['combined']) || count((array)$p['combined']) < 2) return '';
+        return ' (Held during quiet hours — this one reminder replaces the ' . count((array)$p['combined']) . ' that came due.)';
+    }
+}
+
 if (!function_exists('notifyEscalationStillOpen')) {
     /** The client message an escalation is about is still unanswered (nothing from Joust answered after it). */
     function notifyEscalationStillOpen(PDO $pdo, array $p): bool {
@@ -1651,40 +1663,85 @@ if (!function_exists('notifyLastClientMessage')) {
     }
 }
 
+if (!function_exists('notifyQuietLastEnd')) {
+    /** When the escalation quiet hours last ended (unix time, ≤ $now; New York wall clock), null when none are set. */
+    function notifyQuietLastEnd(PDO $pdo, ?int $now = null): ?int {
+        $set = notifySettings($pdo);
+        if ($set['quiet_start'] === null) return null;
+        $now = $now ?? time();
+        $end = mktime($set['quiet_end'], 0, 0, (int)date('n', $now), (int)date('j', $now), (int)date('Y', $now));
+        return $end > $now ? $end - 86400 : $end;
+    }
+}
+
 if (!function_exists('notifyEscalate')) {
     /**
      * The escalation check (notify-cron.php): for every item whose oldest unanswered client message is at least
      * T1 minutes old → a re-ping in its Slack thread (@owner) + a DM to the owner; at least T2 → an email to the owner.
      * Each step happens once per waiting message (dedupe keys on the message id). Messages older than notify_since
-     * (the migration) or 7 days are never escalated. Returns ['t1' => n enqueued, 't2' => n enqueued].
+     * (the migration) or 7 days are never escalated. Returns ['t1' => n enqueued, 't2' => n enqueued] (+ 'combined' => n after quiet hours).
+     *
+     * Quiet hours: nothing is sent inside the window. On the first runs after it, an item with steps that came due while
+     * it was quiet gets ONE combined message instead of every step at once — the highest channel available (the
+     * reminder email when the email step is due and wanted, else the DM, else the thread re-ping), saying how long it
+     * has waited; the other due steps are recorded as skipped ("combined into #id") so they never fire later.
      */
     function notifyEscalate(PDO $pdo): array {
-        $out = ['t1' => 0, 't2' => 0];
+        $out = ['t1' => 0, 't2' => 0];   // + 'combined' => n when a post-quiet-hours catch-up combined steps
         if (!notifyReady($pdo)) return $out;
-        // Quiet hours (Manage → Notifications; none by default): nothing is sent now — each step goes out on the first
-        // run after the window, once (the dedupe keys below).
+        // Quiet hours (Manage → Notifications; none by default): nothing is sent now.
         if (notifyQuietNow($pdo)) return $out + ['quiet' => true];
         $set = notifySettings($pdo);
         $floor = max((int)strtotime(notifyMeta($pdo, 'notify_since', '1970-01-02 00:00:00')), time() - 7 * 86400);
         $now = (int)$pdo->query("SELECT UNIX_TIMESTAMP(NOW())")->fetchColumn();
+        $quietEnd = notifyQuietLastEnd($pdo);
+        $have = $pdo->prepare("SELECT 1 FROM notify_outbox WHERE dedupe_key = ?");
+        $exists = static function (string $key) use ($have): bool { $have->execute([$key]); return (bool)$have->fetchColumn(); };
         foreach (notifyUnanswered($pdo, null, date('Y-m-d H:i:s', $floor)) as $w) {
-            $age = (int)floor(($now - (int)strtotime((string)$w['first_at'])) / 60);
+            $firstAt = (int)strtotime((string)$w['first_at']);
+            $age = (int)floor(($now - $firstAt) / 60);
             if ($age < $set['t1']) continue;
             $owner = notifyOwnerFor($pdo, (int)$w['company_id']);
             $prefs = adminUserPrefs($owner);   // the owner's own switches (My notifications)
             $base = ['entity_type' => $w['entity_type'], 'entity_id' => (int)$w['entity_id'], 'company_id' => (int)$w['company_id'],
                      'first_id' => (int)$w['first_id'], 'owner_user_id' => $owner ? (int)$owner['id'] : 0];
             $o = ['company_id' => (int)$w['company_id'], 'entity_type' => $w['entity_type'], 'entity_id' => (int)$w['entity_id'], 'defer' => true];
+            // the steps due now and not sent yet: [channel, kind, payload, options, due at, counter]
+            $due = [];
             if (notifySlackConfigured()) {
-                if (notifyClientChannel($pdo, (int)$w['company_id']) !== '') {
-                    if (notifyEnqueueOnce($pdo, 'slack', 'escalate_thread', $base + ['minutes' => $set['t1']], $o + ['dedupe' => 'esc1t:' . $w['first_id']])) $out['t1']++;
+                if (notifyClientChannel($pdo, (int)$w['company_id']) !== '' && !$exists('esc1t:' . $w['first_id'])) {
+                    $due[] = ['slack', 'escalate_thread', $base + ['minutes' => $set['t1']], $o + ['dedupe' => 'esc1t:' . $w['first_id']], $firstAt + 60 * $set['t1'], 't1'];
                 }
-                if ($owner && trim((string)$owner['slack_user_id']) !== '' && $prefs['dm']) {
-                    notifyEnqueueOnce($pdo, 'slack', 'escalate_dm', $base + ['minutes' => $set['t1']], $o + ['dedupe' => 'esc1d:' . $w['first_id'], 'target' => (string)$owner['slack_user_id']]);
+                if ($owner && trim((string)$owner['slack_user_id']) !== '' && $prefs['dm'] && !$exists('esc1d:' . $w['first_id'])) {
+                    $due[] = ['slack', 'escalate_dm', $base + ['minutes' => $set['t1']], $o + ['dedupe' => 'esc1d:' . $w['first_id'], 'target' => (string)$owner['slack_user_id']], $firstAt + 60 * $set['t1'], null];
                 }
             }
-            if ($age >= $set['t2'] && ($owner || notifyCfg('notify_to') !== '') && $prefs['email']) {
-                if (notifyEnqueueOnce($pdo, 'email', 'escalate_email', $base + ['minutes' => $set['t2']], $o + ['dedupe' => 'esc2:' . $w['first_id'], 'target' => $owner ? (string)$owner['email'] : notifyCfg('notify_to')])) $out['t2']++;
+            if ($age >= $set['t2'] && ($owner || notifyCfg('notify_to') !== '') && $prefs['email'] && !$exists('esc2:' . $w['first_id'])) {
+                $due[] = ['email', 'escalate_email', $base + ['minutes' => $set['t2']], $o + ['dedupe' => 'esc2:' . $w['first_id'], 'target' => $owner ? (string)$owner['email'] : notifyCfg('notify_to')], $firstAt + 60 * $set['t2'], 't2'];
+            }
+            if (!$due) continue;
+            $held = $quietEnd !== null && min(array_column($due, 4)) <= $quietEnd;   // came due while it was quiet
+            if (!$held || count($due) === 1) {
+                foreach ($due as $d) { if (notifyEnqueue($pdo, $d[0], $d[1], $d[2], $d[3]) > 0 && $d[5]) $out[$d[5]]++; }
+                continue;
+            }
+            // catch-up after quiet hours: one message per item, on the highest channel due
+            $rank = ['escalate_email' => 3, 'escalate_dm' => 2, 'escalate_thread' => 1];
+            usort($due, static function ($a, $b) use ($rank) { return $rank[$b[1]] <=> $rank[$a[1]]; });
+            $pick = array_shift($due);
+            $pick[2]['minutes'] = $age >= $set['t2'] ? $set['t2'] : $set['t1'];
+            $pick[2]['waited'] = $age;
+            $pick[2]['combined'] = array_merge([$pick[1]], array_column($due, 1));
+            $id = notifyEnqueue($pdo, $pick[0], $pick[1], $pick[2], $pick[3]);
+            if ($id <= 0) continue;
+            $out['combined'] = ($out['combined'] ?? 0) + 1;
+            if ($pick[5]) $out[$pick[5]]++;
+            $skip = $pdo->prepare("INSERT IGNORE INTO notify_outbox (channel, kind, company_id, entity_type, entity_id, target, payload, dedupe_key, status, last_error)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'skipped', ?)");
+            foreach ($due as $d) {
+                $skip->execute([$d[0], $d[1], (int)$w['company_id'], (string)$w['entity_type'], (int)$w['entity_id'], isset($d[3]['target']) ? substr((string)$d[3]['target'], 0, 190) : null,
+                                json_encode($d[2], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), $d[3]['dedupe'],
+                                'combined into #' . $id . ' (one reminder after quiet hours)']);
             }
         }
         return $out;
@@ -2107,6 +2164,123 @@ if (!function_exists('notifyMorningSummary')) {
     }
 }
 
+if (!function_exists('notifySummaryPrimary')) {
+    /** The Morning summary / weekly report's main recipient (config notify_to, else the default owner — Lance): it
+     *  gets everything, every client, as before. '' when nobody is set up. */
+    function notifySummaryPrimary(PDO $pdo): string {
+        $to = notifyCfg('notify_to');
+        if ($to === '') { $o = notifyOwnerFor($pdo, 0); $to = $o ? (string)$o['email'] : ''; }
+        return $to;
+    }
+}
+
+if (!function_exists('notifyUserCompanyScope')) {
+    /** The clients a teammate owns (the Inbox "Mine" rule: notifyOwnerFor() is them) → [company_id => name], or null
+     *  when they own none (→ every client). */
+    function notifyUserCompanyScope(PDO $pdo, array $user): ?array {
+        $mine = [];
+        foreach ($pdo->query("SELECT id, name FROM companies ORDER BY name") as $c) {
+            $o = notifyOwnerFor($pdo, (int)$c['id']);
+            if ($o && (int)$o['id'] === (int)$user['id']) $mine[(int)$c['id']] = (string)$c['name'];
+        }
+        return $mine ?: null;
+    }
+}
+
+if (!function_exists('notifySummaryMembers')) {
+    /** Teammates who get their own Morning summary + weekly report: every ACTIVE admin user with "Morning summary &
+     *  weekly report" on (My notifications) other than the main recipient (notifySummaryPrimary()), each with their
+     *  scope → [['user' => row, 'scope' => [company_id => name] | null (all clients)]]. */
+    function notifySummaryMembers(PDO $pdo): array {
+        $primary = strtolower(trim((string)preg_replace('/^.*<([^>]+)>\s*$/', '$1', notifySummaryPrimary($pdo))));
+        $out = [];
+        foreach (adminUsers($pdo) as $u) {
+            $email = strtolower(trim((string)$u['email']));
+            if (empty($u['active']) || $email === '' || $email === $primary || !filter_var($email, FILTER_VALIDATE_EMAIL)) continue;
+            if (!adminUserPrefs($u)['summary']) continue;
+            $out[] = ['user' => $u, 'scope' => notifyUserCompanyScope($pdo, $u)];
+        }
+        return $out;
+    }
+}
+
+if (!function_exists('notifyMemberSummaries')) {
+    /**
+     * The Morning summary for every teammate (notifySummaryMembers()): the client activity since THEIR last summary
+     * (a per-person watermark, meta summary_member_last_<id>; the first one covers the last 24 h, never more than 7
+     * days), scoped to the clients they own ("Mine") when they own any, else every client. One outbox row per person
+     * per day (dedupe summary:u<id>:<date>); the main recipient's summary (notifyMorningSummary()) is untouched and
+     * still the only one that marks activity rows. → ['queued' => n, 'empty' => n, 'sent' => n].
+     */
+    function notifyMemberSummaries(PDO $pdo): array {
+        $out = ['queued' => 0, 'empty' => 0, 'sent' => 0];
+        if (!notifyReady($pdo)) return $out;
+        require_once __DIR__ . '/digest-lib.php';
+        $ids = [];
+        $waitingAll = null;
+        foreach (notifySummaryMembers($pdo) as $m) {
+            $u = $m['user']; $scope = $m['scope']; $uid = (int)$u['id'];
+            $dedupe = 'summary:u' . $uid . ':' . date('Y-m-d');
+            $s = $pdo->prepare("SELECT 1 FROM notify_outbox WHERE dedupe_key = ?");
+            $s->execute([$dedupe]);
+            if ($s->fetchColumn()) continue;   // today's is already queued / sent
+            $last = (int)notifyMeta($pdo, 'summary_member_last_' . $uid, '0');
+            if ($last > 0 && $last > (int)$pdo->query("SELECT COALESCE(MAX(id), 0) FROM activity_log")->fetchColumn()) $last = 0;   // a restored / reset log
+            $since = date('Y-m-d H:i:s', time() - ($last > 0 ? 7 : 1) * 86400);
+            $where = 'a.id > ? AND a.created_at >= ? AND a.actor <> \'admin\'' . (activityHasNotifyCols($pdo) ? ' AND a.internal = 0' : '');
+            $args = [$last, $since];
+            if ($scope !== null) {
+                $where .= ' AND a.company_id IN (' . implode(',', array_fill(0, count($scope), '?')) . ')';
+                $args = array_merge($args, array_keys($scope));
+            }
+            $q = $pdo->prepare("SELECT a.id, a.company_id, a.entity_type, a.entity_id, a.action, a.actor, a.batch_id, a.summary, a.detail, a.created_at,
+                                       c.name AS company_name, c.slug AS company_slug
+                                  FROM activity_log a LEFT JOIN companies c ON c.id = a.company_id
+                                 WHERE {$where} ORDER BY a.company_id, a.created_at, a.id LIMIT 500");
+            $q->execute($args);
+            $rows = $q->fetchAll();
+            if (!$rows) { $out['empty']++; continue; }
+            if ($waitingAll === null) $waitingAll = notifyUnanswered($pdo, null, date('Y-m-d H:i:s', time() - 30 * 86400), 50);
+            $waiting = $scope === null ? $waitingAll : array_values(array_filter($waitingAll, static function ($w) use ($scope) { return isset($scope[(int)$w['company_id']]); }));
+            $label = $scope === null ? '' : implode(', ', array_values($scope));
+            $sum = render_summary($rows, 0, notifyConfig(), $waiting, ['scope_label' => $label]);
+            $n = count($rows);
+            $subject = 'Morning summary — ' . $n . ' update' . ($n === 1 ? '' : 's') . ' from '
+                     . ($scope === null ? $sum['company_count'] . ' client' . ($sum['company_count'] === 1 ? '' : 's') : 'your clients')
+                     . ($waiting ? ' · ' . count($waiting) . ' waiting on Joust' : '');
+            $id = notifyEnqueue($pdo, 'email', 'summary_member', [
+                'user_id' => $uid, 'to' => (string)$u['email'], 'subject' => $subject, 'text' => $sum['text'], 'html' => $sum['html'],
+                'max_id' => (int)max(array_column($rows, 'id')), 'scope' => $scope === null ? 'all' : array_keys($scope),
+            ], ['dedupe' => $dedupe, 'target' => (string)$u['email'], 'defer' => true]);
+            if ($id > 0) { $ids[] = $id; $out['queued']++; }
+        }
+        if ($ids) {
+            notifyPump($pdo, ['ids' => $ids, 'limit' => count($ids)]);
+            $ph = implode(',', array_fill(0, count($ids), '?'));
+            $s = $pdo->prepare("SELECT COUNT(*) FROM notify_outbox WHERE status = 'sent' AND id IN ($ph)");
+            $s->execute($ids);
+            $out['sent'] = (int)$s->fetchColumn();
+        }
+        return $out;
+    }
+}
+
+if (!function_exists('notifyDeliverMemberSummary')) {
+    /** Outbox 'summary_member' row: send to the teammate, then move their watermark (activity rows are never marked). */
+    function notifyDeliverMemberSummary(PDO $pdo, array $p): array {
+        $u = adminUserById($pdo, (int)($p['user_id'] ?? 0));
+        if (!$u || empty($u['active'])) return ['ok' => false, 'skip' => true, 'error' => 'that teammate is no longer active'];
+        if (!adminUserPrefs($u)['summary']) return ['ok' => false, 'skip' => true, 'error' => $u['name'] . ' turned the Morning summary off (My notifications)'];
+        $res = notifyEmail(['to' => (string)$p['to'], 'subject' => (string)$p['subject'], 'text' => (string)$p['text'], 'html' => (string)$p['html'], 'kind' => 'summary',
+                            'message_id' => '<summary-u' . (int)$u['id'] . '-' . date('Ymd') . '@'
+                                . notifyCfg('notify_message_domain', (string)(parse_url(notifyBaseUrl(), PHP_URL_HOST) ?: 'localhost')) . '>']);
+        if (!$res['ok']) return ['ok' => false, 'error' => 'email: ' . $res['error']];
+        $key = 'summary_member_last_' . (int)$u['id'];
+        if ((int)($p['max_id'] ?? 0) > (int)notifyMeta($pdo, $key, '0')) notifyMetaSet($pdo, $key, (string)(int)$p['max_id']);
+        return ['ok' => true, 'provider_id' => $res['message_id']];
+    }
+}
+
 if (!function_exists('notifyMarkDigest')) {
     function notifyMarkDigest(PDO $pdo, array $ids, int $digestId): void {
         $ids = array_values(array_filter(array_map('intval', $ids)));
@@ -2167,7 +2341,7 @@ if (!function_exists('notifyKindLabel')) {
     function notifyKindLabel(string $kind): string {
         static $map = [
             'item_event' => 'Client activity', 'parent_update' => 'Status update', 'escalate_thread' => 'Reminder in thread',
-            'escalate_dm' => 'Reminder DM', 'escalate_email' => 'Reminder email', 'summary' => 'Morning summary', 'slack_test' => 'Test message',
+            'escalate_dm' => 'Reminder DM', 'escalate_email' => 'Reminder email', 'summary' => 'Morning summary', 'summary_member' => 'Morning summary (teammate)', 'slack_test' => 'Test message',
             'sign_in' => 'Sign-in link', 'email' => 'Email', 'client_email' => 'Client email', 'weekly' => 'Weekly report',
             'internal_note' => 'Internal note', 'nochannel_email' => 'Client activity email (no Slack channel)',
         ];

@@ -330,7 +330,7 @@ $nfHourLabel = static function (int $h): string { return date('g A', mktime($h, 
               <?php for ($i = 0; $i < 24; $i++): ?><option value="<?= $i ?>"<?= ($nfSettings['quiet_end'] ?? null) === $i ? ' selected' : '' ?>><?= $nfH($nfHourLabel($i)) ?></option><?php endfor; ?>
             </select></div>
         </div>
-        <p class="studio-help">Quiet hours hold back the reminder nudges, DMs and emails (client comments still post to Slack right away); anything due goes out when they end. None by default.</p>
+        <p class="studio-help">Quiet hours hold back the reminder nudges, DMs and emails (client comments still post to Slack right away); when they end, each waiting item gets one combined reminder instead of every step at once. None by default.</p>
         <p class="studio-help">“Answered” means a comment or decision from Joust on that item after the client’s message (an internal note doesn’t count), or Resolve in Slack. Times are New York time.</p>
         <div class="studio-export-actions"><button type="submit" class="ui-btn ui-btn--filled">Save</button></div>
       </form>

@@ -263,6 +263,7 @@ if ($has('google_account')) {
     if (in_array('email_review', $cols, true)) $pdo->exec("UPDATE notify_clients SET email_review = 1, email_replies = 1, email_live = 1 WHERE company_id IN (1, 2)");
     if (in_array('email_remind', $cols, true)) $pdo->exec("UPDATE notify_clients SET email_remind = 0, remind_days = 3");
     foreach ([['client_emails_allow_mail', '0'], ['notify_quiet_start', ''], ['notify_quiet_end', ''], ['client_remind_last', date('Y-m-d')]] as $kv) $meta->execute($kv);
+    $pdo->exec("DELETE FROM meta WHERE k LIKE 'summary\\_member\\_last\\_%'");   // teammates' Morning summary watermarks
 }
 $root = dirname($app, 2);
 $gdir = $root . '/google';

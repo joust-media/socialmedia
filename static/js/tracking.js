@@ -5,7 +5,8 @@
    Seen:    an item's detail ([data-seen-entity="post:12"], post / email / page sheets) showing in an open sheet →
             POST action=seen once per page view; its unread dots ([data-unread-for="post:12"]) disappear. A sheet that
             is already open when this script boots (a deep link: ?post=12, /kenda/posts/12) is marked too, and so is
-            every [data-seen-on-load] marker (assets.php: a deep-linked image, an explicitly opened tire series).
+            every [data-seen-on-load] marker (assets.php: a deep-linked image, an explicitly opened tire series). The
+            client's tab badge drops the item from its "new reply" part (App.tabBadgeSeen, app.js).
    Resolve: [data-thread-resolve="post:12"] (the sheet ⋯ menu, the Inbox) → POST action=resolve → toast; an Inbox
             row fades out.
    ===================================================================== */
@@ -37,7 +38,11 @@
       var key = n.getAttribute('data-seen-entity');
       if (!key || done[key]) return;
       done[key] = true;
-      send({ action: 'seen', entity: key }).then(function (res) { if (res && res.ok) clearDots(key); });
+      send({ action: 'seen', entity: key }).then(function (res) {
+        if (!res || !res.ok) return;
+        clearDots(key);
+        if (App.tabBadgeSeen) App.tabBadgeSeen(key);   // the client tab badge's "new reply" part (app.js)
+      });
     });
   }
 

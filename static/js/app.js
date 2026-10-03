@@ -161,25 +161,54 @@
   /* ---------------------------------------------------------------- */
   /** The status the viewer's tab badges count: the client's To Review ('pending'), Joust's Needs changes ('denied'). */
   App.queueStatus = function () { return App.role === 'admin' ? 'denied' : 'pending'; };
-  /** Set the badge of a tab (data-tab key or a .ui-tab element) to n — created when missing, removed at 0. */
-  App.tabBadge = function (tab, n) {
-    var el = typeof tab === 'string' ? ($('.ui-tab[data-tab="' + tab + '"]') || $('.ui-tab--' + tab)) : tab;
-    if (!el) return;
-    n = Math.max(0, parseInt(n, 10) || 0);
+  function tabEl(tab) { return typeof tab === 'string' ? ($('.ui-tab[data-tab="' + tab + '"]') || $('.ui-tab--' + tab)) : tab; }
+  /** A client tab's unread-reply keys (data-badge-replies="post:4 post:7", partials/tabbar.php). */
+  function tabReplyKeys(el) { return (el.getAttribute('data-badge-replies') || '').split(/\s+/).filter(Boolean); }
+  /** "3 to review, 1 new reply" (the client's badge label; tracking-lib.php trackingTabBadgeLabel()). */
+  function clientBadgeLabel(review, replies) {
+    var parts = [];
+    if (review > 0) parts.push(review + ' to review');
+    if (replies > 0) parts.push(replies + ' new ' + (replies === 1 ? 'reply' : 'replies'));
+    return parts.join(', ');
+  }
+  function renderTabBadge(el, review, replies) {
+    var n = review + replies;
     var badge = $('.ui-badge', el);
     if (!n) { if (badge) badge.remove(); return; }
     if (!badge) { badge = document.createElement('span'); badge.className = 'ui-badge ui-tab-badge'; el.appendChild(badge); }
     badge.hidden = false;
     badge.textContent = n > 99 ? '99+' : String(n);
-    badge.setAttribute('aria-label', n + (App.queueStatus() === 'denied' ? ' need changes' : ' to review'));
+    badge.setAttribute('aria-label', App.queueStatus() === 'denied' ? n + ' need changes' : clientBadgeLabel(review, replies));
     badge.setAttribute('data-queue', App.queueStatus());
+  }
+  /** Set the To Review / Needs changes part of a tab's badge (data-tab key or a .ui-tab element) to n — created when
+   *  missing, removed at 0. A client tab keeps its unread-reply part (data-badge-replies) on top. */
+  App.tabBadge = function (tab, n) {
+    var el = tabEl(tab);
+    if (!el) return;
+    n = Math.max(0, parseInt(n, 10) || 0);
+    var client = el.hasAttribute('data-badge-review');
+    if (client) el.setAttribute('data-badge-review', String(n));
+    renderTabBadge(el, n, client ? tabReplyKeys(el).length : 0);
   };
-  /** Move a tab badge by delta (its current number + delta). */
+  /** Move a tab badge's queue part by delta (its current queue number + delta). */
   App.bumpTabBadge = function (tab, delta) {
-    var el = typeof tab === 'string' ? ($('.ui-tab[data-tab="' + tab + '"]') || $('.ui-tab--' + tab)) : tab;
+    var el = tabEl(tab);
     if (!el || !delta) return;
-    var badge = $('.ui-badge', el), cur = badge && !badge.hidden ? (parseInt(badge.textContent, 10) || 0) : 0;
+    var cur;
+    if (el.hasAttribute('data-badge-review')) cur = parseInt(el.getAttribute('data-badge-review'), 10) || 0;
+    else { var badge = $('.ui-badge', el); cur = badge && !badge.hidden ? (parseInt(badge.textContent, 10) || 0) : 0; }
     App.tabBadge(el, cur + delta);
+  };
+  /** An item's Joust replies were just read (tracking.js, key "post:4"): drop it from the client tab badge counting it. */
+  App.tabBadgeSeen = function (key) {
+    Array.prototype.forEach.call(document.querySelectorAll('.ui-tab[data-badge-replies]'), function (el) {
+      var keys = tabReplyKeys(el), i = keys.indexOf(key);
+      if (i < 0) return;
+      keys.splice(i, 1);
+      el.setAttribute('data-badge-replies', keys.join(' '));
+      renderTabBadge(el, parseInt(el.getAttribute('data-badge-review'), 10) || 0, keys.length);
+    });
   };
 
   /* ---------------------------------------------------------------- */

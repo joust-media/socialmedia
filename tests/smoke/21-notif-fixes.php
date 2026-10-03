@@ -922,4 +922,168 @@ ftest('Joust replies are marked read from every view the client reaches: the Nee
     is(post('thread-action.php', ['action' => 'seen', 'entity' => 'tire_series:1', 'client' => 'privacybee'], 'client:privacybee', [], J)['code'], 403);
 });
 
+// =====================================================================================================================
+// Round 3 (scratchpad notif-rescore2.md criterion 8 / category F): client tab badges count unread Joust replies;
+// teammates get their own Morning summary + weekly report; one combined escalation after quiet hours
+// =====================================================================================================================
+/** A client tab's badge → ['n' => shown number, 'aria' => label, 'review' => data-badge-review, 'replies' => keys]. */
+function tabBadge(string $html, string $tab): array {
+    if (!preg_match('#<a class="ui-tab ui-tab--' . $tab . '[^"]*"[^>]*>.*?</a>#s', $html, $m)) fail('no ' . $tab . ' tab');
+    $a = $m[0];
+    $attr = static function (string $name) use ($a): ?string { return preg_match('#' . $name . '="([^"]*)"#', $a, $x) ? html_entity_decode($x[1]) : null; };
+    $n = preg_match('#<span class="ui-badge ui-tab-badge"[^>]*>(\d+)</span>#', $a, $x) ? (int)$x[1] : 0;
+    return ['n' => $n, 'aria' => $attr('aria-label'), 'review' => $attr('data-badge-review'), 'replies' => $attr('data-badge-replies')];
+}
+function joustReply(string $type, int $id, int $cid, string $text, int $internal = 0): void {
+    db()->prepare("INSERT INTO activity_log (company_id, entity_type, entity_id, action, actor, author_user_id, summary, detail, internal) VALUES (?, ?, ?, 'commented', 'admin', 1, 'Comment', ?, ?)")
+        ->execute([$cid, $type, $id, $text, $internal]);
+}
+
+ftest('client tab badges: To Review + unread Joust replies, never counted twice; seen → gone; admin badges unchanged', function () {
+    $h = get('posts.php?client=kenda', 'client')['body'];
+    $p = tabBadge($h, 'posts');
+    is($p['n'], 2, 'posts 1 + 2 to review');
+    is($p['aria'], '2 to review');
+    is($p['review'], '2'); is($p['replies'], '');
+    $deniedTire = (int)q1("SELECT ti.id FROM tire_images ti JOIN tires t ON t.id = ti.tire_id WHERE t.company_id = 1 AND ti.status = 'denied' ORDER BY ti.id LIMIT 1");
+    $tiresBefore = tabBadge($h, 'tires')['n'];
+    $assetsBefore = tabBadge($h, 'assets')['n'];
+    is($assetsBefore, 2, 'library 7 + 8');
+    joustReply('post', 4, 1, 'Darker render tomorrow.');            // Needs changes → +1
+    joustReply('post', 1, 1, 'Have a look at the new crop');        // To Review already → no change
+    joustReply('post', 2, 1, 'internal only', 1);                    // an internal note → never
+    joustReply('library_image', 1, 1, 'Swapped the background.');   // approved library image → Assets +1
+    joustReply('library_image', 7, 1, 'Pending one, cropped.');      // To Review already
+    joustReply('tire_image', $deniedTire, 1, 'Re-rendered.');        // denied render → Tires +1
+    joustReply('tire_series', 1, 1, 'Two new angles.');              // series with pending renders → already counted
+    joustReply('post', 8, 2, 'Privacy Bee only');                     // another client
+    $h = get('posts.php?client=kenda', 'client')['body'];
+    $p = tabBadge($h, 'posts');
+    is($p['n'], 3);
+    is($p['aria'], '2 to review, 1 new reply');
+    is($p['review'], '2'); is($p['replies'], 'post:4');
+    $a = tabBadge($h, 'assets');
+    is($a['n'], $assetsBefore + 1); is($a['replies'], 'library_image:1'); is($a['aria'], '2 to review, 1 new reply');
+    $t = tabBadge($h, 'tires');
+    is($t['n'], $tiresBefore + 1); is($t['replies'], 'tire_image:' . $deniedTire);
+    // a tab with only replies: "1 new reply"
+    db()->exec("UPDATE posts SET status = 'approved' WHERE id IN (1, 2)");
+    $p = tabBadge(get('posts.php?client=kenda', 'client')['body'], 'posts');
+    is([$p['n'], $p['aria']], [2, '2 new replies'], 'post 1 left To Review → its unread reply now counts');
+    db()->exec("UPDATE posts SET status = 'pending' WHERE id IN (1, 2)");
+    // seen → gone
+    status(post('thread-action.php', ['action' => 'seen', 'entity' => 'post:4', 'client' => 'kenda'], 'client', [], J), 200);
+    $p = tabBadge(get('posts.php?client=kenda', 'client')['body'], 'posts');
+    is([$p['n'], $p['aria'], $p['replies']], [2, '2 to review', '']);
+    // another client's badge never sees Kenda's replies
+    $pb = tabBadge(get('posts.php?client=privacybee', 'client:privacybee')['body'], 'posts');
+    is([$pb['n'], $pb['aria'], $pb['replies']], [1, '1 to review', ''], 'post 8 is To Review already: counted once');
+    // admin: unchanged — Needs changes, no reply part, no data attributes
+    $ad = tabBadge(get('posts.php?client=kenda', 'admin')['body'], 'posts');
+    is([$ad['n'], $ad['aria'], $ad['review'], $ad['replies']], [1, '1 need changes', null, null]);
+    // the live helpers ship
+    $js = (string)file_get_contents(dirname(__DIR__, 2) . '/static/js/app.js');
+    has($js, 'App.tabBadgeSeen = function');
+    has((string)file_get_contents(dirname(__DIR__, 2) . '/static/js/tracking.js'), 'App.tabBadgeSeen(key)');
+});
+
+ftest('Morning summary + weekly report for teammates: every active one with the switch on, scoped to "Mine", one per person per day; Lance still gets everything', function () {
+    db()->exec("INSERT INTO admin_users (id, name, email, role, active) VALUES (2, 'Sam', 'sam@joustmedia.com', 'admin', 1), (3, 'Ana', 'ana@joustmedia.com', 'admin', 1),
+                (4, 'Bob', 'bob@joustmedia.com', 'admin', 1), (5, 'Old', 'old@joustmedia.com', 'admin', 0)");
+    db()->exec("UPDATE admin_users SET notify_prefs = '{\"summary\":0}' WHERE id = 4");
+    db()->exec("UPDATE notify_clients SET owner_user_id = 2 WHERE company_id = 2");   // Sam owns Privacy Bee; Ana owns nothing
+    clearMail();
+    clientComment(1, 'Kenda morning note');
+    status(post('email-status.php', ['id' => 2, 'comment' => 'PB morning note', 'client' => 'privacybee'], 'client:privacybee', [], J), 200);
+    appRun('activityWithContext(["internal" => 1], static function () use ($pdo) { logActivity($pdo, 2, "email", 2, "commented", "admin", "note", "SECRET internal"); });');
+    $c = cron('summary=now');
+    is($c['summary'], 'sent', 'Lance');
+    is($c['summary_members']['queued'] ?? null, 2, json_encode($c['summary_members'] ?? null));
+    $lance = mailsTo('lance@joustmedia.com');
+    $lanceSum = array_values(array_filter($lance, static function ($m) { return strpos((string)$m['subject'], 'Morning summary') === 0; }));
+    is(count($lanceSum), 1);
+    has($lanceSum[0]['html'], 'Kenda morning note'); has($lanceSum[0]['html'], 'PB morning note');
+    $sam = mailsTo('sam@joustmedia.com');
+    is(count($sam), 1, 'Sam: one');
+    has($sam[0]['subject'], 'from your clients');
+    has($sam[0]['html'], 'data-summary-scope="mine"'); has($sam[0]['html'], 'Your clients: Privacy Bee');
+    has($sam[0]['html'], 'PB morning note');
+    hasNot($sam[0]['html'], 'Kenda morning note', 'not Sam’s client');
+    hasNot($sam[0]['html'], 'SECRET', 'internal notes never');
+    $ana = mailsTo('ana@joustmedia.com');
+    is(count($ana), 1, 'Ana (owns none): every client');
+    has($ana[0]['html'], 'Kenda morning note'); has($ana[0]['html'], 'PB morning note');
+    hasNot($ana[0]['html'], 'data-summary-scope="mine"');
+    is(count(mailsTo('bob@joustmedia.com')), 0, 'switch off');
+    is(count(mailsTo('old@joustmedia.com')), 0, 'inactive');
+    is((string)q1("SELECT status FROM notify_outbox WHERE dedupe_key = ?", ['summary:u2:' . date('Y-m-d')]), 'sent');
+    is((string)q1("SELECT kind FROM notify_outbox WHERE dedupe_key = ?", ['summary:u3:' . date('Y-m-d')]), 'summary_member');
+    ok((int)q1("SELECT v FROM meta WHERE k = 'summary_member_last_2'") > 0, 'Sam’s watermark moved');
+    // once per person per day
+    clientComment(1, 'Another one');
+    $c = cron('summary=now');
+    is($c['summary_members']['queued'] ?? null, 0, 'deduped for today');
+    is(count(mailsTo('sam@joustmedia.com')), 1);
+    has(get('manage.php?section=notifications', 'admin')['body'], 'Morning summary (teammate)');
+    // the weekly report: Lance (all), Sam (Privacy Bee only), Ana (all) — Bob off, Old inactive
+    clearMail();
+    $c = cron('weekly=now');
+    is($c['weekly'], 'queued');
+    cron();
+    is(count(array_filter(mailsTo('lance@joustmedia.com'), static function ($m) { return strpos((string)$m['subject'], 'Weekly report') === 0; })), 1);
+    $sw = mailsTo('sam@joustmedia.com');
+    is(count($sw), 1);
+    has($sw[0]['html'], 'data-weekly-scope="mine"'); has($sw[0]['html'], 'data-weekly-client="2"');
+    hasNot($sw[0]['html'], 'data-weekly-client="1"', 'Kenda is not Sam’s');
+    $aw = mailsTo('ana@joustmedia.com');
+    is(count($aw), 1);
+    has($aw[0]['html'], 'data-weekly-client="1"'); has($aw[0]['html'], 'data-weekly-client="2"');
+    is(count(mailsTo('bob@joustmedia.com')) + count(mailsTo('old@joustmedia.com')), 0);
+    is((int)q1("SELECT COUNT(*) FROM notify_outbox WHERE dedupe_key IN (?, ?)", ['weekly:u2:' . date('Y-m-d'), 'weekly:u3:' . date('Y-m-d')]), 2);
+    cron('weekly=now');
+    is((int)q1("SELECT COUNT(*) FROM notify_outbox WHERE kind = 'weekly'"), 3, 'one per person per day');
+});
+
+ftest('quiet hours catch-up: an item that came due while it was quiet gets ONE combined reminder; the other steps are skipped, never sent later', function () {
+    $h = (int)date('G');
+    // the window ended at the top of this hour: [h-3, h)
+    status(post('notify-admin.php', ['action' => 'settings', 't1' => 60, 't2' => 240, 'summary_hour' => 8, 'quiet_start' => ($h + 21) % 24, 'quiet_end' => $h], 'admin', [], J), 200);
+    clientComment(1, 'Waiting all night');
+    db()->exec("UPDATE activity_log SET created_at = NOW() - INTERVAL 300 MINUTE WHERE entity_type = 'post' AND entity_id = 1 AND actor = 'client'");
+    db()->exec("INSERT INTO activity_log (company_id, entity_type, entity_id, action, actor, summary, internal) VALUES (1, 'post', 4, 'resolved', 'admin', 'x', 1)");
+    clearMail(); slackReset();
+    $c = cron();
+    ok(!isset($c['escalated']['quiet']), 'outside the window now');
+    is($c['escalated']['combined'] ?? null, 1, json_encode($c['escalated']));
+    $live = rows("SELECT kind, status, payload FROM notify_outbox WHERE kind LIKE 'escalate%' AND status <> 'skipped'");
+    is(count($live), 1, 'one message');
+    is($live[0]['kind'], 'escalate_email', 'the highest step due');
+    is($live[0]['status'], 'sent');
+    $p = json_decode($live[0]['payload'], true);
+    is($p['combined'], ['escalate_email', 'escalate_dm', 'escalate_thread']);
+    $skipped = rows("SELECT kind, last_error FROM notify_outbox WHERE kind LIKE 'escalate%' AND status = 'skipped' ORDER BY kind");
+    is(array_column($skipped, 'kind'), ['escalate_dm', 'escalate_thread']);
+    foreach ($skipped as $r) has((string)$r['last_error'], 'combined into #');
+    $m = array_values(array_filter(mailsTo('lance@joustmedia.com'), static function ($x) { return strpos((string)$x['subject'], 'Waiting') === 0; }));
+    is(count($m), 1);
+    has($m[0]['subject'], 'Waiting 5h');
+    has($m[0]['html'], 'data-escalation-held'); has($m[0]['text'], 'Held during quiet hours');
+    $posts = array_filter(slackCalls(), static function ($x) { return ($x['method'] ?? '') === 'chat.postMessage' && strpos(json_encode($x['body'] ?? ''), 'alarm_clock') !== false; });
+    is(count($posts), 0, 'no Slack re-ping / DM on top');
+    // later runs send nothing more for that message
+    cron();
+    is((int)q1("SELECT COUNT(*) FROM notify_outbox WHERE kind LIKE 'escalate%' AND status <> 'skipped'"), 1);
+    // control: an item that came due AFTER the window → the ordinary steps (re-ping + DM), not combined
+    status(post('notify-admin.php', ['action' => 'settings', 't1' => 60, 't2' => 240, 'summary_hour' => 8, 'quiet_start' => ($h + 18) % 24, 'quiet_end' => ($h + 21) % 24], 'admin', [], J), 200);
+    status(post('email-status.php', ['id' => 2, 'comment' => 'PB waiting', 'client' => 'privacybee'], 'client:privacybee', [], J), 200);
+    db()->exec("UPDATE activity_log SET created_at = NOW() - INTERVAL 130 MINUTE WHERE entity_type = 'email' AND entity_id = 2 AND actor = 'client'");
+    $c = cron();
+    ok(!isset($c['escalated']['combined']), 'nothing combined');
+    is((int)q1("SELECT COUNT(*) FROM notify_outbox WHERE entity_type = 'email' AND entity_id = 2 AND kind = 'escalate_thread' AND status <> 'skipped'"), 1);
+    is((int)q1("SELECT COUNT(*) FROM notify_outbox WHERE entity_type = 'email' AND entity_id = 2 AND kind = 'escalate_dm' AND status <> 'skipped'"), 1);
+    // unit: when the window last ended
+    is(appJson('notifyMetaSet($pdo, "notify_quiet_start", "22"); notifyMetaSet($pdo, "notify_quiet_end", "7"); $t = mktime(9, 30, 0, 3, 10, 2026); $u = mktime(6, 0, 0, 3, 10, 2026);'
+             . ' echo json_encode([date("Y-m-d H:i", notifyQuietLastEnd($pdo, $t)), date("Y-m-d H:i", notifyQuietLastEnd($pdo, $u))]);'), ['2026-03-10 07:00', '2026-03-09 07:00']);
+});
+
 finish();

@@ -13,7 +13,8 @@
  *   Unread markers (thread_seen, migrate.php 48): per admin user — items with client messages newer than the last time
  *   that admin opened them; per client contact — items with visible Joust replies newer than their last look.
  *   Weekly owner report (Mondays, notify-cron.php): median / max first-response time, approvals, items waiting > 24h,
- *   per client — trackingWeeklyStats().
+ *   per client — trackingWeeklyStats(). The main recipient gets every client; each teammate with the summary switch on
+ *   gets their own, scoped to the clients they own (else every client) — trackingWeeklyQueue().
  */
 
 if (!function_exists('trackingReady')) {
@@ -258,7 +259,7 @@ if (!function_exists('trackingWeeklyStats')) {
      *   messages (client messages that started a wait), answered, median / max first-response minutes (answered ones),
      *   approved (client approvals), waiting_now (items waiting on Joust right now), waiting_24h (of those, > 24 h).
      */
-    function trackingWeeklyStats(PDO $pdo, string $from, string $to): array {
+    function trackingWeeklyStats(PDO $pdo, string $from, string $to, ?array $companyIds = null): array {
         $pairs = trackingResponsePairs($pdo, $from, $to);
         $s = $pdo->prepare("SELECT company_id, COUNT(*) AS n FROM activity_log WHERE actor = 'client' AND action = 'approved' AND created_at >= ? AND created_at < ? GROUP BY company_id");
         $s->execute([$from, $to]);
@@ -291,13 +292,24 @@ if (!function_exists('trackingWeeklyStats')) {
             unset($b['times']);
             return $b;
         };
+        // a teammate's report ($companyIds = the clients they own): only those clients, overall included
+        if ($companyIds !== null) {
+            $keep = array_flip(array_map('intval', $companyIds));
+            $per = array_intersect_key($per, $keep);
+            $all = $blank();
+            foreach ($per as $b) {
+                foreach (['messages', 'answered', 'approved', 'waiting_now', 'waiting_24h'] as $k) $all[$k] += $b[$k];
+                $all['times'] = array_merge($all['times'], $b['times']);
+            }
+        }
         $clients = [];
         foreach ($per as $cid => $b) {
             if (!isset($companies[$cid])) continue;
             $clients[] = ['company_id' => $cid, 'name' => (string)$companies[$cid]['name']] + $fin($b);
         }
         usort($clients, static function ($a, $b) { return strcmp($a['name'], $b['name']); });
-        return ['from' => $from, 'to' => $to, 'overall' => $fin($all), 'clients' => $clients];
+        $scope = $companyIds === null ? null : array_values(array_filter(array_map(static function ($id) use ($companies) { return isset($companies[(int)$id]) ? (string)$companies[(int)$id]['name'] : null; }, $companyIds)));
+        return ['from' => $from, 'to' => $to, 'overall' => $fin($all), 'clients' => $clients, 'scope' => $scope];
     }
 }
 
@@ -320,6 +332,7 @@ if (!function_exists('trackingWeeklyRender')) {
         };
         $body = '<div style="font:600 13px/18px ' . $font . ';color:#8E8E93;text-transform:uppercase;letter-spacing:.4px">' . $e($range) . '</div>'
               . '<h1 class="jm-h1" style="margin:4px 0 14px;font:700 26px/32px ' . $font . ';color:#000">Weekly report</h1>'
+              . (!empty($st['scope']) ? '<p data-weekly-scope="mine" style="margin:-8px 0 14px;font:14px/20px ' . $font . ';color:#3C3C43">Your clients: ' . $e(implode(', ', $st['scope'])) . '</p>' : '')
               . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
               . $tile('Median first reply', trackingMinutesLabel($o['median_minutes']), 'median')
               . $tile('Slowest first reply', trackingMinutesLabel($o['max_minutes'] !== null ? (float)$o['max_minutes'] : null), 'max')
@@ -331,7 +344,7 @@ if (!function_exists('trackingWeeklyRender')) {
               . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font:14px/20px ' . $font . ';color:#1C1C1E" data-weekly-clients>'
               . '<tr style="color:#8E8E93;font-size:12px"><td style="padding:6px 0;border-bottom:1px solid #E5E5EA">Client</td><td align="right" style="border-bottom:1px solid #E5E5EA">Msgs</td>'
               . '<td align="right" style="border-bottom:1px solid #E5E5EA">Median</td><td align="right" style="border-bottom:1px solid #E5E5EA">Max</td><td align="right" style="border-bottom:1px solid #E5E5EA">Approved</td><td align="right" style="border-bottom:1px solid #E5E5EA">Waiting</td></tr>';
-        $text = "Weekly report — {$range}\n\nMedian first reply: " . trackingMinutesLabel($o['median_minutes'])
+        $text = "Weekly report — {$range}\n" . (!empty($st['scope']) ? 'Your clients: ' . implode(', ', $st['scope']) . "\n" : '') . "\nMedian first reply: " . trackingMinutesLabel($o['median_minutes'])
               . "\nSlowest first reply: " . trackingMinutesLabel($o['max_minutes'] !== null ? (float)$o['max_minutes'] : null)
               . "\nItems approved: {$o['approved']}\nWaiting > 24h now: {$o['waiting_24h']} (of {$o['waiting_now']} waiting)\n\n";
         foreach ($st['clients'] as $c) {
@@ -364,23 +377,38 @@ if (!function_exists('trackingWeeklyDue')) {
 }
 
 if (!function_exists('trackingWeeklyQueue')) {
-    /** Queue the report for the 7 days before today 00:00 (to notify_to, else the owner). → outbox id or 0. */
+    /** Queue the report for the 7 days before today 00:00: the main one (notify_to, else the owner — every client), plus
+     *  one per teammate with "Morning summary & weekly report" on (notifySummaryMembers(): scoped to the clients they
+     *  own, else every client; dedupe weekly:u<id>:<date>). → how many were queued (0 = none: no recipient / all off). */
     function trackingWeeklyQueue(PDO $pdo): int {
-        $to = notifyCfg('notify_to');
-        if ($to === '') { $o = notifyOwnerFor($pdo, 0); $to = $o ? (string)$o['email'] : ''; }
-        if ($to === '') return 0;
-        $rcpt = adminUserByEmail($pdo, $to);
-        if ($rcpt && !adminUserPrefs($rcpt)['summary']) { notifyMetaSet($pdo, 'notify_weekly_last', date('Y-m-d')); return 0; }   // turned off (My notifications)
         $end = date('Y-m-d 00:00:00');
         $start = date('Y-m-d 00:00:00', strtotime('-7 days', strtotime($end)));
         notifyMetaSet($pdo, 'notify_weekly_last', date('Y-m-d'));
-        return notifyEnqueue($pdo, 'email', 'weekly', ['to' => $to, 'from' => $start, 'until' => $end], ['dedupe' => 'weekly:' . date('Y-m-d'), 'target' => $to, 'defer' => true]);
+        $n = 0;
+        $to = function_exists('notifySummaryPrimary') ? notifySummaryPrimary($pdo) : notifyCfg('notify_to');
+        $rcpt = $to !== '' ? adminUserByEmail($pdo, $to) : null;
+        if ($to !== '' && (!$rcpt || adminUserPrefs($rcpt)['summary'])) {   // the main recipient may turn it off (My notifications)
+            if (notifyEnqueue($pdo, 'email', 'weekly', ['to' => $to, 'from' => $start, 'until' => $end], ['dedupe' => 'weekly:' . date('Y-m-d'), 'target' => $to, 'defer' => true]) > 0) $n++;
+        }
+        foreach (function_exists('notifySummaryMembers') ? notifySummaryMembers($pdo) : [] as $m) {
+            $dedupe = 'weekly:u' . (int)$m['user']['id'] . ':' . date('Y-m-d');
+            if (notifyEnqueueOnce($pdo, 'email', 'weekly', ['to' => (string)$m['user']['email'], 'user_id' => (int)$m['user']['id'], 'from' => $start, 'until' => $end,
+                                                           'company_ids' => $m['scope'] === null ? null : array_keys($m['scope'])],
+                                  ['dedupe' => $dedupe, 'target' => (string)$m['user']['email'], 'defer' => true])) $n++;
+        }
+        return $n;
     }
 }
 
 if (!function_exists('trackingDeliverWeekly')) {
     function trackingDeliverWeekly(PDO $pdo, array $p): array {
-        $r = trackingWeeklyRender(trackingWeeklyStats($pdo, (string)$p['from'], (string)$p['until']));
+        if (!empty($p['user_id'])) {   // a teammate's copy: still active, still wanted
+            $u = adminUserById($pdo, (int)$p['user_id']);
+            if (!$u || empty($u['active'])) return ['ok' => false, 'skip' => true, 'error' => 'that teammate is no longer active'];
+            if (!adminUserPrefs($u)['summary']) return ['ok' => false, 'skip' => true, 'error' => $u['name'] . ' turned the weekly report off (My notifications)'];
+        }
+        $ids = isset($p['company_ids']) && is_array($p['company_ids']) ? array_map('intval', $p['company_ids']) : null;
+        $r = trackingWeeklyRender(trackingWeeklyStats($pdo, (string)$p['from'], (string)$p['until'], $ids));
         $res = notifyEmail(['to' => (string)$p['to'], 'subject' => $r['subject'], 'html' => $r['html'], 'text' => $r['text'], 'kind' => 'weekly']);
         return $res['ok'] ? ['ok' => true, 'provider_id' => $res['message_id']] : ['ok' => false, 'error' => 'email: ' . $res['error']];
     }
@@ -544,7 +572,7 @@ if (!function_exists('trackingRepliedUnread')) {
                                   LEFT JOIN thread_seen s ON s.viewer_type = 'contact' AND s.viewer_id = ? AND s.entity_type = a.entity_type AND s.entity_id = a.entity_id
                                  WHERE a.company_id = ? AND a.entity_type IN ({$types}) AND a.id > ? AND a.id > COALESCE(s.last_seen_id, 0)
                                    AND " . trackingUnreadSql('contact') . "
-                                 GROUP BY a.entity_type, a.entity_id ORDER BY last_id DESC LIMIT 30");
+                                 GROUP BY a.entity_type, a.entity_id ORDER BY last_id DESC LIMIT " . max(30, $limit + 24));
             $s->execute([(int)$viewer[1], $companyId, $floor]);
             $rows = $s->fetchAll();
         } catch (Throwable $e) {
@@ -562,6 +590,46 @@ if (!function_exists('trackingRepliedUnread')) {
             if (count($out) >= $limit) break;
         }
         return $out;
+    }
+}
+
+if (!function_exists('trackingClientTabReplies')) {
+    /** The client tab badges' "new reply" part (partials/tabbar.php): per tab, the items of this client with Joust
+     *  replies the signed-in contact has not seen that the badge does NOT already count as To Review — so an item is
+     *  never counted twice. → ['posts' => ['post:4', …], 'emails' => […], 'pages' => […], 'tires' => […], 'assets' => […]]
+     *  ([] for the admin seat, "view as", another client's contact, or before migrate.php 48). Tire renders / series go
+     *  to 'tires' when the client has a Tires tab ($hasTires), else to 'assets' — the same rule as the To Review counts. */
+    function trackingClientTabReplies(PDO $pdo, ?array $client, bool $hasTires): array {
+        if (!$client || empty($client['id']) || (function_exists('isAdmin') && isAdmin())) return [];
+        $viewer = trackingViewer($pdo);
+        if (!$viewer || $viewer[0] !== 'contact' || (int)$viewer[2] !== (int)$client['id']) return [];
+        $tabOf = ['post' => 'posts', 'email' => 'emails', 'page' => 'pages', 'library_image' => 'assets',
+                  'tire_image' => $hasTires ? 'tires' : 'assets', 'tire_series' => $hasTires ? 'tires' : 'assets'];
+        $out = [];
+        foreach (trackingRepliedUnread($pdo, $viewer, (int)$client['id'], 99) as $r) {
+            $type = $r['entity_type'];
+            if (!isset($tabOf[$type])) continue;
+            // already in the To Review count: a pending item; a series whose renders wait for review (they are counted)
+            if ($type === 'tire_series') {
+                $s = $pdo->prepare("SELECT COUNT(*) FROM tire_images WHERE series_id = ? AND status = 'pending'");
+                $s->execute([(int)$r['entity_id']]);
+                if ((int)$s->fetchColumn() > 0) continue;
+            } elseif ((string)$r['info']['status_key'] === 'pending') {
+                continue;
+            }
+            $out[$tabOf[$type]][] = $type . ':' . (int)$r['entity_id'];
+        }
+        return $out;
+    }
+}
+
+if (!function_exists('trackingTabBadgeLabel')) {
+    /** The client tab badge's aria-label: "3 to review, 1 new reply" (either part alone when the other is 0). */
+    function trackingTabBadgeLabel(int $review, int $replies): string {
+        $parts = [];
+        if ($review > 0) $parts[] = $review . ' to review';
+        if ($replies > 0) $parts[] = $replies . ' new ' . ($replies === 1 ? 'reply' : 'replies');
+        return implode(', ', $parts);
     }
 }
 

@@ -65,6 +65,8 @@ try {
         $res = notifyMorningSummary($pdo, 'cron');
         $out['summary'] = $res['status'];
         if (in_array($res['status'], ['sent', 'empty', 'queued', 'off'], true)) notifyMetaSet($pdo, 'notify_summary_last', date('Y-m-d'));
+        // every teammate with the summary on: their own, scoped to the clients they own (one per person per day)
+        if (function_exists('notifyMemberSummaries')) $out['summary_members'] = notifyMemberSummaries($pdo);
     }
 } catch (Throwable $e) {
     error_log('notify-cron: ' . $e->getMessage());

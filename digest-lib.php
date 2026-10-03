@@ -2,7 +2,8 @@
 /**
  * Morning summary renderer (the daily digest's email body) — used by notifyMorningSummary() (notify-lib.php).
  *
- *   render_summary(array $rows, int $leftover, array $config, array $waiting = []): ['text', 'html', 'company_count']
+ *   render_summary(array $rows, int $leftover, array $config, array $waiting = [], array $opts = []): ['text', 'html', 'company_count']
+ *   ($opts['scope_label']: a teammate's summary scoped to their own clients — shown under the date; '' = all clients)
  *
  * $rows are CLIENT activity rows only (Joust's own actions and internal notes are filtered out before this), grouped
  * by client → item → batch. Every item links to the portal with an absolute deep link (portalItemUrl()); $waiting =
@@ -10,7 +11,7 @@
  */
 
 if (!function_exists('render_summary')) {
-    function render_summary(array $rows, int $leftover, array $config, array $waiting = []): array {
+    function render_summary(array $rows, int $leftover, array $config, array $waiting = [], array $opts = []): array {
         global $pdo;
         $companies = [];
         foreach ($rows as $r) {
@@ -136,6 +137,13 @@ if (!function_exists('render_summary')) {
         $htmlOut  = '<div style="font:15px/1.5 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;color:#1c1c1e;max-width:640px;margin:0 auto;padding:20px">';
         $htmlOut .= '<h1 style="font-size:22px;margin:0 0 2px;letter-spacing:-.3px">Morning summary</h1>';
         $htmlOut .= '<div style="color:#8e8e93;font-size:13px;margin-bottom:20px">' . $h(date('l, F j, Y')) . '</div>';
+        // a teammate's summary scoped to the clients they own ("Mine", notifyMemberSummaries())
+        if (!empty($opts['scope_label'])) {
+            $textOut .= 'Your clients: ' . $opts['scope_label'] . "\n\n";
+            $htmlOut .= '<div data-summary-scope="mine" style="color:#3c3c43;font-size:13px;margin:-14px 0 20px">Your clients: ' . $h($opts['scope_label']) . '</div>';
+        } elseif (array_key_exists('scope_label', $opts)) {
+            $htmlOut .= '<div data-summary-scope="all" style="display:none"></div>';
+        }
 
         // ---- Waiting on Joust ---------------------------------------------------------------------------------
         if ($waiting) {

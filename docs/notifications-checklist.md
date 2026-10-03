@@ -159,6 +159,7 @@ To turn them on, **after connecting Google (step 5)**:
 - [ ] In Manage → Notifications → **Team**, add anyone else at Joust (name, email, Slack ID). Their portal comments and Slack replies carry their name.
 - [ ] In **Slack channel per client**, pick who gets @mentioned for each client. That person is the client's **owner**: their reminders go to them, and their Inbox **Mine** filter shows that client.
 - [ ] Each person can open **My notifications** (link in the Inbox and on Manage → Notifications) to turn off their Slack DM reminders, reminder emails, or the Morning summary and weekly report.
+- **Everyone on the team gets the Morning summary and the Monday weekly report** (it is on by default in My notifications). A teammate who owns clients gets only those clients ("Your clients: …"); one who owns none gets every client. The `notify_to` address (Lance) always gets every client. Turn it off per person in My notifications **before** adding teammates if they should not get it.
 - A client with **no Slack channel** is listed in a warning on Manage → Notifications. Its comments and decisions are emailed to the owner instead, at most one email per item every 15 minutes.
 - **Internal notes:** in any comment box, tick **Internal (Joust only)**. The box turns amber, the client never sees the note or gets an email about it, and Slack shows it in the item's thread marked internal.
 
@@ -173,10 +174,10 @@ The **Joust Inbox** is Home → **Joust Inbox**. The Home tab's red badge counts
 | **Resolved** | Items answered in the last 14 days. |
 
 - To clear an item without replying, use **Resolve** in the Inbox, **Mark resolved** in an item's ⋯ menu, or **Resolve** in Slack.
-- Blue dots mark threads with messages you have not opened yet. Clients see the same dots for your replies.
+- Blue dots mark threads with messages you have not opened yet. Clients see the same dots for your replies, and a client's tab badge counts those unread replies on top of their To Review items (for example "3 to review, 1 new reply").
 - Every **Monday**, at the Morning summary hour, you get the **weekly report**: median and slowest first reply, items approved, items waiting over 24 hours, and per-client numbers. Preview it in Manage → Notifications → Client emails → **Weekly owner report**.
 - [ ] Change the reminder times and the Morning summary hour in Manage → Notifications → **Reminders** if you want.
-- [ ] **Quiet hours** (same card) hold back reminder nudges, DMs and emails during a window, for example 10 PM to 7 AM. The default is **None**: reminders run around the clock. Anything due goes out when the window ends.
+- [ ] **Quiet hours** (same card) hold back reminder nudges, DMs and emails during a window, for example 10 PM to 7 AM. The default is **None**: reminders run around the clock. When the window ends, each waiting item gets **one** combined reminder (the email if it is due, else the DM, else the thread nudge) instead of every step at once; the Delivery log shows the others as "combined into #…".
 - The Inbox has **All clients / Mine** at the top. **Mine** shows only the clients you own.
 
 ## 10. Final end-to-end check (10 minutes)

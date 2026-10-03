@@ -4,7 +4,8 @@
  * migrate.php 51; a missing key = on):
  *   dm       Slack DM reminders when a client of yours waits past the Slack reminder time
  *   email    reminder emails when a client of yours waits past the email reminder time
- *   summary  the Morning summary and the Monday weekly report (when they are addressed to you)
+ *   summary  the Morning summary and the Monday weekly report — every active teammate gets their own, scoped to the
+ *            clients they own (else every client); notify_to (Lance) always gets every client (notifyMemberSummaries())
  * "Yours" = the clients you own (Manage → Notifications → Slack channel per client → @ owner; unowned clients go to the
  * first active teammate). The Inbox's "Mine" filter shows the same clients. Saves through notify-admin.php action=my_prefs
  * (static/js/notifications.js). Signed-in admin only; every teammate sees and changes only their own row.
