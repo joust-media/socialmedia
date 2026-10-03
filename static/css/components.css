@@ -590,6 +590,15 @@ html:not(:has(.ui-tabbar)) .ui-toast { bottom: calc(24px + env(safe-area-inset-b
 .ui-bubble--mine   { background: var(--accent); color: #fff; align-self: flex-end; border-bottom-left-radius: 18px; border-bottom-right-radius: 6px; }
 .ui-bubble--theirs { background: var(--fill-tertiary); }
 .ui-bubble-meta { margin-top: 3px; font-size: var(--text-caption); line-height: var(--lh-caption); color: var(--label-tertiary); }
+/* Internal note (Joust only — notify-lib.php): dashed, untinted, with a lock pill; the client seat never receives one */
+.ui-bubble--internal { background: transparent; color: var(--label); border: 1.5px dashed var(--label-tertiary); }
+.ui-pill--internal { margin-left: 6px; padding: 0 8px; gap: 3px; font-size: var(--text-caption); line-height: 16px; color: var(--label-secondary); }
+.ui-pill--internal .ui-icon { width: 11px; height: 11px; }
+/* "All approved ✓" — a tire / series / reference with nothing left to review and every image approved (assets.php) */
+.ui-allok { display: inline-flex; align-items: center; gap: 4px; color: var(--approve); font-weight: 600; white-space: nowrap; }
+.ui-allok .ui-icon { width: 1.1em; height: 1.1em; flex: 0 0 auto; }
+.ui-pill--allok { color: var(--approve); background: rgba(52,199,89,.15); gap: 4px; }
+.ui-pill--allok .ui-icon { width: 13px; height: 13px; }
 .ui-thread { display: flex; flex-direction: column; gap: 6px; }
 
 /* A [hidden] button stays hidden: .ui-btn's display would otherwise win over the UA rule
@@ -650,4 +659,7 @@ html:not(:has(.ui-tabbar)) .ui-toast { bottom: calc(24px + env(safe-area-inset-b
    Manage section switch (manageNavHtml(): manage.php + drive.php)
    --------------------------------------------------------------------- */
 .manage-toolbar { margin: 4px 0 18px; }
-.manage-toolbar .ui-segmented { max-width: 480px; }
+.manage-toolbar .ui-segmented { max-width: 560px; }
+/* Five Manage sections (… Notifications): Notifications takes its natural width, the short ones share the rest */
+.manage-segmented .ui-segmented-item[data-manage-section-link="notifications"] { flex: 1.6 1 auto; }
+@media (max-width: 430px) { .manage-segmented .ui-segmented-item { padding-left: 4px; padding-right: 4px; letter-spacing: -0.2px; } }

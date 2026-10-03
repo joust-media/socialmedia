@@ -15,6 +15,9 @@
  *   &section=tools          Tools: New tire, the client's tires (→ Manage series), AI Builder, Prompt / Vehicle
  *                           Library, Projects, Emails import / export + Audiences, and Maintenance: Pages server rules,
  *                           Send digest, Image previews (preview-job.php; #previews — every client when unscoped).
+ *   &section=notifications  Notifications (partials/manage-notifications.php → notify-admin.php): config status (set /
+ *                           not set, never values), Slack + cron URLs, test message, reminder thresholds + Morning
+ *                           summary hour, Slack channel + owner per client, Team (named admins), delivery log + Retry.
  *   &msg=…                  flash after a save (shown once)
  *
  * Old Studio / Classic admin URLs land here through legacyAdminTarget() (helpers.php).
@@ -115,13 +118,15 @@ $activeTab   = 'manage';
 $navTrailing = $client ? clientAvatar($client) : joustAvatar();
 // One frame for every top-level page (the default 720px column, titles in the label colour) — Export included.
 $bodyClass   = 'page-studio page-manage page-manage--' . $section;
-$headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">';
+$headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">'
+             . ($section === 'notifications' ? '<link rel="stylesheet" href="' . h(staticUrl('css/notify.css')) . '">' : '');
 $studioConfig = ['base' => basePath(), 'client' => $client['slug'] ?? '', 'clientAdmin' => basePath() . '/client-admin.php',
                  'clientsUrl' => manageUrl('clients')];
 if ($exportConfig) $studioConfig['export'] = $exportConfig;
 $footExtra   = '<script>window.StudioConfig = ' . json_encode($studioConfig, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n"
              . '<script src="' . h(staticUrl('js/studio.js')) . '" defer></script>'
-             . ($section === 'tools' ? "\n" . '<script src="' . h(staticUrl('js/studio-previews.js')) . '" defer></script>' : '');   // Tools → Maintenance → Image previews (preview-job.php)
+             . ($section === 'tools' ? "\n" . '<script src="' . h(staticUrl('js/studio-previews.js')) . '" defer></script>' : '')
+             . ($section === 'notifications' ? "\n" . '<script src="' . h(staticUrl('js/notifications.js')) . '" defer></script>' : '');   // Tools → Maintenance → Image previews (preview-job.php)
 
 include __DIR__ . '/partials/layout-top.php';
 ?>
@@ -225,6 +230,12 @@ include __DIR__ . '/partials/layout-top.php';
   <p class="studio-help manage-moved-note" data-previews-moved>Image previews are in <a href="<?= h(manageUrl('tools') . '#previews') ?>">Tools → Maintenance</a>.</p>
 </section>
 
+<?php elseif ($section === 'notifications'): ?>
+<!-- Notifications ---------------------------------------------------------- -->
+<section class="studio-section manage-section" data-manage-section="notifications">
+  <?php include __DIR__ . '/partials/manage-notifications.php'; ?>
+</section>
+
 <?php elseif ($section === 'tools'): ?>
 <!-- Tools ----------------------------------------------------------------- -->
 <section class="studio-section manage-section" data-manage-section="tools">
@@ -317,8 +328,8 @@ include __DIR__ . '/partials/layout-top.php';
                     'attrs' => ['data-tool' => 'pages-repair']]) ?>
     <?php endif; ?>
     <?php if (hasActivityLog($pdo)): ?>
-      <?= insetRow(['icon' => 'mail', 'title' => 'Activity digest', 'subtitle' => 'Email the digest of recent client activity now', 'chevron' => false,
-                    'trailing' => '<form method="POST" action="' . h(basePath() . '/digest.php') . '" target="digest_iframe" data-digest-form><input type="hidden" name="source" value="manual"><button type="submit" class="ui-btn ui-btn--gray ui-btn--sm">Send digest</button></form>',
+      <?= insetRow(['icon' => 'mail', 'title' => 'Morning summary', 'subtitle' => 'Email the summary of client activity since the last one now (it also goes out daily — Notifications)', 'chevron' => false,
+                    'trailing' => '<form method="POST" action="' . h(basePath() . '/digest.php') . '" target="digest_iframe" data-digest-form><input type="hidden" name="source" value="manual"><button type="submit" class="ui-btn ui-btn--gray ui-btn--sm">Send now</button></form>',
                     'attrs' => ['data-tool' => 'digest']]) ?>
     <?php endif; ?>
   <?= insetListClose() ?>

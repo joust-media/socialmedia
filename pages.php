@@ -144,9 +144,9 @@ function pagesAttachRelations(PDO $pdo, array &$rows): void {
     if (!hasActivityLog($pdo)) return;
     try {
         $st = $pdo->prepare("
-            SELECT entity_id, actor, detail, created_at FROM activity_log
+            SELECT entity_id, actor, detail, created_at" . activityAuthorCols($pdo) . " FROM activity_log
             WHERE entity_type = 'page' AND action = 'commented' AND entity_id IN ($ph)
-              AND detail IS NOT NULL AND detail <> ''
+              AND detail IS NOT NULL AND detail <> ''" . activityVisibleSql($pdo) . "
             ORDER BY created_at ASC, id ASC
         ");
         $st->execute($ids);
@@ -156,7 +156,8 @@ function pagesAttachRelations(PDO $pdo, array &$rows): void {
         });
         foreach ($all as $row) {
             $eid = (int)$row['entity_id'];
-            if (isset($byId[$eid])) $byId[$eid]['comments'][] = ['actor' => $row['actor'], 'detail' => $row['detail'], 'created_at' => $row['created_at']];
+            if (isset($byId[$eid])) $byId[$eid]['comments'][] = ['actor' => $row['actor'], 'detail' => $row['detail'], 'created_at' => $row['created_at'],
+                                                          'author_user_id' => $row['author_user_id'] ?? null, 'internal' => (int)($row['internal'] ?? 0)];
         }
         $st = $pdo->prepare("
             SELECT entity_id, MAX(created_at) AS at FROM activity_log

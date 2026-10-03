@@ -1,442 +1,66 @@
 <?php
 /**
- * Daily activity digest — emails recent activity_log rows to lance.
+ * Morning summary trigger (formerly the "daily digest") — builds + sends the summary of CLIENT activity since the
+ * last one to config notify_to (notifyMorningSummary(), notify-lib.php; renderer digest-lib.php). Joust's own actions
+ * are left out; activity rows are marked sent only after the email went out (the outbox retries a failure).
  *
- * Triggers (any one is enough):
- *   - GET ?source=cron        — wired up via real cron, preferred, e.g. (cPanel > Cron Jobs)
- *                               0 13 * * * curl -fsS "https://joustmedia.com/portal/digest.php?source=cron" >/dev/null 2>&1
- *   - POST source=manual      — "Send digest now" button on admin.php
- *   - GET ?source=opportunistic — fired from admin.php shutdown hook
+ * Triggers:
+ *   POST source=manual                              Manage → Tools → "Send Morning summary" (admin session).
+ *   GET  ?source=cron&token=<notify_cron_token>     a cron. Preferred instead: notify-cron (one cron every 5 minutes
+ *                                                   that also sends the summary at the hour set in Manage).
+ *   GET  ?source=opportunistic                      admin session, at most once per 36 h (kept for old links).
  *
- * Uses PHP mail(). For deliverability the From: domain MUST be SPF-authorized
- * for this host's outbound IP — see config.php notify_* keys.
+ * Backward compatibility of the old OPEN cron URL (…/digest.php?source=cron, no token):
+ *   - while config.php has no notify_cron_token, it keeps working but runs at most once per 20 hours (429 otherwise),
+ *     so nobody can flush or spam the summary by hitting the URL;
+ *   - once notify_cron_token is set, ?source=cron requires it (403 without) — update the cPanel cron at the same time.
  */
 
 require __DIR__ . '/db.php';
 require_once __DIR__ . '/helpers.php';
 
-$config = require __DIR__ . '/config.php';
-
-// --- Source ----------------------------------------------------------
 $source = $_REQUEST['source'] ?? 'manual';
-if (!in_array($source, ['cron', 'manual', 'opportunistic'], true)) {
-    $source = 'manual';
-}
-// Manual / opportunistic triggers need the admin session; only cron stays open
-// (protecting it with a shared secret from config.php is a follow-up).
-if ($source !== 'cron' && !(function_exists('currentAdmin') && currentAdmin())) {
-    http_response_code(403);
-    header('Content-Type: text/plain; charset=utf-8');
-    echo "forbidden: admin sign-in required\n";
-    exit;
-}
+if (!in_array($source, ['cron', 'manual', 'opportunistic'], true)) $source = 'manual';
 
-// --- Lock --------------------------------------------------------------
-// Acquire a 5-minute lock so two concurrent triggers can't double-send.
-// `last_digest_sent_at` is the floor for opportunistic/cron triggers.
-try {
-    $lockStmt = $pdo->prepare("
-        UPDATE meta SET v = ?
-        WHERE k = 'digest_lock_until' AND v < NOW()
-    ");
-    $lockUntil = date('Y-m-d H:i:s', time() + 300);
-    $lockStmt->execute([$lockUntil]);
-    if ($lockStmt->rowCount() === 0) {
-        digest_response($source, 'locked', 'Another digest run is in progress; try again in a few minutes.');
-        exit;
-    }
-} catch (Throwable $e) {
-    digest_response($source, 'error', 'Setup failed: ' . $e->getMessage());
-    exit;
-}
-
-// --- Throttle non-manual triggers --------------------------------------
-// 'manual' is always allowed (the user explicitly clicked send).
-// 'opportunistic' is only allowed if last send was >36h ago (cron should win normally).
-// 'cron' fires once a day from cron — let it through.
-if ($source === 'opportunistic') {
-    $last = $pdo->query("SELECT v FROM meta WHERE k = 'last_digest_sent_at'")->fetchColumn();
-    if ($last && (time() - strtotime($last)) < 36 * 3600) {
-        clear_lock($pdo);
-        digest_response($source, 'throttled', 'Last digest was less than 36 hours ago.');
-        exit;
-    }
-}
-
-// --- Pick events --------------------------------------------------------
-$rows = $pdo->query("
-    SELECT a.id, a.company_id, a.entity_type, a.entity_id, a.action, a.actor,
-           a.batch_id, a.summary, a.detail, a.created_at,
-           c.name AS company_name
-      FROM activity_log a
-      LEFT JOIN companies c ON c.id = a.company_id
-     WHERE a.digest_id IS NULL
-     ORDER BY a.company_id, a.created_at
-     LIMIT 200
-")->fetchAll();
-
-if (empty($rows) && $source !== 'manual') {
-    clear_lock($pdo);
-    digest_response($source, 'empty', 'Nothing new to send.');
-    exit;
-}
-
-// --- Insert digest_runs row first --------------------------------------
-$ins = $pdo->prepare("
-    INSERT INTO digest_runs (sent_at, event_count, recipient, trigger_source)
-    VALUES (NOW(), ?, ?, ?)
-");
-$ins->execute([count($rows), $config['notify_to'], $source]);
-$digestId = (int)$pdo->lastInsertId();
-
-// Mark these rows as belonging to this digest so the next run skips them
-// (this happens BEFORE mail() so a hung mail() never blocks the DB).
-if ($rows) {
-    $ids = array_column($rows, 'id');
-    $ph  = implode(',', array_fill(0, count($ids), '?'));
-    $stmt = $pdo->prepare("UPDATE activity_log SET digest_id = ? WHERE id IN ($ph)");
-    $stmt->execute(array_merge([$digestId], $ids));
-}
-
-// Are there more pending past the 200 cap?
-$leftover = (int)$pdo->query("SELECT COUNT(*) FROM activity_log WHERE digest_id IS NULL")->fetchColumn();
-
-// --- Build email -------------------------------------------------------
-$summary       = render_summary($rows, $leftover, $config);
-$textBody      = $summary['text'];
-$htmlBody      = $summary['html'];
-$companyCount  = $summary['company_count'];
-$eventCount    = count($rows);
-$subject       = "Joust admin — {$eventCount} update"
-               . ($eventCount === 1 ? '' : 's')
-               . " from {$companyCount} client"
-               . ($companyCount === 1 ? '' : 's');
-
-if ($eventCount === 0) {
-    $subject  = 'Joust admin — manual digest (no new activity)';
-    $textBody = "No new activity since the last digest.\n\n— Joust admin";
-    $htmlBody = '<p>No new activity since the last digest.</p>';
-}
-
-// MIME multipart/alternative
-$boundary  = 'b_' . bin2hex(random_bytes(8));
-$messageId = 'digest-' . $digestId . '-' . date('Ymd') . '@' . $config['notify_message_domain'];
-
-$headers  = "From: {$config['notify_from']}\r\n";
-$headers .= "Reply-To: {$config['notify_reply_to']}\r\n";
-$headers .= "Message-ID: <{$messageId}>\r\n";
-$headers .= "MIME-Version: 1.0\r\n";
-$headers .= "Content-Type: multipart/alternative; boundary=\"{$boundary}\"\r\n";
-$headers .= "X-Mailer: Joust-Admin-Digest\r\n";
-
-$body  = "This is a multi-part message in MIME format.\r\n\r\n";
-$body .= "--{$boundary}\r\n";
-$body .= "Content-Type: text/plain; charset=utf-8\r\n";
-$body .= "Content-Transfer-Encoding: 8bit\r\n\r\n";
-$body .= $textBody . "\r\n\r\n";
-$body .= "--{$boundary}\r\n";
-$body .= "Content-Type: text/html; charset=utf-8\r\n";
-$body .= "Content-Transfer-Encoding: 8bit\r\n\r\n";
-$body .= $htmlBody . "\r\n\r\n";
-$body .= "--{$boundary}--\r\n";
-
-$envelope = '-f' . $config['notify_envelope'];
-$sent = @mail($config['notify_to'], $subject, $body, $headers, $envelope);
-
-if ($sent) {
-    $pdo->prepare("UPDATE meta SET v = NOW() WHERE k = 'last_digest_sent_at'")->execute();
-}
-clear_lock($pdo);
-
-digest_response($source, $sent ? 'sent' : 'mail_failed',
-    $sent
-        ? "Sent {$eventCount} event(s) to {$config['notify_to']} (digest #{$digestId})."
-        : 'mail() returned false — check shared host mail config and SPF for the From: domain.');
-
-// =====================================================================
-// Helpers
-// =====================================================================
-
-function clear_lock(PDO $pdo) {
-    $pdo->prepare("UPDATE meta SET v = '1970-01-01 00:00:00' WHERE k = 'digest_lock_until'")->execute();
-}
-
-function digest_response($source, $status, $message) {
-    // Manual triggers (button click via hidden iframe) get HTML; everything
-    // else gets plain text so cron logs stay readable.
+function digest_response(string $source, int $code, string $status, string $message): void {
+    http_response_code($code);
     if ($source === 'manual') {
+        // Manual triggers (button click via a hidden iframe) get HTML; everything else plain text for cron logs.
         header('Content-Type: text/html; charset=utf-8');
-        echo '<!doctype html><meta charset="utf-8"><title>Digest</title>'
+        echo '<!doctype html><meta charset="utf-8"><title>Morning summary</title>'
            . '<body style="font:14px -apple-system,sans-serif;padding:20px;color:#333">'
-           . '<strong>' . htmlspecialchars($status) . '</strong>: '
-           . htmlspecialchars($message)
-           . '</body>';
+           . '<strong>' . htmlspecialchars($status) . '</strong>: ' . htmlspecialchars($message) . '</body>';
     } else {
         header('Content-Type: text/plain; charset=utf-8');
-        echo $status . ": " . $message . "\n";
+        echo $status . ': ' . $message . "\n";
     }
+    exit;
 }
 
-/** Group activity rows by company → entity → batch and render text + HTML. */
-function render_summary(array $rows, int $leftover, array $config) {
-    global $pdo;   // used below to label post entities
-    $companies = [];
-    foreach ($rows as $r) {
-        $cid = (int)$r['company_id'];
-        if (!isset($companies[$cid])) {
-            $companies[$cid] = [
-                'name'    => $r['company_name'] ?? ('Company #' . $cid),
-                'entries' => [],
-                'batched' => [],
-            ];
-        }
-        $key = $r['batch_id'] ?: ('id:' . $r['id']);
-        if (!isset($companies[$cid]['batched'][$key])) {
-            $companies[$cid]['batched'][$key] = [
-                'entity_type' => $r['entity_type'],
-                'entity_id'   => $r['entity_id'],
-                'actor'       => $r['actor'],
-                'created_at'  => $r['created_at'],
-                'actions'     => [],
-                'details'     => [],
-            ];
-            $companies[$cid]['entries'][] =& $companies[$cid]['batched'][$key];
-        }
-        $companies[$cid]['batched'][$key]['actions'][] = $r['action'];
-        if ($r['detail'] !== null && $r['detail'] !== '') {
-            $companies[$cid]['batched'][$key]['details'][] = [
-                'action' => $r['action'],
-                'text'   => $r['detail'],
-            ];
-        }
-    }
-
-    $h = function ($s) {
-        return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-    };
-
-    // Batch-fetch labels for the post entities referenced in this digest so the
-    // "Post #N" line can read "Spring launch — hero shot" instead.
-    $postLabels = [];
-    $postIds = [];
-    $emailLabels = [];
-    $emailIds = [];
-    $pageLabels = [];
-    $pageIds = [];
-    $flowLabels = [];
-    $flowIds = [];
-    $imageLabels = [];
-    $imageIds = [];
-    $seriesLabels = [];
-    $seriesIds = [];
-    foreach ($companies as $cid => $co) {
-        foreach ($co['entries'] as $e) {
-            if ($e['entity_type'] === 'post')        $postIds[]   = (int)$e['entity_id'];
-            if ($e['entity_type'] === 'email')       $emailIds[]  = (int)$e['entity_id'];
-            if ($e['entity_type'] === 'email_flow')  $flowIds[]   = (int)$e['entity_id'];
-            if ($e['entity_type'] === 'page')        $pageIds[]   = (int)$e['entity_id'];
-            if ($e['entity_type'] === 'tire_image')  $imageIds[]  = (int)$e['entity_id'];
-            if ($e['entity_type'] === 'tire_series') $seriesIds[] = (int)$e['entity_id'];
-        }
-    }
-    // Tire images: "<series> · <display_name>" (or "<tire> · <display_name>") while the row exists; series: "<tire> · <series>".
-    $withSeries = function_exists('hasTireSeries') && hasTireSeries($pdo);
-    if ($imageIds) {
-        $imageIds = array_values(array_unique($imageIds));
-        $ph = implode(',', array_fill(0, count($imageIds), '?'));
-        try {
-            $hasName   = $pdo->query("SHOW COLUMNS FROM tire_images LIKE 'display_name'")->rowCount() > 0;
-            $nameSel   = $hasName ? 'ti.display_name' : "'' AS display_name";
-            $seriesSel = $withSeries ? 'ti.series_id' : 'NULL AS series_id';
-            $s = $pdo->prepare("
-                SELECT ti.id, ti.caption, {$nameSel}, {$seriesSel}, t.name AS tire_name
-                  FROM tire_images ti
-                  INNER JOIN tires t ON t.id = ti.tire_id
-                 WHERE ti.id IN ($ph)
-            ");
-            $s->execute($imageIds);
-            foreach ($s->fetchAll() as $r) {
-                $sid = isset($r['series_id']) && $r['series_id'] !== null ? (int)$r['series_id'] : 0;
-                if ($sid > 0) $seriesIds[] = $sid;
-                $imageLabels[(int)$r['id']] = [
-                    'name'      => imageDisplayLabel(['display_name' => $r['display_name'] ?? '', 'caption' => $r['caption'] ?? '', 'id' => (int)$r['id']]),
-                    'tire_name' => (string)($r['tire_name'] ?? ''),
-                    'series_id' => $sid,
-                ];
-            }
-        } catch (Throwable $e) {
-            $imageLabels = [];
-        }
-    }
-    $seriesNames = [];
-    if ($seriesIds && $withSeries) {
-        $seriesIds = array_values(array_unique($seriesIds));
-        $ph = implode(',', array_fill(0, count($seriesIds), '?'));
-        try {
-            $s = $pdo->prepare("SELECT s.id, s.name, t.name AS tire_name FROM tire_series s INNER JOIN tires t ON t.id = s.tire_id WHERE s.id IN ($ph)");
-            $s->execute($seriesIds);
-            foreach ($s->fetchAll() as $r) {
-                $seriesNames[(int)$r['id']]  = (string)($r['name'] ?? '');
-                $seriesLabels[(int)$r['id']] = trim((string)($r['tire_name'] ?? '')) . ' · ' . (string)($r['name'] ?? '');
-            }
-        } catch (Throwable $e) {
-            $seriesLabels = [];
-        }
-    }
-    foreach ($imageLabels as $iid => $info) {
-        $prefix = ($info['series_id'] > 0 && isset($seriesNames[$info['series_id']])) ? $seriesNames[$info['series_id']] : $info['tire_name'];
-        $imageLabels[$iid] = ($prefix !== '' ? $prefix . ' · ' : '') . $info['name'];
-    }
-    if ($flowIds && function_exists('hasEmailFlowsTable') && hasEmailFlowsTable($pdo)) {
-        $flowIds = array_values(array_unique($flowIds));
-        $ph = implode(',', array_fill(0, count($flowIds), '?'));
-        try {
-            $s = $pdo->prepare("SELECT id, name, slug FROM email_flows WHERE id IN ($ph)");
-            $s->execute($flowIds);
-            foreach ($s->fetchAll() as $r) {
-                $flowLabels[(int)$r['id']] = 'Flow ' . (string)($r['name'] ?? '');
-            }
-        } catch (Throwable $e) {
-            $flowLabels = [];
-        }
-    }
-    if ($pageIds && function_exists('hasPagesTable') && hasPagesTable($pdo)) {
-        $pageIds = array_values(array_unique($pageIds));
-        $ph = implode(',', array_fill(0, count($pageIds), '?'));
-        try {
-            $s = $pdo->prepare("SELECT id, title, slug FROM pages WHERE id IN ($ph)");
-            $s->execute($pageIds);
-            foreach ($s->fetchAll() as $r) {
-                $pageLabels[(int)$r['id']] = 'Page ' . pageDisplayLabel($r);
-            }
-        } catch (Throwable $e) {
-            $pageLabels = [];
-        }
-    }
-    if ($emailIds && function_exists('hasEmailsTable') && hasEmailsTable($pdo)) {
-        $emailIds = array_values(array_unique($emailIds));
-        $ph = implode(',', array_fill(0, count($emailIds), '?'));
-        try {
-            $s = $pdo->prepare("SELECT id, code, title FROM emails WHERE id IN ($ph)");
-            $s->execute($emailIds);
-            foreach ($s->fetchAll() as $r) {
-                $emailLabels[(int)$r['id']] = emailDisplayLabel($r);
-            }
-        } catch (Throwable $e) {
-            $emailLabels = [];
-        }
-    }
-    if ($postIds) {
-        $postIds = array_values(array_unique($postIds));
-        $ph = implode(',', array_fill(0, count($postIds), '?'));
-        $nameSel = hasPostsNameColumn($pdo) ? 'name' : "'' AS name";
-        $s = $pdo->prepare("SELECT id, {$nameSel}, caption FROM posts WHERE id IN ($ph)");
-        $s->execute($postIds);
-        foreach ($s->fetchAll() as $r) {
-            $postLabels[(int)$r['id']] = postDisplayLabel([
-                'name'    => $r['name'] ?? '',
-                'caption' => $r['caption'] ?? '',
-                'id'      => (int)$r['id'],
-            ]);
-        }
-    }
-
-    $textOut = "Joust admin — daily activity digest\n";
-    $textOut .= str_repeat('=', 40) . "\n\n";
-
-    $htmlOut  = '<div style="font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;max-width:640px;margin:0 auto;padding:20px">';
-    $htmlOut .= '<h1 style="font-size:20px;margin:0 0 4px">Joust admin — activity digest</h1>';
-    $htmlOut .= '<div style="color:#65676b;font-size:13px;margin-bottom:24px">' . $h(date('l, F j, Y')) . '</div>';
-
-    foreach ($companies as $cid => $co) {
-        $textOut .= "## " . $co['name'] . "\n";
-        $htmlOut .= '<h2 style="font-size:16px;margin:24px 0 8px;padding-bottom:4px;border-bottom:1px solid #e4e6eb">'
-                  . $h($co['name']) . '</h2>';
-
-        foreach ($co['entries'] as $e) {
-            $actions = array_unique($e['actions']);
-            if ($e['entity_type'] === 'post') {
-                $entityLabel = $postLabels[(int)$e['entity_id']] ?? ('Post #' . (int)$e['entity_id']);
-            } elseif ($e['entity_type'] === 'tire_image') {
-                $entityLabel = $imageLabels[(int)$e['entity_id']] ?? ('Image #' . (int)$e['entity_id']);
-            } elseif ($e['entity_type'] === 'tire_series') {
-                $entityLabel = $seriesLabels[(int)$e['entity_id']] ?? ('Series #' . (int)$e['entity_id']);
-            } elseif ($e['entity_type'] === 'library_image') {
-                $entityLabel = 'Library image #' . (int)$e['entity_id'];   // never the on-disk filename
-            } elseif ($e['entity_type'] === 'task') {
-                $entityLabel = 'Task #' . (int)$e['entity_id'];
-            } elseif ($e['entity_type'] === 'email') {
-                $entityLabel = $emailLabels[(int)$e['entity_id']] ?? ('Email #' . (int)$e['entity_id']);
-            } elseif ($e['entity_type'] === 'email_flow') {
-                $entityLabel = $flowLabels[(int)$e['entity_id']] ?? ('Flow #' . (int)$e['entity_id']);
-            } elseif ($e['entity_type'] === 'page') {
-                $entityLabel = $pageLabels[(int)$e['entity_id']] ?? ('Page #' . (int)$e['entity_id']);
-            } else {
-                $entityLabel = ucfirst($e['entity_type']) . ' #' . (int)$e['entity_id'];
-            }
-            $verb = (count($actions) > 1)
-                  ? 'edits (' . implode(', ', array_map('actionLabel', $actions)) . ')'
-                  : actionLabel($actions[0]);
-            $when = date('M j g:ia', strtotime($e['created_at']));
-
-            $textOut .= "  • [{$e['actor']}] {$entityLabel} — {$verb} ({$when})\n";
-            foreach ($e['details'] as $d) {
-                if (in_array($d['action'], ['commented', 'uncommented'], true)) {
-                    // "[Slide 3] text" → on slide 3: "text" (the stored prefix is never printed)
-                    [$slideNo, $body] = commentSlideSplit((string)$d['text']);
-                    $excerpt = mb_substr($body, 0, 240);
-                    $textOut .= "      " . ($slideNo > 0 ? "on slide {$slideNo}: " : '') . "\"" . str_replace("\n", ' ', $excerpt)
-                              . (mb_strlen($body) > 240 ? '…' : '') . "\"\n";
-                } elseif (strpos($d['action'], 'edited_') === 0) {
-                    // Caption / hashtag diffs are stored as "old → new" (each side ≤ 300 chars);
-                    // keep the whole line so a client's rewrite is readable in the digest.
-                    $textOut .= "      " . str_replace("\n", ' ', mb_substr($d['text'], 0, 640)) . "\n";
-                }
-            }
-
-            $htmlOut .= '<div style="padding:10px 0;border-bottom:1px solid #f0f2f5">';
-            $actorColor = $e['actor'] === 'client' ? '#1e40af'
-                       : ($e['actor'] === 'admin' ? '#6b21a8' : '#65676b');
-            $htmlOut .= '<span style="font-size:10px;font-weight:700;text-transform:uppercase;'
-                      . 'background:#f0f2f5;color:' . $actorColor . ';padding:2px 8px;border-radius:10px;'
-                      . 'margin-right:8px">' . $h($e['actor']) . '</span>';
-            $htmlOut .= '<strong>' . $h($entityLabel) . '</strong> '
-                      . '<span style="color:#65676b">' . $h($verb) . '</span> '
-                      . '<span style="color:#9ca3af;font-size:12px">· ' . $h($when) . '</span>';
-            foreach ($e['details'] as $d) {
-                if (in_array($d['action'], ['commented', 'uncommented'], true)) {
-                    [$slideNo, $body] = commentSlideSplit((string)$d['text']);
-                    $excerpt = mb_substr($body, 0, 240);
-                    $htmlOut .= '<div style="margin-top:6px;padding:8px 10px;background:#f7f8fa;'
-                              . 'border-left:3px solid #1877f2;font-style:italic;color:#3a3b3c">'
-                              . ($slideNo > 0 ? '<span style="font-style:normal;color:#65676b">on slide ' . $slideNo . ':</span> ' : '')
-                              . '"' . $h($excerpt) . ($h(mb_strlen($body) > 240 ? '…' : '')) . '"</div>';
-                } elseif (strpos($d['action'], 'edited_') === 0) {
-                    $htmlOut .= '<div style="margin-top:4px;font-size:12px;color:#65676b">'
-                              . $h(mb_substr($d['text'], 0, 640)) . '</div>';
-                }
-            }
-            $htmlOut .= '</div>';
-        }
-        $textOut .= "\n";
-    }
-
-    if ($leftover > 0) {
-        $textOut .= "…and {$leftover} more older event(s) — see admin.php for the full list.\n\n";
-        $htmlOut .= '<p style="color:#65676b;font-size:13px;margin-top:16px">'
-                  . '…and ' . $leftover . ' more older event(s) — see admin.php for the full list.</p>';
-    }
-
-    $textOut .= "Reply to this email to talk to Lance directly.\n";
-    $htmlOut .= '<hr style="border:none;border-top:1px solid #e4e6eb;margin:24px 0">';
-    $htmlOut .= '<div style="color:#9ca3af;font-size:12px">'
-              . 'Reply directly to this email to talk to Lance. '
-              . 'You can also <a href="#" style="color:#1877f2">open the admin</a>.</div>';
-    $htmlOut .= '</div>';
-
-    return [
-        'text'          => $textOut,
-        'html'          => '<!doctype html><html><body>' . $htmlOut . '</body></html>',
-        'company_count' => count($companies),
-    ];
+$isAdminSession = function_exists('currentAdmin') && currentAdmin();
+if ($source !== 'cron' && !$isAdminSession) {
+    digest_response($source, 403, 'forbidden', 'admin sign-in required');
 }
+if ($source === 'cron') {
+    if (strlen(notifyCfg('notify_cron_token')) >= 16) {
+        if (!notifyCronTokenOk()) digest_response($source, 403, 'forbidden', 'token required (?token=<notify_cron_token>)');
+    } else {
+        // Legacy open URL: one run per 20 hours, counted on attempts (not only sends).
+        $last = notifyMeta($pdo, 'digest_open_last', '1970-01-01 00:00:00');
+        if (time() - (int)strtotime($last) < 20 * 3600) {
+            digest_response($source, 429, 'throttled', 'the open cron URL runs at most once per 20 hours — set notify_cron_token in config.php and use notify-cron');
+        }
+        try { notifyMetaSet($pdo, 'digest_open_last', date('Y-m-d H:i:s')); } catch (Throwable $e) {}
+    }
+}
+if ($source === 'opportunistic') {
+    $last = notifyMeta($pdo, 'last_digest_sent_at', '1970-01-01 00:00:00');
+    if (time() - (int)strtotime($last) < 36 * 3600) digest_response($source, 200, 'throttled', 'Last summary was less than 36 hours ago.');
+}
+
+$res = notifyMorningSummary($pdo, $source);
+if ($source === 'cron' && in_array($res['status'], ['sent', 'empty', 'queued'], true)) {
+    try { notifyMetaSet($pdo, 'notify_summary_last', date('Y-m-d')); } catch (Throwable $e) {}
+}
+$code = in_array($res['status'], ['sent', 'empty', 'queued'], true) ? 200 : ($res['status'] === 'locked' ? 409 : 500);
+digest_response($source, $code, $res['status'], $res['message']);

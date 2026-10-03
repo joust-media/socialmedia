@@ -1,0 +1,2 @@
+# Server-only configuration (database + secrets). The template is config.example.php.
+config.php

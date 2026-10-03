@@ -1360,6 +1360,162 @@ try {
     } else {
         $steps[] = "• posts.status already has Draft — skipped.";
     }
+
+    // 36–39. Notifications (notify-lib.php; Manage → Notifications). notifyReady() (notify-lib.php) gates every
+    //     read / write until these have run, so the portal keeps working on a deploy that has not migrated yet.
+    // 36. admin_users — named Joust identities (who wrote a comment, who gets the Slack @mention / escalation
+    //     email). Lance is seeded from the single login in auth.php (ADMIN_EMAIL), which keeps working unchanged:
+    //     currentAdminUserId() maps the signed-in email to a row. password_hash is reserved for per-person logins.
+    if (!tableExists($pdo, 'admin_users')) {
+        $pdo->exec("
+            CREATE TABLE admin_users (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                name VARCHAR(80) NOT NULL,
+                email VARCHAR(190) NOT NULL,
+                slack_user_id VARCHAR(32) NULL DEFAULT NULL,
+                password_hash VARCHAR(255) NULL DEFAULT NULL,
+                role VARCHAR(20) NOT NULL DEFAULT 'admin',
+                active TINYINT(1) NOT NULL DEFAULT 1,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_email (email),
+                KEY ix_slack (slack_user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `admin_users` table.";
+    } else {
+        $steps[] = "• `admin_users` already exists — skipped.";
+    }
+    $seedEmail = defined('ADMIN_EMAIL') ? (string)ADMIN_EMAIL : '';
+    if ($seedEmail !== '' && (int)$pdo->query("SELECT COUNT(*) FROM admin_users")->fetchColumn() === 0) {
+        $pdo->prepare("INSERT INTO admin_users (name, email, role) VALUES ('Lance', ?, 'owner')")->execute([$seedEmail]);
+        $steps[] = "✓ Seeded admin user Lance ({$seedEmail}) from the current login.";
+    } else {
+        $steps[] = "• admin_users already has people — seed skipped.";
+    }
+
+    // 37. activity_log.author_user_id (which admin_users row wrote it; NULL = the client seat / legacy rows) and
+    //     activity_log.internal (1 = a Joust-only note: hidden from the client seat in every surface — threads,
+    //     feeds, counts, Home — and never in the Morning summary or a client email). Plus the notification
+    //     settings in `meta` (escalation thresholds in minutes, Morning summary hour) and notify_since, the floor
+    //     below which old client messages never escalate (so the first deploy does not page about history).
+    $alAdd = [];
+    if (!columnExists($pdo, 'activity_log', 'author_user_id')) $alAdd[] = "ADD COLUMN author_user_id INT UNSIGNED NULL DEFAULT NULL AFTER actor";
+    if (!columnExists($pdo, 'activity_log', 'internal'))       $alAdd[] = "ADD COLUMN internal TINYINT(1) NOT NULL DEFAULT 0 AFTER author_user_id";
+    if ($alAdd) {
+        $pdo->exec("ALTER TABLE activity_log " . implode(', ', $alAdd));
+        $steps[] = "✓ Added activity_log author / internal columns.";
+    } else {
+        $steps[] = "• activity_log.author_user_id / internal already exist — skipped.";
+    }
+    $metaIns = $pdo->prepare("INSERT IGNORE INTO meta (k, v) VALUES (?, ?)");
+    $metaNew = 0;
+    foreach ([
+        ['notify_since', date('Y-m-d H:i:s')],
+        ['notify_t1_minutes', '60'],
+        ['notify_t2_minutes', '240'],
+        ['notify_summary_hour', '8'],
+        ['notify_summary_last', '1970-01-01'],
+    ] as $kv) {
+        $metaIns->execute($kv);
+        $metaNew += $metaIns->rowCount();
+    }
+    $steps[] = $metaNew > 0 ? "✓ Seeded {$metaNew} notification settings." : "• Notification settings already seeded — skipped.";
+
+    // 38. notify_outbox — every outbound Slack / email message (delivery log + retry with backoff; dedupe_key makes
+    //     enqueueing idempotent) — and notify_clients — per client: its Slack channel and the Joust owner to @mention.
+    if (!tableExists($pdo, 'notify_outbox')) {
+        $pdo->exec("
+            CREATE TABLE notify_outbox (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                channel ENUM('slack','email') NOT NULL,
+                kind VARCHAR(30) NOT NULL,
+                company_id INT UNSIGNED NULL DEFAULT NULL,
+                entity_type VARCHAR(20) NULL DEFAULT NULL,
+                entity_id INT UNSIGNED NULL DEFAULT NULL,
+                target VARCHAR(190) NULL DEFAULT NULL,
+                payload MEDIUMTEXT NOT NULL,
+                status ENUM('pending','sending','sent','failed','skipped') NOT NULL DEFAULT 'pending',
+                attempts SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+                next_attempt_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_error VARCHAR(500) NULL DEFAULT NULL,
+                dedupe_key VARCHAR(120) NULL DEFAULT NULL,
+                provider_id VARCHAR(190) NULL DEFAULT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                sent_at DATETIME NULL DEFAULT NULL,
+                UNIQUE KEY uq_dedupe (dedupe_key),
+                KEY ix_due (status, next_attempt_at),
+                KEY ix_entity (entity_type, entity_id),
+                KEY ix_created (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `notify_outbox` table.";
+    } else {
+        $steps[] = "• `notify_outbox` already exists — skipped.";
+    }
+    if (!tableExists($pdo, 'notify_clients')) {
+        $pdo->exec("
+            CREATE TABLE notify_clients (
+                company_id INT UNSIGNED NOT NULL PRIMARY KEY,
+                slack_channel_id VARCHAR(32) NULL DEFAULT NULL,
+                slack_channel_name VARCHAR(80) NULL DEFAULT NULL,
+                owner_user_id INT UNSIGNED NULL DEFAULT NULL,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `notify_clients` table.";
+    } else {
+        $steps[] = "• `notify_clients` already exists — skipped.";
+    }
+
+    // 39. notify_threads — one row per portal item that has a conversation outside the portal: its Slack parent
+    //     message (channel + ts, the parent's last rendered hash) and the email Message-ID later mails thread on
+    //     (In-Reply-To / References). slack_inbox — every verified Slack delivery by event_id (dedupe of Slack's
+    //     retries) with what the portal did with it.
+    if (!tableExists($pdo, 'notify_threads')) {
+        $pdo->exec("
+            CREATE TABLE notify_threads (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                company_id INT UNSIGNED NOT NULL,
+                entity_type VARCHAR(20) NOT NULL,
+                entity_id INT UNSIGNED NOT NULL,
+                slack_channel VARCHAR(32) NULL DEFAULT NULL,
+                slack_ts VARCHAR(32) NULL DEFAULT NULL,
+                slack_claimed_at DATETIME NULL DEFAULT NULL,
+                parent_hash CHAR(40) NULL DEFAULT NULL,
+                email_message_id VARCHAR(190) NULL DEFAULT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_entity (entity_type, entity_id),
+                KEY ix_slack (slack_channel, slack_ts),
+                KEY ix_company (company_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `notify_threads` table.";
+    } else {
+        $steps[] = "• `notify_threads` already exists — skipped.";
+    }
+    if (!tableExists($pdo, 'slack_inbox')) {
+        $pdo->exec("
+            CREATE TABLE slack_inbox (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                event_id VARCHAR(80) NOT NULL,
+                kind VARCHAR(30) NOT NULL DEFAULT '',
+                channel VARCHAR(32) NULL DEFAULT NULL,
+                user_id VARCHAR(32) NULL DEFAULT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'received',
+                note VARCHAR(255) NULL DEFAULT NULL,
+                activity_id INT UNSIGNED NULL DEFAULT NULL,
+                received_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                processed_at DATETIME NULL DEFAULT NULL,
+                UNIQUE KEY uq_event (event_id),
+                KEY ix_received (received_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `slack_inbox` table.";
+    } else {
+        $steps[] = "• `slack_inbox` already exists — skipped.";
+    }
 } catch (Exception $e) {
     $errors[] = $e->getMessage();
 }

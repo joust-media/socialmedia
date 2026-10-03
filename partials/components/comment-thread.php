@@ -77,6 +77,11 @@ if (!function_exists('commentBubble')) {
         $actor  = strtolower(trim((string)($row['actor'] ?? 'unknown')));
         $viewer = isset($opts['viewer']) ? (string)$opts['viewer'] : commentViewerRole();
         $side   = $actor === $viewer ? 'mine' : 'theirs';
+        // Named Joust authors (notify-lib.php): the client reads "Lance at Joust"; on the admin seat a teammate's
+        // message sits on the other side under their name. Rows without an author keep "Joust" / "You".
+        $named  = ($actor === 'admin' && function_exists('activityAuthorLabel')) ? activityAuthorLabel($row, $viewer) : '';
+        if ($named !== '' && $named !== 'You' && $viewer === 'admin') $side = 'theirs';
+        $internal = !empty($row['internal']);
         $text  = (string)($row['detail'] ?? '');
         $chip  = '';
         if (isset($opts['slides']) && is_array($opts['slides'])) {
@@ -91,9 +96,12 @@ if (!function_exists('commentBubble')) {
         // initials for client bubbles (actorAvatar(), helpers.php; '' for 'unknown' notes).
         $avatar = function_exists('actorAvatar') ? actorAvatar($actor, $GLOBALS['client'] ?? null, 'ui-avatar--xs pd-msg-avatar') : '';
 
-        $out  = '<div class="pd-msg pd-msg--' . $side . '" data-actor="' . $esc($actor) . '">';
-        $out .= '<div class="ui-bubble ui-bubble--' . $side . '">' . $chip . nl2br($esc($text)) . '</div>';
-        $out .= '<div class="ui-bubble-meta">' . $avatar . $esc(commentActorLabel($actor, $viewer));
+        $label = $named !== '' ? $named : commentActorLabel($actor, $viewer);
+        // Internal notes (Joust only — never rendered for the client seat; the readers filter them out) get a lock pill.
+        $out  = '<div class="pd-msg pd-msg--' . $side . '" data-actor="' . $esc($actor) . '"' . ($internal ? ' data-internal="1"' : '') . '>';
+        $out .= '<div class="ui-bubble ui-bubble--' . $side . ($internal ? ' ui-bubble--internal' : '') . '">' . $chip . nl2br($esc($text)) . '</div>';
+        $out .= '<div class="ui-bubble-meta">' . $avatar . $esc($label)
+              . ($internal ? ' <span class="ui-pill ui-pill--nodot ui-pill--internal" data-internal-pill>' . (function_exists('icon') ? icon('lock') : '') . 'Internal</span>' : '');
         if ($rel !== '') { $out .= ' · <time title="' . $esc($abs) . '">' . $esc($rel) . '</time>'; }
         $out .= '</div></div>';
         return $out;

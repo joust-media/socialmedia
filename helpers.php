@@ -93,9 +93,10 @@ if (!function_exists('adminToolsUrl')) {
     function adminToolsUrl(): string { return manageUrl('tools'); }
 }
 
-/** Manage (manage.php) — the admin's settings hub. Sections: clients · export · drive (drive.php) · tools. */
+/** Manage (manage.php) — the admin's settings hub. Sections: clients · export · drive (drive.php) · tools ·
+ *  notifications (partials/manage-notifications.php: Slack / email setup, reminders, team, delivery log). */
 if (!defined('MANAGE_SECTIONS')) {
-    define('MANAGE_SECTIONS', ['clients' => 'Clients', 'export' => 'Export', 'drive' => 'Drive', 'tools' => 'Tools']);
+    define('MANAGE_SECTIONS', ['clients' => 'Clients', 'export' => 'Export', 'drive' => 'Drive', 'tools' => 'Tools', 'notifications' => 'Notifications']);
 }
 
 if (!function_exists('manageUrl')) {
@@ -852,24 +853,59 @@ function syncLibraryImages(PDO $pdo, $companyId, $slug) {
 
 /**
  * Insert one row into activity_log. Swallows any exception — a logging
- * failure must never break the user-facing mutation.
+ * failure must never break the user-facing mutation. Returns the new row id (0 on failure).
+ *
+ * Once migrate.php 37 ran it also records the named author (author_user_id: the signed-in admin's
+ * admin_users row for actor 'admin', or the one activityWithContext() names — a Slack reply) and the
+ * internal flag (activityWithContext(['internal' => 1])), then hands the row to notifyOnActivity()
+ * (notify-lib.php), which decides whether Slack hears about it.
  */
 function logActivity(PDO $pdo, $companyId, $entityType, $entityId,
                      $action, $actor, $summary,
                      $detail = null, $batchId = null) {
     try {
-        $stmt = $pdo->prepare("
-            INSERT INTO activity_log
-                (company_id, entity_type, entity_id, action, actor, batch_id, summary, detail)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ");
-        $stmt->execute([
-            (int)$companyId, $entityType, (int)$entityId, $action,
-            $actor, $batchId, mb_substr((string)$summary, 0, 500), $detail,
-        ]);
+        $ctx      = $GLOBALS['__activityCtx'] ?? [];
+        $named    = function_exists('activityHasNotifyCols') && activityHasNotifyCols($pdo);
+        $author   = null;
+        $internal = 0;
+        if ($named) {
+            $author = array_key_exists('author_user_id', $ctx)
+                ? ($ctx['author_user_id'] !== null ? (int)$ctx['author_user_id'] : null)
+                : ($actor === 'admin' && function_exists('currentAdminUserId') ? currentAdminUserId($pdo) : null);
+            $internal = !empty($ctx['internal']) ? 1 : 0;
+            $stmt = $pdo->prepare("
+                INSERT INTO activity_log
+                    (company_id, entity_type, entity_id, action, actor, author_user_id, internal, batch_id, summary, detail)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([
+                (int)$companyId, $entityType, (int)$entityId, $action,
+                $actor, $author, $internal, $batchId, mb_substr((string)$summary, 0, 500), $detail,
+            ]);
+        } else {
+            $stmt = $pdo->prepare("
+                INSERT INTO activity_log
+                    (company_id, entity_type, entity_id, action, actor, batch_id, summary, detail)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([
+                (int)$companyId, $entityType, (int)$entityId, $action,
+                $actor, $batchId, mb_substr((string)$summary, 0, 500), $detail,
+            ]);
+        }
+        $id = (int)$pdo->lastInsertId();
     } catch (Throwable $e) {
         error_log('logActivity failed: ' . $e->getMessage());
+        return 0;
     }
+    if ($id > 0 && function_exists('notifyOnActivity')) {
+        notifyOnActivity($pdo, $id, [
+            'company_id' => (int)$companyId, 'entity_type' => (string)$entityType, 'entity_id' => (int)$entityId,
+            'action' => (string)$action, 'actor' => (string)$actor, 'batch_id' => $batchId, 'detail' => $detail,
+            'internal' => $internal,
+        ]);
+    }
+    return $id;
 }
 
 /** 16-hex-char id used to group multi-field edits in one feed line. */
@@ -943,13 +979,14 @@ require_once __DIR__ . '/media-lib.php';
  * Used to render chat-style comment history on posts and tire images.
  */
 function commentThread(PDO $pdo, $entityType, $entityId) {
+    // author_user_id / internal (notify-lib.php): named Joust authors; internal notes only for the admin seat
     $stmt = $pdo->prepare("
-        SELECT actor, detail, created_at
+        SELECT actor, detail, created_at" . activityAuthorCols($pdo) . "
           FROM activity_log
          WHERE entity_type = ?
            AND entity_id = ?
            AND action = 'commented'
-           AND detail IS NOT NULL AND detail <> ''
+           AND detail IS NOT NULL AND detail <> ''" . activityVisibleSql($pdo) . "
          ORDER BY created_at ASC, id ASC
     ");
     $stmt->execute([$entityType, (int)$entityId]);
@@ -992,7 +1029,7 @@ function latestCommentDates(PDO $pdo, $entityType, array $entityIds) {
         SELECT entity_id, MAX(created_at) AS last_at
           FROM activity_log
          WHERE entity_type = ? AND action = 'commented'
-           AND entity_id IN ($placeholders)
+           AND entity_id IN ($placeholders)" . activityVisibleSql($pdo) . "
          GROUP BY entity_id
     ");
     $stmt->execute(array_merge([$entityType], $entityIds));
@@ -1015,7 +1052,7 @@ function commentCounts(PDO $pdo, $entityType, array $entityIds) {
           FROM activity_log
          WHERE entity_type = ? AND action = 'commented'
            AND detail IS NOT NULL AND detail <> ''
-           AND entity_id IN ($placeholders)
+           AND entity_id IN ($placeholders)" . activityVisibleSql($pdo) . "
          GROUP BY entity_id
     ");
     $stmt->execute(array_merge([$entityType], $entityIds));
@@ -1032,7 +1069,7 @@ function commentCounts(PDO $pdo, $entityType, array $entityIds) {
 function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
     $sql = "
         SELECT a.id, a.company_id, a.entity_type, a.entity_id, a.action, a.actor,
-               a.batch_id, a.summary, a.detail, a.created_at,
+               a.batch_id, a.summary, a.detail, a.created_at" . activityAuthorCols($pdo, 'a') . ",
                c.name AS company_name, c.slug AS company_slug, c.logo_url AS company_logo_url
           FROM activity_log a
           LEFT JOIN companies c ON c.id = a.company_id
@@ -1042,6 +1079,9 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
         $sql .= " WHERE a.company_id = ? ";
         $params[] = (int)$companyId;
     }
+    // Internal notes (notify-lib.php) never reach the client seat's feed.
+    $vis = activityVisibleSql($pdo, 'a');
+    if ($vis !== '') $sql .= ($companyId ? '' : ' WHERE 1 = 1 ') . $vis . ' ';
     $sql .= " ORDER BY a.created_at DESC LIMIT " . (int)max(1, $limit * 3);
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
@@ -1062,6 +1102,8 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
                     'entity_type'  => $r['entity_type'],
                     'entity_id'    => $r['entity_id'],
                     'actor'        => $r['actor'],
+                    'author_user_id' => $r['author_user_id'] ?? null,
+                    'internal'     => (int)($r['internal'] ?? 0),
                     'created_at'   => $r['created_at'],
                     'batch_id'     => $r['batch_id'],
                     'actions'      => [],
@@ -1086,6 +1128,8 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
                 'entity_type'  => $r['entity_type'],
                 'entity_id'    => $r['entity_id'],
                 'actor'        => $r['actor'],
+                'author_user_id' => $r['author_user_id'] ?? null,
+                'internal'     => (int)($r['internal'] ?? 0),
                 'created_at'   => $r['created_at'],
                 'batch_id'     => null,
                 'actions'      => [$r['action']],
@@ -1344,6 +1388,7 @@ function actionLabel($action) {
         'unposted'             => 'unmarked scheduled',
         'commented'            => 'commented',
         'uncommented'          => 'cleared comment',
+        'resolved'             => 'marked the note answered',   // Slack "Resolve" (an internal row: admin seat only)
         'edited_caption'       => 'edited caption',
         'edited_hashtags'      => 'edited hashtags',
         'edited_schedule'      => 'rescheduled',
@@ -1649,7 +1694,13 @@ if (!function_exists('humanizeActivityRows')) {
             $action  = activityPrimaryAction($actions);
             $pn      = activityParentName($e);
             $isYou   = ($actor === $viewerRole);
-            if ($isYou) {
+            // Named Joust authors (notify-lib.php) on the admin seat: a teammate's row reads "Sam", your own "You".
+            // The client seat keeps "Joust" as the team's name in feed sentences.
+            $named = ($actor === 'admin' && $viewerRole === 'admin' && function_exists('activityAuthorLabel'))
+                ? activityAuthorLabel($e, 'admin') : '';
+            if ($named !== '' && $named !== 'You') {
+                $who = $named; $isYou = false;
+            } elseif ($isYou) {
                 $who = 'You';
             } elseif ($actor === 'admin') {
                 $who = 'Joust';
@@ -1830,6 +1881,9 @@ if (!function_exists('activityFinalizeRows')) {
                 case 'commented':
                     $verb = 'commented'; $icon = 'ellipsis'; $tone = 'accent';
                     $t = "$who commented on $objT"; $hh = "$whoH commented on $objH"; break;
+                case 'resolved':
+                    $verb = 'marked the note answered'; $icon = 'checkmark'; $tone = 'neutral';
+                    $t = "$who marked the note on $objT answered"; $hh = "$whoH marked the note on $objH answered"; break;
                 case 'uncommented':
                     $verb = 'cleared a comment'; $icon = 'ellipsis'; $tone = 'neutral';
                     $t = "$who cleared a comment on $objT"; $hh = "$whoH cleared a comment on $objH"; break;
@@ -2350,3 +2404,8 @@ require_once __DIR__ . '/preview-lib.php';
 
 // Render-side wrappers over preview-lib.php: pvImg() / pvUrls() / pvSizes() (sm tiles, lg viewer). Definitions only.
 require_once __DIR__ . '/preview-ui.php';
+
+// Notifications (named authors, internal notes, Slack / email outbox) and the Joust-side status transitions shared
+// by the portal endpoints and the Slack buttons. Function definitions only.
+require_once __DIR__ . '/transitions-lib.php';
+require_once __DIR__ . '/notify-lib.php';

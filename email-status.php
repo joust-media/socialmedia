@@ -115,21 +115,13 @@ $prevStat  = (string)$email['status'];
 $prevLive  = !empty($email['live']) ? 1 : 0;
 
 try {
-    // ---- toggle_live (admin) ----
+    // ---- toggle_live (admin) ---- (rules + activity row: transitions-lib.php, shared with the Slack buttons)
     if ($action === 'toggle_live') {
-        $to = ((string)($_POST['to'] ?? '1')) === '1' ? 1 : 0;
-        if ($to === 1 && $prevStat !== 'approved') {
-            emailFail(409, 'Only an approved email can be marked live');
+        $res = transitionMailLive($pdo, 'email', $email, ((string)($_POST['to'] ?? '1')) === '1' ? 1 : 0, $actor);
+        if (empty($res['ok'])) {
+            emailFail((int)$res['code'], (string)$res['error']);
         }
-        if ($to !== $prevLive) {
-            $pdo->prepare($to === 1
-                ? "UPDATE emails SET live = 1, live_at = NOW() WHERE id = ?"
-                : "UPDATE emails SET live = 0, live_at = NULL WHERE id = ?")->execute([$id]);
-            logEmailActivity($pdo, $actor, $to === 1 ? 'marked_live' : 'unmarked_live', $id,
-                "Email {$label} " . ($to === 1 ? 'marked live' : 'unmarked live'), null, null, $companyId);
-        }
-        $email['live']    = $to;
-        $email['live_at'] = $to === 1 ? date('Y-m-d H:i:s') : null;
+        $email = $res['row'];
         emailReply($email, ['live_at' => $email['live_at']]);
     }
 
@@ -143,7 +135,15 @@ try {
         exit;
     }
 
-    // ---- submit (admin): draft → pending ----
+    // ---- submit (admin): draft → pending ---- (no note: transitions-lib.php, shared with the Slack buttons;
+    //      with a note it takes the generic route below, which applies the same rules plus the comment)
+    if ($action === 'submit' && !$hasCmt && !$hasStat) {
+        $res = transitionMailSubmit($pdo, 'email', $email, $actor);
+        if (empty($res['ok'])) {
+            emailFail((int)$res['code'], (string)$res['error']);
+        }
+        emailReply($res['row'], ['comment' => null]);
+    }
     if ($action === 'submit') {
         $hasStat = true;
         $status  = 'pending';

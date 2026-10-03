@@ -62,7 +62,7 @@ checks. See `tests/README.md`. `tests/` is never deployed.
   | Classic admin | Now |
   |---|---|
   | Client picker / Switch client | Home → Choose a client; Manage → Clients |
-  | Recent activity + Send digest now | Home activity feeds; Manage → Tools → Activity digest |
+  | Recent activity + Send digest now | Home activity feeds; Manage → Tools → Morning summary |
   | Default hashtags | Manage → Clients → Settings |
   | AI Builder profile (product type, industry) | Manage → Clients → Settings |
   | Add a Post | "+ New → New post" |
@@ -93,11 +93,20 @@ checks. See `tests/README.md`. `tests/` is never deployed.
   removes current media on edit.
 - **+ New** (admin, top right of every page): New post · Upload · New email · New page.
 
-## Daily digest cron (cPanel > Cron Jobs)
+## Notifications: Slack, reminders, Morning summary (cPanel > Cron Jobs)
+
+Setup: `docs/slack-setup.md` (Slack app from `docs/slack-app-manifest.yml`, secrets in `config.php` — template
+`config.example.php`; `config.php` is not in git). Code: `notify-lib.php` (outbox, Slack threads, escalation,
+`notifyEmail()`), `notify-cron.php`, `slack-events.php`, `slack-actions.php`, `notify-thumb.php`, `notify-admin.php`
+(Manage → Notifications), `transitions-lib.php` (status rules shared with the Slack buttons), `digest-lib.php`.
+One cron every 5 minutes runs retries, reminders and the daily Morning summary:
 
 ```
-0 13 * * * curl -fsS "https://joustmedia.com/portal/digest.php?source=cron" >/dev/null 2>&1
+*/5 * * * * curl -fsS -H "X-Notify-Token: <notify_cron_token>" "https://joustmedia.com/portal/notify-cron" >/dev/null 2>&1
 ```
+
+The old `digest.php?source=cron` URL needs `&token=<notify_cron_token>` once that key is set (403 without); before
+that it still runs, at most once per 20 hours. Remove the old digest cron when adding the one above.
 
 ## Emails
 
