@@ -7,8 +7,14 @@ test('client cannot act on another client\'s post (tenant)', function () {
     is($r['code'], 403);
     is(q1("SELECT status FROM posts WHERE id = 1"), 'pending', 'unchanged');
 });
-test('client cannot act without a client slug', function () {
-    is(post('status.php', ['id' => 1, 'status' => 'approved'], 'client')['code'], 403);
+test('client cannot act without a client slug (no session for the test seat → 401)', function () {
+    is(post('status.php', ['id' => 1, 'status' => 'approved'], 'client')['code'], 401);
+    is(q1("SELECT status FROM posts WHERE id = 1"), 'pending', 'unchanged');
+});
+test('a client signed in for Privacy Bee cannot act on a Kenda post, even posting client=kenda', function () {
+    $r = post('status.php', ['id' => 1, 'status' => 'approved', 'client' => 'kenda'], 'client:privacybee');
+    is($r['code'], 403);
+    is(q1("SELECT status FROM posts WHERE id = 1"), 'pending', 'unchanged');
 });
 foreach ([
     'toggle_posted' => ['action' => 'toggle_posted', 'id' => 3, 'to' => 1],

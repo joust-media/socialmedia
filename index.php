@@ -611,6 +611,9 @@ if (!$isAdmin) echo $reviewSectionHtml;   // the client's Home opens with it; th
     <p class="t-footnote text-secondary home-appearance-note">Auto follows your device's light or dark setting. Your choice is remembered on this device.</p>
   </div>
 </section>
+<?php if ($homeSess = currentClientSession($pdo)): // phones: the sidebar's sign-out line is not there ?>
+<p class="home-signout t-footnote text-secondary" data-client-signout>Signed in as <?= h($homeSess['email']) ?> · <a href="<?= h(pagePath('sign-out')) ?>">Sign out</a></p>
+<?php endif; ?>
 <?php endif; ?>
 
 <?php include __DIR__ . '/partials/layout-bottom.php'; ?>

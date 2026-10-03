@@ -194,6 +194,8 @@ $uiBrandHref = clientUrl('index.php');
   </ul>
   <?php if ($uiIsAdmin): ?>
     <div class="ui-tabbar-footer">Signed in as Joust · <a href="<?= esc(pagePath('logout')) ?>">Sign out</a></div>
+  <?php elseif (function_exists('currentClientSession') && ($uiSess = currentClientSession())): ?>
+    <div class="ui-tabbar-footer" data-client-signout>Signed in as <?= esc($uiSess['email']) ?> · <a href="<?= esc(pagePath('sign-out')) ?>">Sign out</a></div>
   <?php endif; ?>
 </nav>
-<?php unset($uiMergeMail, $uiCountTabs, $uiTabs, $uiTiresLabel, $uiIsAdmin, $uiHasEmails, $uiHasTires, $uiHasPages, $uiModules, $uiActive, $uiScript, $uiKey, $uiTab, $uiBadges, $uiQueue, $uiBadgeLabel, $uiCid, $uiSt, $uiErr, $uiBrandName, $uiBrandHref, $uiIsActive, $uiCount, $uiCls); ?>
+<?php unset($uiSess, $uiMergeMail, $uiCountTabs, $uiTabs, $uiTiresLabel, $uiIsAdmin, $uiHasEmails, $uiHasTires, $uiHasPages, $uiModules, $uiActive, $uiScript, $uiKey, $uiTab, $uiBadges, $uiQueue, $uiBadgeLabel, $uiCid, $uiSt, $uiErr, $uiBrandName, $uiBrandHref, $uiIsActive, $uiCount, $uiCls); ?>

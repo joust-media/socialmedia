@@ -20,7 +20,9 @@ By hand:
 tests/bootstrap.sh            # MariaDB up, DB + user, schema.sql, site copy, migrate.php ×2, seed
 tests/serve.sh                # php -S on http://127.0.0.1:8099/portal/  (tests/serve.sh stop | sync)
 open "http://127.0.0.1:8099/portal/?client=kenda&__role=admin"    # admin seat (sticky cookie)
-open "http://127.0.0.1:8099/portal/?client=kenda&__role=client"   # client seat
+open "http://127.0.0.1:8099/portal/?client=kenda&__role=client"   # client seat (test sign-in as Kenda's first contact)
+open "http://127.0.0.1:8099/portal/?client=kenda&__role=client:privacybee"   # pinned to Privacy Bee → refused here
+open "http://127.0.0.1:8099/portal/sign-in.php?__role=anon"   # nobody: the real magic-link sign-in (emails land in $PORTAL_TEST_ROOT/mail)
 php tests/seed.php /tmp/portal-test/site/portal /tmp/portal-test/site/media   # reset the data
 ```
 
@@ -33,15 +35,16 @@ install) and Chromium (`/opt/pw-browsers`, or `PLAYWRIGHT_BROWSERS_PATH`). On De
 
 | Path | What |
 |---|---|
-| `env.sh` | Shared settings: `PORTAL_TEST_ROOT` (default `/tmp/portal-test`), port 8099, DB `portal_test` (user/password `portal_test`), `sync_site`, `php_test` |
+| `env.sh` | Shared settings: `PORTAL_TEST_ROOT` (default `/tmp/portal-test`), port 8099, DB `portal_test` (user/password `portal_test`), `sync_site` (test `config.php` with `mail_capture_dir` = `$PORTAL_TEST_ROOT/mail` and a `client_link_secret`), `php_test` |
 | `schema.sql` | The **pre-migration** base tables (companies, posts, post_images, tires, tire_images, categories, post/tire_categories, tasks). Everything else comes from `migrate.php`, so every bootstrap also proves the migration upgrades an old database and is idempotent (it runs twice; the second run must apply nothing). |
-| `seed.php` | Deterministic fixtures (ids are stable — see the header): Kenda (tires, series, renders in every status, references, library + a video, posts in every state incl. two drafts and a 3-image carousel), Privacy Bee (emails in every state, groups, a flow, pages), Hollow Mill Farm (empty). Images are generated with GD. |
+| `seed.php` | Deterministic fixtures (ids are stable — see the header; client contacts 1–4, no sessions, clean links off): Kenda (tires, series, renders in every status, references, library + a video, posts in every state incl. two drafts and a 3-image carousel), Privacy Bee (emails in every state, groups, a flow, pages), Hollow Mill Farm (empty). Images are generated with GD. |
 | `bootstrap.sh` | Builds the stack from scratch. |
-| `serve.sh` | `php -S` with `router.php` and the `test-auth.php` prepend; log in `$PORTAL_TEST_ROOT/server.log`. |
-| `router.php` | Serves `/portal/*.php` in one execution (so the prepend applies) and static files. |
-| `test-auth.php` | Seat shim: `?__role=admin|client` (or cookie `portal_test_role`, or `PORTAL_TEST_ROLE` on the CLI). Inert unless `PORTAL_TEST=1`. |
+| `serve.sh` | `php -S` (4 workers — the Clean links installer requests its own server) with `router.php` and the `test-auth.php` prepend; log in `$PORTAL_TEST_ROOT/server.log`. |
+| `router.php` | Serves `/portal/*.php` in one execution (so the prepend applies) and static files. When `<site>/portal/.htaccess` carries the Clean links block (Manage → Tools → Clean links), it emulates those rules: `/portal/<name>` → `<name>.php`, the machine endpoints 404, everything else → `route.php`. Without the block extensionless paths 404 — the "rewrites off" fallback. |
+| `test-auth.php` | Seat shim: `?__role=admin|client|client:<slug>|anon` (or cookie `portal_test_role`, or `PORTAL_TEST_ROLE` on the CLI). `client` = a real client session (row + `jsm_client` value) for the first contact of the client the request names; `client:<slug>` = pinned to one client (cross-client checks); `anon` = nobody; no role = the browser's own cookies. Inert unless `PORTAL_TEST=1`. |
 | `run.sh` | Everything, plus a scan of the server log: any PHP warning / notice / fatal fails the run. |
-| `smoke/lib.php` | `get()` / `post()` per seat, `db()` / `q1()` / `rows()`, `test()` / `ok()` / `is()` / `has()` / `status()`, `tmpImage()`. |
+| `smoke/lib.php` | `get()` / `post()` per seat (`admin`, `client`, `client:<slug>`, `anon`; a `Cookie` header adds browser cookies; replies carry every `Set-Cookie` line), `db()` / `q1()` / `rows()`, `test()` / `ok()` / `is()` / `has()` / `status()`, `tmpImage()`. |
+| `smoke/18-auth.php`, `e2e/14-auth.js` | Client sign-in (magic links, sessions, rate limits, revoke, deep links), the access gate (cross-client sweep over every page and endpoint), View as client, and clean links (route map, guarded `.htaccess` writer, live install, old → clean 301s, fallback). `14-auth.js` writes review screenshots to `$AUTH_SHOTS_DIR` (default `$PORTAL_TEST_ROOT/shots/auth`). |
 | `smoke/NN-*.php` | HTTP-level suites (re-seeded before each one). |
 | `e2e/lib.js`, `e2e/NN-*.js` | Playwright scripts (desktop 1440×900 and phone 390×844 contexts). Screenshots on failure go to `$PORTAL_TEST_ROOT/shots/`. |
 

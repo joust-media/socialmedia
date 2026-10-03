@@ -140,6 +140,7 @@ $joustLogo = $brandUrl('joust.png');
   }
   .notice--error { background: rgba(255,59,48,.14); color: var(--deny); }
   .notice--ok    { background: rgba(52,199,89,.15); color: var(--approve); }
+  .footnote a { color: var(--accent); text-decoration: none; }
   .footnote {
     margin-top: 18px; padding-top: 14px; text-align: center;
     box-shadow: inset 0 0.5px 0 var(--separator);
@@ -252,7 +253,7 @@ $joustLogo = $brandUrl('joust.png');
 
     <button type="submit">Sign in</button>
 
-    <div class="footnote">Need access? Talk to Lance.</div>
+    <div class="footnote">Joust team only. Client? <a href="<?= h($base . '/sign-in' . $ext . ($returnRaw !== $fallback ? '?return=' . urlencode($returnUrl) : '')) ?>">Sign in with your email</a></div>
   </form>
 </div>
 </body>

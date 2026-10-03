@@ -663,3 +663,14 @@ html:not(:has(.ui-tabbar)) .ui-toast { bottom: calc(24px + env(safe-area-inset-b
 /* Five Manage sections (… Notifications): Notifications takes its natural width, the short ones share the rest */
 .manage-segmented .ui-segmented-item[data-manage-section-link="notifications"] { flex: 1.6 1 auto; }
 @media (max-width: 430px) { .manage-segmented .ui-segmented-item { padding-left: 4px; padding-right: 4px; letter-spacing: -0.2px; } }
+
+/* Admin "View as client" banner (partials/layout-top.php): a slim tinted strip above the nav bar. */
+.ui-viewas {
+  position: sticky; top: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;
+  padding: 8px max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));
+  background: rgba(255,149,0,.16); color: var(--label);
+  font-size: var(--text-footnote); line-height: var(--lh-footnote);
+  box-shadow: inset 0 -0.5px 0 var(--separator);
+  backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
+}

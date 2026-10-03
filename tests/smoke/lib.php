@@ -10,7 +10,8 @@
  *   });
  *   finish();
  *
- * Seats: 'admin' (the test-auth.php shim signs in), 'client' (anonymous client seat), 'anon' (no cookie).
+ * Seats: 'admin' (the test-auth.php shim signs in), 'client' (test sign-in as the requested client's first contact),
+ * 'client:<slug>' (signed in for that client only), 'anon' (no cookie).
  * Requests go to $PORTAL_TEST_BASE (tests/env.sh); db() opens the test database.
  */
 
@@ -21,12 +22,14 @@ function base(): string { return rtrim((string)(getenv('PORTAL_TEST_BASE') ?: 'h
 
 /**
  * One request. $data = form fields (POST, multipart when $files is given), $files = ['field' => path | [paths]].
- * Returns ['code', 'body', 'headers' (lower-case name → last value), 'json' (decoded or null), 'location'].
+ * Returns ['code', 'body', 'headers' (lower-case name → last value), 'json' (decoded or null), 'location',
+ * 'cookies' (every Set-Cookie line)].
  */
 function req(string $method, string $path, string $role = 'admin', array $data = [], array $files = [], array $headers = []): array {
     $url = preg_match('#^https?://#', $path) ? $path : base() . '/' . ltrim($path, '/');
     $ch = curl_init();
     $hdrs = [];
+    $setCookies = [];
     $opts = [
         CURLOPT_URL => $url,
         CURLOPT_RETURNTRANSFER => true,
@@ -34,13 +37,22 @@ function req(string $method, string $path, string $role = 'admin', array $data =
         CURLOPT_TIMEOUT => 60,
         CURLOPT_USERAGENT => SMOKE_UA,
         CURLOPT_CUSTOMREQUEST => $method,
-        CURLOPT_HEADERFUNCTION => static function ($ch, $line) use (&$hdrs) {
+        CURLOPT_HEADERFUNCTION => static function ($ch, $line) use (&$hdrs, &$setCookies) {
             $p = strpos($line, ':');
-            if ($p !== false) $hdrs[strtolower(trim(substr($line, 0, $p)))] = trim(substr($line, $p + 1));
+            if ($p !== false) {
+                $name = strtolower(trim(substr($line, 0, $p)));
+                $hdrs[$name] = trim(substr($line, $p + 1));
+                if ($name === 'set-cookie') $setCookies[] = trim(substr($line, $p + 1));
+            }
             return strlen($line);
         },
     ];
-    if ($role === 'admin' || $role === 'client') $opts[CURLOPT_COOKIE] = 'portal_test_role=' . $role;
+    // Seats (tests/test-auth.php): admin · client (test sign-in for the client the request names) · client:<slug> (pinned)
+    // · anon / '' (no cookie). $headers['Cookie'] adds browser cookies (jsm_client …) on top.
+    $cookies = [];
+    if ($role === 'admin' || $role === 'client' || strpos($role, 'client:') === 0) $cookies[] = 'portal_test_role=' . $role;
+    if (isset($headers['Cookie'])) { $cookies[] = $headers['Cookie']; unset($headers['Cookie']); }
+    if ($cookies) $opts[CURLOPT_COOKIE] = implode('; ', $cookies);
     $h = [];
     foreach ($headers as $k => $v) $h[] = is_int($k) ? $v : "$k: $v";
     if ($method !== 'GET') {
@@ -67,7 +79,8 @@ function req(string $method, string $path, string $role = 'admin', array $data =
     curl_close($ch);
     $json = null;
     if (isset($hdrs['content-type']) && stripos($hdrs['content-type'], 'json') !== false) $json = json_decode($body, true);
-    return ['code' => $code, 'body' => (string)$body, 'headers' => $hdrs, 'json' => $json, 'location' => $hdrs['location'] ?? ''];
+    return ['code' => $code, 'body' => (string)$body, 'headers' => $hdrs, 'json' => $json, 'location' => $hdrs['location'] ?? '',
+            'cookies' => $setCookies];
 }
 function get(string $path, string $role = 'admin', array $headers = []): array { return req('GET', $path, $role, [], [], $headers); }
 function post(string $path, array $data, string $role = 'admin', array $files = [], array $headers = []): array { return req('POST', $path, $role, $data, $files, $headers); }

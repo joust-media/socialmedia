@@ -282,3 +282,10 @@
 @media (min-width: 1024px) { .manage-signout { display: none; } }
 .page-manage .ui-row-trailing form { display: inline-flex; margin: 0; }
 .studio-client-settings .ui-textarea { min-height: 64px; }
+
+/* Manage → Tools → Clean links: status pill + buttons in one trailing row. */
+.studio-inline-actions { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+/* Manage → Clients → Contacts / Signed in */
+.studio-client-contacts, .studio-client-sessions { margin-top: 20px; padding-top: 16px; box-shadow: inset 0 0.5px 0 var(--separator); }
+.studio-client-contacts .studio-client-modlist, .studio-client-sessions .studio-client-modlist { margin-top: 8px; }
+.studio-contact-add { margin-top: 10px; }

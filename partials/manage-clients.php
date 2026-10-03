@@ -75,7 +75,7 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
           <?= clientAvatar($scEdit, 'ui-avatar--lg') ?>
           <div>
             <h3 class="ui-card-title"><?= esc($scEdit['name']) ?></h3>
-            <p class="ui-card-subtitle">Review links use <code>?client=<?= esc($scEdit['slug']) ?></code>. Changing the slug changes every link already sent.</p>
+            <p class="ui-card-subtitle">Portal address <code><?= esc(portalUrl('index', ['client' => $scEdit['slug']])) ?></code> — clients sign in with an email on the Contacts list below. Changing the slug changes every link already sent.</p>
           </div>
         </div>
       </div>
@@ -178,13 +178,108 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
           <?php endforeach; ?>
         </ul>
       </div>
+
+      <?php // ---- Sign-in: contacts + signed-in devices (client-auth-lib.php) ----
+        $scAuthReady = clientAuthReady($pdo);
+        $scContacts  = $scAuthReady ? clientContacts($pdo, (int)$scEdit['id']) : [];
+        $scSessions  = $scAuthReady ? clientSessionsForCompany($pdo, (int)$scEdit['id']) : [];
+      ?>
+      <div class="studio-client-contacts" data-client-contacts id="contacts">
+        <div class="studio-label">Contacts <span class="text-tertiary">who can sign in</span></div>
+        <?php if (!$scAuthReady): ?>
+          <p class="text-tertiary">Run migrate.php first (steps 40–43 add client sign-in).</p>
+        <?php else: ?>
+        <ul class="studio-client-modlist" role="list" data-contact-list>
+          <?php if (!$scContacts): ?>
+            <li class="studio-client-mod-row" data-contact-empty><div class="studio-client-mod-body"><div class="ui-row-subtitle">No contacts yet — <?= esc($scEdit['name']) ?> can’t sign in until you add an email.</div></div></li>
+          <?php endif; ?>
+          <?php foreach ($scContacts as $scP): ?>
+            <li class="studio-client-mod-row" data-contact="<?= (int)$scP['id'] ?>">
+              <div class="studio-client-mod-body">
+                <div class="ui-row-title"><?= esc(trim((string)$scP['name']) !== '' ? $scP['name'] : $scP['email']) ?></div>
+                <div class="ui-row-subtitle"><?= trim((string)$scP['name']) !== '' ? esc($scP['email']) . ' · ' : '' ?><?= $scP['last_login_at'] ? 'last signed in ' . esc(relativeTime($scP['last_login_at'])) : 'never signed in' ?><?= (int)$scP['active_sessions'] > 0 ? ' · ' . (int)$scP['active_sessions'] . ' device' . ((int)$scP['active_sessions'] === 1 ? '' : 's') : '' ?></div>
+              </div>
+              <?php if ((int)$scP['active_sessions'] > 0): ?>
+              <form method="POST" action="<?= esc($scEndpoint) ?>" class="studio-inline-form" data-client-form data-confirm-submit="Sign <?= esc($scP['email']) ?> out on every device and void the links already emailed to them?">
+                <input type="hidden" name="action" value="sessions_revoke_all">
+                <input type="hidden" name="id" value="<?= (int)$scEdit['id'] ?>">
+                <input type="hidden" name="contact_id" value="<?= (int)$scP['id'] ?>">
+                <input type="hidden" name="links" value="1">
+                <button type="submit" class="ui-btn ui-btn--plain ui-btn--sm" data-contact-signout>Sign out everywhere</button>
+              </form>
+              <?php endif; ?>
+              <form method="POST" action="<?= esc($scEndpoint) ?>" class="studio-inline-form" data-client-form data-confirm-submit="Remove <?= esc($scP['email']) ?>? They are signed out at once and their links stop working.">
+                <input type="hidden" name="action" value="contact_remove">
+                <input type="hidden" name="id" value="<?= (int)$scEdit['id'] ?>">
+                <input type="hidden" name="contact_id" value="<?= (int)$scP['id'] ?>">
+                <button type="submit" class="ui-btn ui-btn--plain ui-btn--sm studio-danger-btn" data-contact-remove>Remove</button>
+              </form>
+            </li>
+          <?php endforeach; ?>
+        </ul>
+        <form method="POST" action="<?= esc($scEndpoint) ?>" class="studio-client-form studio-contact-add" data-client-form data-contact-add autocomplete="off">
+          <input type="hidden" name="action" value="contact_add">
+          <input type="hidden" name="id" value="<?= (int)$scEdit['id'] ?>">
+          <div class="studio-field-row">
+            <div class="studio-field"><label class="studio-label" for="contactEmail<?= (int)$scEdit['id'] ?>">Email</label>
+              <input class="ui-input" type="email" name="email" id="contactEmail<?= (int)$scEdit['id'] ?>" maxlength="190" required placeholder="name@<?= esc($scEdit['slug']) ?>.com" data-contact-email></div>
+            <div class="studio-field"><label class="studio-label" for="contactName<?= (int)$scEdit['id'] ?>">Name <span class="text-tertiary">optional</span></label>
+              <input class="ui-input" type="text" name="contact_name" id="contactName<?= (int)$scEdit['id'] ?>" maxlength="120" placeholder="Sarah Lee"></div>
+          </div>
+          <div class="studio-client-actions">
+            <button type="submit" class="ui-btn ui-btn--tinted">Add contact</button>
+            <span class="studio-client-status" data-client-status aria-live="polite"></span>
+          </div>
+        </form>
+        <p class="studio-help">Contacts sign in with a one-time link emailed to them (no password) and stay signed in for 30 days on that device. Removing a contact signs them out everywhere.</p>
+        <?php endif; ?>
+      </div>
+
+      <?php if ($scAuthReady): ?>
+      <div class="studio-client-sessions" data-client-sessions id="sessions">
+        <div class="studio-label">Signed in <span class="text-tertiary"><?= count($scSessions) ?> device<?= count($scSessions) === 1 ? '' : 's' ?></span></div>
+        <ul class="studio-client-modlist" role="list">
+          <?php if (!$scSessions): ?>
+            <li class="studio-client-mod-row" data-session-empty><div class="studio-client-mod-body"><div class="ui-row-subtitle">Nobody from <?= esc($scEdit['name']) ?> is signed in right now.</div></div></li>
+          <?php endif; ?>
+          <?php foreach ($scSessions as $scS): ?>
+            <li class="studio-client-mod-row" data-session="<?= (int)$scS['id'] ?>">
+              <div class="studio-client-mod-body">
+                <div class="ui-row-title"><?= esc(trim((string)$scS['name']) !== '' ? $scS['name'] . ' · ' . $scS['email'] : $scS['email']) ?></div>
+                <div class="ui-row-subtitle" title="<?= esc((string)$scS['user_agent']) ?>"><?= esc(clientDeviceLabel((string)$scS['user_agent'])) ?> · signed in <?= esc(relativeTime($scS['created_at'])) ?> <?= $scS['via'] === 'link' ? 'from an emailed link' : ($scS['via'] === 'test' ? '(test)' : 'with a sign-in email') ?> · active <?= esc(relativeTime($scS['last_seen_at'] ?: $scS['created_at'])) ?> · until <?= esc(date('M j', strtotime((string)$scS['expires_at']))) ?></div>
+              </div>
+              <form method="POST" action="<?= esc($scEndpoint) ?>" class="studio-inline-form" data-client-form>
+                <input type="hidden" name="action" value="session_revoke">
+                <input type="hidden" name="id" value="<?= (int)$scEdit['id'] ?>">
+                <input type="hidden" name="session_id" value="<?= (int)$scS['id'] ?>">
+                <button type="submit" class="ui-btn ui-btn--gray ui-btn--sm" data-session-revoke>Sign out</button>
+              </form>
+            </li>
+          <?php endforeach; ?>
+        </ul>
+        <div class="studio-client-actions">
+          <?php if ($scSessions): ?>
+          <form method="POST" action="<?= esc($scEndpoint) ?>" class="studio-inline-form" data-client-form data-confirm-submit="Sign everyone at <?= esc($scEdit['name']) ?> out on every device?">
+            <input type="hidden" name="action" value="sessions_revoke_all">
+            <input type="hidden" name="id" value="<?= (int)$scEdit['id'] ?>">
+            <button type="submit" class="ui-btn ui-btn--plain ui-btn--sm studio-danger-btn" data-sessions-revoke-all>Sign everyone out</button>
+          </form>
+          <?php endif; ?>
+          <form method="POST" action="<?= esc(pagePath('view-as')) ?>" class="studio-inline-form" data-view-as-form>
+            <input type="hidden" name="client" value="<?= esc($scEdit['slug']) ?>">
+            <button type="submit" class="ui-btn ui-btn--gray ui-btn--sm" data-view-as-start>View as client</button>
+          </form>
+        </div>
+        <p class="studio-help">“View as client” shows you <?= esc($scEdit['name']) ?>’s portal exactly as they see it — no sign-in email needed. A banner on top takes you back.</p>
+      </div>
+      <?php endif; ?>
     </div>
   </section>
   <?php else: ?>
   <!-- New client card -->
   <section class="ui-card studio-client-card" data-client-new>
     <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">New client</h3>
-      <p class="ui-card-subtitle">The slug becomes the review link (<code>?client=slug</code>) and the client's folder names — pick it once.</p></div></div>
+      <p class="ui-card-subtitle">The slug becomes the portal address (<code><?= esc(cleanUrlsOn() ? basePath() . '/slug/' : basePath() . '/?client=slug') ?></code>) and the client's folder names — pick it once.</p></div></div>
     <div class="ui-card-body">
       <form method="POST" action="<?= esc($scEndpoint) ?>" enctype="multipart/form-data" class="studio-client-form" data-client-form autocomplete="off">
         <input type="hidden" name="action" value="create">
@@ -229,4 +324,4 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
     <?php endforeach; ?>
   <?= insetListClose('Logos come from the uploaded file, else the logo that ships with the portal, else the initial. Clients cannot be deleted here.') ?>
 </div>
-<?php unset($scSettingCols, $scCompanies, $scModules, $scModuleIds, $scEnabled, $scEditId, $scEdit, $scEndpoint, $scListUrl, $scErrFlash, $scFmt, $scC, $scM, $scR, $scSt, $scErr, $scKey, $scLabel, $scOn, $scHas); ?>
+<?php unset($scAuthReady, $scContacts, $scSessions, $scP, $scS, $scSettingCols, $scCompanies, $scModules, $scModuleIds, $scEnabled, $scEditId, $scEdit, $scEndpoint, $scListUrl, $scErrFlash, $scFmt, $scC, $scM, $scR, $scSt, $scErr, $scKey, $scLabel, $scOn, $scHas); ?>
