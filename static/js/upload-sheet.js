@@ -285,6 +285,11 @@
   function onHome() { return !!$('.ui-tab[data-tab="home"][aria-current="page"]'); }
   /** Is the destination URL the page we are on (same script, client, view and tire)? */
   function landsHere(u) {
+    if (App.urls) {   // both URL styles (clean links keep client / view / item in the path)
+      var pa = App.urls.parse(u), pb = App.urls.current();
+      if (pa.script !== pb.script) return false;
+      return ['client', 'view', 'item'].every(function (k) { return String(pa.params[k] || '') === String(pb.params[k] || ''); });
+    }
     var a, b;
     try { a = new URL(u, window.location.href); b = new URL(window.location.href); } catch (e) { return false; }
     if (a.pathname !== b.pathname) return false;

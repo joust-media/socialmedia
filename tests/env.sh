@@ -19,7 +19,8 @@ PORTAL_TEST_DB="${PORTAL_TEST_DB:-portal_test}"
 PORTAL_TEST_DB_USER="${PORTAL_TEST_DB_USER:-portal_test}"
 PORTAL_TEST_DB_PASS="${PORTAL_TEST_DB_PASS:-portal_test}"
 PORTAL_TEST_BASE="http://127.0.0.1:${PORTAL_TEST_PORT}/portal"
-export TESTS_DIR REPO_DIR PORTAL_TEST_ROOT SITE_DIR APP_DIR MEDIA_DIR SESSION_DIR SERVER_LOG SERVER_PID \
+MAIL_DIR="$PORTAL_TEST_ROOT/mail"
+export MAIL_DIR TESTS_DIR REPO_DIR PORTAL_TEST_ROOT SITE_DIR APP_DIR MEDIA_DIR SESSION_DIR SERVER_LOG SERVER_PID \
        PORTAL_TEST_PORT PORTAL_TEST_DB PORTAL_TEST_DB_USER PORTAL_TEST_DB_PASS PORTAL_TEST_BASE
 
 # Copy the repo into the test site (code only: never .git, tests/, the real config.php or uploads/).
@@ -39,6 +40,9 @@ return [
     'password' => '${PORTAL_TEST_DB_PASS}',
     'charset'  => 'utf8mb4',
     'notify_to' => '',
+    // Client sign-in emails (auth-mail.php notifyEmail shim) are written here as JSON instead of being sent.
+    'mail_capture_dir' => '${PORTAL_TEST_ROOT}/mail',
+    'client_link_secret' => 'portal-test-client-link-secret-0123456789',
 ];
 PHP
 }

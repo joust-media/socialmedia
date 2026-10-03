@@ -50,7 +50,14 @@ $uiRole = isAdmin() ? 'admin' : 'client';
 <?= appStylesheets() ?>
 <?= isset($headExtra) ? $headExtra : '' ?>
 <?= avatarScriptTag($client ?? null) ?>
+<?= portalUrlsScript() ?>
 </head>
 <body class="<?= esc(trim('ui-body ' . (isset($bodyClass) ? (string)$bodyClass : ''))) ?>" data-role="<?= $uiRole ?>" data-actor="<?= $uiRole ?>"<?= !empty($client['slug']) ? ' data-client="' . esc($client['slug']) . '"' : '' ?><?= isset($pageFlash) && is_string($pageFlash) && trim($pageFlash) !== '' ? ' data-flash="' . esc(mb_substr(trim($pageFlash), 0, 300)) . '"' : '' ?>>
+<?php if (($uiViewAs = adminViewAsSlug()) !== '' && $uiViewAs === ($client['slug'] ?? '') && !isAdmin()): // Manage → Clients → View as client ?>
+<div class="ui-viewas" role="status" data-view-as="<?= esc($uiViewAs) ?>">
+  <span>Viewing as <strong><?= esc($client['name'] ?? $uiViewAs) ?></strong> — exactly what the client sees.</span>
+  <a class="ui-btn ui-btn--sm ui-btn--filled" href="<?= esc(pagePath('view-as') . '?exit=1') ?>" data-view-as-exit>Exit</a>
+</div>
+<?php endif; unset($uiViewAs); ?>
 <?php include __DIR__ . '/navbar.php'; ?>
 <main class="ui-page<?= !empty($pageWide) ? ' ui-page--wide' : '' ?>" id="main">

@@ -6,7 +6,7 @@
   'use strict';
   var root = document.querySelector('[data-previews]');
   if (!root) return;
-  var endpoint = root.getAttribute('data-endpoint') || 'preview-job.php';
+  var endpoint = root.getAttribute('data-endpoint') || (window.App && App.urls ? App.urls.abs('preview-job.php') : 'preview-job.php');
   var statusEl = root.querySelector('[data-previews-status]');
   var progress = root.querySelector('[data-previews-progress]');
   var fill = root.querySelector('[data-previews-fill]');

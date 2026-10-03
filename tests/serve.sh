@@ -27,7 +27,9 @@ esac
 stop
 sync_site
 : > "$SERVER_LOG"
-PORTAL_TEST=1 setsid nohup php \
+# Workers: Manage → Tools → Clean links checks the rules with a request to this same server (url-lib.php
+# cleanLinksSelfCheck), which a single-worker php -S would deadlock on.
+PORTAL_TEST=1 PHP_CLI_SERVER_WORKERS=4 setsid nohup php \
     -d "auto_prepend_file=$TESTS_DIR/test-auth.php" \
     -d "session.save_path=$SESSION_DIR" \
     -d display_errors=0 -d log_errors=1 -d error_log="$SERVER_LOG" \

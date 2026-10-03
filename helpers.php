@@ -15,17 +15,16 @@
 
 // $pdo must be included before this file.
 
-$clientSlug = '';
-$client     = null;
+require_once __DIR__ . '/url-lib.php';          // portalUrl() / the clean-link map / cleanUrlsOn()
+require_once __DIR__ . '/client-auth-lib.php';  // client sign-in: sessions, contacts, deep links, the access gate
 
-if (!empty($_GET['client'])) {
-    $slugCandidate = strtolower(trim((string)$_GET['client']));
-    $slugCandidate = preg_replace('/[^a-z0-9\-]/', '', $slugCandidate);
-    if ($slugCandidate !== '' && isset($pdo)) {
-        // Probe for optional, migration-gated columns so we don't blow up
-        // before migrate.php has run. default_hashtags, product_type and
-        // industry are all added by later migration steps.
+if (!function_exists('helpersLoadCompany')) {
+    /** The company row pages scope to (id, name, slug, feature_label, logo_url + the migration-gated profile
+     *  columns, '' until migrate.php adds them) for a slug, or null. */
+    function helpersLoadCompany(PDO $pdo, string $slug): ?array {
         static $extraCompanyCols = null;
+        $slug = preg_replace('/[^a-z0-9\-]/', '', strtolower(trim($slug)));
+        if ($slug === '') return null;
         if ($extraCompanyCols === null) {
             $present = $pdo->query("
                 SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
@@ -42,8 +41,22 @@ if (!empty($_GET['client'])) {
             $extraCol .= $exists ? ", {$col}" : ", '' AS {$col}";
         }
         $stmt = $pdo->prepare("SELECT id, name, slug, feature_label, logo_url{$extraCol} FROM companies WHERE slug = ?");
-        $stmt->execute([$slugCandidate]);
+        $stmt->execute([$slug]);
         $row = $stmt->fetch();
+        return $row ?: null;
+    }
+}
+
+$clientSlug = '';
+$client     = null;
+$askedClientSlug = '';
+
+if (!empty($_GET['client']) && is_string($_GET['client'])) {
+    // Probe for optional, migration-gated columns so we don't blow up before migrate.php has run
+    // (helpersLoadCompany: default_hashtags, product_type and industry come from later steps).
+    $askedClientSlug = preg_replace('/[^a-z0-9\-]/', '', strtolower(trim((string)$_GET['client'])));
+    if ($askedClientSlug !== '' && isset($pdo)) {
+        $row = helpersLoadCompany($pdo, $askedClientSlug);
         if ($row) {
             $client     = $row;
             $clientSlug = $row['slug'];
@@ -57,16 +70,28 @@ if (!empty($_GET['client'])) {
 // functions when included; currentAdmin() starts the jsm_admin session,
 // which is safe here because helpers.php is included before any output.
 // Pages that also include auth.php must use require_once (they do).
+//
+// Access (client-auth-lib.php portalAccessGate): on every client-facing script a visitor must be the admin or a
+// client signed in for THIS client (a session with no ?client= is scoped to its own client); otherwise pages go to
+// sign-in and endpoints answer 401 / 403. Admin-only scripts keep requireAdmin(); machine endpoints are not gated.
 // ---------------------------------------------------------------------
 require_once __DIR__ . '/auth.php';
-$role = currentAdmin() ? 'admin' : 'client';
-
-/** True when the visitor is the signed-in admin (session-based). */
+if (isset($pdo) && $pdo instanceof PDO) {
+    portalAccessGate($pdo, $client, $clientSlug, $askedClientSlug, static function (string $slug) use ($pdo) { return helpersLoadCompany($pdo, $slug); });
+}
+/** True when the visitor is the signed-in admin (session-based) — false on the client-facing pages of the client
+ *  the admin is "viewing as" (Manage → Clients → View as client), so they render exactly the client's view. */
 if (!function_exists('isAdmin')) {
     function isAdmin(): bool {
-        return function_exists('currentAdmin') && currentAdmin() !== null;
+        if (!function_exists('currentAdmin') || currentAdmin() === null) return false;
+        $as = adminViewAsSlug();
+        if ($as === '' || $as !== ($GLOBALS['clientSlug'] ?? '')) return true;
+        // Viewing as this client: only its client-facing pages / endpoints render the client seat; Manage and the
+        // other admin tools stay admin.
+        return !in_array(portalScriptName(basename((string)($_SERVER['SCRIPT_NAME'] ?? ''))), portalClientScripts(), true);
     }
 }
+$role = isAdmin() ? 'admin' : 'client';
 
 /** Shared escaper for partials. Pages keep their own page-local h(); this
  *  name is unique so nothing can collide. */
@@ -163,8 +188,7 @@ if (!function_exists('legacyAdminTarget')) {
         $msg   = isset($q['msg']) && is_string($q['msg']) && trim($q['msg']) !== '' ? trim($q['msg']) : null;
         $int   = static function (string $k) use ($q) { $v = is_scalar($q[$k] ?? null) ? (int)$q[$k] : 0; return $v > 0 ? $v : null; };
         $build = static function (string $page, array $extra) use ($slug) {
-            $extra = array_filter(($slug !== '' ? ['client' => $slug] : []) + $extra, static function ($v) { return $v !== null && $v !== ''; });
-            return pagePath($page) . ($extra ? '?' . http_build_query($extra) : '');
+            return portalUrl($page, ($slug !== '' ? ['client' => $slug] : []) + $extra);
         };
         if (!empty($q['upload'])) {   // an Upload sheet deep link keeps its destination
             $keep = ['upload' => '1'];
@@ -230,39 +254,35 @@ function clientQs() {
  *  admin.php's digest shutdown trigger uses. Cached per-request because SCRIPT_NAME never
  *  changes mid-flight. */
 function basePath() {
-    static $cached = null;
-    if ($cached !== null) return $cached;
-    $script = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
-    $dir = rtrim(str_replace('\\', '/', dirname($script)), '/');
-    if ($dir === '.' || $dir === '') $dir = '';
-    return $cached = $dir;
+    return portalBasePath();
 }
 
-/** URL style switch for clientUrl() / pagePath().
+/** URL style switch for pagePath() when clean links are off.
  *
  *  false (default) → explicit script URLs: '/portal/posts.php?client=hmf'. Works on
  *                    any Apache folder with or without an extension-less rewrite, so the
  *                    portal never depends on the host's .htaccess being in place.
- *  true            → pretty URLs: '/portal/posts?client=hmf'. Only flip this once the
- *                    server's .htaccess rewrite (name → name.php) is confirmed working.
- *  Home is the folder root ('/portal/') in both modes. Guarded so a config.php or a
- *  test harness can define it first. */
+ *  true            → extensionless URLs: '/portal/posts?client=hmf'.
+ *  Clean links (url-lib.php cleanUrlsOn(): Manage → Tools → Clean links installed, or config 'clean_urls')
+ *  supersede both: '/portal/hmf/posts'. Home is the folder root ('/portal/', '/portal/hmf/') in every mode.
+ *  Guarded so a config.php or a test harness can define it first. */
 if (!defined('CLEAN_URLS')) { define('CLEAN_URLS', false); }
 
-/** Root-rooted path for a page name honouring CLEAN_URLS:
- *    pagePath('posts') / pagePath('posts.php') → '/portal/posts.php' (or '/portal/posts')
+/** Root-rooted path for an unscoped page name (url-lib.php portalUrl()):
+ *    pagePath('posts') / pagePath('posts.php') → '/portal/posts.php' (or '/portal/posts' with clean links)
  *    pagePath('index') / pagePath('index.php') / pagePath('') → '/portal/'
- *  Paths with a directory component ('legacy/admin.php') are treated the same way. */
+ *    pagePath('manage') with clean links → '/portal/manage'
+ *  Paths with a directory component ('legacy/admin.php') keep their own form. */
 function pagePath($page) {
     $name = preg_replace('/\.php$/', '', (string)$page);
     if ($name === '' || $name === 'index') { return basePath() . '/'; }   // homepage = folder root
-    return basePath() . '/' . $name . (CLEAN_URLS ? '' : '.php');
+    if (strpos($name, '/') !== false) return basePath() . '/' . $name . (CLEAN_URLS ? '' : '.php');   // the clean-links block maps top-level names only
+    return portalUrl($name);
 }
 
-/** Build URL to a page preserving client scope and merging extras.
- *  Output is always root-rooted ('/posts.php?client=hmf', '/portal/posts.php?client=hmf'),
- *  so the same href works from any page in the app. The page name may be given with or
- *  without '.php' — see pagePath() / CLEAN_URLS for the emitted form. */
+/** Build URL to a page preserving client scope and merging extras (an extra 'client' replaces the scope;
+ *  null / '' extras are dropped). Always root-rooted and always through portalUrl(), so it prints the clean
+ *  form ('/portal/hmf/posts/12') when clean links are on and '/portal/posts.php?client=hmf&post=12' otherwise. */
 function clientUrl($page, $extra = []) {
     global $clientSlug;
     $qs = [];
@@ -270,7 +290,23 @@ function clientUrl($page, $extra = []) {
     foreach ($extra as $k => $v) {
         if ($v !== null && $v !== '') { $qs[$k] = $v; }
     }
-    return pagePath($page) . ($qs ? '?' . http_build_query($qs) : '');
+    return portalUrl((string)$page, $qs);
+}
+
+/** JSON for window.PortalUrls (layout-top.php): the folder, whether clean links are on, the scoped client, this
+ *  page's script + params, and the route map — static/js/app.js App.urls builds every link from it. */
+function portalUrlsConfig(): array {
+    global $clientSlug;
+    $routes = [];
+    foreach (portalRouteTable() as $r) $routes[] = [$r[0], $r[1], (object)($r[2] ?? []), (object)($r[3] ?? [])];
+    $cur = portalCurrentRequest();
+    return ['base' => basePath(), 'clean' => cleanUrlsOn(), 'ext' => (CLEAN_URLS || cleanUrlsOn()) ? '' : '.php',
+            'client' => (string)$clientSlug, 'script' => $cur['script'], 'params' => (object)$cur['params'], 'routes' => $routes,
+            'reserved' => portalReservedSegments()];
+}
+
+function portalUrlsScript(): string {
+    return '<script>window.PortalUrls = ' . json_encode(portalUrlsConfig(), JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n";
 }
 
 /**
@@ -900,21 +936,14 @@ if (!function_exists('postedClientSlug')) {
 }
 
 /** Tenant scoping for the client seat. Admin sessions always pass. A non-admin
- *  request passes only when the posted client slug resolves to $companyId
- *  (one companies lookup per request). Callers answer 403 on false. */
+ *  request passes only when its signed-in client session (client-auth-lib.php) belongs to
+ *  $companyId — never on a posted slug alone. Callers answer 403 on false. */
 if (!function_exists('clientOwnsCompany')) {
     function clientOwnsCompany(PDO $pdo, int $companyId): bool {
         if (function_exists('currentAdmin') && currentAdmin()) return true;
-        $slug = postedClientSlug();
-        if ($slug === '' || $companyId <= 0) return false;
-        try {
-            $st = $pdo->prepare("SELECT slug FROM companies WHERE id = ?");
-            $st->execute([$companyId]);
-            $have = $st->fetchColumn();
-        } catch (Throwable $e) {
-            return false;
-        }
-        return is_string($have) && $have !== '' && $have === $slug;
+        if ($companyId <= 0) return false;
+        $sess = currentClientSession($pdo);
+        return $sess !== null && (int)$sess['company_id'] === $companyId;
     }
 }
 

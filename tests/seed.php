@@ -26,6 +26,8 @@
  *               flow "Welcome" = W1 → W2 → W3
  *   pages       privacybee: 1 pending (url), 2 approved + live (url), 3 draft (url)
  *   tasks       kenda: 2
+ *   contacts    1 jane@kenda.example (Jane Kenda) · 2 ops@kenda.example · 3 pat@privacybee.example · 4 farm@hmf.example
+ *               (no sessions, tokens or rate-limit rows; clean links off — <app>/.htaccess removed)
  *   activity    a client approve / deny, an admin "created" row for draft post 6 (must never reach the client feed)
  */
 
@@ -95,7 +97,8 @@ $colors = [[30, 60, 110], [110, 40, 30], [30, 90, 50], [90, 60, 120], [120, 100,
 $pdo->exec("SET FOREIGN_KEY_CHECKS = 0");
 foreach (['activity_log', 'company_modules', 'tire_images', 'tire_series', 'tires', 'library_images', 'post_images',
           'post_categories', 'posts', 'emails', 'email_groups', 'email_group_map', 'email_flows', 'email_flow_steps',
-          'pages', 'page_files', 'tasks', 'companies'] as $t) {
+          'pages', 'page_files', 'tasks', 'companies',
+          'client_contacts', 'client_login_tokens', 'client_sessions', 'auth_attempts'] as $t) {
     $pdo->exec("TRUNCATE TABLE `{$t}`");
 }
 $pdo->exec("SET FOREIGN_KEY_CHECKS = 1");
@@ -104,6 +107,14 @@ $pdo->exec("INSERT INTO companies (id, name, slug, feature_label, logo_url, defa
     (1, 'Kenda Tires', 'kenda', 'Tires', '', '#Kenda #KendaTires', 'tires', 'automotive'),
     (2, 'Privacy Bee', 'privacybee', NULL, '', '#PrivacyBee', 'software', 'privacy'),
     (3, 'Hollow Mill Farm', 'hmf', NULL, '', '', '', '')");
+// Client contacts (sign-in): the test seat (tests/test-auth.php ?__role=client) signs in as the FIRST contact of a client.
+$pdo->exec("INSERT INTO client_contacts (id, company_id, email, name) VALUES
+    (1, 1, 'jane@kenda.example', 'Jane Kenda'),
+    (2, 1, 'ops@kenda.example', NULL),
+    (3, 2, 'pat@privacybee.example', 'Pat Bee'),
+    (4, 3, 'farm@hmf.example', NULL)");
+// Clean links start OFF in every suite (a suite that installs them writes <app>/.htaccess; the harness router emulates it).
+foreach (array_merge([$app . '/.htaccess'], glob($app . '/.htaccess.bak-*') ?: []) as $f) { if (is_file($f)) @unlink($f); }
 $mods = $pdo->query("SELECT slug, id FROM modules")->fetchAll(PDO::FETCH_KEY_PAIR);
 $cm = $pdo->prepare("INSERT INTO company_modules (company_id, module_id) VALUES (?, ?)");
 $cm->execute([1, $mods['tires']]);

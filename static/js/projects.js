@@ -32,7 +32,7 @@
   var App = window.App = window.App || {};
 
   var root = null;          // [data-projects]
-  var endpoint = 'task.php';
+  var endpoint = (window.App && App.urls) ? App.urls.abs('task.php') : 'task.php';
   var scoped = true;
   var can = { create: false, edit: false, toggle: false, delete: false };
   var currentRow = null;    // row shown in the detail sheet

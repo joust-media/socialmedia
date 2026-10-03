@@ -25,7 +25,7 @@
   var $  = function (sel, root) { return (root || document).querySelector(sel); };
   var $$ = function (sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); };
 
-  var ENDPOINT = cfg.endpoint || 'page-status.php';
+  var ENDPOINT = cfg.endpoint || (window.App && App.urls ? App.urls.abs('page-status.php') : 'page-status.php');
   var DESKTOP  = window.matchMedia ? window.matchMedia('(min-width: 1024px)') : { matches: false };
   var LABELS   = { draft: 'Draft', pending: 'To Review', approved: 'Approved', denied: 'Needs changes', live: 'Live' };
   var PILL     = { draft: 'neutral', pending: 'pending', approved: 'approved', denied: 'denied', live: 'scheduled' };
@@ -247,6 +247,8 @@
 
   /* history: ?page=ID ⇄ sheet */
   function urlWithPage(id) {
+    // App.urls: /portal/<client>/pages/ID with clean links (the id lives in the path), ?page=ID otherwise.
+    if (App.urls) return App.urls.withParams({ page: id || null });
     var u = new URL(window.location.href);
     if (id) u.searchParams.set('page', id); else u.searchParams.delete('page');
     return u.pathname + u.search + u.hash;
@@ -581,7 +583,7 @@
    */
   function repairMedia(art, btn) {
     var line = btn.closest('[data-server-check]');
-    var endpoint = (line && line.getAttribute('data-repair-endpoint')) || 'page-upload.php';
+    var endpoint = (line && line.getAttribute('data-repair-endpoint')) || (window.App && App.urls ? App.urls.abs('page-upload.php') : 'page-upload.php');
     btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = 'Repairing…';
     return App.post(endpoint, { action: 'repair_media', page_id: art.getAttribute('data-id'), actor: App.actor }).then(function (res) {
       btn.disabled = false; btn.removeAttribute('aria-busy'); btn.textContent = 'Repair';
@@ -607,7 +609,7 @@
    */
   function extractInline(art, btn) {
     var line = btn.closest('[data-server-check]');
-    var endpoint = (line && line.getAttribute('data-repair-endpoint')) || 'page-upload.php';
+    var endpoint = (line && line.getAttribute('data-repair-endpoint')) || (window.App && App.urls ? App.urls.abs('page-upload.php') : 'page-upload.php');
     var id = art.getAttribute('data-id');
     btn.disabled = true; btn.setAttribute('aria-busy', 'true'); btn.textContent = 'Extracting…';
     return App.post(endpoint, { action: 'extract_inline', page_id: id, actor: App.actor }).then(function (res) {
@@ -847,7 +849,7 @@
   PageFiles.prototype.probe = function () {
     if (this.infoP) return this.infoP;
     var self = this;
-    this.infoP = (this.chunk ? this.chunk.probe(this.fc.endpoint || 'page-upload.php') : Promise.resolve(null)).then(function (info) { self.info = info; return info; }, function () { return null; });
+    this.infoP = (this.chunk ? this.chunk.probe(this.fc.endpoint || (window.App && App.urls ? App.urls.abs('page-upload.php') : 'page-upload.php')) : Promise.resolve(null)).then(function (info) { self.info = info; return info; }, function () { return null; });
     return this.infoP;
   };
   /** The size cap for a file: from the probe (video / text / asset) when chunking works, else the single-request 10 MB. */
@@ -936,7 +938,7 @@
   };
   /** Chunked path (chunk-upload.js): init → pieces with progress / retry → finish; the ledger entry survives a reload. */
   PageFiles.prototype.sendChunked = function (job, info) {
-    var self = this, item = job.item, file = job.file, endpoint = this.fc.endpoint || 'page-upload.php';
+    var self = this, item = job.item, file = job.file, endpoint = this.fc.endpoint || (window.App && App.urls ? App.urls.abs('page-upload.php') : 'page-upload.php');
     var fill = $('[data-upload-fill]', item), status = $('[data-upload-status]', item), cancel = $('[data-page-cancel]', item);
     var client = this.fc.client || (document.body.dataset.client || '');
     var fields = { client: client, page_id: this.fc.pageId, subfolder: job.sub || '', batch: this.batch, actor: App.actor || 'admin' };
@@ -1021,7 +1023,7 @@
       self.settle();
     };
     xhr.onerror = function () { self.failJob(job, 'Network error — try again.'); self.settle(); };
-    xhr.open('POST', this.fc.endpoint || 'page-upload.php');
+    xhr.open('POST', this.fc.endpoint || (window.App && App.urls ? App.urls.abs('page-upload.php') : 'page-upload.php'));
     xhr.setRequestHeader('Accept', 'application/json');
     xhr.send(fd);
   };
@@ -1065,7 +1067,7 @@
     var self = this;
     if (!window.confirm('Delete ' + name + ' from this page?')) return;
     if (btn) btn.disabled = true;
-    App.post(this.fc.endpoint || 'page-upload.php', { action: 'delete_file', page_id: this.fc.pageId, name: name, client: this.fc.client }).then(function (res) {
+    App.post(this.fc.endpoint || (window.App && App.urls ? App.urls.abs('page-upload.php') : 'page-upload.php'), { action: 'delete_file', page_id: this.fc.pageId, name: name, client: this.fc.client }).then(function (res) {
       if (!res.ok) { if (btn) btn.disabled = false; toast(res.error || 'Could not delete', 'error'); return; }
       var li = self.rowFor(name); if (li) li.remove();
       if (res.data && res.data.page) self.setCount(res.data.page.file_count);
@@ -1075,7 +1077,7 @@
   PageFiles.prototype.setEntry = function (name, btn) {
     var self = this;
     if (btn) btn.disabled = true;
-    App.post(this.fc.endpoint || 'page-upload.php', { action: 'set_entry', page_id: this.fc.pageId, name: name, client: this.fc.client }).then(function (res) {
+    App.post(this.fc.endpoint || (window.App && App.urls ? App.urls.abs('page-upload.php') : 'page-upload.php'), { action: 'set_entry', page_id: this.fc.pageId, name: name, client: this.fc.client }).then(function (res) {
       if (btn) btn.disabled = false;
       if (!res.ok) { toast(res.error || 'Could not set the entry file', 'error'); return; }
       self.markEntry(name);

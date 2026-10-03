@@ -82,7 +82,7 @@
   function Export(root) {
     var self = this, xc = cfg.export || {};
     this.root = root; this.xc = xc;
-    this.endpoint = root.dataset.endpoint || xc.endpoint || 'export.php';
+    this.endpoint = root.dataset.endpoint || xc.endpoint || (window.App && App.urls ? App.urls.abs('export.php') : 'export.php');
     this.zipOn = root.dataset.zip !== '0' && xc.zip !== false;
     this.tires = xc.tires || [];
     this.tireSel = $('[data-export-tire]', root); this.seriesSel = $('[data-export-series]', root);
@@ -484,7 +484,7 @@
   document.addEventListener('click', function (e) {
     var btn = e.target.closest('[data-pages-repair]');
     if (!btn || btn.disabled) return;
-    var endpoint = btn.getAttribute('data-endpoint') || 'page-upload.php';
+    var endpoint = btn.getAttribute('data-endpoint') || (window.App && App.urls ? App.urls.abs('page-upload.php') : 'page-upload.php');
     btn.disabled = true; btn.setAttribute('aria-busy', 'true');
     App.post(endpoint, { action: 'repair_media', actor: App.actor }).then(function (res) {
       btn.disabled = false; btn.removeAttribute('aria-busy');

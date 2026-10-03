@@ -77,9 +77,7 @@ function redirectHere($extra = [], $msg = null) {
         'module' => $module['slug'],
     ], $extra);
     if ($msg !== null) { $qs['msg'] = $msg; }
-    header('Location: add-feature.php?' . http_build_query(array_filter(
-        $qs, fn($v) => $v !== null && $v !== ''
-    )));
+    header('Location: ' . portalUrl('add-feature', $qs));   // root-rooted (clean links: /portal/<client>/tires/<id>/edit)
     exit;
 }
 
@@ -299,7 +297,7 @@ $val_item_name = $isEdit ? $editItem['name'] : '';
 function selfUrl($extra = []) {
     global $client, $module;
     $qs = array_merge(['client' => $client['slug'], 'module' => $module['slug']], $extra);
-    return 'add-feature.php?' . http_build_query(array_filter($qs, fn($v) => $v !== null && $v !== ''));
+    return portalUrl('add-feature', $qs);
 }
 
 // Inline behaviour (status chips, Replace, Remove, category chips) — printed after </main> by layout-bottom.php.

@@ -22,7 +22,7 @@
   var $  = function (sel, root) { return (root || document).querySelector(sel); };
   var $$ = function (sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); };
 
-  var ENDPOINT = cfg.endpoint || 'email-status.php';
+  var ENDPOINT = cfg.endpoint || (window.App && App.urls ? App.urls.abs('email-status.php') : 'email-status.php');
   var DESKTOP  = window.matchMedia ? window.matchMedia('(min-width: 1024px)') : { matches: false };
   var LABELS   = { draft: 'Draft', pending: 'To Review', approved: 'Approved', denied: 'Needs changes', live: 'Live' };
   var PILL     = { draft: 'neutral', pending: 'pending', approved: 'approved', denied: 'denied', live: 'scheduled' };
@@ -244,6 +244,8 @@
 
   /* history: ?email=ID ⇄ sheet */
   function urlWithEmail(id) {
+    // App.urls: /portal/<client>/emails/ID with clean links (the id lives in the path), ?email=ID otherwise.
+    if (App.urls) return App.urls.withParams({ email: id || null });
     var u = new URL(window.location.href);
     if (id) u.searchParams.set('email', id); else u.searchParams.delete('email');
     return u.pathname + u.search + u.hash;

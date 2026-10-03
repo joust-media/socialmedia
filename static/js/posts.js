@@ -30,7 +30,7 @@
   var $  = function (sel, root) { return (root || document).querySelector(sel); };
   var $$ = function (sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); };
 
-  var ENDPOINT = cfg.endpoint || 'status.php';
+  var ENDPOINT = cfg.endpoint || (window.App && App.urls ? App.urls.abs('status.php') : 'status.php');
   var DESKTOP  = window.matchMedia ? window.matchMedia('(min-width: 1024px)') : { matches: false };
   var LABELS   = { draft: 'Draft', pending: 'To Review', approved: 'Approved', denied: 'Needs changes', scheduled: 'Scheduled' };
 
@@ -296,6 +296,8 @@
 
   /* history: ?post=ID ⇄ sheet */
   function urlWithPost(id) {
+    // App.urls: /portal/<client>/posts/ID with clean links (the id lives in the path), ?post=ID otherwise.
+    if (App.urls) return App.urls.withParams({ post: id || null });
     var u = new URL(window.location.href);
     if (id) u.searchParams.set('post', id); else u.searchParams.delete('post');
     return u.pathname + u.search + u.hash;

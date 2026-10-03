@@ -229,3 +229,7 @@
   .activity-disclosure-chevron { transition: none; }
   .activity-comments li { animation: ui-fade-in var(--dur-fast) linear both; }
 }
+
+/* Client Home: "Signed in as … · Sign out" under Appearance (phones have no sidebar footer). */
+.home-signout { margin: 4px 16px 24px; text-align: center; }
+.home-signout a { color: var(--accent); text-decoration: none; }

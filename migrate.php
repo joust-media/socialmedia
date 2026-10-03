@@ -1363,6 +1363,120 @@ try {
 } catch (Exception $e) {
     $errors[] = $e->getMessage();
 }
+
+// 40–43. Client sign-in (client-auth-lib.php): per-client contact emails, one-time magic links, 30-day sessions,
+//        and the rate-limit ledger. A separate block so steps 36–39 (notifications) can sit above it untouched.
+if (!$errors) {
+    try {
+        // 40. client_contacts — the per-client list of addresses that may sign in (Manage → Clients → Contacts).
+        //     link_epoch: bumped by "Sign out everywhere" to void that contact's emailed deep links.
+        if (!tableExists($pdo, 'client_contacts')) {
+            $pdo->exec("
+                CREATE TABLE client_contacts (
+                    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                    company_id INT UNSIGNED NOT NULL,
+                    email VARCHAR(190) NOT NULL,
+                    name VARCHAR(120) NULL DEFAULT NULL,
+                    link_epoch INT UNSIGNED NOT NULL DEFAULT 0,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    last_login_at DATETIME NULL DEFAULT NULL,
+                    UNIQUE KEY uq_company_email (company_id, email),
+                    KEY ix_email (email)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $steps[] = "✓ Created `client_contacts` table.";
+        } else {
+            $steps[] = "• `client_contacts` already exists — skipped.";
+        }
+        // 40b. Carry over any client email column an older install may have (companies.email / emails / contact_email /
+        //      client_email / notify_email — comma, semicolon or space separated). INSERT IGNORE: re-runs add nothing.
+        $legacyCols = $pdo->query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME = 'companies' AND COLUMN_NAME IN ('email', 'emails', 'contact_email', 'client_email', 'notify_email')")->fetchAll(PDO::FETCH_COLUMN);
+        $carried = 0;
+        foreach ($legacyCols as $col) {
+            $ins = $pdo->prepare("INSERT IGNORE INTO client_contacts (company_id, email) VALUES (?, ?)");
+            foreach ($pdo->query("SELECT id, `{$col}` AS v FROM companies WHERE `{$col}` IS NOT NULL AND `{$col}` <> ''")->fetchAll() as $row) {
+                foreach (preg_split('/[\s,;]+/', strtolower((string)$row['v'])) as $addr) {
+                    if ($addr !== '' && strlen($addr) <= 190 && filter_var($addr, FILTER_VALIDATE_EMAIL)) {
+                        $ins->execute([(int)$row['id'], $addr]);
+                        $carried += $ins->rowCount();
+                    }
+                }
+            }
+        }
+        if ($legacyCols) {
+            $steps[] = $carried > 0 ? "✓ Copied {$carried} client email address(es) into `client_contacts`." : "• Client email columns already copied — skipped.";
+        }
+
+        // 41. client_login_tokens — one-time sign-in links (sha256 of the token only), 15-minute expiry, single use.
+        if (!tableExists($pdo, 'client_login_tokens')) {
+            $pdo->exec("
+                CREATE TABLE client_login_tokens (
+                    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                    contact_id INT UNSIGNED NOT NULL,
+                    token_hash CHAR(64) NOT NULL,
+                    return_path VARCHAR(1000) NULL DEFAULT NULL,
+                    ip VARCHAR(45) NULL DEFAULT NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    expires_at DATETIME NOT NULL,
+                    used_at DATETIME NULL DEFAULT NULL,
+                    UNIQUE KEY uq_token (token_hash),
+                    KEY ix_contact (contact_id),
+                    KEY ix_expires (expires_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $steps[] = "✓ Created `client_login_tokens` table.";
+        } else {
+            $steps[] = "• `client_login_tokens` already exists — skipped.";
+        }
+
+        // 42. client_sessions — a signed-in browser (cookie jsm_client = random token, sha256 stored), 30 days,
+        //     revocable from Manage → Clients.
+        if (!tableExists($pdo, 'client_sessions')) {
+            $pdo->exec("
+                CREATE TABLE client_sessions (
+                    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                    contact_id INT UNSIGNED NOT NULL,
+                    company_id INT UNSIGNED NOT NULL,
+                    token_hash CHAR(64) NOT NULL,
+                    via VARCHAR(12) NOT NULL DEFAULT 'magic',
+                    ip VARCHAR(45) NULL DEFAULT NULL,
+                    user_agent VARCHAR(255) NULL DEFAULT NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    last_seen_at DATETIME NULL DEFAULT NULL,
+                    expires_at DATETIME NOT NULL,
+                    revoked_at DATETIME NULL DEFAULT NULL,
+                    revoked_by VARCHAR(20) NULL DEFAULT NULL,
+                    UNIQUE KEY uq_token (token_hash),
+                    KEY ix_company_live (company_id, revoked_at, expires_at),
+                    KEY ix_contact (contact_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $steps[] = "✓ Created `client_sessions` table.";
+        } else {
+            $steps[] = "• `client_sessions` already exists — skipped.";
+        }
+
+        // 43. auth_attempts — sign-in request ledger for the per-address and per-IP rate limits (hashed keys).
+        if (!tableExists($pdo, 'auth_attempts')) {
+            $pdo->exec("
+                CREATE TABLE auth_attempts (
+                    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                    scope VARCHAR(10) NOT NULL,
+                    key_hash CHAR(64) NOT NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    KEY ix_scope_key (scope, key_hash, created_at),
+                    KEY ix_created (created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $steps[] = "✓ Created `auth_attempts` table.";
+        } else {
+            $steps[] = "• `auth_attempts` already exists — skipped.";
+        }
+    } catch (Exception $e) {
+        $errors[] = $e->getMessage();
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">

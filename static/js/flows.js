@@ -21,7 +21,7 @@
   var cfg = window.FlowsConfig || {};
   var $  = function (sel, root) { return (root || document).querySelector(sel); };
   var $$ = function (sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); };
-  var ENDPOINT = cfg.endpoint || 'flow-status.php';
+  var ENDPOINT = cfg.endpoint || (window.App && App.urls ? App.urls.abs('flow-status.php') : 'flow-status.php');
   var LS_COMPACT = 'flows:compact';
 
   function toast(msg, kind) { if (App.toast) App.toast(msg, { kind: kind }); }
@@ -409,7 +409,7 @@
     if (!window.confirm('Delete the flow "' + name + '"? The emails themselves are kept.')) return;
     post({ action: 'delete_flow' }).then(function (res) {
       if (!res.ok) { toast(res.error || 'Could not delete', 'error'); return; }
-      window.location.href = cfg.flowsUrl || 'flows.php';
+      window.location.href = cfg.flowsUrl || (window.App && App.urls ? App.urls.abs('flows.php') : 'flows.php');
     });
   }
 
