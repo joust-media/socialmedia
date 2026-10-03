@@ -235,3 +235,5 @@
 /* Client Home: "Signed in as … · Sign out" under Appearance (phones have no sidebar footer). */
 .home-signout { margin: 4px 16px 24px; text-align: center; }
 .home-signout a { color: var(--accent); text-decoration: none; }
+.home-email-settings { margin: -16px 16px 24px; text-align: center; }
+.home-email-settings a { color: var(--accent); text-decoration: none; }

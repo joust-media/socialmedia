@@ -12,8 +12,13 @@
  *   2. escalation check (notifyEscalate): unanswered client messages ≥ T1 → Slack thread re-ping + DM to the owner;
  *      ≥ T2 → email to the owner (thresholds: Manage → Notifications);
  *   3. delivers every due outbox row (retries with backoff 1 / 5 / 15 / 60 / 180 min, then 'failed');
- *   4. the Morning summary, once a day at / after the configured hour (America/New_York).
- * Replies JSON {ok, reclaimed, escalated: {t1, t2}, delivered: {sent, failed, retry, skipped}, summary}.
+ *   4. the Morning summary, once a day at / after the configured hour (America/New_York);
+ *   inbound email replies (gmail-lib.php gmailPollInbound: replies to lance+ai@ → portal comments / the unmatched list;
+ *   "not_connected" until Google is connected), client email batches (client-notify-lib.php clientEmailRun: Ready
+ *   for review 15 min after the last change, Joust replied 10 min, Live & scheduled once a day) and the Monday owner
+ *   report (tracking-lib.php) run before step 3, so what they queue goes out in the same run.
+ *   ?summary=now / ?live=now / ?weekly=now force those steps (testing).
+ * Replies JSON {ok, reclaimed, escalated: {t1, t2}, inbound, client_emails, weekly, delivered: {sent, failed, retry, skipped}, summary}.
  */
 
 header('Content-Type: application/json');
@@ -46,6 +51,12 @@ try {
     notifyMetaSet($pdo, 'notify_cron_last', date('Y-m-d H:i:s'));
     $out['reclaimed'] = notifyReclaimStale($pdo);
     $out['escalated'] = notifyEscalate($pdo);
+    $out['inbound'] = function_exists('gmailPollInbound') ? gmailPollInbound($pdo) : ['status' => 'unavailable'];
+    $out['client_emails'] = function_exists('clientEmailRun') ? clientEmailRun($pdo, ['live_now' => ($_GET['live'] ?? '') === 'now']) : [];
+    $out['weekly'] = 'not due';
+    if (function_exists('trackingWeeklyDue') && (trackingWeeklyDue($pdo) || (($_GET['weekly'] ?? '') === 'now'))) {
+        $out['weekly'] = trackingWeeklyQueue($pdo) > 0 ? 'queued' : 'no recipient';
+    }
     $out['delivered'] = notifyPump($pdo, ['limit' => 60, 'budget' => 20.0]);
     $out['summary'] = 'not due';
     if (notifySummaryDue($pdo) || (($_GET['summary'] ?? '') === 'now')) {

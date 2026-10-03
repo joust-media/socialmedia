@@ -27,13 +27,17 @@ SLACK_STUB_LOG="$PORTAL_TEST_ROOT/slack-calls.jsonl"
 SLACK_STUB_PID="$PORTAL_TEST_ROOT/slack-stub.pid"
 MAIL_SINK_DIR="$PORTAL_TEST_ROOT/mail"
 MAIL_DIR="$MAIL_SINK_DIR"
+# Fake Google (tests/google-stub.php: OAuth consent + token, Gmail API) on its own php -S; state in GOOGLE_STUB_DIR.
+GOOGLE_STUB_PORT="${GOOGLE_STUB_PORT:-$((PORTAL_TEST_PORT + 2000))}"
+GOOGLE_STUB_DIR="$PORTAL_TEST_ROOT/google"
+GOOGLE_STUB_PID="$PORTAL_TEST_ROOT/google-stub.pid"
 export TESTS_DIR REPO_DIR PORTAL_TEST_ROOT SITE_DIR APP_DIR MEDIA_DIR SESSION_DIR SERVER_LOG SERVER_PID \
        PORTAL_TEST_PORT PORTAL_TEST_DB PORTAL_TEST_DB_USER PORTAL_TEST_DB_PASS PORTAL_TEST_BASE \
-       PORTAL_TEST_STUB_PORT SLACK_STUB_LOG SLACK_STUB_PID MAIL_SINK_DIR MAIL_DIR
+       PORTAL_TEST_STUB_PORT SLACK_STUB_LOG SLACK_STUB_PID MAIL_SINK_DIR MAIL_DIR GOOGLE_STUB_PORT GOOGLE_STUB_DIR GOOGLE_STUB_PID
 
 # Copy the repo into the test site (code only: never .git, tests/, the real config.php or uploads/).
 sync_site() {
-    mkdir -p "$APP_DIR" "$MEDIA_DIR" "$SESSION_DIR" "$MAIL_SINK_DIR"
+    mkdir -p "$APP_DIR" "$MEDIA_DIR" "$SESSION_DIR" "$MAIL_SINK_DIR" "$GOOGLE_STUB_DIR"
     rsync -a --delete \
         --exclude '.git' --exclude '.github' --exclude 'tests' --exclude 'uploads' \
         --exclude 'config.php' --exclude 'error_log' --exclude 'node_modules' \
@@ -63,6 +67,13 @@ return [
     'slack_signing_secret'  => 'test-signing-secret-abcdef',
     'slack_api_base'        => 'http://127.0.0.1:${PORTAL_TEST_STUB_PORT}/api',
     'client_link_secret'    => 'portal-test-client-link-secret-0123456789',
+    // Google (gmail-lib.php) against tests/google-stub.php. mail_transport stays 'sink' (explicit), so every email
+    // still lands in MAIL_SINK_DIR; the Gmail transport itself is exercised by tests/smoke/20-email.php.
+    'google_client_id'      => 'test-google-client-id',
+    'google_client_secret'  => 'test-google-secret',
+    'google_token_key'      => 'test-google-token-key-0123456789abcdef',
+    'google_api_base'       => 'http://127.0.0.1:${GOOGLE_STUB_PORT}',
+    'google_oauth_base'     => 'http://127.0.0.1:${GOOGLE_STUB_PORT}',
 ];
 PHP
 }

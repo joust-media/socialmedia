@@ -245,7 +245,8 @@ if (!function_exists('renderPostDetail')) {
         $menuDecide = $canApprove || $canDeny || $isDenied;
         $clientName = trim((string)($post['company_name'] ?? '')) !== '' ? (string)$post['company_name'] : 'the client';
 
-        $out  = '<article class="pd" data-post-detail="' . $id . '" data-id="' . $id . '" data-status="' . pdEsc($status) . '" data-posted="' . ($posted ? '1' : '0') . '" data-past="' . ($datePast ? '1' : '0') . '" data-endpoint="' . pdEsc($endpoint) . '">';
+        $out  = '<article class="pd" data-post-detail="' . $id . '" data-id="' . $id . '" data-status="' . pdEsc($status) . '" data-posted="' . ($posted ? '1' : '0') . '" data-past="' . ($datePast ? '1' : '0') . '" data-endpoint="' . pdEsc($endpoint) . '"'
+              . (function_exists('trackingSeenAttr') ? trackingSeenAttr('post', $id) : '') . '>';
         $out .= '<div class="pd-body" data-pd-body>';
 
         // ---- Top meta row: type · status pill · (admin) ⋯ menu -------------
@@ -272,6 +273,7 @@ if (!function_exists('renderPostDetail')) {
                   . '<button type="button" role="menuitem" data-decide="denied" data-state="menu-deny"' . ($canDeny ? '' : ' hidden') . '>Needs changes…</button>'
                   . '<button type="button" role="menuitem" data-decide="pending" data-state="menu-resubmit"' . ($isDenied ? '' : ' hidden') . '>Send for review</button>'
                   . '</div>'
+                  . (function_exists('trackingResolveMenuItem') ? trackingResolveMenuItem('post', $id) : '')   // the thread is answered (Inbox)
                   . '<div class="pd-menu-sep" role="separator"></div>'
                   . '<button type="button" role="menuitem" class="is-destructive" data-delete-post>Delete</button>'
                   . '</div></div>';

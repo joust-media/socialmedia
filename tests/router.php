@@ -24,7 +24,7 @@ if ($__cleanLinks && strpos($__uri, '/portal/') === 0 && !file_exists($__file)) 
     if (preg_match('#^([A-Za-z0-9_-]+)$#', $__rel, $__m) && is_file($__root . '/portal/' . $__m[1] . '.php')) {
         $__uri  = '/portal/' . $__m[1] . '.php';
         $__file = $__root . $__uri;
-    } elseif (preg_match('#^(slack-events|slack-actions|notify-cron|notify-thumb|notify-pump|drive-ingest|mail-inbound)/?$#', $__rel)) {
+    } elseif (preg_match('#^(slack-events|slack-actions|notify-cron|notify-thumb|notify-pump|drive-ingest|mail-inbound|google-oauth|email-prefs)/?$#', $__rel)) {
         http_response_code(404);
         echo 'Not found';
         return true;

@@ -89,6 +89,7 @@ if (!$client) {
     $headExtra  = '<link rel="stylesheet" href="' . h(staticUrl('css/home.css')) . '">' . "\n";
     include __DIR__ . '/partials/layout-top.php';
     ?>
+    <?= $isAdmin && function_exists('trackingInboxHomeHtml') ? trackingInboxHomeHtml($pdo, null) : '' ?>
     <section class="home-section home-chooser">
       <?= insetListOpen('Choose a client') ?>
       <?php foreach ($companies as $co): ?>
@@ -586,6 +587,7 @@ if (!$isAdmin) echo $reviewSectionHtml;   // the client's Home opens with it; th
 <?php // --- 3. Admin: Joust links (server-side gated) — above Activity; "+ New" in the nav bar is the one
       //     place to create (New post / Upload / New tire …), so no duplicate New post / Upload tiles here ---- ?>
 <?php if ($isAdmin): ?>
+<?= function_exists('trackingInboxHomeHtml') ? trackingInboxHomeHtml($pdo, $client) : '' ?>
 <section class="home-section" aria-labelledby="home-manage" data-home-admin>
   <h2 class="ui-list-header" id="home-manage">Joust</h2>
   <?= insetListOpen('', ['class' => 'home-manage', 'attrs' => ['data-home-manage' => '1']]) ?>
@@ -613,6 +615,7 @@ if (!$isAdmin) echo $reviewSectionHtml;   // the client's Home opens with it; th
 </section>
 <?php if ($homeSess = currentClientSession($pdo)): // phones: the sidebar's sign-out line is not there ?>
 <p class="home-signout t-footnote text-secondary" data-client-signout>Signed in as <?= h($homeSess['email']) ?> · <a href="<?= h(pagePath('sign-out')) ?>">Sign out</a></p>
+<?php if (function_exists('clientEmailReady') && clientEmailReady($pdo)): ?><p class="home-email-settings t-footnote text-secondary"><span><a href="<?= h(notifyMachineUrl('email-prefs')) ?>" data-email-settings-home>Email settings</a></span></p><?php endif; ?>
 <?php endif; ?>
 <?php endif; ?>
 

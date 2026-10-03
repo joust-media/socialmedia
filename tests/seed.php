@@ -29,6 +29,8 @@
  *   contacts    1 jane@kenda.example (Jane Kenda) · 2 ops@kenda.example · 3 pat@privacybee.example · 4 farm@hmf.example
  *               (no sessions, tokens or rate-limit rows; clean links off — <app>/.htaccess removed)
  *   activity    a client approve / deny, an admin "created" row for draft post 6 (must never reach the client feed)
+ *   email       Google disconnected, no inbound mail / client email queue / seen markers; every client email switch on,
+ *               every contact subscribed; the fake Google (tests/google-stub.php) emptied
  */
 
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
@@ -247,7 +249,20 @@ if ($has('notify_outbox')) {
               ['notify_summary_hour', '8'], ['notify_summary_last', date('Y-m-d')], ['notify_cron_last', ''], ['digest_open_last', '1970-01-01 00:00:00'],
               ['digest_lock_until', '1970-01-01 00:00:00']] as $kv) $meta->execute($kv);
 }
+// ---- email through Google, client emails, tracking (migrate.php 45–49) ------------------------------------------------
+// Google starts disconnected; no inbound mail, no queued client emails, nothing "seen"; every client switch on (the
+// notify_clients defaults) and every contact subscribed (contacts were re-created above). The fake Google's state
+// (tests/google-stub.php: mailbox, sent mail, call log, failure mode) is wiped.
+if ($has('google_account')) {
+    foreach (['google_account', 'email_inbound', 'notify_email_refs', 'client_email_queue', 'thread_seen'] as $t) $pdo->exec("TRUNCATE TABLE `{$t}`");
+    $meta = $pdo->prepare("INSERT INTO meta (k, v) VALUES (?, ?) ON DUPLICATE KEY UPDATE v = VALUES(v)");
+    foreach ([['unread_since', '0'], ['client_live_last', date('Y-m-d')], ['notify_weekly_last', date('Y-m-d')], ['client_email_since', date('Y-m-d H:i:s', time() - 86400)]] as $kv) $meta->execute($kv);
+}
 $root = dirname($app, 2);
+$gdir = $root . '/google';
+if (is_dir($gdir)) {
+    foreach (array_merge(glob($gdir . '/*') ?: [], glob($gdir . '/sent/*') ?: []) as $f) { if (is_file($f)) @unlink($f); }
+}
 @unlink($root . '/slack-calls.jsonl');
 @unlink($root . '/slack-calls.jsonl.fail');
 if (!empty($cfg['mail_sink_dir']) && is_dir($cfg['mail_sink_dir'])) {

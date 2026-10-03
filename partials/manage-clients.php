@@ -179,6 +179,37 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
         </ul>
       </div>
 
+      <?php // ---- Client emails (client-notify-lib.php): which kinds this client's contacts get ----
+        $scEmailReady = function_exists('clientEmailReady') && clientEmailReady($pdo);
+        $scSwitches = $scEmailReady ? clientEmailClientSwitches($pdo, (int)$scEdit['id']) : [];
+      ?>
+      <div class="studio-client-emails" data-client-emails id="client-emails">
+        <div class="studio-label">Client emails <span class="text-tertiary">to the contacts below</span></div>
+        <?php if (!$scEmailReady): ?>
+          <p class="text-tertiary">Run migrate.php first (steps 45–49 add client emails).</p>
+        <?php else: ?>
+        <ul class="studio-client-modlist" role="list">
+          <?php foreach (clientEmailKinds() as $scKey => [$scLabel, , $scHelp]): $scOn = !empty($scSwitches[$scKey]); ?>
+            <li class="studio-client-mod-row" data-client-email-kind="<?= esc($scKey) ?>">
+              <div class="studio-client-mod-body">
+                <div class="ui-row-title"><?= esc($scLabel) ?></div>
+                <div class="ui-row-subtitle"><?= esc($scHelp) ?></div>
+              </div>
+              <?= statusPill($scOn ? 'approved' : 'neutral', false, ['label' => $scOn ? 'On' : 'Off', 'attrs' => ['data-client-email-state' => $scOn ? 'on' : 'off']]) ?>
+              <form method="POST" action="<?= esc($scEndpoint) ?>" class="studio-inline-form" data-client-form>
+                <input type="hidden" name="action" value="email_toggle">
+                <input type="hidden" name="id" value="<?= (int)$scEdit['id'] ?>">
+                <input type="hidden" name="kind" value="<?= esc($scKey) ?>">
+                <input type="hidden" name="to" value="<?= $scOn ? 0 : 1 ?>">
+                <button type="submit" class="ui-btn ui-btn--sm <?= $scOn ? 'ui-btn--gray' : 'ui-btn--tinted' ?>"><?= $scOn ? 'Turn off' : 'Turn on' ?></button>
+              </form>
+            </li>
+          <?php endforeach; ?>
+        </ul>
+        <p class="studio-help">Each contact can also turn kinds off (or unsubscribe) from the link at the bottom of every email. Previews: Manage → Notifications → Client emails.</p>
+        <?php endif; ?>
+      </div>
+
       <?php // ---- Sign-in: contacts + signed-in devices (client-auth-lib.php) ----
         $scAuthReady = clientAuthReady($pdo);
         $scContacts  = $scAuthReady ? clientContacts($pdo, (int)$scEdit['id']) : [];
@@ -324,4 +355,4 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
     <?php endforeach; ?>
   <?= insetListClose('Logos come from the uploaded file, else the logo that ships with the portal, else the initial. Clients cannot be deleted here.') ?>
 </div>
-<?php unset($scAuthReady, $scContacts, $scSessions, $scP, $scS, $scSettingCols, $scCompanies, $scModules, $scModuleIds, $scEnabled, $scEditId, $scEdit, $scEndpoint, $scListUrl, $scErrFlash, $scFmt, $scC, $scM, $scR, $scSt, $scErr, $scKey, $scLabel, $scOn, $scHas); ?>
+<?php unset($scEmailReady, $scSwitches, $scHelp, $scAuthReady, $scContacts, $scSessions, $scP, $scS, $scSettingCols, $scCompanies, $scModules, $scModuleIds, $scEnabled, $scEditId, $scEdit, $scEndpoint, $scListUrl, $scErrFlash, $scFmt, $scC, $scM, $scR, $scSt, $scErr, $scKey, $scLabel, $scOn, $scHas); ?>

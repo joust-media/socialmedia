@@ -440,6 +440,7 @@ include __DIR__ . '/partials/layout-top.php';
     <?php if ($admin): ?><?= assignSelectButtonHtml('email') ?><?php endif; ?>
   </h2>
   <ul class="ui-list posts-list emails-list" role="list" data-emails-items>
+    <?php if (function_exists('trackingUnreadPreload')) trackingUnreadPreload($pdo, 'email', array_column($emails, 'id')); ?>
     <?php foreach ($emails as $email):
         $eid      = (int)$email['id'];
         $key      = emailStatusKey($email);
@@ -479,7 +480,7 @@ include __DIR__ . '/partials/layout-top.php';
           </div>
           <div class="ui-row-body">
             <div class="pl-top">
-              <div class="ui-row-title pl-title"><?= h($rowTitle) ?></div>
+              <div class="ui-row-title pl-title"><?= function_exists('trackingUnreadDot') ? trackingUnreadDot('email', $eid) : '' ?><?= h($rowTitle) ?></div>
               <span class="pl-when">
                 <?php if ($isPast): ?><span class="pl-past" title="This email's send date has passed">Past</span><?php endif; ?>
                 <?php if ($dateLbl !== ''): ?><time class="pl-date" datetime="<?= h(date('Y-m-d', $ts)) ?>"><?= h($dateLbl) ?></time><?php endif; ?>

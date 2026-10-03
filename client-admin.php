@@ -384,6 +384,22 @@ switch ($action) {
         caReply(200, ['message' => $label . ($on ? ' enabled' : ' disabled') . ' for ' . $co['name'] . '.', 'id' => $id, 'module' => $module, 'enabled' => $on === 1], $scope, $id);
     }
 
+    // ---- client emails: which kinds this client's contacts get (client-notify-lib.php) ---------------
+    case 'email_toggle': {
+        $co = caCompany($pdo, $id);
+        if (!$co) caReply(404, ['error' => 'Unknown client.'], $scope);
+        if (!function_exists('clientEmailReady') || !clientEmailReady($pdo)) caReply(409, ['error' => 'Run migrate.php first (steps 45–49).'], $scope, $id);
+        $kind = strtolower(trim((string)($_POST['kind'] ?? '')));
+        $col = clientEmailKinds()[$kind][1] ?? null;
+        if ($col === null) caReply(400, ['error' => 'Unknown email kind.'], $scope, $id);
+        $on = (int)($_POST['to'] ?? -1);
+        if ($on !== 0 && $on !== 1) caReply(400, ['error' => 'to must be 1 or 0.'], $scope, $id);
+        $pdo->prepare("INSERT IGNORE INTO notify_clients (company_id) VALUES (?)")->execute([$id]);
+        $pdo->prepare("UPDATE notify_clients SET {$col} = ? WHERE company_id = ?")->execute([$on, $id]);
+        $label = clientEmailKinds()[$kind][0];
+        caReply(200, ['message' => '“' . $label . '” emails ' . ($on ? 'on' : 'off') . ' for ' . $co['name'] . '.', 'id' => $id, 'kind' => $kind, 'enabled' => $on === 1], $scope, $id);
+    }
+
     // ---- settings (default hashtags, AI Builder profile) -------------------------
     case 'settings': {
         $co = caCompany($pdo, $id);

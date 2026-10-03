@@ -37,6 +37,10 @@ echo assignBootHtml($client ?? null);
 ?>
 <?= appScript() ?>
 <script src="<?= esc(staticUrl('js/video.js')) ?>" defer></script>
+<?php // Unread markers + "Mark resolved" (tracking-lib.php → thread-action.php): for the admin and signed-in client contacts
+if (function_exists('trackingViewer') && isset($pdo) && $pdo instanceof PDO && trackingViewer($pdo)): ?>
+<script src="<?= esc(staticUrl('js/tracking.js')) ?>" data-endpoint="<?= esc(basePath() . '/thread-action.php') ?>" defer></script>
+<?php endif; ?>
 
 </body>
 </html>

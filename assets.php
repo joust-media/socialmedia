@@ -196,6 +196,8 @@ if (($_GET['partial'] ?? '') === 'comments') {
         exit;
     }
     $rows = $hasLog ? commentThread($pdo, $cKind === 'tire' ? 'tire_image' : 'library_image', $cId) : [];
+    // the Comments panel is open = the thread was read (tracking-lib.php unread markers)
+    if (function_exists('trackingViewer') && ($tv = trackingViewer($pdo))) trackingMarkSeen($pdo, $tv, $cKind === 'tire' ? 'tire_image' : 'library_image', $cId);
     $rows = array_values(array_filter($rows, static function ($r) { return trim((string)($r['detail'] ?? '')) !== ''; }));
     echo json_encode([
         'ok'    => true,

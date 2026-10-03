@@ -2455,3 +2455,10 @@ require_once __DIR__ . '/preview-ui.php';
 // by the portal endpoints and the Slack buttons. Function definitions only.
 require_once __DIR__ . '/transitions-lib.php';
 require_once __DIR__ . '/notify-lib.php';
+
+// Email through Google (Gmail API transport, OAuth, inbound replies), client notification emails (Ready for review /
+// Joust replied / Live, preferences, unsubscribe) and tracking (Joust Inbox, unread markers, weekly report).
+// Function definitions only.
+require_once __DIR__ . '/gmail-lib.php';
+require_once __DIR__ . '/client-notify-lib.php';
+require_once __DIR__ . '/tracking-lib.php';

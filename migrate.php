@@ -1650,6 +1650,171 @@ if (!$errors) {
         $errors[] = $e->getMessage();
     }
 }
+
+// 45–49. Email through Google (gmail-lib.php), client notification emails (client-notify-lib.php) and tracking
+//        (tracking-lib.php): Inbox, unread markers, weekly report. Every reader probes for its tables first.
+if (!$errors) {
+    try {
+        // 45. google_account — the ONE connected Google Workspace mailbox (lance@joustmedia.com): the OAuth refresh
+        //     token and the cached access token, both ENCRYPTED (gmail-lib.php googleEncrypt(): libsodium secretbox, or
+        //     AES-256-GCM, key derived from config google_token_key); never stored or shown in clear. Plus the health
+        //     line Manage → Notifications shows (last success / last error) and the "portal-processed" label id.
+        if (!tableExists($pdo, 'google_account')) {
+            $pdo->exec("
+                CREATE TABLE google_account (
+                    id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
+                    account_email VARCHAR(190) NOT NULL,
+                    refresh_token_enc TEXT NOT NULL,
+                    access_token_enc TEXT NULL DEFAULT NULL,
+                    access_expires_at DATETIME NULL DEFAULT NULL,
+                    scopes VARCHAR(500) NULL DEFAULT NULL,
+                    label_id VARCHAR(64) NULL DEFAULT NULL,
+                    connected_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    connected_by VARCHAR(190) NULL DEFAULT NULL,
+                    last_success_at DATETIME NULL DEFAULT NULL,
+                    last_error VARCHAR(500) NULL DEFAULT NULL,
+                    last_error_at DATETIME NULL DEFAULT NULL,
+                    last_poll_at DATETIME NULL DEFAULT NULL,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $steps[] = "✓ Created `google_account` table.";
+        } else {
+            $steps[] = "• `google_account` already exists — skipped.";
+        }
+
+        // 46. Inbound email replies: email_inbound (every Gmail message the cron looked at, deduped by Gmail id, with
+        //     what happened: posted / unmatched / dismissed / assigned / ignored), notify_email_refs (every Message-ID
+        //     the portal sent to a client → its client, item and contact: replies are matched on In-Reply-To /
+        //     References), notify_threads.email_token (the short signed [J#…] subject token per item, the fallback match).
+        if (!tableExists($pdo, 'email_inbound')) {
+            $pdo->exec("
+                CREATE TABLE email_inbound (
+                    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                    gmail_id VARCHAR(64) NOT NULL,
+                    thread_id VARCHAR(64) NULL DEFAULT NULL,
+                    message_id VARCHAR(190) NULL DEFAULT NULL,
+                    from_email VARCHAR(190) NOT NULL DEFAULT '',
+                    from_name VARCHAR(190) NULL DEFAULT NULL,
+                    subject VARCHAR(500) NULL DEFAULT NULL,
+                    body_text MEDIUMTEXT NULL,
+                    received_at DATETIME NULL DEFAULT NULL,
+                    has_attachments TINYINT(1) NOT NULL DEFAULT 0,
+                    status VARCHAR(20) NOT NULL DEFAULT 'unmatched',
+                    reason VARCHAR(255) NULL DEFAULT NULL,
+                    company_id INT UNSIGNED NULL DEFAULT NULL,
+                    entity_type VARCHAR(20) NULL DEFAULT NULL,
+                    entity_id INT UNSIGNED NULL DEFAULT NULL,
+                    contact_id INT UNSIGNED NULL DEFAULT NULL,
+                    author_user_id INT UNSIGNED NULL DEFAULT NULL,
+                    activity_id INT UNSIGNED NULL DEFAULT NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    handled_at DATETIME NULL DEFAULT NULL,
+                    UNIQUE KEY uq_gmail (gmail_id),
+                    KEY ix_status (status, created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $steps[] = "✓ Created `email_inbound` table.";
+        } else {
+            $steps[] = "• `email_inbound` already exists — skipped.";
+        }
+        if (!tableExists($pdo, 'notify_email_refs')) {
+            $pdo->exec("
+                CREATE TABLE notify_email_refs (
+                    message_id VARCHAR(190) NOT NULL PRIMARY KEY,
+                    company_id INT UNSIGNED NOT NULL,
+                    entity_type VARCHAR(20) NULL DEFAULT NULL,
+                    entity_id INT UNSIGNED NULL DEFAULT NULL,
+                    contact_id INT UNSIGNED NULL DEFAULT NULL,
+                    kind VARCHAR(20) NOT NULL DEFAULT '',
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    KEY ix_entity (entity_type, entity_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $steps[] = "✓ Created `notify_email_refs` table.";
+        } else {
+            $steps[] = "• `notify_email_refs` already exists — skipped.";
+        }
+        if (!columnExists($pdo, 'notify_threads', 'email_token')) {
+            $pdo->exec("ALTER TABLE notify_threads ADD COLUMN email_token VARCHAR(12) NULL DEFAULT NULL, ADD UNIQUE KEY uq_email_token (email_token)");
+            $steps[] = "✓ Added notify_threads.email_token (the [J#…] subject token).";
+        } else {
+            $steps[] = "• notify_threads.email_token already exists — skipped.";
+        }
+
+        // 47. Client email preferences: per contact (client_contacts.notify_prefs JSON {review, replies, live} — a
+        //     missing key = on; unsubscribed_at = the one-click "stop all"), and per client (notify_clients
+        //     email_review / email_replies / email_live — Manage → Clients, default on).
+        $ccAdd = [];
+        if (!columnExists($pdo, 'client_contacts', 'notify_prefs'))   $ccAdd[] = "ADD COLUMN notify_prefs VARCHAR(255) NULL DEFAULT NULL";
+        if (!columnExists($pdo, 'client_contacts', 'unsubscribed_at')) $ccAdd[] = "ADD COLUMN unsubscribed_at DATETIME NULL DEFAULT NULL";
+        if ($ccAdd) {
+            $pdo->exec("ALTER TABLE client_contacts " . implode(', ', $ccAdd));
+            $steps[] = "✓ Added client_contacts email preferences.";
+        } else {
+            $steps[] = "• client_contacts email preferences already exist — skipped.";
+        }
+        $ncAdd = [];
+        foreach (['email_review', 'email_replies', 'email_live'] as $col) {
+            if (!columnExists($pdo, 'notify_clients', $col)) $ncAdd[] = "ADD COLUMN {$col} TINYINT(1) NOT NULL DEFAULT 1";
+        }
+        if ($ncAdd) {
+            $pdo->exec("ALTER TABLE notify_clients " . implode(', ', $ncAdd));
+            $steps[] = "✓ Added per-client email switches.";
+        } else {
+            $steps[] = "• Per-client email switches already exist — skipped.";
+        }
+
+        // 48. thread_seen — unread markers: per viewer (an admin user or a client contact) and item, the newest
+        //     activity id they have seen. meta unread_since = the floor (nothing older shows as unread).
+        if (!tableExists($pdo, 'thread_seen')) {
+            $pdo->exec("
+                CREATE TABLE thread_seen (
+                    viewer_type VARCHAR(10) NOT NULL,
+                    viewer_id INT UNSIGNED NOT NULL,
+                    entity_type VARCHAR(20) NOT NULL,
+                    entity_id INT UNSIGNED NOT NULL,
+                    last_seen_id INT UNSIGNED NOT NULL DEFAULT 0,
+                    seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (viewer_type, viewer_id, entity_type, entity_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $steps[] = "✓ Created `thread_seen` table.";
+        } else {
+            $steps[] = "• `thread_seen` already exists — skipped.";
+        }
+        $metaIns = $pdo->prepare("INSERT IGNORE INTO meta (k, v) VALUES (?, ?)");
+        $metaIns->execute(['unread_since', (string)(int)$pdo->query("SELECT COALESCE(MAX(id), 0) FROM activity_log")->fetchColumn()]);
+        $metaIns->execute(['client_email_since', date('Y-m-d H:i:s')]);
+        if ($metaIns->rowCount() > 0) $steps[] = "✓ Seeded the unread / client email floors.";
+
+        // 49. client_email_queue — what the client emails batch: one row per event (an item sent for review, a
+        //     visible Joust reply, an item gone live / scheduled). The cron sends one email per client and kind once
+        //     the batch window has passed (review 15 min after the last change, replies 10 min, live once a day) and
+        //     stamps batch_key on the rows it covered.
+        if (!tableExists($pdo, 'client_email_queue')) {
+            $pdo->exec("
+                CREATE TABLE client_email_queue (
+                    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                    company_id INT UNSIGNED NOT NULL,
+                    kind VARCHAR(10) NOT NULL,
+                    entity_type VARCHAR(20) NOT NULL,
+                    entity_id INT UNSIGNED NOT NULL,
+                    activity_id INT UNSIGNED NULL DEFAULT NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    batch_key VARCHAR(60) NULL DEFAULT NULL,
+                    batched_at DATETIME NULL DEFAULT NULL,
+                    KEY ix_open (batch_key, company_id, kind, created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $steps[] = "✓ Created `client_email_queue` table.";
+        } else {
+            $steps[] = "• `client_email_queue` already exists — skipped.";
+        }
+    } catch (Exception $e) {
+        $errors[] = $e->getMessage();
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">

@@ -674,3 +674,11 @@ html:not(:has(.ui-tabbar)) .ui-toast { bottom: calc(24px + env(safe-area-inset-b
   box-shadow: inset 0 -0.5px 0 var(--separator);
   backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
 }
+
+/* Unread marker (tracking-lib.php trackingUnreadDot; static/js/tracking.js removes it once the item is opened) */
+.ui-unread-dot {
+  display: inline-block; flex: none; width: 9px; height: 9px; margin-right: 7px; border-radius: 50%;
+  background: var(--accent); vertical-align: 0.08em;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.ui-tabbar-footer--links + .ui-tabbar-footer { margin-top: 0; padding-top: 2px; }

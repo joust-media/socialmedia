@@ -397,6 +397,7 @@ include __DIR__ . '/partials/layout-top.php';
     <?php if ($admin): ?><?= assignSelectButtonHtml('page') ?><?php endif; ?>
   </h2>
   <ul class="ui-list posts-list pages-list" role="list" data-pages-items>
+    <?php if (function_exists('trackingUnreadPreload')) trackingUnreadPreload($pdo, 'page', array_column($pages, 'id')); ?>
     <?php foreach ($pages as $page):
         $pid      = (int)$page['id'];
         $key      = pageStatusKey($page);
@@ -429,7 +430,7 @@ include __DIR__ . '/partials/layout-top.php';
           <div class="ui-row-leading pgl-tile pgl-tile--<?= h($key) ?>" aria-hidden="true"><?= icon('page') ?></div>
           <div class="ui-row-body">
             <div class="pl-top">
-              <div class="ui-row-title pl-title"><?= h($rowTitle) ?></div>
+              <div class="ui-row-title pl-title"><?= function_exists('trackingUnreadDot') ? trackingUnreadDot('page', $pid) : '' ?><?= h($rowTitle) ?></div>
               <span class="pl-when">
                 <?php if ($updated !== '' && relativeTime($updated) !== ''): ?><time class="pl-date" datetime="<?= h(date('Y-m-d', strtotime($updated) ?: time())) ?>" title="<?= h(absoluteTime($updated)) ?>"><?= h(relativeTime($updated)) ?></time><?php endif; ?>
               </span>

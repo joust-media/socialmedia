@@ -972,6 +972,8 @@ if (!function_exists('notifyOnActivity')) {
     function notifyOnActivity(PDO $pdo, int $activityId, array $row): void {
         try {
             if ($activityId <= 0 || !notifyReady($pdo)) return;
+            // Client emails (client-notify-lib.php): items sent for review, visible Joust replies, live / scheduled
+            if (function_exists('clientEmailOnActivity')) clientEmailOnActivity($pdo, $activityId, $row);
             $type = (string)$row['entity_type'];
             if (!in_array($type, notifyThreadTypes(), true)) return;
             $action = (string)$row['action'];
@@ -1373,6 +1375,10 @@ if (!function_exists('notifyDeliver')) {
             }
             case 'summary':
                 return notifyDeliverSummary($pdo, $p);
+            case 'client_email':   // client-notify-lib.php: Ready for review / Joust replied / Live & scheduled (rendered now, per recipient)
+                return function_exists('clientEmailDeliver') ? clientEmailDeliver($pdo, $p) : ['ok' => false, 'permanent' => true, 'error' => 'client emails are not available'];
+            case 'weekly':         // tracking-lib.php: the Monday owner report
+                return function_exists('trackingDeliverWeekly') ? trackingDeliverWeekly($pdo, $p) : ['ok' => false, 'permanent' => true, 'error' => 'weekly report is not available'];
             case 'sign_in':
             case 'email':
                 return notifyDeliverDirectEmail($pdo, $p);
@@ -1696,12 +1702,15 @@ if (!function_exists('notifyEmail')) {
      *   message_id (default generated '<…@notify_message_domain>'), in_reply_to, references (string|array),
      *   headers (extra 'Name' => 'value'), thread (['entity_type','entity_id','company_id'] — threads the mail on the
      *   item: the first message's id is stored in notify_threads.email_message_id and later ones reply to it).
-     * Transport = config mail_transport ('mail' default — 'sink' when only mail_sink_dir is set · Phase 3: 'gmail'),
+     * Transport = gmail-lib.php notifyMailTransport(): config mail_transport when set ('mail' | 'gmail' | 'sink'); blank =
+     * 'gmail' once Google is connected, else 'mail' ('sink' when only the harness's mail_sink_dir is set),
      * dispatched to notifyMailSend_<transport>(array $msg): ['ok' => bool, 'error' => string, 'provider_id' => ?string].
      * Returns ['ok', 'error', 'message_id', 'transport'].
      */
     function notifyEmail(array $msg): array {
-        $transport = preg_replace('/[^a-z0-9_]/', '', strtolower(notifyCfg('mail_transport', notifyCfg('mail_sink_dir') !== '' ? 'sink' : 'mail')));
+        // gmail-lib.php notifyMailTransport(): config mail_transport when set, else Gmail once Google is connected, else mail()
+        $transport = function_exists('notifyMailTransport') ? notifyMailTransport()
+            : preg_replace('/[^a-z0-9_]/', '', strtolower(notifyCfg('mail_transport', notifyCfg('mail_sink_dir') !== '' ? 'sink' : 'mail')));
         $fn = 'notifyMailSend_' . $transport;
         $msg['to'] = notifyEmailClean((string)($msg['to'] ?? ''));
         if ($msg['to'] === '' || !filter_var(preg_replace('/^.*<([^>]+)>$/', '$1', $msg['to']), FILTER_VALIDATE_EMAIL)) {
@@ -1813,6 +1822,7 @@ if (!function_exists('notifyMailSend_sink')) {
      *  send fail (delivery-failure tests). Refuses to run without the directory. */
     function notifyMailSend_sink(array $msg): array {
         $dir = notifyCfg('mail_sink_dir');
+        if (function_exists('notifyMimeBuild')) $msg['mime'] = notifyMimeBuild($msg);   // the exact message the Gmail transport would send
         if ($dir === '' || !is_dir($dir)) return ['ok' => false, 'error' => 'sink: mail_sink_dir missing'];
         if (is_file($dir . '/FAIL')) return ['ok' => false, 'error' => 'sink: forced failure'];
         $file = $dir . '/' . date('Ymd-His') . '-' . bin2hex(random_bytes(4)) . '.json';
@@ -1953,7 +1963,7 @@ if (!function_exists('notifyKindLabel')) {
         static $map = [
             'item_event' => 'Client activity', 'parent_update' => 'Status update', 'escalate_thread' => 'Reminder in thread',
             'escalate_dm' => 'Reminder DM', 'escalate_email' => 'Reminder email', 'summary' => 'Morning summary', 'slack_test' => 'Test message',
-            'sign_in' => 'Sign-in link', 'email' => 'Email',
+            'sign_in' => 'Sign-in link', 'email' => 'Email', 'client_email' => 'Client email', 'weekly' => 'Weekly report',
         ];
         return $map[$kind] ?? ucfirst(str_replace('_', ' ', $kind));
     }

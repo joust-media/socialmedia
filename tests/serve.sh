@@ -16,9 +16,14 @@ stop() {
         kill "$(cat "$SLACK_STUB_PID")" 2>/dev/null || true
         rm -f "$SLACK_STUB_PID"
     fi
+    if [ -f "$GOOGLE_STUB_PID" ]; then
+        kill "$(cat "$GOOGLE_STUB_PID")" 2>/dev/null || true
+        rm -f "$GOOGLE_STUB_PID"
+    fi
     # anything else still bound to the ports from an earlier run
     pkill -f "php .*-S 127.0.0.1:${PORTAL_TEST_PORT}" 2>/dev/null || true
     pkill -f "php .*-S 127.0.0.1:${PORTAL_TEST_STUB_PORT}" 2>/dev/null || true
+    pkill -f "php .*-S 127.0.0.1:${GOOGLE_STUB_PORT}" 2>/dev/null || true
 }
 
 case "${1:-start}" in
@@ -45,6 +50,10 @@ echo $! > "$SERVER_PID"
 SLACK_STUB_LOG="$SLACK_STUB_LOG" setsid nohup php -d display_errors=0 -d log_errors=1 -d error_log="$SERVER_LOG" \
     -S "127.0.0.1:${PORTAL_TEST_STUB_PORT}" "$TESTS_DIR/slack-stub.php" >/dev/null 2>&1 &
 echo $! > "$SLACK_STUB_PID"
+# the fake Google (tests/google-stub.php: OAuth + Gmail API) — its own server too
+GOOGLE_STUB_DIR="$GOOGLE_STUB_DIR" setsid nohup php -d display_errors=0 -d log_errors=1 -d error_log="$SERVER_LOG" \
+    -S "127.0.0.1:${GOOGLE_STUB_PORT}" "$TESTS_DIR/google-stub.php" >/dev/null 2>&1 &
+echo $! > "$GOOGLE_STUB_PID"
 for _ in $(seq 1 50); do
     if curl -fsS -o /dev/null "${PORTAL_TEST_BASE}/login.php" 2>/dev/null; then
         echo "serve: ${PORTAL_TEST_BASE}/ (pid $(cat "$SERVER_PID"))"

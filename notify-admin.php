@@ -10,6 +10,11 @@
  *   action=test          company_id (0 = DM to me) → a test message, delivered now; reply carries the result
  *   action=retry         id → that outbox row back in the queue and delivered now
  *   action=retry_all     every failed row back in the queue (delivered now, up to 20)
+ *   action=google_disconnect   revoke + forget the connected Google account (email falls back to PHP mail())
+ *   action=google_poll         check the inbound address for replies now (gmail-lib.php gmailPollInbound)
+ *   action=email_test          a test email to me (notify_to / my address) through the current transport, now
+ *   action=inbound_assign      id, entity (<type>:<id>) → post an unmatched email reply on that item
+ *   action=inbound_dismiss     id → drop an unmatched email reply (nothing is posted)
  * Replies {ok, message} / {ok:false, error}. Secrets are never echoed.
  */
 require __DIR__ . '/db.php';
@@ -147,6 +152,42 @@ try {
             if (!$ids) notifyAdminOut(200, ['ok' => true, 'message' => 'Nothing failed']);
             $st = notifyPump($pdo, ['ids' => $ids, 'limit' => 20, 'budget' => 15.0]);
             notifyAdminOut(200, ['ok' => true, 'message' => $st['sent'] . ' sent · ' . ($st['retry'] + $st['failed']) . ' still failing', 'stats' => $st]);
+        }
+        case 'google_disconnect': {
+            if (!googleReady($pdo)) notifyAdminFail(409, 'Run migrate.php first (steps 45–49).');
+            if (!googleDisconnect($pdo)) notifyAdminFail(409, 'Google is not connected.');
+            notifyAdminOut(200, ['ok' => true, 'message' => 'Disconnected — email goes out with PHP mail() until you connect again']);
+        }
+        case 'google_poll': {
+            if (!googleConnected($pdo)) notifyAdminFail(409, 'Connect Google first.');
+            $r = gmailPollInbound($pdo);
+            if ($r['status'] !== 'ok') notifyAdminFail(502, 'Gmail: ' . ($r['error'] ?: $r['status']));
+            notifyAdminOut(200, ['ok' => true, 'message' => $r['seen'] . ' new · ' . $r['posted'] . ' posted · ' . $r['unmatched'] . ' unmatched', 'stats' => $r]);
+        }
+        case 'email_test': {
+            $me = adminUserById($pdo, (int)currentAdminUserId($pdo));
+            $to = notifyCfg('notify_to', $me ? (string)$me['email'] : '');
+            if ($to === '') notifyAdminFail(409, 'Set notify_to in config.php first.');
+            $t = function_exists('notifyMailTransport') ? notifyMailTransport() : 'mail';
+            $r = notifySendEmailNow($pdo, ['to' => $to, 'subject' => 'Test from the Joust portal (' . $t . ')',
+                'text' => "This is a test email from " . notifyBaseUrl() . " sent with the '{$t}' transport.\nReplies to client emails go to " . inboundAddress() . '.',
+                'html' => '<p style="font:15px/1.5 -apple-system,Segoe UI,sans-serif">This is a test email from <strong>' . htmlspecialchars(notifyBaseUrl()) . '</strong>, sent with the <strong>' . htmlspecialchars($t) . '</strong> transport.</p>']);
+            if (!$r['ok']) notifyAdminFail(502, 'Not sent: ' . ($r['error'] ?: 'unknown error') . ($r['queued'] ? ' (queued for a retry)' : ''));
+            notifyAdminOut(200, ['ok' => true, 'message' => 'Test email sent to ' . $to . ' (' . $t . ')']);
+        }
+        case 'inbound_assign': {
+            if (!googleReady($pdo)) notifyAdminFail(409, 'Run migrate.php first (steps 45–49).');
+            if (!preg_match('/^([a-z_]{3,20}):([1-9][0-9]{0,9})$/', $str('entity'), $m)) notifyAdminFail(422, 'Pick the item this reply belongs to.');
+            $r = inboundAssign($pdo, $int('id'), $m[1], (int)$m[2]);
+            if (!$r['ok']) notifyAdminFail(409, $r['error']);
+            notifyAdminOut(200, ['ok' => true, 'message' => 'Posted on ' . $r['title']]);
+        }
+        case 'inbound_dismiss': {
+            if (!googleReady($pdo)) notifyAdminFail(409, 'Run migrate.php first (steps 45–49).');
+            $s = $pdo->prepare("UPDATE email_inbound SET status = 'dismissed', handled_at = NOW() WHERE id = ? AND status = 'unmatched'");
+            $s->execute([$int('id')]);
+            if ($s->rowCount() !== 1) notifyAdminFail(409, 'That reply was already handled.');
+            notifyAdminOut(200, ['ok' => true, 'message' => 'Dismissed']);
         }
     }
     notifyAdminFail(400, 'Unknown action');

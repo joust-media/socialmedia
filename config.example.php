@@ -22,7 +22,7 @@ return [
     // request's host (fine in the browser, but cron / Slack-triggered messages may then use the wrong host — set it).
     // Older name still accepted: portal_base_url.
     'portal_url' => '',          // e.g. 'https://joustmedia.com/portal' (staging: 'https://joustmedia.com/portal-staging')
-    // Machine endpoints (notify-thumb, notify-cron, slack-events, slack-actions) are linked WITHOUT '.php' because the
+    // Machine endpoints (notify-thumb, notify-cron, slack-events, slack-actions, google-oauth, email-prefs) are linked WITHOUT '.php' because the
     // live host 301-redirects 'x.php' to 'x' and Slack does not follow redirects. Set to '.php' only on a host with
     // no extension-less rewrite (the test harness does). Leave blank on the live server.
     'machine_url_ext' => '',
@@ -34,11 +34,12 @@ return [
     'clean_links_check_origin' => '',
 
     // ---- Client sign-in (client-auth-lib.php) -------------------------------------------------------------------
-    // HMAC key for the signed deep links in client emails (clientLink()). 32+ random characters; changing it voids
-    // every link already sent. Blank = derived from the database settings (works, but set it).
+    // HMAC key for the signed deep links in client emails (clientLink()), the [J#…] reply tokens and the email
+    // preferences links. 32+ random characters; changing it voids every link already sent. Blank = derived from the
+    // database settings (works, but set it).
     'client_link_secret' => '',
 
-    // ---- Email (sign-in links, Morning summary, reminder emails) — every email goes through notifyEmail() ------
+    // ---- Email (sign-in links, client emails, Morning summary, reminders) — every email goes through notifyEmail() --
     'notify_to'             => '',   // who gets the Morning summary (Lance), e.g. 'lance@joustmedia.com'
     // Sender of every portal email, client sign-in links included. A bare address ('lance@joustmedia.com') with the
     // display name below, or a full 'Name <address>'. Blank = lance@joustmedia.com. Must be SPF-authorized for this
@@ -49,10 +50,28 @@ return [
     'notify_message_domain' => '',   // right-hand side of generated Message-IDs, e.g. 'joustmedia.com'
     // Envelope sender for PHP mail() (-f). Blank = the From address. (old name: auth_mail_envelope)
     'notify_envelope'       => '',
-    // How email is sent: 'mail' = PHP mail() (default). Phase 3 adds 'gmail' (Gmail API). 'sink' is the test
-    // harness only: each message is written to mail_sink_dir as JSON and NOTHING is sent — never on the live server.
-    'mail_transport'        => 'mail',
+    // How email is sent. Leave BLANK (automatic): the Gmail API once Google is connected (Manage → Notifications →
+    // Connect Google), PHP mail() until then. 'mail' / 'gmail' force one (an override — 'mail' keeps PHP mail() even
+    // with Google connected). 'sink' is the test harness only: each message is written to mail_sink_dir as JSON and
+    // NOTHING is sent — never on the live server.
+    'mail_transport'        => '',
     'mail_sink_dir'         => '',   // test harness only (old name: mail_capture_dir); setting it alone also means 'sink'
+
+    // ---- Email through Google Workspace (gmail-lib.php; step by step: docs/google-setup.md) ----------------------
+    // The OAuth "Web application" client from Lance's Google Cloud project (consent screen: Internal). Redirect URI to
+    // register there: https://joustmedia.com/portal/google-oauth (staging: …/portal-staging/google-oauth).
+    'google_client_id'     => '',   // …apps.googleusercontent.com
+    'google_client_secret' => '',   // GOCSPX-…
+    // The secret the stored Google token is encrypted with (libsodium / AES-256-GCM, key = HKDF of this). 32+ random
+    // characters: php -r 'echo bin2hex(random_bytes(24));'. Changing it means pressing Connect Google again.
+    'google_token_key'     => '',
+    // Where clients' email replies go (the Reply-To of client emails; the cron reads it through Gmail and posts the
+    // replies on the right item). Blank = lance+ai@joustmedia.com (Workspace delivers +ai mail to lance@ by default).
+    'inbound_address'      => '',
+    // API bases. Leave blank (= https://gmail.googleapis.com and https://oauth2.googleapis.com). Only the test harness
+    // points them at a local stub (tests/google-stub.php).
+    'google_api_base'      => '',
+    'google_oauth_base'    => '',
 
     // ---- Notifications: cron ----------------------------------------------------------------------------------
     // Secret for the cPanel cron URL (…/portal/notify-cron?token=…) and for digest.php?source=cron. 16+ random

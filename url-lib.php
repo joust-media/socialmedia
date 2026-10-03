@@ -17,7 +17,7 @@
  * block is only kept when a self-request proved it works, so a folder without mod_rewrite keeps the query-string
  * URLs, and every old link keeps working either way (old URLs 301 to the clean form once the block is in).
  *
- * Machine endpoints (drive-ingest, slack-events, slack-actions, notify-cron, notify-thumb, …) are never captured by the router:
+ * Machine endpoints (drive-ingest, slack-events, slack-actions, notify-cron, notify-thumb, google-oauth, email-prefs, …) are never captured by the router:
  * an extensionless name whose .php exists is served by that file first, and the reserved names never reach route.php.
  *
  * Function definitions only (function_exists-guarded); no output, no DB.
@@ -169,7 +169,7 @@ if (!function_exists('portalReservedSegments')) {
                 'docs', 'tests', 'api', 'route', 'admin', 'new', 'view-as',
                 // machine endpoints (portalMachineEndpoints()): never a client, never routed
                 'drive-ingest', 'slack-events', 'slack-actions', 'notify-cron', 'notify-thumb', 'notify-pump', 'mail-inbound',
-                '__clean-links-check'];
+                'google-oauth', 'email-prefs', '__clean-links-check'];
         foreach (glob(__DIR__ . '/*.php') ?: [] as $f) $out[] = basename($f, '.php');
         foreach (glob(__DIR__ . '/*', GLOB_ONLYDIR) ?: [] as $d) $out[] = basename($d);
         $out = array_values(array_unique(array_map('strtolower', $out)));
@@ -180,7 +180,8 @@ if (!function_exists('portalReservedSegments')) {
 if (!function_exists('portalMachineEndpoints')) {
     /** Extensionless machine endpoints the router must never capture (the .htaccess passes them straight through). */
     function portalMachineEndpoints(): array {
-        return ['drive-ingest', 'slack-events', 'slack-actions', 'notify-cron', 'notify-thumb', 'notify-pump', 'mail-inbound'];
+        return ['drive-ingest', 'slack-events', 'slack-actions', 'notify-cron', 'notify-thumb', 'notify-pump', 'mail-inbound',
+                'google-oauth', 'email-prefs'];   // Google's OAuth redirect; the emailed preferences / one-click unsubscribe link
     }
 }
 

@@ -99,7 +99,8 @@ if (!function_exists('renderPageDetail')) {
         $approvedLine = 'Approved' . ($approvedAt ? ' ' . date('M j', $approvedAt) : '') . ' · Joust will make it live';
 
         $out  = '<article class="pd pg" data-page-detail="' . $id . '" data-id="' . $id . '" data-status="' . pgEsc($status) . '" data-live="' . ($live ? '1' : '0') . '"'
-              . ' data-key="' . pgEsc($key) . '" data-slug="' . pgEsc($slug) . '" data-source="' . pgEsc($source) . '" data-endpoint="' . pgEsc($endpoint) . '">';
+              . ' data-key="' . pgEsc($key) . '" data-slug="' . pgEsc($slug) . '" data-source="' . pgEsc($source) . '" data-endpoint="' . pgEsc($endpoint) . '"'
+              . (function_exists('trackingSeenAttr') ? trackingSeenAttr('page', $id) : '') . '>';
         $out .= '<div class="pd-body" data-pd-body>';
 
         // ---- Top meta row: "PAGE · slug" · status pill · source badge · edited ------------
@@ -112,7 +113,7 @@ if (!function_exists('renderPageDetail')) {
         }
         // Admin ⋯: Move to client… (assign.js sheet → assign.php; the folder moves with it)
         if ($admin && function_exists('assignMenuHtml')) {
-            $out .= assignMenuHtml('page', $id, $label, ['admin' => true, 'extra' => reviewMenuItemsHtml('page', $key, $editUrl, 'data-delete-page')]);
+            $out .= assignMenuHtml('page', $id, $label, ['admin' => true, 'extra' => (function_exists('trackingResolveMenuItem') ? trackingResolveMenuItem('page', $id) : '') . reviewMenuItemsHtml('page', $key, $editUrl, 'data-delete-page')]);
         }
         $out .= '</div>';
 

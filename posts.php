@@ -541,7 +541,7 @@ $renderRow = function (array $post, int $rowIndex = 0) use ($client, $segment, $
           </div>
           <div class="ui-row-body">
             <div class="pl-top">
-              <div class="ui-row-title pl-title"><?= h($title) ?></div>
+              <div class="ui-row-title pl-title"><?= function_exists('trackingUnreadDot') ? trackingUnreadDot('post', $pid) : '' ?><?= h($title) ?></div>
               <span class="pl-when">
                 <?php if ($isPast): ?><span class="pl-past" title="This post's scheduled date has passed">Past</span><?php endif; ?>
                 <time class="pl-date" datetime="<?= h($ts ? date('Y-m-d\TH:i', $ts) : '') ?>"><?= h($dateLbl) ?></time>
@@ -619,6 +619,7 @@ if ($isListPartial) {
     header('Cache-Control: no-store');
     header('X-Posts-Total: ' . $listTotal);
     header('X-Posts-Next: ' . ($listNext > 0 ? (string)$listNext : ''));
+    if (function_exists('trackingUnreadPreload')) trackingUnreadPreload($pdo, 'post', array_column($posts, 'id'));
     foreach ($posts as $i => $post) { echo $renderRow($post, $listOffset + $i); }
     exit;
 }
@@ -644,6 +645,7 @@ include __DIR__ . '/partials/layout-top.php';
     <?= h($monthLabel) ?> · <span data-segment-count><?= (int)$counts[$segment] ?></span> <?= h(strtolower($segments[$segment])) ?>
   </h2>
   <ul class="ui-list posts-list" role="list" data-posts-items>
+    <?php if (function_exists('trackingUnreadPreload')) trackingUnreadPreload($pdo, 'post', array_column($posts, 'id')); ?>
     <?php foreach ($posts as $i => $post) { echo $renderRow($post, $i); } ?>
   </ul>
   <?php if ($listNext > 0): $remaining = $listTotal - $listNext; ?>
