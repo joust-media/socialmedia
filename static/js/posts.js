@@ -755,7 +755,7 @@
     var wrap = document.createElement('div');
     wrap.className = 'pd-viewer';
     wrap.setAttribute('role', 'dialog'); wrap.setAttribute('aria-modal', 'true'); wrap.setAttribute('aria-label', 'Full screen image');
-    wrap.innerHTML = '<img src="' + escapeHtml(src) + '" alt="' + escapeHtml(alt || '') + '">'
+    wrap.innerHTML = '<img src="' + escapeHtml(src) + '" alt="' + escapeHtml(alt || '') + '" decoding="async">'
                    + (original && original !== src ? '<a class="pd-viewer-original" href="' + escapeHtml(original) + '" target="_blank" rel="noopener">View original</a>' : '')
                    + '<button type="button" class="pd-viewer-close" aria-label="Close"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>';
     document.body.appendChild(wrap);

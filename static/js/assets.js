@@ -687,10 +687,13 @@
       if (chunk && uploadEp) {
         var lastPct = -1;
         chunk.upload({
-          endpoint: uploadEp, file: file,
+          endpoint: uploadEp, file: file, previews: true,   // an image: the browser makes its sm / lg previews (no server decode)
           fields: { purpose: 'replace', replace_kind: 'tire', replace_id: item.id, client: (document.body && document.body.dataset.client) || '', actor: App.actor || 'admin' },
           onProgress: function (p) { if (p.pct !== lastPct && (p.count > 1 || p.pct === 100)) { lastPct = p.pct; toast('Replacing… ' + p.text); } }
-        }).promise.then(function (data) { done({ ok: true, data: data, status: 200 }); }).catch(fail);
+        }).promise.then(function (data) {
+          if (data.previews && data.previews.ok) { data.thumb = data.previews.thumb || data.thumb; data.large = data.previews.large || data.large; }
+          done({ ok: true, data: data, status: 200 });
+        }).catch(fail);
         return;
       }
       var fd = new FormData();

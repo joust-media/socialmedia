@@ -68,7 +68,7 @@ if (!function_exists('mediaHtaccessMarker')) {
 
 if (!function_exists('mediaHtaccessText')) {
     /**
-     * The one .htaccess text written into media/tires/ and media/pages/: no directory listing,
+     * The one .htaccess text written into media/tires/, media/pages/, media/library/ and uploads/: no directory listing,
      * PHP engine off (only when PHP is an Apache module), no handler / type / output filter for
      * script-ish extensions, script-ish names refused outright, nosniff. Every line except
      * `Options -Indexes` sits inside an <IfModule> guard so a host without that module (or with

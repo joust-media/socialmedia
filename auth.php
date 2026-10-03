@@ -23,6 +23,7 @@ const ADMIN_PASSWORD_HASH = '$2y$12$hQcjKIHKxzi7IXBJewJ9TuNHO89QsG.SF3eXHTCFzcDl
  *  and JSON calls get no Set-Cookie and no session file. */
 function startAdminSession() {
     if (session_status() === PHP_SESSION_ACTIVE) return;
+    if (!empty($GLOBALS['__jsmSessionReleased'])) return;   // released for slow work (preview-lib.php previewReleaseSession): $_SESSION stays readable
     if (empty($_COOKIE['jsm_admin']) && !defined('JSM_FORCE_SESSION')) return;
     $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
            || (($_SERVER['SERVER_PORT'] ?? '') === '443')

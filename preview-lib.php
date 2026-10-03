@@ -8,16 +8,22 @@
  *   <dir>/.thumbs/.htaccess          1-year immutable caching (media-lib.php mediaThumbsHtaccessText())
  *
  * <fmt> is webp when GD can encode WebP, else jpg (previewFormat()). Aspect kept, never upscaled: an
- * original whose long edge already fits the target gets no derivative and is used as-is for that size.
+ * original whose long edge already fits the target gets no derivative and is used as-is for that size —
+ * except `lg` of an original over previewHeavyBytes() (500 KB), re-encoded at its own size (previewTargetDims).
  * EXIF orientation is applied (JPEG), alpha kept for webp / flattened onto white for jpg, GIF = first frame.
  * SVG and videos never get derivatives. The old 640 px tire thumbs (<dir>/.thumbs/<stem>.jpg) are still
  * read as the `sm` fallback until regenerated.
  *
  * Render sites call previewUrl() / previewImgAttrs() with the URL they already print; the result is the
  * static derivative (?v=<mtime of the original>) when it is fresh, else the lazy endpoint preview.php
- * (HMAC-signed path, generates once, 302s to the original when it cannot) — so nothing ever breaks.
- * Stores call previewAfterStore(); deletes call previewDelete(); Studio → Export → Image previews backfills
- * (preview-job.php). Contract: scratchpad previews-design.md; README "Image previews".
+ * (HMAC-signed path; makes every stale size in one decode, then 302s to that same static URL; a placeholder
+ * while the host's generator slots are busy or when it cannot — never the original).
+ * Host protection: at most previewSlotCount() (2) decodes at a time across the host (flock slots in
+ * uploads/.locks), the admin session released first (previewReleaseSession), X-Preview-Gd counts decodes.
+ * Uploads: the browser sends its own sm / lg WebP (previewClientTicket / previewClientAccept) so the server
+ * decodes nothing; otherwise stores call previewAfterStore(). Deletes call previewDelete(); a parked file's
+ * previews follow it (previewMoveDerivatives); Manage → Tools → Image previews backfills (preview-job.php).
+ * README "Image previews".
  *
  * Loaded from helpers.php (end of the chain), tire-series-lib.php and preview.php. Every function is
  * function_exists-guarded; no DB, no output, no work at load.
@@ -308,13 +314,39 @@ if (!function_exists('previewScaleDims')) {
     }
 }
 
+if (!function_exists('previewHeavyBytes')) {
+    /** An original at or under 1600 px that is bigger than this still gets an `lg` (same size, re-encoded). */
+    function previewHeavyBytes(): int { return 500 * 1024; }
+}
+
+if (!function_exists('previewTargetDims')) {
+    /**
+     * [w, h] of the derivative this size needs, or null when none is needed: fitted within the size's long edge
+     * (never upscaled); for `lg` also the original's own size when it already fits but weighs more than
+     * previewHeavyBytes() (a 1080×1350 q95 JPEG, a 1500 px PNG) — GIFs excepted (the derivative is one frame).
+     * $d = previewDims($abs) when the caller has it.
+     */
+    function previewTargetDims(string $abs, string $size, ?array $d = null): ?array {
+        $sizes = previewSizes();
+        if (!isset($sizes[$size])) return null;
+        $d = $d ?? previewDims($abs);
+        if ($d === null) return null;
+        $t = previewScaleDims($d['w'], $d['h'], $sizes[$size]);
+        if ($t !== null) return $t;
+        if ($size === 'lg' && strtolower((string)pathinfo($abs, PATHINFO_EXTENSION)) !== 'gif' && (int)@filesize($abs) > previewHeavyBytes()) {
+            return [$d['w'], $d['h']];
+        }
+        return null;
+    }
+}
+
 if (!function_exists('previewNeeds')) {
-    /** Does this size need a derivative at all? (image, decodable, larger than the target) */
+    /** Does this size need a derivative at all? (image, decodable, larger than the target — or heavy, for lg) */
     function previewNeeds(string $abs, string $size): bool {
         $sizes = previewSizes();
         if (!isset($sizes[$size])) return false;
         $d = previewDims($abs);
-        return $d !== null && previewScaleDims($d['w'], $d['h'], $sizes[$size]) !== null;
+        return $d !== null && previewTargetDims($abs, $size, $d) !== null;
     }
 }
 
@@ -349,6 +381,33 @@ if (!function_exists('previewEndpointUrl')) {
     }
 }
 
+if (!function_exists('previewRefUrl')) {
+    /**
+     * The public URL of a canonical ref, in the form the render sites print it: basePath-rooted for uploads/,
+     * root-relative for media/ (segments rawurlencoded). Works without helpers.php (preview.php).
+     */
+    function previewRefUrl(string $ref): string {
+        $segs = array_map('rawurlencode', explode('/', $ref));
+        if ($segs[0] === 'uploads') {
+            if (function_exists('basePath')) {
+                $base = basePath();
+            } else {
+                $base = rtrim(str_replace('\\', '/', dirname((string)($_SERVER['SCRIPT_NAME'] ?? '/preview.php'))), '/');
+                if ($base === '.') $base = '';
+            }
+            return $base . '/' . implode('/', $segs);
+        }
+        return '/' . implode('/', $segs);
+    }
+}
+
+if (!function_exists('previewStaticUrl')) {
+    /** '<dir>/.thumbs/<stem>.<size>.<fmt>?v=<mtime of the original>' for a ref — the URL pages print once the file exists. */
+    function previewStaticUrl(string $ref, string $absOriginal, string $size): string {
+        return previewSiblingUrl(previewRefUrl($ref), basename(previewPathFor($absOriginal, $size)), previewMtime($absOriginal));
+    }
+}
+
 if (!function_exists('previewRefFromPath')) {
     /** Canonical ref of an absolute path under uploads/ or media/ (for callers without a URL); null otherwise. */
     function previewRefFromPath(string $abs): ?string {
@@ -377,7 +436,7 @@ if (!function_exists('previewVariant')) {
         $d = previewDims($absOriginal);
         if ($d === null) return $orig;
         $orig['w'] = $d['w']; $orig['h'] = $d['h'];
-        $t = previewScaleDims($d['w'], $d['h'], $sizes[$size]);
+        $t = previewTargetDims($absOriginal, $size, $d);
         if ($t === null) return $orig;
         $m = previewMtime($absOriginal);
         $p = previewPathFor($absOriginal, $size);
@@ -515,6 +574,130 @@ if (!function_exists('previewEnsureUploadsHtaccess')) {
     }
 }
 
+// ---------------------------------------------------------------------
+// Host protection: a global cap on simultaneous decodes, the session released before GD work,
+// a per-request count of decodes (X-Preview-Gd), failure markers
+// ---------------------------------------------------------------------
+
+if (!function_exists('previewSlotCount')) {
+    /** How many previews may be generated at the same time on this host (env PREVIEW_SLOTS=1..16, default 2). */
+    function previewSlotCount(): int {
+        $n = (int)getenv('PREVIEW_SLOTS');
+        return ($n >= 1 && $n <= 16) ? $n : 2;
+    }
+}
+
+if (!function_exists('previewSlotDir')) {
+    /** uploads/.locks (0755, deny-all .htaccess) — slot-<i>.lock files for the flock() semaphore; null when unusable. */
+    function previewSlotDir(): ?string {
+        static $dir = false;
+        if ($dir !== false) return $dir;
+        $up = previewUploadsDir();
+        if (!is_dir($up)) { function_exists('mediaMkdir') ? mediaMkdir($up) : @mkdir($up, 0755, true); }
+        $d = $up . '/.locks';
+        if (!is_dir($d) && !@mkdir($d, 0755) && !is_dir($d)) return $dir = null;
+        if (is_link($d) || !is_writable($d)) return $dir = null;
+        $ht = $d . '/.htaccess';
+        if (!is_file($ht)) {
+            @file_put_contents($ht, "# Written by the portal (preview-lib.php): lock files of the image-preview generator. Never served.\n"
+                . "Options -Indexes\n"
+                . "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n"
+                . "<IfModule !mod_authz_core.c>\n    Order allow,deny\n    Deny from all\n</IfModule>\n");
+            @chmod($ht, 0644);
+        }
+        return $dir = $d;
+    }
+}
+
+if (!function_exists('previewSlotAcquire')) {
+    /**
+     * Take one of the previewSlotCount() generator slots (flock LOCK_NB on uploads/.locks/slot-<i>.lock), trying
+     * again every 100 ms for up to $wait seconds. Returns the open handle (release with previewSlotRelease()),
+     * true when no lock folder can be used (never block generation on a broken host), or false when every slot
+     * stayed busy — the caller then serves a placeholder / leaves the work for later.
+     */
+    function previewSlotAcquire(float $wait = 0.0) {
+        $dir = previewSlotDir();
+        if ($dir === null) return true;
+        $n = previewSlotCount();
+        $deadline = microtime(true) + max(0.0, $wait);
+        $start = mt_rand(0, $n - 1);
+        do {
+            for ($k = 0; $k < $n; $k++) {
+                $i = ($start + $k) % $n;
+                $h = @fopen($dir . '/slot-' . $i . '.lock', 'c');
+                if (!$h) return true;
+                if (@flock($h, LOCK_EX | LOCK_NB)) return $h;
+                @fclose($h);
+            }
+            if (microtime(true) >= $deadline) break;
+            usleep(100000);
+        } while (true);
+        return false;
+    }
+}
+
+if (!function_exists('previewSlotRelease')) {
+    function previewSlotRelease($h): void {
+        if (is_resource($h)) { @flock($h, LOCK_UN); @fclose($h); }
+    }
+}
+
+if (!function_exists('previewReleaseSession')) {
+    /**
+     * session_write_close() before slow work (GD decodes, uploads) so the admin's other requests are not queued
+     * behind this one on the session lock. $_SESSION stays readable for the rest of the request; auth.php's
+     * startAdminSession() does not reopen it (the flag below). Idempotent; no-op without a session.
+     */
+    function previewReleaseSession(): void {
+        if (function_exists('session_status') && session_status() === PHP_SESSION_ACTIVE) {
+            $GLOBALS['__jsmSessionReleased'] = true;
+            @session_write_close();
+        }
+    }
+}
+
+if (!function_exists('previewGdRuns')) {
+    /** How many originals this request decoded to make previews ($add bumps it). Endpoints echo it as X-Preview-Gd. */
+    function previewGdRuns(int $add = 0): int {
+        static $n = 0;
+        return $n += $add;
+    }
+}
+
+if (!function_exists('previewGdHeader')) {
+    /** Send X-Preview-Gd: <decodes this request> with the response headers (whenever they go out). */
+    function previewGdHeader(): void {
+        if (headers_sent() || !function_exists('header_register_callback')) return;
+        @header_register_callback(static function (): void { header('X-Preview-Gd: ' . previewGdRuns()); });
+    }
+}
+
+if (!function_exists('previewFailPath')) {
+    /** <dir>/.thumbs/<stem>.fail.json — "this original could not be made into previews" (mtime-keyed). */
+    function previewFailPath(string $absOriginal): string {
+        return previewThumbsDir($absOriginal) . '/' . pathinfo($absOriginal, PATHINFO_FILENAME) . '.fail.json';
+    }
+}
+
+if (!function_exists('previewFailed')) {
+    /** Did a generation of this exact original (same mtime) fail before? (preview.php then answers at once) */
+    function previewFailed(string $absOriginal): bool {
+        $f = previewFailPath($absOriginal);
+        if (!is_file($f)) return false;
+        $d = json_decode((string)@file_get_contents($f), true);
+        return is_array($d) && (int)($d['m'] ?? -1) === previewMtime($absOriginal);
+    }
+}
+
+if (!function_exists('previewMarkFailed')) {
+    function previewMarkFailed(string $absOriginal, string $why): void {
+        $dir = previewThumbsDir($absOriginal);
+        if (!is_dir($dir) || is_link($dir)) return;
+        @file_put_contents(previewFailPath($absOriginal), json_encode(['m' => previewMtime($absOriginal), 'why' => $why, 'at' => time()]));
+    }
+}
+
 if (!function_exists('previewOrientGd')) {
     /** (internal) Apply EXIF orientation to a GD image; returns the (possibly new) image. */
     function previewOrientGd($im, int $o) {
@@ -560,8 +743,11 @@ if (!function_exists('previewWriteGd')) {
 }
 
 if (!function_exists('previewGenerateGd')) {
-    /** (internal) One decode, every requested size (largest first, each scaled from the previous). size → path|null. */
-    function previewGenerateGd(string $abs, array $want, array $dims): array {
+    /**
+     * (internal) One decode, every requested size (largest first, each scaled from the previous). size → path|null.
+     * $want = size → long edge; a size whose target is the original's own size (heavy `lg`) is re-encoded unscaled.
+     */
+    function previewGenerateGd(string $abs, array $want, array $dims, ?callable $early = null): array {
         $out = array_fill_keys(array_keys($want), null);
         if (!function_exists('imagecreatefromstring') || !function_exists('imagescale')) return $out;
         $fmt = previewFormat();
@@ -581,19 +767,46 @@ if (!function_exists('previewGenerateGd')) {
         $im = previewOrientGd($im, previewExifOrientation($abs));
         imagealphablending($im, false);
         imagesavealpha($im, true);
+        // $early (preview.php): the small size first, straight from the full decode (area-averaged — the tile can be
+        // answered after ~0.3 s), then the rest from the same decode while the browser already shows the tile.
+        if ($early !== null && isset($want['sm']) && count($want) > 1) {
+            $t = previewTargetDims($abs, 'sm', $dims);
+            if ($t !== null && ($sm = imagecreatetruecolor($t[0], $t[1]))) {
+                imagealphablending($sm, false);
+                imagesavealpha($sm, true);
+                imagefill($sm, 0, 0, imagecolorallocatealpha($sm, 0, 0, 0, 127));
+                if (imagecopyresampled($sm, $im, 0, 0, 0, 0, $t[0], $t[1], imagesx($im), imagesy($im))) {
+                    $dest = previewPathFor($abs, 'sm');
+                    if (previewWriteGd($sm, $dest, $fmt)) { $out['sm'] = $dest; $early('sm', $dest); }
+                }
+                imagedestroy($sm);
+            }
+            unset($want['sm']);
+        }
         $cur = $im;
         arsort($want);   // largest target first
         foreach ($want as $size => $max) {
             $t = previewScaleDims(imagesx($im), imagesy($im), (int)$max);
-            if ($t === null) continue;
-            $scaled = imagescale($cur, $t[0], $t[1], IMG_BICUBIC);
-            if (!$scaled) continue;
-            imagealphablending($scaled, false);
-            imagesavealpha($scaled, true);
+            if ($t === null) {
+                // Already within the target: only a heavy `lg` gets here (previewTargetDims) — re-encode unscaled.
+                if (previewTargetDims($abs, (string)$size, $dims) === null) continue;
+                $dest = previewPathFor($abs, $size);
+                if (previewWriteGd($cur, $dest, $fmt)) $out[$size] = $dest;
+                continue;
+            }
+            if (imagesx($cur) === $t[0] && imagesy($cur) === $t[1]) { $scaled = $cur; }
+            else {
+                $scaled = imagescale($cur, $t[0], $t[1], IMG_BICUBIC);
+                if (!$scaled) continue;
+                imagealphablending($scaled, false);
+                imagesavealpha($scaled, true);
+            }
             $dest = previewPathFor($abs, $size);
             if (previewWriteGd($scaled, $dest, $fmt)) $out[$size] = $dest;
-            if ($cur !== $im) imagedestroy($cur);
-            $cur = $scaled;
+            if ($scaled !== $cur) {
+                if ($cur !== $im) imagedestroy($cur);
+                $cur = $scaled;
+            }
         }
         if ($cur !== $im) imagedestroy($cur);
         imagedestroy($im);
@@ -629,9 +842,10 @@ if (!function_exists('previewGenerateImagick')) {
             arsort($want);
             foreach ($want as $size => $max) {
                 $t = previewScaleDims($w, $h, (int)$max);
+                if ($t === null && previewTargetDims($abs, (string)$size) !== null) $t = [$w, $h];   // heavy lg: re-encode unscaled
                 if ($t === null) continue;
                 $c = clone $im;
-                $c->resizeImage($t[0], $t[1], Imagick::FILTER_LANCZOS, 1);
+                if ($t[0] !== $w || $t[1] !== $h) $c->resizeImage($t[0], $t[1], Imagick::FILTER_LANCZOS, 1);
                 if ($fmt === 'jpg') {
                     $c->setImageBackgroundColor('white');
                     $c = $c->mergeImageLayers(Imagick::LAYERMETHOD_FLATTEN);
@@ -662,10 +876,17 @@ if (!function_exists('previewGenerateImagick')) {
 
 if (!function_exists('previewGenerate')) {
     /**
-     * (internal) Make the given sizes for one original under a per-original lock; re-checks freshness after the
-     * lock (a concurrent request may have done it). Returns size → path|null for the requested sizes.
+     * (internal) Make the given sizes for one original in ONE decode, under a per-original lock and one of the
+     * host-wide generator slots (previewSlotAcquire); re-checks freshness after the lock (a concurrent request may
+     * have done it). The session is released before the decode (previewReleaseSession).
+     *   $opts['wait']  seconds to wait for the original's lock / a free slot (default 10; 0 = never wait — preview.php)
+     *   $opts['early'] callable(size, path): called as soon as `sm` is written, before the other sizes of the same
+     *                  decode (preview.php answers the tile there and finishes `lg` after the response)
+     *   $status        'ok' (made, or nothing to do) | 'busy' (lock / slots taken, nothing done) | 'failed'
+     * Returns size → path|null for the requested sizes.
      */
-    function previewGenerate(string $abs, array $sizes): array {
+    function previewGenerate(string $abs, array $sizes, array $opts = [], ?string &$status = null): array {
+        $status = 'failed';
         $all = previewSizes();
         $out = [];
         foreach ($sizes as $s) { if (isset($all[$s])) $out[$s] = null; }
@@ -679,10 +900,18 @@ if (!function_exists('previewGenerate')) {
         previewEnsureThumbsHtaccess($dir);
         $up = realpath(previewUploadsDir());
         if ($up !== false && dirname((string)realpath($abs)) === rtrim($up, '/')) previewEnsureUploadsHtaccess();
+        $wait = isset($opts['wait']) ? max(0.0, (float)$opts['wait']) : 10.0;
 
         $lockFile = $dir . '/' . pathinfo($abs, PATHINFO_FILENAME) . '.lock';
         $lock = @fopen($lockFile, 'c');
-        if ($lock) @flock($lock, LOCK_EX);
+        if ($lock) {
+            if ($wait <= 0.0) {
+                if (!@flock($lock, LOCK_EX | LOCK_NB)) { @fclose($lock); $status = 'busy'; return $out; }   // being made right now
+            } else {
+                @flock($lock, LOCK_EX);
+            }
+        }
+        $slot = null;
         try {
             clearstatcache();
             $want = [];
@@ -691,18 +920,31 @@ if (!function_exists('previewGenerate')) {
                 if (previewIsFresh($abs, $s)) { $out[$s] = previewPathFor($abs, $s); continue; }
                 $want[$s] = $all[$s];
             }
-            if ($want && getenv('PREVIEW_QA_FAIL') !== '1') {
-                @set_time_limit(120);
-                $made = previewGenerateImagick($abs, $want);
-                $left = array_filter($want, static function ($k) use ($made) { return $made[$k] === null; }, ARRAY_FILTER_USE_KEY);
-                if ($left) {
-                    try { $made = array_merge($made, array_filter(previewGenerateGd($abs, $left, $dims))); }
-                    catch (Throwable $e) { error_log('preview gd: ' . basename($abs) . ': ' . $e->getMessage()); }
-                }
-                foreach ($made as $s => $p) { if ($p !== null) $out[$s] = $p; }
-                if (array_filter($made)) previewWriteDims($abs, $dims['w'], $dims['h']);
+            if (!$want) { $status = 'ok'; return $out; }
+            $slot = previewSlotAcquire($wait);
+            if ($slot === false) { $slot = null; $status = 'busy'; return $out; }
+            previewReleaseSession();
+            if (getenv('PREVIEW_QA_FAIL') === '1') return $out;
+            @set_time_limit(120);
+            previewGdRuns(1);
+            $early = isset($opts['early']) && is_callable($opts['early']) ? $opts['early'] : null;
+            $made = previewGenerateImagick($abs, $want);
+            if ($early !== null && !empty($made['sm'])) { previewWriteDims($abs, $dims['w'], $dims['h']); $early('sm', $made['sm']); $early = null; }
+            $left = array_filter($want, static function ($k) use ($made) { return $made[$k] === null; }, ARRAY_FILTER_USE_KEY);
+            if ($left) {
+                $cb = $early === null ? null : static function (string $s, string $p) use ($early, $abs, $dims): void { previewWriteDims($abs, $dims['w'], $dims['h']); $early($s, $p); };
+                try { $made = array_merge($made, array_filter(previewGenerateGd($abs, $left, $dims, $cb))); }
+                catch (Throwable $e) { error_log('preview gd: ' . basename($abs) . ': ' . $e->getMessage()); }
+            }
+            foreach ($made as $s => $p) { if ($p !== null) $out[$s] = $p; }
+            if (array_filter($made)) previewWriteDims($abs, $dims['w'], $dims['h']);
+            $missing = array_diff(array_keys($want), array_keys(array_filter($made)));
+            if (!$missing) {
+                $status = 'ok';
+                if (is_file(previewFailPath($abs))) @unlink(previewFailPath($abs));
             }
         } finally {
+            if ($slot !== null) previewSlotRelease($slot);
             if ($lock) { @flock($lock, LOCK_UN); @fclose($lock); @unlink($lockFile); }
         }
         return $out;
@@ -711,41 +953,39 @@ if (!function_exists('previewGenerate')) {
 
 if (!function_exists('previewEnsure')) {
     /**
-     * The file to serve for $size: the fresh derivative (generated when missing / stale), the ORIGINAL itself when
-     * it already fits the target (never upscale), or null (not an image, SVG / video, undecodable, too big for
-     * memory, GD missing, folder not writable). Never fatal.
+     * The file to serve for $size: the fresh derivative (generated when missing / stale — together with the other
+     * stale sizes, one decode), the ORIGINAL itself when it needs no derivative, or null (not an image, SVG / video,
+     * undecodable, too big for memory, GD missing, folder not writable, every generator slot busy). Never fatal.
+     * $opts as previewGenerate().
      */
-    function previewEnsure(string $absOriginal, string $size): ?string {
+    function previewEnsure(string $absOriginal, string $size, array $opts = []): ?string {
         $sizes = previewSizes();
         if (!isset($sizes[$size]) || !previewIsImage($absOriginal) || !is_file($absOriginal)) return null;
         if (previewDims($absOriginal) === null) return null;
         if (!previewNeeds($absOriginal, $size)) return $absOriginal;
         if (previewIsFresh($absOriginal, $size)) return previewPathFor($absOriginal, $size);
-        try {
-            return previewGenerate($absOriginal, [$size])[$size] ?? null;
-        } catch (Throwable $e) {
-            error_log('previewEnsure: ' . $e->getMessage());
-            return null;
-        }
+        return previewEnsureAll($absOriginal, $opts)[$size] ?? null;
     }
 }
 
 if (!function_exists('previewEnsureAll')) {
-    /** Every size in one decode: size → the file to serve (derivative / the original when small) | null. */
-    function previewEnsureAll(string $absOriginal): array {
+    /** Every size in one decode: size → the file to serve (derivative / the original when none is needed) | null. $opts / $status as previewGenerate(). */
+    function previewEnsureAll(string $absOriginal, array $opts = [], ?string &$status = null): array {
         $out = [];
         $stale = [];
+        $status = 'ok';
         foreach (array_keys(previewSizes()) as $s) {
             $out[$s] = null;
-            if (!previewIsImage($absOriginal) || !is_file($absOriginal) || previewDims($absOriginal) === null) continue;
+            if (!previewIsImage($absOriginal) || !is_file($absOriginal) || previewDims($absOriginal) === null) { $status = 'failed'; continue; }
             if (!previewNeeds($absOriginal, $s)) { $out[$s] = $absOriginal; continue; }
             if (previewIsFresh($absOriginal, $s)) { $out[$s] = previewPathFor($absOriginal, $s); continue; }
             $stale[] = $s;
         }
         if ($stale) {
             try {
-                foreach (previewGenerate($absOriginal, $stale) as $s => $p) $out[$s] = $p;
+                foreach (previewGenerate($absOriginal, $stale, $opts, $status) as $s => $p) $out[$s] = $p;
             } catch (Throwable $e) {
+                $status = 'failed';
                 error_log('previewEnsureAll: ' . $e->getMessage());
             }
         }
@@ -753,24 +993,40 @@ if (!function_exists('previewEnsureAll')) {
     }
 }
 
+if (!function_exists('previewClientDefer')) {
+    /**
+     * "The browser is sending this upload's previews" (upload-chunk.php / tire-upload.php with client_previews=1):
+     * while on, previewAfterStore() does nothing — previewClientAccept() writes the files, or generates them itself
+     * when what arrives is refused. previewClientDefer(true|false) sets, previewClientDefer() reads.
+     */
+    function previewClientDefer(?bool $set = null): bool {
+        static $on = false;
+        if ($set !== null) $on = $set;
+        return $on;
+    }
+}
+
 if (!function_exists('previewAfterStore')) {
     /**
      * Generation hook after a store: previewEnsureAll() (or $opts['sizes']) while this request's generation budget
-     * lasts ($opts['budget'] seconds, default 8 s shared by every call in the request); later files are left to the
-     * lazy endpoint / backfill. Returns true when it generated (or nothing was needed), false when skipped / failed.
+     * lasts ($opts['budget'] seconds, default 8 s shared by every call in the request) and a generator slot frees up
+     * within $opts['wait'] (default 3 s); later files are left to the lazy endpoint / backfill. Skipped entirely while
+     * previewClientDefer() is on. Returns true when it generated (or nothing was needed), false when skipped / failed.
      */
     function previewAfterStore(string $absOriginal, array $opts = []): bool {
         static $spent = 0.0;
         if ($absOriginal === '' || !previewIsImage($absOriginal) || !is_file($absOriginal)) return false;
+        if (previewClientDefer() && empty($opts['force'])) return false;
         $budget = isset($opts['budget']) ? (float)$opts['budget'] : 8.0;
         if ($spent >= $budget) return false;
+        $gen = ['wait' => isset($opts['wait']) ? (float)$opts['wait'] : 3.0];
         $t0 = microtime(true);
         try {
             if (isset($opts['sizes']) && is_array($opts['sizes'])) {
                 $ok = true;
-                foreach ($opts['sizes'] as $s) { if (previewEnsure($absOriginal, (string)$s) === null) $ok = false; }
+                foreach ($opts['sizes'] as $s) { if (previewEnsure($absOriginal, (string)$s, $gen) === null) $ok = false; }
             } else {
-                $ok = !in_array(null, previewEnsureAll($absOriginal), true);
+                $ok = !in_array(null, previewEnsureAll($absOriginal, $gen), true);
             }
         } catch (Throwable $e) {
             error_log('previewAfterStore: ' . $e->getMessage());
@@ -792,7 +1048,7 @@ if (!function_exists('previewDelete')) {
         if (is_link($dir) || !is_dir($dir)) return 0;
         $stem = pathinfo($absOriginal, PATHINFO_FILENAME);
         if ($stem === '') return 0;
-        $names = [$stem . '.dims.json', $stem . '.lock', $stem . '.jpg'];
+        $names = [$stem . '.dims.json', $stem . '.fail.json', $stem . '.lock', $stem . '.jpg'];
         foreach (array_keys(previewSizes()) as $s) { foreach (['webp', 'jpg'] as $f) $names[] = $stem . '.' . $s . '.' . $f; }
         $n = 0;
         foreach ($names as $name) {
@@ -831,5 +1087,235 @@ if (!function_exists('previewCopyDerivatives')) {
             return true;
         }
         return $fallback ? previewAfterStore($destAbs) : false;
+    }
+}
+
+if (!function_exists('previewMoveDerivatives')) {
+    /**
+     * A parked original moved to its final name (uploadClaimTake: uploads/tmp_<token>.jpg → uploads/img_….jpg): its
+     * fresh derivatives + dims sidecar follow it, so the store hook finds them and decodes nothing. Stale or foreign
+     * files are left behind (deleted with the old stem). Returns how many derivatives moved.
+     */
+    function previewMoveDerivatives(string $fromAbs, string $toAbs): int {
+        if (!previewIsImage($toAbs) || !is_file($toAbs)) return 0;
+        $fromDir = previewThumbsDir($fromAbs); $toDir = previewThumbsDir($toAbs);
+        if (is_link($fromDir) || !is_dir($fromDir)) return 0;
+        $n = 0;
+        foreach (array_keys(previewSizes()) as $s) {
+            $src = previewPathFor($fromAbs, $s);
+            if (!is_file($src) || is_link($src)) continue;
+            if (!is_dir($toDir) && !mediaMkdir($toDir)) break;
+            previewEnsureThumbsHtaccess($toDir);
+            $dest = previewPathFor($toAbs, $s);
+            if (!@rename($src, $dest)) { @unlink($src); continue; }
+            clearstatcache(true, $dest);
+            if (previewMtime($dest) < previewMtime($toAbs)) @touch($dest, previewMtime($toAbs));   // copy fallback gave the original a new mtime
+            mediaChmodPath($dest);
+            $n++;
+        }
+        if ($n) {
+            $d = previewDims($toAbs);
+            if ($d) previewWriteDims($toAbs, $d['w'], $d['h']);
+        }
+        previewDelete($fromAbs);
+        return $n;
+    }
+}
+
+// ---------------------------------------------------------------------
+// Placeholder (preview.php when every generator slot is busy / a build failed)
+// ---------------------------------------------------------------------
+
+if (!function_exists('previewPlaceholderSvg')) {
+    /**
+     * A neutral tile. 'pending' is 1×1 intrinsic (static/js/app.js App.previewRetry spots naturalWidth === 1 on a
+     * preview.php image and retries with backoff); 'failed' is 2×2 (never retried). The <img> keeps its own
+     * width / height attributes, so the layout does not move.
+     */
+    function previewPlaceholderSvg(string $kind): string {
+        $n = $kind === 'failed' ? 2 : 1;
+        return '<svg xmlns="http://www.w3.org/2000/svg" width="' . $n . '" height="' . $n . '" viewBox="0 0 ' . $n . ' ' . $n . '">'
+             . '<rect width="' . $n . '" height="' . $n . '" fill="#8e8e93" fill-opacity="0.16"/></svg>';
+    }
+}
+
+// ---------------------------------------------------------------------
+// Client-made previews (static/js/chunk-upload.js App.imagePreview): the browser encodes sm / lg WebP while the
+// original uploads; the upload reply carries a one-time preview_key (a ticket tied to this admin session, the
+// client and that one stored file); action=previews brings the files. Strict validation, server-chosen names
+// (exactly previewPathFor()), anything refused → the server makes that size itself (or leaves it to the lazy path).
+// ---------------------------------------------------------------------
+
+if (!function_exists('previewClientCaps')) {
+    /** size → max bytes of a client-made preview. */
+    function previewClientCaps(): array { return ['sm' => 300 * 1024, 'lg' => 1536 * 1024]; }
+}
+
+if (!function_exists('previewClientEnabled')) {
+    /** Client previews are WebP: only when the server's own format is WebP (else the paths would not match). Env PREVIEW_NO_CLIENT=1 turns them off. */
+    function previewClientEnabled(): bool {
+        return previewFormat() === 'webp' && getenv('PREVIEW_NO_CLIENT') !== '1';
+    }
+}
+
+if (!function_exists('previewClientRequested')) {
+    /** Did this upload request say "the browser sends the previews" (client_previews=1)? */
+    function previewClientRequested(): bool {
+        return previewClientEnabled() && !empty($_POST['client_previews']) && (string)$_POST['client_previews'] !== '0';
+    }
+}
+
+if (!function_exists('previewClientTicketDir')) {
+    /** uploads/.spool (deny-all, chunk-upload-lib.php) — <32hex>.pvt tickets live next to the claim sidecars. */
+    function previewClientTicketDir(): ?string {
+        $up = previewUploadsDir();
+        if (!is_dir($up)) return null;
+        if (function_exists('chunkSpoolDir')) return chunkSpoolDir($up, true);
+        $d = $up . '/.spool';
+        return is_dir($d) && !is_link($d) && is_writable($d) ? $d : null;
+    }
+}
+
+if (!function_exists('previewClientSessionTag')) {
+    /** Who may redeem a ticket: a hash of this admin session's id ('' without a session — such tickets never redeem). */
+    function previewClientSessionTag(): string {
+        $id = function_exists('session_id') ? (string)session_id() : '';
+        return $id === '' ? '' : hash_hmac('sha256', $id, previewSecret());
+    }
+}
+
+if (!function_exists('previewClientTicket')) {
+    /**
+     * Issue the one-time key for the file this admin just stored at $abs (images that need a derivative only).
+     * $gen: when what the browser sends is refused (or never arrives in this request), make the missing sizes
+     * here (library / reference / replace / series) — false for parked Compose files (made when the post is saved).
+     * Returns the key, or null (then the caller makes previews the usual way).
+     */
+    function previewClientTicket(string $abs, string $client, bool $gen): ?string {
+        if (!previewClientEnabled() || !previewIsImage($abs) || !is_file($abs)) return null;
+        $ref = previewRefFromPath($abs);
+        $tag = previewClientSessionTag();
+        $d = previewDims($abs);
+        if ($ref === null || $tag === '' || $d === null) return null;
+        $need = array_values(array_filter(array_keys(previewSizes()), static function ($s) use ($abs) { return previewNeeds($abs, $s); }));
+        if (!$need) return null;
+        $dir = previewClientTicketDir();
+        if ($dir === null) return null;
+        previewClientCleanup($dir);
+        $key = bin2hex(random_bytes(16));
+        $t = ['key' => $key, 'ref' => $ref, 'client' => $client, 'sess' => $tag, 'm' => previewMtime($abs), 'w' => $d['w'], 'h' => $d['h'],
+              'need' => $need, 'gen' => $gen, 'created_at' => time()];
+        if (@file_put_contents($dir . '/' . $key . '.pvt', json_encode($t, JSON_UNESCAPED_SLASHES)) === false) return null;
+        @chmod($dir . '/' . $key . '.pvt', 0600);
+        return $key;
+    }
+}
+
+if (!function_exists('previewClientCleanup')) {
+    /** Tickets live an hour. */
+    function previewClientCleanup(string $dir, int $maxAge = 3600, int $cap = 200): void {
+        $dh = @opendir($dir);
+        if ($dh === false) return;
+        $seen = 0; $cut = time() - $maxAge;
+        while (($f = readdir($dh)) !== false && $seen < $cap) {
+            if (!preg_match('/^[a-f0-9]{32}\.pvt$/', $f)) continue;
+            $seen++;
+            $mt = @filemtime($dir . '/' . $f);
+            if ($mt !== false && $mt < $cut) @unlink($dir . '/' . $f);
+        }
+        closedir($dh);
+    }
+}
+
+if (!function_exists('previewClientCheckFile')) {
+    /**
+     * Validate one uploaded preview against the original: '' when acceptable, else the reason. $f = a $_FILES entry,
+     * $t = [w, h] the derivative the server would make (previewTargetDims), $d = the original's oriented size.
+     */
+    function previewClientCheckFile(array $f, string $size, array $t, array $d): string {
+        $caps = previewClientCaps();
+        if ((int)($f['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) return 'upload error';
+        $tmp = (string)($f['tmp_name'] ?? '');
+        if ($tmp === '' || !is_uploaded_file($tmp)) return 'not an upload';
+        $bytes = (int)@filesize($tmp);
+        if ($bytes <= 0 || $bytes > $caps[$size]) return 'too large (' . $bytes . ' bytes, max ' . $caps[$size] . ')';
+        $fh = @fopen($tmp, 'rb');
+        $head = $fh ? (string)fread($fh, 12) : '';
+        if ($fh) fclose($fh);
+        if (strlen($head) < 12 || substr($head, 0, 4) !== 'RIFF' || substr($head, 8, 4) !== 'WEBP') return 'not a WebP file';
+        $info = @getimagesize($tmp);
+        if (!is_array($info) || !defined('IMAGETYPE_WEBP') || (int)($info[2] ?? 0) !== IMAGETYPE_WEBP) return 'not a WebP image';
+        $w = (int)$info[0]; $h = (int)$info[1];
+        if ($w <= 0 || $h <= 0) return 'no dimensions';
+        $max = previewSizes()[$size];
+        $long = max($w, $h);
+        if ($long > $max + 2) return "longest side {$long} over {$max}";
+        if (abs($long - max($t[0], $t[1])) > 2) return "longest side {$long}, expected " . max($t[0], $t[1]);
+        $want = $d['w'] / $d['h']; $got = $w / $h;
+        if (abs($got / $want - 1) > 0.02) return 'aspect ' . round($got, 4) . ' vs original ' . round($want, 4);
+        return '';
+    }
+}
+
+if (!function_exists('previewClientAccept')) {
+    /**
+     * Redeem a ticket: $files = ['sm' => $_FILES entry, 'lg' => …] (either may be missing). Every needed size is
+     * either written from the browser's file (validated, renamed to previewPathFor()) or — when refused / absent
+     * and the ticket says so — made here in one decode (generator slot, short wait). The ticket is single-use.
+     * Returns ['code' => 200|400|403|404|409, 'body' => [ok, accepted, rejected{size: why}, generated, thumb, large]].
+     */
+    function previewClientAccept(string $key, string $client, array $files): array {
+        $fail = static function (int $code, string $msg): array { return ['code' => $code, 'body' => ['ok' => false, 'error' => $msg]]; };
+        if (!preg_match('/^[a-f0-9]{32}$/', $key)) return $fail(400, 'Invalid preview key');
+        $dir = previewClientTicketDir();
+        $file = $dir === null ? '' : $dir . '/' . $key . '.pvt';
+        if ($file === '' || is_link($file) || !is_file($file)) return $fail(404, 'Unknown or used preview key');
+        $t = json_decode((string)@file_get_contents($file), true);
+        if (!is_array($t) || ($t['key'] ?? '') !== $key) { @unlink($file); return $fail(404, 'Unknown preview key'); }
+        if (!hash_equals((string)$t['sess'], previewClientSessionTag()) || (string)$t['client'] !== $client) return $fail(403, 'This preview key belongs to another upload');
+        @unlink($file);   // single use from here on
+        if ((int)$t['created_at'] < time() - 3600) return $fail(404, 'Preview key expired');
+        $abs = previewRefPath((string)$t['ref']);
+        if ($abs === null || !is_file($abs) || previewMtime($abs) !== (int)$t['m']) return $fail(409, 'The file changed since it was uploaded');
+        $d = ['w' => (int)$t['w'], 'h' => (int)$t['h']];
+        $now = previewDims($abs);
+        if ($now === null || $now['w'] !== $d['w'] || $now['h'] !== $d['h']) return $fail(409, 'The file changed since it was uploaded');
+
+        $accepted = []; $rejected = [];
+        $thumbs = previewThumbsDir($abs);
+        foreach (array_keys(previewSizes()) as $s) {
+            $f = $files[$s] ?? null;
+            if (!is_array($f) || (int)($f['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) continue;
+            $target = previewTargetDims($abs, $s, $d);
+            if ($target === null) { $rejected[$s] = 'not needed'; continue; }
+            $why = previewClientCheckFile($f, $s, $target, $d);
+            if ($why === '') {
+                if (is_link($thumbs) || (!is_dir($thumbs) && !mediaMkdir($thumbs)) || !is_writable($thumbs)) { $why = 'previews folder not writable'; }
+            }
+            if ($why !== '') { $rejected[$s] = $why; continue; }
+            previewEnsureThumbsHtaccess($thumbs);
+            $dest = previewPathFor($abs, $s);
+            $tmp = $dest . '.' . getmypid() . '.' . mt_rand() . '.tmp';
+            if (!@move_uploaded_file((string)$f['tmp_name'], $tmp) || !@rename($tmp, $dest)) { @unlink($tmp); $rejected[$s] = 'could not be saved'; continue; }
+            clearstatcache(true, $dest);
+            if (previewMtime($dest) < previewMtime($abs)) @touch($dest, previewMtime($abs));
+            mediaChmodPath($dest);
+            $accepted[] = $s;
+        }
+        if ($accepted) previewWriteDims($abs, $d['w'], $d['h']);
+        foreach ($rejected as $s => $why) error_log('preview client: ' . basename($abs) . ' ' . $s . ' refused — ' . $why);
+
+        $generated = false;
+        $missing = array_values(array_filter((array)$t['need'], static function ($s) use ($abs) { return !previewIsFresh($abs, (string)$s); }));
+        if ($missing && !empty($t['gen'])) {
+            previewEnsureAll($abs, ['wait' => 3.0]);
+            $generated = true;
+        }
+        $url = previewRefUrl((string)$t['ref']);
+        clearstatcache();
+        return ['code' => 200, 'body' => [
+            'ok' => true, 'accepted' => $accepted, 'rejected' => (object)$rejected, 'generated' => $generated,
+            'thumb' => previewUrlFor($url, $abs, 'sm'), 'large' => previewUrlFor($url, $abs, 'lg'),
+        ]];
     }
 }

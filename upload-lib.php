@@ -175,6 +175,11 @@ if (!function_exists('uploadClaimStore')) {
             // no LOCK_EX: the name is unique to this request (no second writer) and stream-wrapped harnesses refuse it
             if (@file_put_contents($dir . '/' . $token . '.claim', json_encode($side, JSON_UNESCAPED_SLASHES)) === false) { @unlink($dest); return null; }
             @chmod($dir . '/' . $token . '.claim', 0600);
+            // preview_url / thumb / large: the sm / lg PREVIEWS of the parked file (lazy preview.php URLs until they
+            // exist — the browser's own previews usually arrive right after, upload-chunk.php action=previews),
+            // never the multi-MB original itself; a video keeps its one URL.
+            $url = (function_exists('basePath') ? basePath() : '') . '/uploads/' . $file;
+            $pv  = !$side['video'] && function_exists('pvUrls') ? pvUrls($url) : ['thumb' => $url, 'large' => $url];
             return [
                 'token'       => $token,
                 'name'        => $side['name'],
@@ -182,7 +187,9 @@ if (!function_exists('uploadClaimStore')) {
                 'type'        => $side['video'] ? 'video' : 'image',
                 'mime'        => $side['mime'],
                 'ext'         => $ext,
-                'preview_url' => (function_exists('basePath') ? basePath() : '') . '/uploads/' . $file,
+                'preview_url' => (string)$pv['thumb'],
+                'thumb'       => (string)$pv['thumb'],
+                'large'       => (string)$pv['large'],
                 'file'        => $file,
             ];
         }
@@ -237,6 +244,8 @@ if (!function_exists('uploadClaimTake')) {
     function uploadClaimTake(array $claim, string $dest): bool {
         if (empty($claim['path']) || !is_file($claim['path'])) return false;
         if (!uploadMoveInto((string)$claim['path'], $dest, false)) return false;
+        // Its previews (made by the browser at upload time, or lazily while the post was composed) follow it.
+        if (function_exists('previewMoveDerivatives')) previewMoveDerivatives((string)$claim['path'], $dest);
         uploadClaimDiscard((string)($claim['token'] ?? ''), false);
         return true;
     }
@@ -252,7 +261,7 @@ if (!function_exists('uploadClaimDiscard')) {
         if ($withFile && is_file($sideFile)) {
             $side = json_decode((string)@file_get_contents($sideFile), true);
             $path = uploadClaimFilePath(is_array($side) ? (string)($side['file'] ?? '') : '');
-            if ($path !== null) @unlink($path);
+            if ($path !== null) { if (function_exists('previewDelete')) previewDelete($path); @unlink($path); }
         }
         if (is_file($sideFile) || is_link($sideFile)) @unlink($sideFile);
     }
@@ -297,7 +306,10 @@ if (!function_exists('uploadClaimCleanup')) {
                 $p = $up . '/' . $f;
                 if (is_link($p) || !is_file($p)) continue;
                 $mt = @filemtime($p);
-                if ($mt !== false && $mt < $cut && @unlink($p)) $n++;
+                if ($mt !== false && $mt < $cut) {
+                    if (function_exists('previewDelete')) previewDelete($p);
+                    if (@unlink($p)) $n++;
+                }
             }
             closedir($dh);
         }
@@ -410,7 +422,7 @@ if (!function_exists('uploadReplaceApply')) {
             // Previews: the old original's derivatives go (same stem in place → must be rebuilt), the new file gets fresh ones.
             if ($oldPath !== null && function_exists('previewDelete')) previewDelete($oldPath);
             if (function_exists('previewDelete')) previewDelete($dest);
-            if (!$isVideo && function_exists('previewAfterStore')) previewAfterStore($dest);
+            if (!$isVideo && function_exists('previewAfterStore')) { previewReleaseSession(); previewAfterStore($dest); }
             if ($type === 'post') {
                 $pdo->prepare("UPDATE posts SET updated_at = NOW() WHERE id = (SELECT post_id FROM post_images WHERE id = ?)")->execute([$imageId]);
             }
@@ -506,7 +518,7 @@ if (!function_exists('uploadFeatureInsert')) {
         }
         $row = ['id' => $id, 'tire_id' => $tireId, 'image_url' => $url, 'display_name' => $seed, 'sort_order' => $sortOrder, 'status' => 'pending'];
         $thumb = '';
-        if (function_exists('previewAfterStore')) { try { previewAfterStore($dest); $thumb = tireImageThumb($row); } catch (Throwable $e) { $thumb = ''; } }
+        if (function_exists('previewAfterStore')) { try { previewReleaseSession(); previewAfterStore($dest); $thumb = tireImageThumb($row); } catch (Throwable $e) { $thumb = ''; } }
         return ['code' => 200, 'body' => [
             'ok'    => true,
             'image' => $row + ['src' => basePath() . '/' . $url, 'thumb' => $thumb !== '' ? $thumb : basePath() . '/' . $url],
@@ -566,7 +578,8 @@ if (!function_exists('uploadLibraryStore')) {
             error_log('upload library insert: ' . $e->getMessage());
             return ['code' => 500, 'body' => ['ok' => false, 'error' => 'Database error']];
         }
-        if (!$isVideo && function_exists('previewAfterStore')) { try { previewAfterStore($dest); } catch (Throwable $e) { /* previews are best-effort */ } }
+        if (function_exists('ensureLibraryMediaHtaccess')) ensureLibraryMediaHtaccess();   // media/library/.htaccess: static only + 7-day caching
+        if (!$isVideo && function_exists('previewAfterStore')) { try { previewReleaseSession(); previewAfterStore($dest); } catch (Throwable $e) { /* previews are best-effort */ } }
         $url = libraryFileUrl($slug, $name);
         $pv  = !$isVideo && function_exists('pvUrls') ? pvUrls($url) : ['thumb' => $url, 'large' => $url];
         return ['code' => 200, 'body' => [

@@ -445,7 +445,9 @@
       if (S.files.some(function (x) { return x.file.name === f.name && x.file.size === f.size && x.file.lastModified === f.lastModified; })) return;   // the same file twice
       room--;
       var vid = isVideo(f), err = checkFile(f);
-      S.files.push({ id: 'f' + (++uid), file: f, video: vid, error: err, url: !vid && !err && /^image\//.test(f.type || '') ? URL.createObjectURL(f) : '' });
+      var fo = { id: 'f' + (++uid), file: f, video: vid, error: err, url: '' };
+      S.files.push(fo);
+      if (!vid && !err) localThumb(fo);
     });
     if (skipped) toast(plural(skipped, 'file') + ' left out — up to ' + MAX_FILES + ' at a time', 'error', 4000);
     if (quiet || !S.init) return;   // still loading: start() moves on to Destination once the client's data is in
@@ -460,7 +462,24 @@
     renderFiles(); renderFooter();
   }
   function validFiles() { return S ? S.files.filter(function (f) { return !f.error; }) : []; }
-  function thumbHtml(f) { return f.url ? '<img src="' + esc(f.url) + '" alt="">' : (f.video ? I.play : I.photo); }
+  /** The row / summary / job thumbnail: a downscaled WebP the browser made (App.imagePreview — the same sm file that
+   *  goes up with the upload), never an object URL of the multi-MB original; an icon until it is ready. */
+  function thumbHtml(f) {
+    if (f.url) return '<img src="' + esc(f.url) + '" alt="" decoding="async" data-us-thumb="' + f.id + '"' + (f.w ? ' width="' + f.w + '" height="' + f.h + '"' : '') + '>';
+    return '<span class="us-thumb-icon" data-us-thumb="' + f.id + '">' + (f.video ? I.play : I.photo) + '</span>';
+  }
+  function localThumb(f) {
+    var file = f.file;
+    var small = function () { return /^image\//.test(file.type || '') && file.size <= 1572864 ? URL.createObjectURL(file) : ''; };   // no encoder: only a small original may be shown as is
+    var p = App.imagePreview && App.imagePreview.eligible(file) ? App.imagePreview.make(file) : Promise.resolve(null);
+    p.then(function (r) {
+      if (!S || S.files.indexOf(f) === -1) return;
+      f.url = r && r.sm ? URL.createObjectURL(r.sm) : small();
+      if (r && r.sm) { f.w = r.smW; f.h = r.smH; }
+      if (!f.url || !R) return;
+      $$('[data-us-thumb="' + f.id + '"]', R).forEach(function (el) { el.outerHTML = thumbHtml(f); });
+    });
+  }
   function renderFiles() {
     var ul = $('[data-us-files]', R);
     ul.innerHTML = S.files.map(function (f) {
@@ -682,6 +701,7 @@
     var label = destLabel(j.dest);
     j.ctl = App.chunkUpload.upload({
       endpoint: j.endpoint, file: file, fields: j.fields, uploadId: j.uploadId,
+      previews: !j.f.video,   // images: the browser makes the sm / lg previews while the original uploads (no server decode)
       onInit: function (d) {
         j.uploadId = d.upload_id;
         if (d.series && d.series.id && j.dest.kind === 'series') { noteSeries(d.series); j.fields.series_id = d.series.id; delete j.fields.new_series; delete j.fields.new_series_drive; }
@@ -776,8 +796,10 @@
   function handOff() {
     if (!S || S.handedOff) return;
     var pre = S.jobs.filter(function (j) { return j.state === 'done' && j.token; }).map(function (j) {
-      var r = j.result || {};
-      return { ref: 'upload:' + j.token, media: r.type === 'video' ? 'video' : 'image', thumb: r.type === 'video' ? '' : (r.preview_url || ''), name: j.f.file.name };
+      var r = j.result || {}, pv = r.previews && r.previews.ok ? r.previews : {};
+      // The parked file's PREVIEW URLs (sm for the tray, lg for the carousel) — never /uploads/tmp_* itself.
+      var thumb = r.type === 'video' ? '' : (pv.thumb || r.thumb || r.preview_url || ''), large = r.type === 'video' ? '' : (pv.large || r.large || thumb);
+      return { ref: 'upload:' + j.token, media: r.type === 'video' ? 'video' : 'image', thumb: thumb, large: large, name: j.f.file.name };
     });
     if (!pre.length) return;
     if (!App.newPost || !App.newPost.open) { toast('The New post pop-up is not available on this page — reload and try again', 'error', 5000); return; }
@@ -842,8 +864,9 @@
       if (!e) { unmatched.push(f.name); return; }
       matched.push(e);
       var vid = isVideo(f);
-      var fo = { id: 'f' + (++uid), file: f, video: vid, error: '', url: !vid && /^image\//.test(f.type || '') ? URL.createObjectURL(f) : '' };
+      var fo = { id: 'f' + (++uid), file: f, video: vid, error: '', url: '' };
       S.files.push(fo);
+      if (!vid) localThumb(fo);
       S.jobs.push({ id: 'j' + (++uid), f: fo, dest: e.dest || { kind: 'library' }, endpoint: e.endpoint, fields: e.fields || {}, state: 'queued', pct: 0, text: '', error: '', retryable: false, uploadId: e.id, ctl: null, result: null, token: null });
     });
     if (unmatched.length) toast(plural(unmatched.length, 'file does', 'files do') + ' not match an unfinished upload (same name and size needed): ' + unmatched.join(', '), 'error', 6000);

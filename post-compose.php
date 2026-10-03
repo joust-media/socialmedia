@@ -58,6 +58,7 @@ $action = (string)($_POST['action'] ?? $_GET['action'] ?? '');
 $isPost = ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST';
 requireSameSiteFetch();                                         // cross-site → JSON 403 (helpers.php)
 if (!function_exists('currentAdmin') || !currentAdmin()) { npFail(403, 'Admin sign-in required'); }
+previewGdHeader();   // X-Preview-Gd: originals decoded for previews in this request
 
 $reads  = ['clients', 'init', 'picker', 'load'];
 $writes = ['create', 'update'];
@@ -543,7 +544,7 @@ try {
 }
 
 foreach ($toUnlink as $u) npUnlinkIfOrphan($pdo, $u);
-if (function_exists('previewAfterStore')) { foreach ($previewQ as $pq) previewAfterStore($pq); }
+if (function_exists('previewAfterStore') && $previewQ) { previewReleaseSession(); foreach ($previewQ as $pq) previewAfterStore($pq); }   // session released: GD never holds other admin requests
 
 $msg = $isCreate ? ($status === 'draft' ? 'Draft saved' : 'Sent for review') : ($intent === 'review' ? 'Sent for review' : 'Post saved');
 npOut(200, ['ok' => true, 'post_id' => $postId, 'status' => $status, 'url' => npPostUrl($postId), 'message' => $msg, 'slides' => array_map('npSlideFromRow', npRows($pdo, $postId))]);
