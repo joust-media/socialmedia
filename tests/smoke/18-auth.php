@@ -109,11 +109,21 @@ test('magic link: same answer for an unknown address; only a known one gets an e
     is($norm($unknown['body'], 'nobody@kenda.example'), $norm($known['body'], 'jane@kenda.example'), 'identical page');
     $m = mails();
     is(count($m), 1, 'one email (the known address)');
-    is($m[0]['to'], ['jane@kenda.example']);
-    is($m[0]['from'], 'lance@joustmedia.com');
+    is($m[0]['to'], 'jane@kenda.example');
+    is($m[0]['from_address'], 'lance@joustmedia.com');
     is($m[0]['from_name'], 'Joust Media');
+    is($m[0]['from'], '"Joust Media" <lance@joustmedia.com>', 'From header');
+    is($m[0]['kind'], 'sign_in');
     has($m[0]['subject'], 'Kenda Tires');
     has($m[0]['html'], 'expires in 15 minutes');
+    // through the notifications outbox (delivery log), sent at once, and the token scrubbed from the row afterwards
+    $o = rows("SELECT * FROM notify_outbox WHERE kind = 'sign_in' ORDER BY id DESC LIMIT 1");
+    is(count($o), 1, 'one outbox row');
+    is($o[0]['status'], 'sent', 'delivered in the same request');
+    is($o[0]['target'], 'jane@kenda.example');
+    $p = json_decode($o[0]['payload'], true);
+    ok(!empty($p['redacted']) && !isset($p['html']) && !isset($p['text']), 'bodies scrubbed once sent');
+    hasNot($o[0]['payload'], '?t=', 'no link left in the outbox');
 });
 test('magic link: stored hashed, 15-minute expiry, the GET shows a Continue button and does not spend it', function () {
     clearMail();

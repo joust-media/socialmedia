@@ -120,17 +120,18 @@ test('#2 posts: the admin sees the client note on the left with the client name;
     status(post('status.php', ['id' => 1, 'comment' => 'Love it', 'actor' => 'client', 'client' => 'kenda'], 'client', [], J), 200);
     status(post('status.php', ['id' => 1, 'comment' => 'Thanks!', 'actor' => 'admin', 'client' => 'kenda'], 'admin', [], J), 200);
     is(r3Bubbles(get('posts.php?client=kenda&post=1&partial=1', 'client')['body']), [['client', 'mine', 'You'], ['admin', 'theirs', 'Lance at Joust']], 'client seat (named author, notify-lib.php)');
-    is(r3Bubbles(get('posts.php?client=kenda&post=1&partial=1')['body']), [['client', 'theirs', 'Kenda Tires'], ['admin', 'mine', 'You']], 'admin seat');
+    // the signed-in contact who wrote it (activity_log.client_contact_id, migrate.php 44); legacy rows keep the client name
+    is(r3Bubbles(get('posts.php?client=kenda&post=1&partial=1')['body']), [['client', 'theirs', 'Jane Kenda (Kenda Tires)'], ['admin', 'mine', 'You']], 'admin seat');
     has(get('posts.php?client=kenda')['body'], '"names":{"client":"Kenda Tires"}', 'App.bubbleWho gets the client name');
 });
 test('#2 emails + pages (sheet and full form): the same sides', function () {
     status(post('email-status.php', ['id' => 2, 'comment' => 'Shorter subject?', 'actor' => 'client', 'client' => 'privacybee'], 'client', [], J), 200);
-    is(r3Bubbles(get('emails.php?client=privacybee&email=2&partial=1')['body']), [['client', 'theirs', 'Privacy Bee']], 'email sheet, admin');
+    is(r3Bubbles(get('emails.php?client=privacybee&email=2&partial=1')['body']), [['client', 'theirs', 'Pat Bee (Privacy Bee)']], 'email sheet, admin');
     is(r3Bubbles(get('emails.php?client=privacybee&email=2&partial=1', 'client')['body']), [['client', 'mine', 'You']], 'email sheet, client');
-    is(r3Bubbles(get('add-email.php?client=privacybee&edit=2')['body']), [['client', 'theirs', 'Privacy Bee']], 'add-email thread');
+    is(r3Bubbles(get('add-email.php?client=privacybee&edit=2')['body']), [['client', 'theirs', 'Pat Bee (Privacy Bee)']], 'add-email thread');
     status(post('page-status.php', ['id' => 1, 'comment' => 'Hero looks great', 'actor' => 'client', 'client' => 'privacybee'], 'client', [], J), 200);
-    is(r3Bubbles(get('pages.php?client=privacybee&page=1&partial=1')['body']), [['client', 'theirs', 'Privacy Bee']], 'page sheet, admin');
-    is(r3Bubbles(get('add-page.php?client=privacybee&edit=1')['body']), [['client', 'theirs', 'Privacy Bee']], 'add-page thread');
+    is(r3Bubbles(get('pages.php?client=privacybee&page=1&partial=1')['body']), [['client', 'theirs', 'Pat Bee (Privacy Bee)']], 'page sheet, admin');
+    is(r3Bubbles(get('add-page.php?client=privacybee&edit=1')['body']), [['client', 'theirs', 'Pat Bee (Privacy Bee)']], 'add-page thread');
     hasNot(get('index.php?client=kenda')['body'], '>You</span> · ', 'Home notes never say "You" for the client');
 });
 

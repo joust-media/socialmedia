@@ -44,16 +44,24 @@ function slackPost(string $path, string $body, string $ctype = 'application/json
     $sig = $sig ?? 'v0=' . hash_hmac('sha256', "v0:{$ts}:{$body}", SIGNING);
     $ch = curl_init(base() . '/' . $path);
     $hdrs = [];
+    $sync = bin2hex(random_bytes(8));
     curl_setopt_array($ch, [CURLOPT_POST => true, CURLOPT_POSTFIELDS => $body, CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 30,
-        CURLOPT_HTTPHEADER => ["Content-Type: {$ctype}", "X-Slack-Request-Timestamp: {$ts}", "X-Slack-Signature: {$sig}"],
+        CURLOPT_HTTPHEADER => ["Content-Type: {$ctype}", "X-Slack-Request-Timestamp: {$ts}", "X-Slack-Signature: {$sig}", "X-Test-Sync: {$sync}"],
         CURLOPT_HEADERFUNCTION => static function ($c, $l) use (&$hdrs) { $p = strpos($l, ':'); if ($p) $hdrs[strtolower(trim(substr($l, 0, $p)))] = trim(substr($l, $p + 1)); return strlen($l); }]);
     $out = (string)curl_exec($ch);
     $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
     curl_close($ch);
-    // The endpoints ack first (Content-Length + Connection: close) and work after the response; php -S serves one
-    // request at a time, so the next request returns only once that work is done.
-    get('login.php', 'anon');
+    // The endpoints ack first (Content-Length + Connection: close) and work after the response; wait until that
+    // request has completely finished (tests/test-auth.php X-Test-Sync), whichever php -S worker it ran on.
+    syncWait($sync);
     return ['code' => $code, 'body' => $out, 'json' => json_decode($out, true), 'headers' => $hdrs];
+}
+/** Wait (≤ 20 s) for the X-Test-Sync marker of a finished request. */
+function syncWait(string $token): void {
+    $f = nroot() . '/sessions/sync-' . $token;
+    for ($i = 0; $i < 400 && !is_file($f); $i++) usleep(50000);
+    if (!is_file($f)) throw new RuntimeException('request did not finish (no sync marker)');
+    @unlink($f);
 }
 function slackEvent(array $event, ?string $eventId = null): array {
     $body = json_encode(['type' => 'event_callback', 'team_id' => 'T0JOUST', 'event_id' => $eventId ?? ('Ev' . bin2hex(random_bytes(5))), 'event' => $event]);
@@ -104,10 +112,12 @@ ntest('config.php is out of git; config.example.php lists every key with blank v
     has($tracked, 'config.example.php');
     has((string)file_get_contents($repo . '/.gitignore'), 'config.php');
     $ex = require $repo . '/config.example.php';
-    foreach (['host', 'dbname', 'username', 'password', 'charset', 'portal_base_url', 'notify_to', 'notify_from', 'notify_reply_to',
-              'notify_message_domain', 'notify_envelope', 'mail_transport', 'notify_cron_token', 'slack_bot_token', 'slack_signing_secret',
-              'slack_api_base', 'drive_ingest_secret', 'preview_secret', 'machine_url_ext'] as $k) ok(array_key_exists($k, $ex), "key {$k}");
-    foreach (['password', 'notify_cron_token', 'slack_bot_token', 'slack_signing_secret', 'drive_ingest_secret', 'preview_secret'] as $k) is($ex[$k], '', "{$k} blank");
+    foreach (['host', 'dbname', 'username', 'password', 'charset', 'portal_url', 'notify_to', 'notify_from', 'notify_from_name', 'notify_reply_to',
+              'notify_message_domain', 'notify_envelope', 'mail_transport', 'mail_sink_dir', 'notify_cron_token', 'slack_bot_token', 'slack_signing_secret',
+              'slack_api_base', 'drive_ingest_secret', 'preview_secret', 'machine_url_ext', 'client_link_secret', 'clean_urls'] as $k) ok(array_key_exists($k, $ex), "key {$k}");
+    foreach (['password', 'notify_cron_token', 'slack_bot_token', 'slack_signing_secret', 'drive_ingest_secret', 'preview_secret', 'client_link_secret'] as $k) is($ex[$k], '', "{$k} blank");
+    // every key once: the old names are aliases (url-lib.php portalConfigAliases()), never listed themselves
+    foreach (['portal_base_url', 'mail_capture_dir', 'auth_mail_from', 'auth_mail_from_name', 'auth_mail_reply_to', 'auth_mail_envelope'] as $k) ok(!array_key_exists($k, $ex), "alias {$k} not listed");
 });
 
 // ---- Slack out ------------------------------------------------------------------------------------------------------
@@ -138,7 +148,7 @@ ntest('client comment → one outbox row, the item thread is created (Block Kit 
     is($reply['body']['thread_ts'], $t['slack_ts'], 'reply in the item thread');
     has(textOf($reply), '<@U0LANCE>', '@mention of the owner');
     has(textOf($reply), 'Can we swap this tire angle?');
-    has(textOf($reply), '*Kenda Tires* commented');
+    has(textOf($reply), '*Jane Kenda (Kenda Tires)* commented', 'names the signed-in contact (activity_log.client_contact_id)');
 });
 ntest('client deny with a slide note → ONE message: "requested changes on slide 2" + the quote; the parent shows Needs changes', function () {
     slackReset();

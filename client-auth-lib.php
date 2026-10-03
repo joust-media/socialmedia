@@ -23,7 +23,8 @@
  *   clientContactEmails($pdo, $companyId)            the client's contact addresses
  *   clientContacts($pdo, $companyId) / clientContactsByEmail($pdo, $email)
  *   currentClientContact()                           the signed-in contact (id, email, name, company_id) or null
- *   notifyEmail($to, $subject, $html, $text, $opts)  auth-mail.php (shim) / notify-lib.php
+ *   notifyEmail(['to' => …, 'subject' => …, 'html' => …, 'text' => …])   notify-lib.php — the one email function;
+ *   the sign-in email goes through notifySendEmailNow() (the outbox, delivered at once; retried by the cron)
  *
  * Function definitions only (function_exists-guarded). Needs url-lib.php.
  */
@@ -313,12 +314,14 @@ if (!function_exists('clientMagicRequest')) {
 }
 
 if (!function_exists('clientMagicSend')) {
-    /** The sign-in email (one link per client). Through notifyEmail() (notify-lib.php, else the auth-mail.php shim). */
+    /**
+     * The sign-in email (one link per client). Through the notifications outbox with an immediate send attempt
+     * (notify-lib.php notifySendEmailNow() → notifyEmail()), so it is in the delivery log and a failed first attempt
+     * is retried by the cron while the link is still valid. Sender: config notify_from / notify_from_name (aliases
+     * auth_mail_from / auth_mail_from_name), default "Joust Media" <lance@joustmedia.com>.
+     */
     function clientMagicSend(string $to, array $links): bool {
-        if (!function_exists('notifyEmail')) {
-            if (is_file(__DIR__ . '/notify-lib.php')) require_once __DIR__ . '/notify-lib.php';
-            if (!function_exists('notifyEmail')) require_once __DIR__ . '/auth-mail.php';
-        }
+        if (!function_exists('notifySendEmailNow')) require_once __DIR__ . '/notify-lib.php';
         $mins = (int)round(CLIENT_MAGIC_TTL / 60);
         $one = count($links) === 1;
         $subject = $one ? 'Your sign-in link for ' . $links[0]['company'] . ' — Joust Media' : 'Your Joust Media sign-in links';
@@ -340,8 +343,11 @@ if (!function_exists('clientMagicSend')) {
         $plain = "Sign in to your Joust Media review portal:\n\n" . $text
                . "\nThe link works once and expires in {$mins} minutes. Didn't ask for this? Ignore this email.\n";
         try {
-            $r = notifyEmail($to, $subject, $html, $plain, ['kind' => 'sign_in', 'priority' => 'immediate']);
-            return is_array($r) ? !empty($r['ok']) : (bool)$r;
+            $pdo = ($GLOBALS['pdo'] ?? null) instanceof PDO ? $GLOBALS['pdo'] : null;
+            $r = notifySendEmailNow($pdo, ['to' => $to, 'subject' => $subject, 'html' => $html, 'text' => $plain],
+                                    ['kind' => 'sign_in', 'expires' => time() + CLIENT_MAGIC_TTL]);
+            if (!$r['ok']) error_log('client sign-in email to ' . $to . ' not sent yet: ' . $r['error'] . ($r['queued'] ? ' (queued for retry)' : ''));
+            return !empty($r['ok']);
         } catch (Throwable $e) {
             error_log('client sign-in email failed: ' . $e->getMessage());
             return false;

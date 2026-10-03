@@ -909,15 +909,26 @@ function logActivity(PDO $pdo, $companyId, $entityType, $entityId,
                 ? ($ctx['author_user_id'] !== null ? (int)$ctx['author_user_id'] : null)
                 : ($actor === 'admin' && function_exists('currentAdminUserId') ? currentAdminUserId($pdo) : null);
             $internal = !empty($ctx['internal']) ? 1 : 0;
+            // The signed-in client contact behind a client row (migrate.php 44): "Jane (Kenda Tires)" in Slack / admin.
+            $contactCol = function_exists('activityHasContactCol') && activityHasContactCol($pdo);
+            $contact = null;
+            if ($contactCol && $actor === 'client') {
+                $contact = array_key_exists('client_contact_id', $ctx)
+                    ? ($ctx['client_contact_id'] !== null ? (int)$ctx['client_contact_id'] : null)
+                    : activityCurrentClientContactId($pdo, (int)$companyId);
+            }
             $stmt = $pdo->prepare("
                 INSERT INTO activity_log
-                    (company_id, entity_type, entity_id, action, actor, author_user_id, internal, batch_id, summary, detail)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (company_id, entity_type, entity_id, action, actor, author_user_id, internal, batch_id, summary, detail"
+                    . ($contactCol ? ", client_contact_id" : "") . ")
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?" . ($contactCol ? ", ?" : "") . ")
             ");
-            $stmt->execute([
+            $vals = [
                 (int)$companyId, $entityType, (int)$entityId, $action,
                 $actor, $author, $internal, $batchId, mb_substr((string)$summary, 0, 500), $detail,
-            ]);
+            ];
+            if ($contactCol) $vals[] = $contact;
+            $stmt->execute($vals);
         } else {
             $stmt = $pdo->prepare("
                 INSERT INTO activity_log
@@ -1132,6 +1143,7 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
                     'entity_id'    => $r['entity_id'],
                     'actor'        => $r['actor'],
                     'author_user_id' => $r['author_user_id'] ?? null,
+                    'client_contact_id' => $r['client_contact_id'] ?? null,
                     'internal'     => (int)($r['internal'] ?? 0),
                     'created_at'   => $r['created_at'],
                     'batch_id'     => $r['batch_id'],
@@ -1158,6 +1170,7 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
                 'entity_id'    => $r['entity_id'],
                 'actor'        => $r['actor'],
                 'author_user_id' => $r['author_user_id'] ?? null,
+                'client_contact_id' => $r['client_contact_id'] ?? null,
                 'internal'     => (int)($r['internal'] ?? 0),
                 'created_at'   => $r['created_at'],
                 'batch_id'     => null,
@@ -1727,8 +1740,12 @@ if (!function_exists('humanizeActivityRows')) {
             // The client seat keeps "Joust" as the team's name in feed sentences.
             $named = ($actor === 'admin' && $viewerRole === 'admin' && function_exists('activityAuthorLabel'))
                 ? activityAuthorLabel($e, 'admin') : '';
+            // The client contact behind a client row (migrate.php 44), for Joust: "Jane Kenda (Kenda Tires)".
+            $contactWho = ($actor === 'client' && $viewerRole === 'admin' && function_exists('activityClientLabel')) ? activityClientLabel($e) : '';
             if ($named !== '' && $named !== 'You') {
                 $who = $named; $isYou = false;
+            } elseif ($contactWho !== '' && !$isYou) {
+                $who = $contactWho;
             } elseif ($isYou) {
                 $who = 'You';
             } elseif ($actor === 'admin') {

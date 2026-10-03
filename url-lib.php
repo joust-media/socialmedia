@@ -17,7 +17,7 @@
  * block is only kept when a self-request proved it works, so a folder without mod_rewrite keeps the query-string
  * URLs, and every old link keeps working either way (old URLs 301 to the clean form once the block is in).
  *
- * Machine endpoints (drive-ingest, slack-events, slack-actions, notify-cron, …) are never captured by the router:
+ * Machine endpoints (drive-ingest, slack-events, slack-actions, notify-cron, notify-thumb, …) are never captured by the router:
  * an extensionless name whose .php exists is served by that file first, and the reserved names never reach route.php.
  *
  * Function definitions only (function_exists-guarded); no output, no DB.
@@ -27,10 +27,47 @@ if (!defined('CLEAN_LINKS_BEGIN')) define('CLEAN_LINKS_BEGIN', '# BEGIN joust-po
 if (!defined('CLEAN_LINKS_END'))   define('CLEAN_LINKS_END', '# END joust-portal-clean-links');
 if (!defined('CLEAN_LINKS_VERSION')) define('CLEAN_LINKS_VERSION', 1);
 
-if (!function_exists('portalConfig')) {
-    /** One key of config.php (read once per request, never fatal); $default when missing. */
-    function portalConfig(string $key, $default = null) {
+if (!function_exists('portalConfigAliases')) {
+    /**
+     * config.php keys that were named differently by the notifications and the client sign-in work: canonical key →
+     * the older names still accepted. config.example.php lists only the canonical names. Either name may be asked for
+     * (portalConfig('portal_base_url') finds a 'portal_url' entry and the reverse); a blank value counts as not set,
+     * and the canonical key wins when both are set.
+     */
+    function portalConfigAliases(): array {
+        return [
+            'portal_url'       => ['portal_base_url'],
+            'mail_sink_dir'    => ['mail_capture_dir'],
+            'notify_from'      => ['auth_mail_from'],
+            'notify_from_name' => ['auth_mail_from_name'],
+            'notify_reply_to'  => ['auth_mail_reply_to'],
+            'notify_envelope'  => ['auth_mail_envelope'],
+        ];
+    }
+}
+
+if (!function_exists('portalConfigPick')) {
+    /** $key from a config array, alias-aware (portalConfigAliases()); null when neither name holds a value. */
+    function portalConfigPick(array $cfg, string $key) {
+        $group = null;
+        foreach (portalConfigAliases() as $canon => $aliases) {
+            if ($key === $canon || in_array($key, $aliases, true)) { $group = array_merge([$canon], $aliases); break; }
+        }
+        if ($group === null) return array_key_exists($key, $cfg) ? $cfg[$key] : null;
+        foreach ($group as $k) {
+            if (!array_key_exists($k, $cfg) || $cfg[$k] === null) continue;
+            if (is_string($cfg[$k]) && trim($cfg[$k]) === '') continue;
+            return $cfg[$k];
+        }
+        return null;
+    }
+}
+
+if (!function_exists('portalConfigArray')) {
+    /** config.php as an array (the global $config db.php loaded, else read once; never fatal, never printed). */
+    function portalConfigArray(): array {
         static $cfg = null;
+        if (isset($GLOBALS['config']) && is_array($GLOBALS['config'])) return $GLOBALS['config'];
         if ($cfg === null) {
             $cfg = [];
             $file = __DIR__ . '/config.php';
@@ -39,7 +76,15 @@ if (!function_exists('portalConfig')) {
                 catch (Throwable $e) { $cfg = []; }
             }
         }
-        return array_key_exists($key, $cfg) ? $cfg[$key] : $default;
+        return $cfg;
+    }
+}
+
+if (!function_exists('portalConfig')) {
+    /** One key of config.php (alias-aware: portalConfigAliases()); $default when missing. */
+    function portalConfig(string $key, $default = null) {
+        $v = portalConfigPick(portalConfigArray(), $key);
+        return $v === null ? $default : $v;
     }
 }
 
@@ -122,8 +167,8 @@ if (!function_exists('portalReservedSegments')) {
         if ($out !== null) return $out;
         $out = ['manage', 'sign-in', 'sign-out', 'login', 'logout', 'static', 'uploads', 'media', 'legacy', 'partials',
                 'docs', 'tests', 'api', 'route', 'admin', 'new', 'view-as',
-                // machine endpoints (this branch and wt/notify): never a client, never routed
-                'drive-ingest', 'slack-events', 'slack-actions', 'notify-cron', 'notify-pump', 'mail-inbound',
+                // machine endpoints (portalMachineEndpoints()): never a client, never routed
+                'drive-ingest', 'slack-events', 'slack-actions', 'notify-cron', 'notify-thumb', 'notify-pump', 'mail-inbound',
                 '__clean-links-check'];
         foreach (glob(__DIR__ . '/*.php') ?: [] as $f) $out[] = basename($f, '.php');
         foreach (glob(__DIR__ . '/*', GLOB_ONLYDIR) ?: [] as $d) $out[] = basename($d);
@@ -135,7 +180,7 @@ if (!function_exists('portalReservedSegments')) {
 if (!function_exists('portalMachineEndpoints')) {
     /** Extensionless machine endpoints the router must never capture (the .htaccess passes them straight through). */
     function portalMachineEndpoints(): array {
-        return ['drive-ingest', 'slack-events', 'slack-actions', 'notify-cron', 'notify-pump', 'mail-inbound'];
+        return ['drive-ingest', 'slack-events', 'slack-actions', 'notify-cron', 'notify-thumb', 'notify-pump', 'mail-inbound'];
     }
 }
 
@@ -301,7 +346,7 @@ if (!function_exists('portalUrl')) {
 }
 
 if (!function_exists('portalOrigin')) {
-    /** 'https://joustmedia.com' — config 'portal_url' (scheme + host part) wins, else the current request. */
+    /** 'https://joustmedia.com' — config 'portal_url' (alias 'portal_base_url'; scheme + host part) wins, else the request. */
     function portalOrigin(): string {
         $cfgUrl = trim((string)portalConfig('portal_url', ''));
         if ($cfgUrl !== '' && preg_match('#^(https?://[^/]+)#i', $cfgUrl, $m)) return rtrim($m[1], '/');

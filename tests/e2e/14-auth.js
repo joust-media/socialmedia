@@ -61,7 +61,7 @@ const pathOf = (page) => new URL(page.url()).pathname + new URL(page.url()).sear
       await page.waitForSelector('[data-signin-sent]');
       if (desktop) await page.screenshot({ path: path.join(SHOTS, 'sign-in-sent-1440-dark.png') });
       const mail = lastMail();
-      expect(mail && mail.to[0] === 'jane@kenda.example', 'the email was sent');
+      expect(mail && mail.to === 'jane@kenda.example', 'the email was sent');
       const link = (mail.text.match(/https?:\/\/\S+sign-in(?:\.php)?\?t=[A-Za-z0-9_-]+/) || [])[0];
       expect(link, 'a link in the email');
       await page.goto(link);

@@ -32,8 +32,14 @@ async function slackEvent(event) {
   const body = JSON.stringify({ type: 'event_callback', event_id: 'Ev' + crypto.randomBytes(5).toString('hex'), event });
   const ts = Math.floor(Date.now() / 1000);
   const sig = 'v0=' + crypto.createHmac('sha256', SIGNING).update(`v0:${ts}:${body}`).digest('hex');
-  await fetch(BASE + '/slack-events.php', { method: 'POST', body, headers: { 'Content-Type': 'application/json', 'X-Slack-Request-Timestamp': String(ts), 'X-Slack-Signature': sig } });
-  await fetch(BASE + '/login.php');   // php -S: returns once the post-ack work is done
+  const sync = crypto.randomBytes(8).toString('hex');
+  await fetch(BASE + '/slack-events.php', { method: 'POST', body, headers: { 'Content-Type': 'application/json', 'X-Slack-Request-Timestamp': String(ts), 'X-Slack-Signature': sig, 'X-Test-Sync': sync } });
+  // The endpoint acks first and works after the response; php -S runs several workers, so wait for the request's
+  // completion marker (tests/test-auth.php X-Test-Sync) rather than for "the next request".
+  const marker = path.join(ROOT, 'sessions', 'sync-' + sync);
+  for (let i = 0; i < 400 && !fs.existsSync(marker); i++) await new Promise((r) => setTimeout(r, 50));
+  if (!fs.existsSync(marker)) throw new Error('slack-events did not finish (no sync marker)');
+  fs.unlinkSync(marker);
 }
 const noOverflow = (page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 

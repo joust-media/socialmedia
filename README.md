@@ -72,13 +72,20 @@ Clients sign in; a bare `?client=<slug>` link no longer opens anything by itself
   301 to the clean form. Extensionless scripts (`/portal/drive-ingest`, `/portal/slack-events`,
   `/portal/notify-cron`, …) are served by their `.php` first and never reach the router (`route.php`).
   Slugs that would shadow a portal page (`manage`, `posts`, `sign-in`, …) are refused for new clients.
-- **Config keys** (server `config.php`): `client_link_secret` (deep-link HMAC key, 32+ random chars),
-  `auth_mail_from` (default `lance@joustmedia.com`), `auth_mail_from_name` (default `Joust Media`),
-  `auth_mail_reply_to`, `auth_mail_envelope` (default = from), `portal_url` (e.g.
-  `https://joustmedia.com/portal` — absolute links from cron / CLI), `clean_urls` (true / false to force),
-  `mail_capture_dir` (development only: write emails to files instead of sending).
-- **Email transport**: `notifyEmail($to, $subject, $html, $text, $opts)` — `auth-mail.php` is a `mail()`
-  shim; a `notify-lib.php` defining the same function takes precedence.
+- **Config keys** (server `config.php`; every key, once, in `config.example.php`): `client_link_secret`
+  (deep-link HMAC key, 32+ random chars), `portal_url` (e.g. `https://joustmedia.com/portal` — every absolute
+  link: Slack, emails, sign-in links), `clean_urls` (true / false to force), and the shared email keys below.
+  Older names are still read as aliases (`url-lib.php` `portalConfigAliases()`): `portal_base_url` → `portal_url`,
+  `mail_capture_dir` → `mail_sink_dir`, `auth_mail_from` / `auth_mail_from_name` / `auth_mail_reply_to` /
+  `auth_mail_envelope` → `notify_from` / `notify_from_name` / `notify_reply_to` / `notify_envelope`.
+- **Email**: one function, `notifyEmail(array $msg)` in `notify-lib.php` (`to`, `subject`, `text`, `html`, …).
+  The sign-in email goes through the notifications outbox with an immediate send attempt
+  (`notifySendEmailNow()`): it shows in Manage → Notifications → Delivery log, a failed first attempt is retried by
+  the cron while the link is still valid, and the link is scrubbed from the row once handled. Sender: `notify_from`
+  (default `lance@joustmedia.com`) with `notify_from_name` (default `Joust Media`). Any link a client receives by
+  email is a `clientLink()` (`notifyItemLinkFor()`); Joust's own messages carry the plain admin URL.
+- **Who said it**: a client comment records the signed-in contact (`activity_log.client_contact_id`, migrate step
+  44); Slack thread replies and the admin's threads / feeds read "Jane Kenda (Kenda Tires)" (name, else email).
 
 ## Navigation and Manage (admin)
 

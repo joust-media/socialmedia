@@ -157,7 +157,8 @@ function pagesAttachRelations(PDO $pdo, array &$rows): void {
         foreach ($all as $row) {
             $eid = (int)$row['entity_id'];
             if (isset($byId[$eid])) $byId[$eid]['comments'][] = ['actor' => $row['actor'], 'detail' => $row['detail'], 'created_at' => $row['created_at'],
-                                                          'author_user_id' => $row['author_user_id'] ?? null, 'internal' => (int)($row['internal'] ?? 0)];
+                                                          'author_user_id' => $row['author_user_id'] ?? null, 'internal' => (int)($row['internal'] ?? 0),
+                                                          'client_contact_id' => $row['client_contact_id'] ?? null];
         }
         $st = $pdo->prepare("
             SELECT entity_id, MAX(created_at) AS at FROM activity_log

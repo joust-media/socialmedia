@@ -17,9 +17,9 @@ $nfKeys = [
     ['slack_bot_token',      'Slack bot token',          'xoxb-… from the Slack app (OAuth & Permissions)'],
     ['slack_signing_secret', 'Slack signing secret',     'Basic Information → App Credentials'],
     ['notify_cron_token',    'Cron token',               'a random string (16+ characters) for the cPanel cron URL'],
-    ['portal_base_url',      'Portal address',           'https://joustmedia.com/portal — used in every link Slack and email show'],
+    ['portal_url',           'Portal address',           'https://joustmedia.com/portal — used in every link Slack and email show (old name: portal_base_url)'],
     ['notify_to',            'Morning summary goes to',  'your email address'],
-    ['notify_from',          'Emails come from',         'e.g. Joust Portal <portal@joustmedia.com>'],
+    ['notify_from',          'Emails come from',         'lance@joustmedia.com (the default; display name notify_from_name, default Joust Media) — sign-in links too'],
 ];
 $nfCfgSet = static function (string $k): bool { return notifyCfg($k) !== ''; };
 $nfSettings = $nfReady ? notifySettings($pdo) : ['t1' => 60, 't2' => 240, 'summary_hour' => 8];

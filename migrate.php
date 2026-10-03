@@ -1633,6 +1633,23 @@ if (!$errors) {
         $errors[] = $e->getMessage();
     }
 }
+
+// 44. activity_log.client_contact_id — which signed-in client contact (client_contacts.id) wrote a client row, so
+//     Slack and the admin views can say "Jane (Kenda Tires)" instead of just the client. NULL = unknown (rows from
+//     before sign-in, the admin's "reply as client", a removed contact). Probed by activityHasContactCol()
+//     (notify-lib.php); every reader works without it.
+if (!$errors) {
+    try {
+        if (!columnExists($pdo, 'activity_log', 'client_contact_id')) {
+            $pdo->exec("ALTER TABLE activity_log ADD COLUMN client_contact_id INT UNSIGNED NULL DEFAULT NULL");
+            $steps[] = "✓ Added activity_log.client_contact_id (which client contact wrote it).";
+        } else {
+            $steps[] = "• activity_log.client_contact_id already exists — skipped.";
+        }
+    } catch (Exception $e) {
+        $errors[] = $e->getMessage();
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">

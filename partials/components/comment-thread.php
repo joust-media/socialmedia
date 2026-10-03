@@ -96,6 +96,8 @@ if (!function_exists('commentBubble')) {
         // initials for client bubbles (actorAvatar(), helpers.php; '' for 'unknown' notes).
         $avatar = function_exists('actorAvatar') ? actorAvatar($actor, $GLOBALS['client'] ?? null, 'ui-avatar--xs pd-msg-avatar') : '';
 
+        // A client message on the admin seat names the signed-in contact who wrote it ("Jane Kenda (Kenda Tires)").
+        if ($named === '' && $actor === 'client' && $viewer === 'admin' && function_exists('activityClientLabel')) $named = activityClientLabel($row);
         $label = $named !== '' ? $named : commentActorLabel($actor, $viewer);
         // Internal notes (Joust only — never rendered for the client seat; the readers filter them out) get a lock pill.
         $out  = '<div class="pd-msg pd-msg--' . $side . '" data-actor="' . $esc($actor) . '"' . ($internal ? ' data-internal="1"' : '') . '>';

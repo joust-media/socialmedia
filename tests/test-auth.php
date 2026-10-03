@@ -27,6 +27,18 @@ if (getenv('PORTAL_TEST') !== '1' || defined('PORTAL_TEST_AUTH')) {
 }
 define('PORTAL_TEST_AUTH', 1);
 
+// X-Test-Sync: <token> → touch <session.save_path>/sync-<token> once this request is COMPLETELY done, after-response
+// work included (notifyRespondEarly() acks Slack before the work; the shutdown pump runs after the script). The outer
+// hook runs first and queues the inner one behind every shutdown function the app registered meanwhile, so the file
+// appears last. php -S runs several workers (serve.sh), so "the next request waits" no longer holds — tests poll this.
+if (PHP_SAPI !== 'cli' && preg_match('/^[a-z0-9]{8,40}$/', (string)($_SERVER['HTTP_X_TEST_SYNC'] ?? ''))) {
+    $__ptSync = rtrim((string)ini_get('session.save_path'), '/') . '/sync-' . $_SERVER['HTTP_X_TEST_SYNC'];
+    register_shutdown_function(static function () use ($__ptSync) {
+        register_shutdown_function(static function () use ($__ptSync) { @touch($__ptSync); });
+    });
+    unset($__ptSync);
+}
+
 $__ptRole = '';
 if (PHP_SAPI === 'cli') {
     $__ptRole = (string)getenv('PORTAL_TEST_ROLE');

@@ -26,11 +26,16 @@
  *   cron endpoint (notify-cron.php) retries with backoff, runs the escalation checks and the Morning summary.
  *
  * ── Interfaces other work plugs into ───────────────────────────────────────────────────────────────────────────────
- *   portalUrl($page, $params) / portalItemUrl(...) / notifyAbsoluteUrl($rootRooted): absolute links (built on
- *   pagePath(), so CLEAN_URLS / the auth worker's URL helpers apply). notifyMachineUrl($name, $params): the
- *   session-free endpoints (thumbs, cron, Slack), extensionless on the live host.
- *   notifyEmail($msg): ONE function every email goes through; transports are functions notifyMailSend_<name>($msg)
- *   chosen by config 'mail_transport' (mail = PHP mail(), sink = test harness). Phase 3 adds notifyMailSend_gmail.
+ *   portalUrl($page, $params) (url-lib.php: root-rooted, clean when clean links are on) → notifyAbsoluteUrl() for
+ *   an absolute link; portalItemUrl(...) is the absolute deep link to one item (admin form — Slack "Open in portal",
+ *   reminder emails to Joust). Any link a CLIENT receives by email goes through notifyItemLinkFor() → clientLink()
+ *   (client-auth-lib.php: signed, signs that contact in). notifyMachineUrl($name, $params): the session-free
+ *   endpoints (thumbs, cron, Slack), extensionless on the live host (never captured by the clean-link router).
+ *   notifyEmail($msg): ONE function every email goes through (client sign-in links included); transports are
+ *   functions notifyMailSend_<name>($msg) chosen by config 'mail_transport' (mail = PHP mail(), sink = test
+ *   harness). notifySendEmailNow(): an email through the outbox with an immediate delivery attempt (sign-in links).
+ *   Config keys are read alias-aware (url-lib.php portalConfigAliases(): portal_url ← portal_base_url, mail_sink_dir
+ *   ← mail_capture_dir, notify_from / _from_name / _reply_to / _envelope ← auth_mail_*).
  */
 
 if (!defined('NOTIFY_MAX_ATTEMPTS')) define('NOTIFY_MAX_ATTEMPTS', 6);
@@ -44,6 +49,7 @@ if (!defined('NOTIFY_THUMB_TTL'))    define('NOTIFY_THUMB_TTL', 30 * 86400);
 if (!function_exists('notifyConfig')) {
     /** config.php as an array (the global $config db.php loaded, else read once). Never printed anywhere. */
     function notifyConfig(): array {
+        if (function_exists('portalConfigArray')) return portalConfigArray();
         static $cfg = null;
         if ($cfg !== null) return $cfg;
         if (isset($GLOBALS['config']) && is_array($GLOBALS['config'])) return $cfg = $GLOBALS['config'];
@@ -57,8 +63,9 @@ if (!function_exists('notifyConfig')) {
 }
 
 if (!function_exists('notifyCfg')) {
+    /** One config key as a trimmed string ($default when unset / blank). Alias-aware (url-lib.php portalConfigAliases()). */
     function notifyCfg(string $key, string $default = ''): string {
-        $v = notifyConfig()[$key] ?? null;
+        $v = function_exists('portalConfigPick') ? portalConfigPick(notifyConfig(), $key) : (notifyConfig()[$key] ?? null);
         if ($v === null || !is_scalar($v)) return $default;
         $v = trim((string)$v);
         return $v === '' ? $default : $v;
@@ -139,9 +146,10 @@ if (!function_exists('notifySettings')) {
 // =====================================================================================================================
 
 if (!function_exists('notifyBaseUrl')) {
-    /** The portal's absolute base ('https://joustmedia.com/portal'): config portal_base_url, else this request's host. */
+    /** The portal's absolute base ('https://joustmedia.com/portal'): config portal_url (alias portal_base_url), else
+     *  this request's host. */
     function notifyBaseUrl(): string {
-        $cfg = rtrim(notifyCfg('portal_base_url'), '/');
+        $cfg = rtrim(notifyCfg('portal_url'), '/');
         if ($cfg !== '') return $cfg;
         $host = (string)($_SERVER['HTTP_HOST'] ?? '');
         if ($host === '' || !preg_match('/^[A-Za-z0-9.\-]+(:\d+)?$/', $host)) $host = 'localhost';
@@ -155,6 +163,8 @@ if (!function_exists('notifyAbsoluteUrl')) {
     /** Root-rooted ('/portal/posts.php?…') → absolute on the portal's origin. Absolute input passes through. */
     function notifyAbsoluteUrl(string $url): string {
         if (preg_match('#^https?://#i', $url)) return $url;
+        // url-lib.php's absolutizer knows the request's folder vs. the configured one (cron / Slack-triggered senders)
+        if ($url !== '' && $url[0] === '/' && function_exists('portalAbsoluteUrl') && notifyCfg('portal_url') !== '') return portalAbsoluteUrl($url);
         $base = notifyBaseUrl();
         $p = parse_url($base);
         $origin = ($p['scheme'] ?? 'https') . '://' . ($p['host'] ?? 'localhost') . (isset($p['port']) ? ':' . $p['port'] : '');
@@ -163,13 +173,11 @@ if (!function_exists('notifyAbsoluteUrl')) {
     }
 }
 
-if (!function_exists('portalUrl')) {
-    /** Absolute link to a portal page: portalUrl('posts', ['client' => 'kenda', 'post' => 3]). Built on pagePath(),
-     *  so CLEAN_URLS (and any later clean-URL helper behind it) applies — every emailed / Slack link goes through here. */
-    function portalUrl(string $page, array $params = []): string {
-        $params = array_filter($params, static function ($v) { return $v !== null && $v !== ''; });
-        $path = function_exists('pagePath') ? pagePath($page) : '/' . $page;
-        return notifyAbsoluteUrl($path . ($params ? '?' . http_build_query($params) : ''));
+if (!function_exists('notifyPortalUrl')) {
+    /** Absolute link to a portal page for an admin-facing message: notifyPortalUrl('posts', ['client' => 'kenda']).
+     *  url-lib.php portalUrl() (the one link builder: clean links when they are on) made absolute. */
+    function notifyPortalUrl(string $page, array $params = []): string {
+        return notifyAbsoluteUrl(portalUrl($page, $params));
     }
 }
 
@@ -180,6 +188,56 @@ if (!function_exists('portalItemUrl')) {
             ? activityDeepLink(['entity_type' => $entityType, 'entity_id' => $entityId, 'company_slug' => $companySlug, '_meta' => $meta])
             : '/';
         return notifyAbsoluteUrl($rel);
+    }
+}
+
+if (!function_exists('notifyClientItemPath')) {
+    /** An item as a clientLink() path inside its client's portal ('posts/12', 'tires/3?asset=9&kind=tire', …). */
+    function notifyClientItemPath(string $entityType, int $entityId, array $meta = []): string {
+        switch ($entityType) {
+            case 'post':  return 'posts/' . $entityId;
+            case 'email': return 'emails/' . $entityId;
+            case 'page':  return 'pages/' . $entityId;
+            case 'tire_image':
+                $tire = (int)($meta['tire_id'] ?? 0);
+                if ($tire <= 0) return 'tires';
+                $q = ['asset' => $entityId, 'kind' => 'tire'];
+                if ((int)($meta['series_id'] ?? 0) > 0) $q = ['series' => (int)$meta['series_id']] + $q;
+                return 'tires/' . $tire . '?' . http_build_query($q);
+            case 'tire_series':
+                $tire = (int)($meta['tire_id'] ?? 0);
+                return $tire > 0 ? 'tires/' . $tire . '?' . http_build_query(['series' => $entityId]) : 'tires';
+            case 'library_image': return 'assets?' . http_build_query(['asset' => $entityId, 'kind' => 'library']);
+        }
+        return '';
+    }
+}
+
+if (!function_exists('notifyItemLinkFor')) {
+    /**
+     * The link to put in an email about an item, for THIS recipient: a contact of the item's client gets
+     * clientLink() (signed — one tap signs them in and lands on the item); anyone else (Joust) gets the plain admin
+     * deep link ($info['url']). $info = notifyItemInfo(). Never hands a client an unsigned admin URL.
+     */
+    function notifyItemLinkFor(PDO $pdo, array $info, string $recipient): string {
+        $addr = strtolower(trim((string)preg_replace('/^.*<([^>]+)>\s*$/', '$1', $recipient)));
+        $slug = (string)($info['company_slug'] ?? '');
+        if ($addr !== '' && $slug !== '' && function_exists('clientLink') && function_exists('clientAuthReady') && clientAuthReady($pdo)) {
+            $isContact = false;
+            try {
+                $st = $pdo->prepare("SELECT 1 FROM client_contacts WHERE company_id = ? AND email = ?");
+                $st->execute([(int)($info['company_id'] ?? 0), $addr]);
+                $isContact = (bool)$st->fetchColumn();
+            } catch (Throwable $e) {
+                $isContact = false;
+            }
+            if ($isContact) {
+                $link = clientLink($slug, notifyClientItemPath((string)$info['entity_type'], (int)$info['entity_id'], (array)($info['meta'] ?? [])), $addr);
+                // a contact never gets the admin URL: '' (logged by clientLink) rather than an unsigned link
+                return $link;
+            }
+        }
+        return (string)($info['url'] ?? '');
     }
 }
 
@@ -322,13 +380,78 @@ if (!function_exists('activityVisibleSql')) {
     }
 }
 
+if (!function_exists('activityHasContactCol')) {
+    /** activity_log.client_contact_id exists (migrate.php 44). Cached per request. */
+    function activityHasContactCol(?PDO $pdo): bool {
+        static $has = null;
+        if ($has !== null) return $has;
+        if (!$pdo) return false;
+        try {
+            return $has = (int)$pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE()
+                AND TABLE_NAME = 'activity_log' AND COLUMN_NAME = 'client_contact_id'")->fetchColumn() === 1;
+        } catch (Throwable $e) {
+            return $has = false;
+        }
+    }
+}
+
 if (!function_exists('activityAuthorCols')) {
-    /** ', <a>.author_user_id, <a>.internal' (or NULL / 0 stand-ins before migrate.php 37) for SELECT lists. */
+    /** ', <a>.author_user_id, <a>.internal, <a>.client_contact_id' (or NULL / 0 stand-ins before migrate.php 37 / 44)
+     *  for SELECT lists. */
     function activityAuthorCols(?PDO $pdo, string $alias = ''): string {
         $a = $alias !== '' ? $alias . '.' : '';
-        return ($pdo && activityHasNotifyCols($pdo))
+        return (($pdo && activityHasNotifyCols($pdo))
             ? ", {$a}author_user_id, {$a}internal"
-            : ', NULL AS author_user_id, 0 AS internal';
+            : ', NULL AS author_user_id, 0 AS internal')
+            . (($pdo && activityHasContactCol($pdo)) ? ", {$a}client_contact_id" : ', NULL AS client_contact_id');
+    }
+}
+
+if (!function_exists('clientContactLabel')) {
+    /**
+     * Who at the client wrote something, for Joust: "Jane Kenda (Kenda Tires)" — the contact's name, else its email,
+     * with the client's name. '' when the id is unknown (removed contact / legacy row): callers fall back to the
+     * client's name. Cached per request.
+     */
+    function clientContactLabel(?PDO $pdo, $contactId, bool $withCompany = true): string {
+        $id = (int)$contactId;
+        if ($id <= 0 || !$pdo) return '';
+        static $cache = [];
+        if (!array_key_exists($id, $cache)) {
+            $cache[$id] = null;
+            try {
+                $st = $pdo->prepare("SELECT c.name, c.email, co.name AS company_name FROM client_contacts c
+                                       LEFT JOIN companies co ON co.id = c.company_id WHERE c.id = ?");
+                $st->execute([$id]);
+                $cache[$id] = $st->fetch() ?: null;
+            } catch (Throwable $e) {
+                $cache[$id] = null;
+            }
+        }
+        $r = $cache[$id];
+        if (!$r) return '';
+        $who = trim((string)($r['name'] ?? '')) !== '' ? trim((string)$r['name']) : trim((string)$r['email']);
+        $co = trim((string)($r['company_name'] ?? ''));
+        return ($withCompany && $co !== '') ? $who . ' (' . $co . ')' : $who;
+    }
+}
+
+if (!function_exists('activityClientLabel')) {
+    /** The client contact behind a client row, for the ADMIN seat ("Jane Kenda (Kenda Tires)"), or ''. */
+    function activityClientLabel(array $row): string {
+        if (($row['actor'] ?? '') !== 'client' || empty($row['client_contact_id'])) return '';
+        return clientContactLabel($GLOBALS['pdo'] ?? null, (int)$row['client_contact_id']);
+    }
+}
+
+if (!function_exists('activityCurrentClientContactId')) {
+    /** client_contacts.id to record on a client row of $companyId: the signed-in contact of THAT client (never for the
+     *  admin seat — its "reply as client" stays anonymous), else null. */
+    function activityCurrentClientContactId(?PDO $pdo, int $companyId): ?int {
+        if (!$pdo || !activityHasContactCol($pdo) || !function_exists('currentClientContact')) return null;
+        if (function_exists('currentAdmin') && currentAdmin()) return null;
+        $c = currentClientContact();
+        return ($c && (int)$c['company_id'] === $companyId && (int)$c['id'] > 0) ? (int)$c['id'] : null;
     }
 }
 
@@ -756,6 +879,23 @@ if (!function_exists('notifyPump')) {
 if (!function_exists('notifyFinish')) {
     /** Record a delivery result → 'sent' | 'skipped' | 'retry' | 'failed'. */
     function notifyFinish(PDO $pdo, array $row, array $res): string {
+        $out = notifyFinishRow($pdo, $row, $res);
+        // A ready-made email (sign-in link) keeps its bodies only while it may still be sent.
+        if ($out !== 'retry' && in_array((string)$row['kind'], ['sign_in', 'email'], true)) {
+            $p = json_decode((string)$row['payload'], true) ?: [];
+            $keep = ['redacted' => 1, 'to' => (string)($p['to'] ?? ''), 'subject' => (string)($p['subject'] ?? ''), 'kind' => (string)($p['kind'] ?? '')];
+            try {
+                $pdo->prepare("UPDATE notify_outbox SET payload = ? WHERE id = ?")->execute([json_encode($keep, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE), (int)$row['id']]);
+            } catch (Throwable $e) {
+                error_log('notifyFinish scrub: ' . $e->getMessage());
+            }
+        }
+        return $out;
+    }
+}
+
+if (!function_exists('notifyFinishRow')) {
+    function notifyFinishRow(PDO $pdo, array $row, array $res): string {
         $id = (int)$row['id'];
         $err = substr((string)($res['error'] ?? ''), 0, 500);
         if (!empty($res['ok'])) {
@@ -1088,9 +1228,15 @@ if (!function_exists('notifySlackUpdateParent')) {
 }
 
 if (!function_exists('notifySlackEventText')) {
-    /** The thread reply for a client batch: "@Lance — Kenda Tires requested changes on slide 2:\n> note". */
+    /** The thread reply for a client batch: "@Lance — *Jane (Kenda Tires)* requested changes on slide 2:\n> note".
+     *  Each line names the signed-in contact who did it (activity_log.client_contact_id), else the client. */
     function notifySlackEventText(array $info, array $acts, ?array $owner): string {
-        $who = '*' . notifySlackEscape($info['company_name'] !== '' ? $info['company_name'] : 'The client') . '*';
+        $company = $info['company_name'] !== '' ? $info['company_name'] : 'The client';
+        $whoOf = static function (array $a) use ($company): string {
+            $label = !empty($a['client_contact_id']) ? clientContactLabel($GLOBALS['pdo'] ?? null, (int)$a['client_contact_id']) : '';
+            return '*' . notifySlackEscape($label !== '' ? $label : $company) . '*';
+        };
+        $who = $whoOf($acts[0] ?? []);
         $mention = ($owner && trim((string)$owner['slack_user_id']) !== '') ? '<@' . trim((string)$owner['slack_user_id']) . '> ' : '';
         $actions = array_column($acts, 'action');
         $comments = array_values(array_filter($acts, static function ($a) { return $a['action'] === 'commented' && trim((string)$a['detail']) !== ''; }));
@@ -1101,6 +1247,8 @@ if (!function_exists('notifySlackEventText')) {
         };
         if (in_array('denied', $actions, true) || in_array('approved', $actions, true)) {
             $denied = in_array('denied', $actions, true);
+            $decider = array_values(array_filter($acts, static function ($a) { return in_array($a['action'], ['denied', 'approved'], true); }))[0] ?? [];
+            $who = $whoOf($decider);
             $verb = $denied ? ':red_circle: ' . $who . ' requested changes' : ':white_check_mark: ' . $who . ' approved it';
             if ($comments) {
                 [$slide, $q] = $quote(array_shift($comments));
@@ -1111,11 +1259,11 @@ if (!function_exists('notifySlackEventText')) {
         }
         foreach ($comments as $c) {
             [$slide, $q] = $quote($c);
-            $lines[] = ':speech_balloon: ' . $who . ' commented' . ($slide > 0 ? ' on slide ' . $slide : '') . ':' . "\n" . $q;
+            $lines[] = ':speech_balloon: ' . $whoOf($c) . ' commented' . ($slide > 0 ? ' on slide ' . $slide : '') . ':' . "\n" . $q;
         }
         foreach ($acts as $a) {
             if ($a['action'] === 'edited_caption' || $a['action'] === 'edited_hashtags') {
-                $lines[] = ':pencil2: ' . $who . ' edited the ' . ($a['action'] === 'edited_caption' ? 'caption' : 'hashtags') . ':' . "\n" . notifyQuote((string)$a['detail'], 700);
+                $lines[] = ':pencil2: ' . $whoOf($a) . ' edited the ' . ($a['action'] === 'edited_caption' ? 'caption' : 'hashtags') . ':' . "\n" . notifyQuote((string)$a['detail'], 700);
             }
         }
         if (!$lines) $lines[] = $who . ' updated it.';
@@ -1133,7 +1281,7 @@ if (!function_exists('notifyDeliverItemEvent')) {
         $ids = array_values(array_filter(array_map('intval', (array)($p['activity_ids'] ?? []))));
         if (!$ids) return ['ok' => false, 'skip' => true, 'error' => 'no events'];
         $ph = implode(',', array_fill(0, count($ids), '?'));
-        $s = $pdo->prepare("SELECT id, action, actor, detail, internal FROM activity_log
+        $s = $pdo->prepare("SELECT id, action, actor, detail, internal" . (activityHasContactCol($pdo) ? ', client_contact_id' : ', NULL AS client_contact_id') . " FROM activity_log
                              WHERE id IN ($ph) AND company_id = ? AND entity_type = ? AND entity_id = ? AND actor = 'client' AND internal = 0 ORDER BY id ASC");
         $s->execute(array_merge($ids, [$cid, $type, $id]));
         $acts = $s->fetchAll();
@@ -1208,6 +1356,7 @@ if (!function_exists('notifyDeliver')) {
                 $last = notifyLastClientMessage($pdo, $p);
                 [$slide, $body] = commentSlideSplit($last);
                 $age = notifyAgeLabel((int)$p['minutes']);
+                $info['url'] = notifyItemLinkFor($pdo, $info, $to);   // the admin link for Joust; clientLink() for a client
                 $subject = "Waiting {$age}: {$info['company_name']} — {$info['title']}";
                 $text = "{$info['company_name']} has been waiting {$age} for a reply on {$info['title']}.\n\n"
                       . ($slide > 0 ? "On slide {$slide}: " : '') . "\"{$body}\"\n\nOpen it: {$info['url']}\n";
@@ -1224,6 +1373,9 @@ if (!function_exists('notifyDeliver')) {
             }
             case 'summary':
                 return notifyDeliverSummary($pdo, $p);
+            case 'sign_in':
+            case 'email':
+                return notifyDeliverDirectEmail($pdo, $p);
             case 'slack_test': {
                 $text = ':wave: Test from the Joust portal (' . notifySlackEscape(notifyBaseUrl()) . '). Notifications for this channel are working.';
                 $channel = (string)($p['channel'] ?? '');
@@ -1237,6 +1389,49 @@ if (!function_exists('notifyDeliver')) {
             }
         }
         return ['ok' => false, 'permanent' => true, 'error' => 'unknown kind ' . $row['kind']];
+    }
+}
+
+if (!function_exists('notifyDeliverDirectEmail')) {
+    /** Outbox 'sign_in' / 'email' row: one ready-made message (notifySendEmailNow()). A row whose body was already
+     *  scrubbed (delivered / given up) or whose expiry passed (a sign-in link is dead after 15 minutes) is skipped. */
+    function notifyDeliverDirectEmail(PDO $pdo, array $p): array {
+        if (!empty($p['redacted']) || !isset($p['to'])) return ['ok' => false, 'skip' => true, 'error' => 'nothing to send (message already handled)'];
+        if (!empty($p['expires']) && (int)$p['expires'] < time()) return ['ok' => false, 'skip' => true, 'error' => 'expired before it could be sent'];
+        $msg = array_intersect_key($p, array_flip(['to', 'subject', 'text', 'html', 'from', 'from_name', 'reply_to', 'kind', 'headers']));
+        $res = notifyEmail($msg);
+        return $res['ok'] ? ['ok' => true, 'provider_id' => $res['message_id']] : ['ok' => false, 'error' => 'email: ' . $res['error']];
+    }
+}
+
+if (!function_exists('notifySendEmailNow')) {
+    /**
+     * An email through the outbox with an IMMEDIATE delivery attempt in this request (client sign-in links: they must
+     * arrive while the person is waiting). The row is the delivery log entry (Manage → Notifications) and the retry
+     * path when the first attempt fails (the cron retries with backoff until $o['expires']); once delivered or given
+     * up, the bodies are scrubbed from the row (a sign-in token never stays in the database in clear).
+     * $o: kind ('sign_in' | 'email'), expires (unix time after which sending is pointless), company_id.
+     * Without the outbox (migrate.php 36–39 not run yet) it sends directly. → ['ok' => bool, 'queued' => bool, 'error'].
+     */
+    function notifySendEmailNow(?PDO $pdo, array $msg, array $o = []): array {
+        $kind = in_array($o['kind'] ?? '', ['sign_in', 'email'], true) ? $o['kind'] : 'email';
+        if (!$pdo || !notifyReady($pdo)) {
+            $r = notifyEmail($msg + ['kind' => $kind]);
+            return ['ok' => $r['ok'], 'queued' => false, 'error' => $r['error']];
+        }
+        $payload = $msg + ['kind' => $kind];
+        if (!empty($o['expires'])) $payload['expires'] = (int)$o['expires'];
+        $id = notifyEnqueue($pdo, 'email', $kind, $payload, ['target' => (string)($msg['to'] ?? ''), 'defer' => true,
+            'company_id' => isset($o['company_id']) ? (int)$o['company_id'] : null]);
+        if ($id <= 0) {
+            $r = notifyEmail($msg + ['kind' => $kind]);
+            return ['ok' => $r['ok'], 'queued' => false, 'error' => $r['error']];
+        }
+        notifyPump($pdo, ['ids' => [$id], 'limit' => 1, 'budget' => 10.0]);
+        $st = $pdo->prepare("SELECT status, last_error FROM notify_outbox WHERE id = ?");
+        $st->execute([$id]);
+        $row = $st->fetch() ?: ['status' => 'pending', 'last_error' => ''];
+        return ['ok' => $row['status'] === 'sent', 'queued' => $row['status'] === 'pending', 'error' => (string)($row['last_error'] ?? '')];
     }
 }
 
@@ -1493,17 +1688,20 @@ if (!function_exists('notifyEmailClean')) {
 
 if (!function_exists('notifyEmail')) {
     /**
-     * Send one email. $msg:
-     *   to (required), subject, text, html, from (default config notify_from), reply_to (default notify_reply_to),
+     * Send one email — THE email function (notifications, reminders, the Morning summary, client sign-in links). $msg:
+     *   to (required), subject, text, html,
+     *   from (an address, or a full 'Name <address>'; default config notify_from, else lance@joustmedia.com),
+     *   from_name (display name for a bare from address; default config notify_from_name, else "Joust Media"),
+     *   reply_to (default notify_reply_to), kind (free-form tag kept in the sink, e.g. 'sign_in'),
      *   message_id (default generated '<…@notify_message_domain>'), in_reply_to, references (string|array),
      *   headers (extra 'Name' => 'value'), thread (['entity_type','entity_id','company_id'] — threads the mail on the
      *   item: the first message's id is stored in notify_threads.email_message_id and later ones reply to it).
-     * Transport = config mail_transport ('mail' default · 'sink' = test harness · Phase 3: 'gmail'), dispatched to
-     * notifyMailSend_<transport>(array $msg): ['ok' => bool, 'error' => string, 'provider_id' => ?string].
+     * Transport = config mail_transport ('mail' default — 'sink' when only mail_sink_dir is set · Phase 3: 'gmail'),
+     * dispatched to notifyMailSend_<transport>(array $msg): ['ok' => bool, 'error' => string, 'provider_id' => ?string].
      * Returns ['ok', 'error', 'message_id', 'transport'].
      */
     function notifyEmail(array $msg): array {
-        $transport = preg_replace('/[^a-z0-9_]/', '', strtolower(notifyCfg('mail_transport', 'mail')));
+        $transport = preg_replace('/[^a-z0-9_]/', '', strtolower(notifyCfg('mail_transport', notifyCfg('mail_sink_dir') !== '' ? 'sink' : 'mail')));
         $fn = 'notifyMailSend_' . $transport;
         $msg['to'] = notifyEmailClean((string)($msg['to'] ?? ''));
         if ($msg['to'] === '' || !filter_var(preg_replace('/^.*<([^>]+)>$/', '$1', $msg['to']), FILTER_VALIDATE_EMAIL)) {
@@ -1511,7 +1709,8 @@ if (!function_exists('notifyEmail')) {
         }
         if (!function_exists($fn)) return ['ok' => false, 'error' => 'unknown mail transport ' . $transport, 'message_id' => '', 'transport' => $transport];
         $msg['subject']  = notifyEmailClean((string)($msg['subject'] ?? ''));
-        $msg['from']     = notifyEmailClean((string)($msg['from'] ?? notifyCfg('notify_from')));
+        [$msg['from_address'], $msg['from_name']] = notifyMailSender((string)($msg['from'] ?? ''), (string)($msg['from_name'] ?? ''));
+        $msg['from']     = notifyMailFromHeader($msg['from_address'], $msg['from_name']);
         $msg['reply_to'] = notifyEmailClean((string)($msg['reply_to'] ?? notifyCfg('notify_reply_to')));
         $domain = notifyCfg('notify_message_domain', (string)(parse_url(notifyBaseUrl(), PHP_URL_HOST) ?: 'localhost'));
         $msg['message_id'] = notifyEmailClean((string)($msg['message_id'] ?? ('<notify-' . date('YmdHis') . '-' . bin2hex(random_bytes(6)) . '@' . $domain . '>')));
@@ -1540,6 +1739,33 @@ if (!function_exists('notifyEmail')) {
     }
 }
 
+if (!function_exists('notifyMailSender')) {
+    /** [address, display name] of the sender: $from (bare address or 'Name <address>'), else config notify_from
+     *  (alias auth_mail_from; same two forms), else lance@joustmedia.com; the name from the 'Name <…>' form, else
+     *  $name, else config notify_from_name (alias auth_mail_from_name), else "Joust Media". */
+    function notifyMailSender(string $from = '', string $name = ''): array {
+        $from = notifyEmailClean($from !== '' ? $from : notifyCfg('notify_from', 'lance@joustmedia.com'));
+        if (preg_match('/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/', $from, $m)) {
+            $addr = trim($m[2]);
+            if (trim($m[1]) !== '' && $name === '') $name = trim($m[1]);
+        } else {
+            $addr = trim($from);
+        }
+        if (!filter_var($addr, FILTER_VALIDATE_EMAIL)) $addr = 'lance@joustmedia.com';
+        $name = notifyEmailClean($name !== '' ? $name : notifyCfg('notify_from_name', 'Joust Media'));
+        return [$addr, str_replace(['"', '\\'], '', $name)];
+    }
+}
+
+if (!function_exists('notifyMailFromHeader')) {
+    /** '"Joust Media" <lance@joustmedia.com>' (RFC 2047-encoded name when it is not plain ASCII). */
+    function notifyMailFromHeader(string $addr, string $name): string {
+        if ($name === '') return $addr;
+        $enc = preg_match('/[^\x20-\x7e]/', $name) ? '=?UTF-8?B?' . base64_encode($name) . '?=' : '"' . $name . '"';
+        return $enc . ' <' . $addr . '>';
+    }
+}
+
 if (!function_exists('notifyMailHeaders')) {
     /** The RFC 5322 header lines shared by transports (From, Reply-To, Message-ID, In-Reply-To, References, extras). */
     function notifyMailHeaders(array $msg): array {
@@ -1558,7 +1784,8 @@ if (!function_exists('notifyMailHeaders')) {
 }
 
 if (!function_exists('notifyMailSend_mail')) {
-    /** PHP mail() with multipart/alternative and the envelope sender (config notify_envelope). */
+    /** PHP mail() with multipart/alternative and the envelope sender (config notify_envelope, alias auth_mail_envelope;
+     *  default the From address — the host's SPF / DMARC alignment). */
     function notifyMailSend_mail(array $msg): array {
         $boundary = 'b_' . bin2hex(random_bytes(8));
         $headers = notifyMailHeaders($msg);
@@ -1572,7 +1799,8 @@ if (!function_exists('notifyMailSend_mail')) {
             $body .= "--{$boundary}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n" . $msg['html'] . "\r\n\r\n";
         }
         $body .= "--{$boundary}--\r\n";
-        $env = notifyCfg('notify_envelope');
+        $env = notifyCfg('notify_envelope', (string)($msg['from_address'] ?? ''));
+        if ($env !== '' && !filter_var($env, FILTER_VALIDATE_EMAIL)) $env = '';
         $subject = '=?UTF-8?B?' . base64_encode((string)$msg['subject']) . '?=';
         $ok = $env !== '' ? @mail($msg['to'], $subject, $body, implode("\r\n", $headers), '-f' . $env)
                           : @mail($msg['to'], $subject, $body, implode("\r\n", $headers));
@@ -1725,6 +1953,7 @@ if (!function_exists('notifyKindLabel')) {
         static $map = [
             'item_event' => 'Client activity', 'parent_update' => 'Status update', 'escalate_thread' => 'Reminder in thread',
             'escalate_dm' => 'Reminder DM', 'escalate_email' => 'Reminder email', 'summary' => 'Morning summary', 'slack_test' => 'Test message',
+            'sign_in' => 'Sign-in link', 'email' => 'Email',
         ];
         return $map[$kind] ?? ucfirst(str_replace('_', ' ', $kind));
     }

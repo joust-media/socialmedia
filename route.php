@@ -38,7 +38,12 @@ if ($__routeRel === '__clean-links-check') {
     exit;
 }
 
-$__routeHit = ($__routeRel === '' || $__routeRel === 'route.php' || strpos($__routeRel, "\0") !== false) ? null : portalRouteMatch($__routeRel);
+// Machine endpoints (slack-events, slack-actions, notify-cron, notify-thumb, drive-ingest, …) are never routed: the
+// .htaccess serves '<name>' straight from '<name>.php' and passes '<name>/' through; should one still land here, it
+// gets the 404 below — never a client page, never a sign-in redirect (Slack and cron do not follow redirects).
+$__routeFirst = strtolower((string)explode('/', $__routeRel)[0]);
+$__routeMachine = in_array(preg_replace('/\.php$/', '', $__routeFirst), portalMachineEndpoints(), true);
+$__routeHit = ($__routeMachine || $__routeRel === '' || $__routeRel === 'route.php' || strpos($__routeRel, "\0") !== false) ? null : portalRouteMatch($__routeRel);
 if ($__routeHit === null || !is_file(__DIR__ . '/' . $__routeHit['script'] . '.php')) {
     http_response_code(404);
     header('Content-Type: text/html; charset=utf-8');
@@ -71,5 +76,5 @@ $_SERVER['PHP_SELF']        = $_SERVER['SCRIPT_NAME'];
 $_SERVER['SCRIPT_FILENAME'] = __DIR__ . '/' . $__routeScript;
 $_SERVER['QUERY_STRING']    = http_build_query($_GET);
 chdir(__DIR__);
-unset($__routeBase, $__routePath, $__routeRel, $__routeHit, $__k, $__v, $n, $home, $qs);
+unset($__routeBase, $__routePath, $__routeRel, $__routeHit, $__routeFirst, $__routeMachine, $__k, $__v, $n, $home, $qs);
 require __DIR__ . '/' . $__routeScript;

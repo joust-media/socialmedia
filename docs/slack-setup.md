@@ -9,6 +9,12 @@ Joust-only note. The daily digest is now the **Morning summary**.
 
 Do these steps once, in order. Nothing here needs a code change or a deploy.
 
+**Staging** (`…/portal-staging/`): a Slack app sends its events to ONE address. To try Slack on staging, create a
+separate app (e.g. "Joust Portal (staging)") from the manifest with both URLs changed to
+`https://joustmedia.com/portal-staging/slack-events` and `…/portal-staging/slack-actions`, use ITS token and signing
+secret in the staging `config.php` (with `portal_url` = `https://joustmedia.com/portal-staging`), and a test channel.
+Or leave `slack_bot_token` blank on staging: everything else works and nothing is posted to Slack.
+
 ## 1. Update the database
 Open `https://joustmedia.com/portal/migrate.php` while signed in. Steps 36–39 create the notification tables and
 add you (Lance) as the first team member. Running it again is safe.
@@ -29,9 +35,10 @@ If a key is missing, copy it from `config.example.php`. Fill in:
 | `slack_bot_token` | Slack app → **OAuth & Permissions** → *Bot User OAuth Token* (starts with `xoxb-`) |
 | `slack_signing_secret` | Slack app → **Basic Information** → *App Credentials* → *Signing Secret* (Show) |
 | `notify_cron_token` | Make one up: 32+ random letters and digits (or run `php -r 'echo bin2hex(random_bytes(24));'`) |
-| `portal_base_url` | `https://joustmedia.com/portal` |
+| `portal_url` | `https://joustmedia.com/portal` (the older name `portal_base_url` still works) |
 | `notify_to` | `lance@joustmedia.com` (Morning summary + reminder emails) |
-| `notify_from`, `notify_reply_to`, `notify_message_domain`, `notify_envelope` | keep your current values |
+| `notify_from`, `notify_from_name` | `lance@joustmedia.com` and `Joust Media` (the defaults) — client sign-in emails use them too |
+| `notify_reply_to`, `notify_message_domain`, `notify_envelope` | keep your current values |
 
 Never paste these values anywhere else (chat, email, git). Manage → Notifications → **Setup** shows a green check
 for each key that is set; it never shows the values.

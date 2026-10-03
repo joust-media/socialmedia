@@ -200,7 +200,7 @@ if (!function_exists('render_summary')) {
             $textOut .= "\n";
         }
 
-        $home = function_exists('portalUrl') ? portalUrl('index') : '';
+        $home = function_exists('notifyPortalUrl') ? notifyPortalUrl('index') : '';   // absolute (the summary goes to Joust)
         if ($leftover > 0) {
             $textOut .= "…and {$leftover} more older update(s) — they are in the portal's Activity feed: {$home}\n\n";
             $htmlOut .= '<p style="color:#8e8e93;font-size:13px;margin-top:16px">…and ' . $leftover . ' more older update(s) — they are in the portal’s '
