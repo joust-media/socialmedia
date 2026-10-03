@@ -4,7 +4,8 @@
 
    Seen:    an item's detail ([data-seen-entity="post:12"], post / email / page sheets) showing in an open sheet →
             POST action=seen once per page view; its unread dots ([data-unread-for="post:12"]) disappear. A sheet that
-            is already open when this script boots (a deep link: ?post=12, /kenda/posts/12) is marked too.
+            is already open when this script boots (a deep link: ?post=12, /kenda/posts/12) is marked too, and so is
+            every [data-seen-on-load] marker (assets.php: a deep-linked image, an explicitly opened tire series).
    Resolve: [data-thread-resolve="post:12"] (the sheet ⋯ menu, the Inbox) → POST action=resolve → toast; an Inbox
             row fades out.
    ===================================================================== */
@@ -100,6 +101,8 @@
     watchSheets();
     // A deep link (Inbox row, Slack "Open in portal", an email link) opens its sheet BEFORE this deferred script runs:
     // the sheet:open event already fired and the observers see no change. Mark whatever is already open as seen.
+    // A page that IS the item (assets.php deep link to an image or a series) carries [data-seen-on-load] markers.
+    Array.prototype.forEach.call(document.querySelectorAll('[data-seen-on-load][data-seen-entity]'), function (n) { markSeen(n); });
     var open = Array.prototype.filter.call(document.querySelectorAll('.ui-sheet-root'), isOpen);
     if (open.length) open.forEach(function (root) { soon(root); });
     else if (App.sheet && App.sheet.current) soon(document);

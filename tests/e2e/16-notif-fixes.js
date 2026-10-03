@@ -4,6 +4,8 @@
      tracking.js starts, which used to leave the dots forever
    - the "Internal (Joust only)" switch in the comment composer: distinct styling, the bubble is marked, the client never
      sees it
+   - Joust replies are marked read from the client's Needs-changes notice (renderPostHiddenNotice) and from asset
+     deep links (assets.php [data-seen-on-load]: a library image, a tire series) — the Home "Joust replied" card empties
    - screenshots for review: Manage → Clients banner, Manage → Notifications (client emails held / allow mail(), clients
      without a Slack channel, quiet hours, a "Failed sender check" reply), My notifications, the Inbox "Mine" filter, the
      client Home "Joust replied" card, the gentle reminder email
@@ -224,6 +226,36 @@ async function seenStored(page, viewerType, type, id) {
       await page.goto(url('index.php?client=kenda'));
       await page.waitForSelector('[data-home-replied="1"]');
       expect.eq(await page.locator('[data-replied-row="post:1"]').count(), 0, 'gone once read');
+    });
+  }, { role: 'client:kenda', viewports: ['desktop', 'phone'], reseed: 'test' });
+  // ---------------------------------------------------------------------------------------------------------------------
+  await run('nfix: replies read from the Needs-changes notice and asset deep links (client)', async ({ test, expect, viewport, ctx }) => {
+    const w = viewport === 'desktop' ? '1440' : '390';
+    await theme(ctx, 'light');
+    await test('post 4 (Needs changes): Joust replies, the client opens the "Joust is updating this post" sheet → read, the Home card empties', async (page) => {
+      joustSays('post', 4, 1, 'Darker render is coming tomorrow.');
+      await page.goto(url('index.php?client=kenda'));
+      await page.waitForSelector('[data-replied-row="post:4"]');
+      await page.goto(url('posts.php?client=kenda&post=4'));
+      await page.waitForSelector('.ui-sheet-root[aria-hidden="false"] [data-hidden-post][data-seen-entity="post:4"]');
+      expect(await seenStored(page, 'contact', 'post', 4), 'thread_seen stored for the contact');
+      await page.screenshot({ path: shot(`client-needs-changes-read-${w}.png`), fullPage: false });
+      await page.goto(url('index.php?client=kenda'));
+      expect.eq(await page.locator('[data-home-replied]').count(), 0, 'no "Joust replied" card left');
+    });
+    await test('a library image and a tire series: the Home card links there and opening them marks the reply read', async (page) => {
+      joustSays('library_image', 7, 1, 'Cropped tighter as asked.');
+      joustSays('tire_series', 1, 1, 'Series 1 has two new angles.');
+      await page.goto(url('index.php?client=kenda'));
+      await page.waitForSelector('[data-home-replied="2"]');
+      await Promise.all([page.waitForNavigation(), page.locator('[data-replied-row="library_image:7"]').click()]);
+      expect(await seenStored(page, 'contact', 'library_image', 7), 'library image seen');
+      await page.goto(url('index.php?client=kenda'));
+      await page.waitForSelector('[data-home-replied="1"]');
+      await Promise.all([page.waitForNavigation(), page.locator('[data-replied-row="tire_series:1"]').click()]);
+      expect(await seenStored(page, 'contact', 'tire_series', 1), 'series seen');
+      await page.goto(url('index.php?client=kenda'));
+      expect.eq(await page.locator('[data-home-replied]').count(), 0, 'card empty');
     });
   }, { role: 'client:kenda', viewports: ['desktop', 'phone'], reseed: 'test' });
 })();

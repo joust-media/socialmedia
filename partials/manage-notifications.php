@@ -122,7 +122,10 @@ $nfItemOptions = static function (int $companyId) use ($pdo): array {
 };
 $nfWhen = static function (?string $at): string { return $at ? relativeTime($at) : 'never'; };
 // Environment (gmail-lib.php portalEnvironment()): staging must not share production's inbound address.
-$nfEnv = function_exists('portalEnvironment') ? portalEnvironment() : 'production';
+$nfEnvInfo = function_exists('portalEnvironmentInfo') ? portalEnvironmentInfo() : ['env' => 'production', 'source' => 'default'];
+$nfEnv = $nfEnvInfo['env'];
+$nfEnvHow = ['config' => 'set by <code>environment</code> in config.php', 'portal_url' => 'detected: <code>portal_url</code> contains “staging”',
+             'folder' => 'detected: the portal folder name contains “staging”', 'default' => 'no staging signs — set <code>environment</code> in config.php to be explicit'][$nfEnvInfo['source']] ?? '';
 $nfInboundShared = function_exists('inboundSharedWithProduction') && inboundSharedWithProduction();
 // Client emails: held until Google (or mail() explicitly allowed) — client-notify-lib.php clientEmailTransportOk()
 $nfClientMailAllow = function_exists('clientEmailAllowMail') && clientEmailAllowMail($pdo);
@@ -149,10 +152,10 @@ $nfHourLabel = static function (int $h): string { return date('g A', mktime($h, 
         <?= $nfCheck(function_exists('curl_init'), 'PHP curl', 'ask the host to enable the curl extension', 'Available', 'Missing') ?>
         <?= $nfCheck($nfCronOk, 'Cron', $nfCronLast !== '' ? 'last run ' . relativeTime($nfCronLast) . ', expected every 5 minutes' : 'add the cPanel cron below',
                      'Ran ' . ($nfCronLast !== '' ? relativeTime($nfCronLast) : ''), $nfCronLast !== '' ? 'Late' : 'Never ran') ?>
-        <li class="nf-check<?= $nfInboundShared ? ' is-missing' : ' is-ok' ?>" data-environment="<?= $nfH($nfEnv) ?>">
+        <li class="nf-check<?= $nfInboundShared ? ' is-missing' : ' is-ok' ?>" data-environment="<?= $nfH($nfEnv) ?>" data-environment-source="<?= $nfH($nfEnvInfo['source']) ?>">
           <span class="nf-check-mark" aria-hidden="true"><?= $nfInboundShared ? '!' : icon('checkmark') ?></span>
           <span class="nf-check-body"><span class="nf-check-label">Environment</span>
-          <span class="nf-check-state"><?= $nfEnv === 'staging' ? 'Staging' : 'Production' ?> · replies to <?= $nfH(function_exists('inboundAddress') ? inboundAddress() : '') ?><?= notifyCfg('environment') === '' ? ' (set <code>environment</code> in config.php to be explicit)' : '' ?></span></span></li>
+          <span class="nf-check-state"><strong data-environment-label><?= $nfEnv === 'staging' ? 'Staging' : 'Production' ?></strong> · replies to <?= $nfH(function_exists('inboundAddress') ? inboundAddress() : '') ?> <span class="text-secondary" data-environment-how>(<?= $nfEnvHow ?>)</span></span></span></li>
       </ul>
       <?php if ($nfInboundShared): ?>
         <div class="studio-alert studio-alert--error" role="alert" data-staging-inbound-warning>

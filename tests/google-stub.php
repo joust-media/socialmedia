@@ -12,7 +12,9 @@
  *   rewrite_mid.txt while it exists, messages/send replaces the Message-ID with its own (as Gmail may); GET
  *                   messages/sent<n>?format=metadata&metadataHeaders=Message-ID returns what was really sent
  *   mailbox.json    {"messages": [{id, threadId, raw (base64url RFC 5322), labelIds}], "labels": [{id, name}]}
- *                   — tests drop replies in here; modify adds label ids; list honours "-label:<name>"
+ *                   — tests drop replies in here; modify adds label ids; list honours "-label:<name>" and the
+ *                   labelIds= query parameter (every id must be on the message); messages.get returns labelIds as
+ *                   stored — a message Lance "sent himself" carries ["SENT", "INBOX"] (gmail-lib.php trusts SENT)
  *   sent/<n>.eml    every message messages/send received (decoded)
  *   refresh.txt     every refresh token handed out (one per line) — the at-rest test looks for them in the DB
  *
@@ -131,9 +133,11 @@ if ($rest === 'messages' && $method === 'GET') {
         foreach ($m[1] as $name) foreach ($b['labels'] as $l) if (strcasecmp($l['name'], $name) === 0) $exclude[] = $l['id'];
     }
     $to = preg_match('/\bto:(\S+)/', $q, $mm) ? strtolower($mm[1]) : '';
+    $want = array_values(array_filter(array_map('strval', (array)($_GET['labelIds'] ?? []))));
     $out = [];
     foreach ($b['messages'] as $msg) {
         if (array_intersect($exclude, (array)($msg['labelIds'] ?? []))) continue;
+        if ($want && array_diff($want, (array)($msg['labelIds'] ?? []))) continue;
         if ($to !== '' && stripos($b64d((string)$msg['raw']), $to) === false) continue;
         $out[] = ['id' => $msg['id'], 'threadId' => $msg['threadId'] ?? $msg['id']];
     }

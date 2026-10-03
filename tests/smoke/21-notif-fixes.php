@@ -11,6 +11,12 @@
  *   7  internal notes from the portal composer · asset reviews in "Ready for your review" · stale To Review reminders ·
  *      escalation quiet hours · per-person settings + the Inbox "Mine" filter · the client Home "Joust replied" card ·
  *      no Slack channel → an email to the owner (≤ 1 per item per 15 min) + the Manage warning
+ *   round 2 (scratchpad notif-rescore2.md §5): the Authentication-Results parser is quote- and comment-aware (the A-e
+ *      quoted-semicolon injection and other tricks), only Google's topmost header counts, dmarc for exactly the From
+ *      domain, aligned DKIM required; Lance's own replies via the Gmail SENT label; reminders at most one per client
+ *      every N days, ≤ 2 per item, stopped by client activity (+ a 30-day simulation); held client emails older than
+ *      72 h expire ("expired, not sent"); staging detected from any "staging" in portal_url / the folder; the
+ *      Needs-changes notice and asset deep links mark Joust's replies read
  * (3, unread on deep links, is a browser fix: tests/e2e/16-notif-fixes.js.) Every test starts from the seed.
  */
 require __DIR__ . '/lib.php';
@@ -51,7 +57,7 @@ function gbox(?array $set = null): array {
 }
 function gsent(): array { global $GDIR; $o = []; $fs = glob($GDIR . '/sent/*.eml') ?: []; sort($fs); foreach ($fs as $f) $o[] = (string)file_get_contents($f); return $o; }
 function b64u(string $s): string { return rtrim(strtr(base64_encode($s), '+/', '-_'), '='); }
-function deliver(string $id, string $raw): void { $b = gbox(); $b['messages'][] = ['id' => $id, 'threadId' => 't' . $id, 'raw' => b64u($raw), 'labelIds' => ['INBOX']]; gbox($b); }
+function deliver(string $id, string $raw, array $labels = ['INBOX']): void { $b = gbox(); $b['messages'][] = ['id' => $id, 'threadId' => 't' . $id, 'raw' => b64u($raw), 'labelIds' => $labels]; gbox($b); }
 /** The Authentication-Results line Google's MX adds. */
 function googleAr(string $dkim, string $dkimDomain, string $spf, string $dmarc, string $fromDomain): string {
     return "mx.google.com;\r\n       dkim={$dkim} header.i=@{$dkimDomain} header.s=s1 header.b=Zz9;\r\n       spf={$spf} (google.com: domain of x@{$fromDomain}) smtp.mailfrom=x@{$fromDomain};\r\n       dmarc={$dmarc} (p=QUARANTINE sp=QUARANTINE dis=NONE) header.from={$fromDomain}";
@@ -189,9 +195,9 @@ ftest('inbound: genuine mail passes — DMARC pass from Lance posts as Joust; an
     db()->exec("UPDATE client_email_queue SET batch_key = 'old' WHERE batch_key IS NULL");
     deliver('g1', rawMail(['From' => 'Lance <lance@joustmedia.com>', 'Subject' => 'Re: Spring launch hero [J#' . $tok . ']'], "Will do, Jane.",
         [googleAr('pass', 'joustmedia.com', 'pass', 'pass', 'joustmedia.com')]));
-    // DMARC not evaluated (none), DKIM pass with a subdomain signature: relaxed alignment
+    // DMARC not evaluated (the domain has no DMARC record), DKIM pass signed by the From domain
     deliver('g2', rawMail(['From' => 'Jane Kenda <jane@kenda.example>', 'Subject' => 'Re: Spring launch hero [J#' . $tok . ']'], "Thanks, looks great.",
-        ["mx.google.com;\r\n       dkim=pass header.i=@mail.kenda.example header.s=k1 header.b=Q1;\r\n       spf=softfail smtp.mailfrom=jane@kenda.example"]));
+        ["mx.google.com;\r\n       dkim=pass header.i=@kenda.example header.s=k1 header.b=Q1;\r\n       spf=softfail smtp.mailfrom=jane@kenda.example"]));
     $c = cron();
     is((int)$c['inbound']['posted'], 2);
     $a = commentsOn(1, 'admin');
@@ -483,8 +489,9 @@ ftest('assets sent for review (tire renders uploaded to a series, library drops,
 // =====================================================================================================================
 // 7c. Stale To Review reminders
 // =====================================================================================================================
-ftest('gentle reminders: items To Review with no answer for N days, at most once every N days per item; switch, days and preferences respected', function () {
+ftest('gentle reminders: one email per client every N days, all stale items in it, ≤ 2 per item, stop once the client is active; switch, days, preferences', function () {
     clearMail();
+    db()->exec("UPDATE activity_log SET created_at = created_at - INTERVAL 60 DAY WHERE actor = 'client'");   // the seed's client activity: long ago
     db()->exec("INSERT INTO activity_log (company_id, entity_type, entity_id, action, actor, summary, created_at) VALUES
         (1, 'post', 1, 'submitted', 'admin', 's', NOW() - INTERVAL 4 DAY),
         (1, 'post', 2, 'submitted', 'admin', 's', NOW() - INTERVAL 1 DAY)");
@@ -503,34 +510,98 @@ ftest('gentle reminders: items To Review with no answer for N days, at most once
     hasNot($m[0]['html'], 'AT2 carousel', 'only 1 day old — not yet');
     has($m[0]['html'], 'data-email-unsub', 'unsubscribe');
     is(count(mailsTo('ops@kenda.example')), 1, 'every subscribed contact');
-    // once every N days
+    // time passes: every timestamp moves back
+    $pass = static function (int $days): void {
+        db()->exec("UPDATE activity_log SET created_at = created_at - INTERVAL {$days} DAY");
+        db()->exec("UPDATE client_email_queue SET created_at = created_at - INTERVAL {$days} DAY, batched_at = batched_at - INTERVAL {$days} DAY");
+    };
+    // once every N days PER CLIENT: post 2 turning 3 days old two days later does not trigger its own email
     clearMail();
+    $pass(2);
     cron('remind=now');
-    is(count(mails()), 0, 'not again the next day');
-    db()->exec("UPDATE client_email_queue SET created_at = NOW() - INTERVAL 4 DAY WHERE kind = 'remind'");
+    is(count(mails()), 0, 'not again within N days, even for another stale item');
+    // after N days: ONE email covering both stale items
+    $pass(1);
     cron('remind=now');
-    is(count(mailsTo('jane@kenda.example')), 1, 'again after N days');
-    // the contact's preference
+    $m = mailsTo('jane@kenda.example');
+    is(count($m), 1, 'one email for the client');
+    has($m[0]['html'], 'Spring launch hero');
+    has($m[0]['html'], 'AT2 carousel', 'both stale items in the one email');
+    // at most 2 per item: post 1 had its second → the next email lists only post 2; the contact's preference
     clearMail();
-    db()->exec("UPDATE client_email_queue SET created_at = NOW() - INTERVAL 4 DAY WHERE kind = 'remind'");
+    $pass(3);
     db()->exec("UPDATE client_contacts SET notify_prefs = '{\"review\":1,\"reply\":1,\"live\":1,\"remind\":0}' WHERE id = 2");
     cron('remind=now');
-    is(count(mailsTo('jane@kenda.example')), 1);
+    $m = mailsTo('jane@kenda.example');
+    is(count($m), 1);
+    has($m[0]['html'], 'AT2 carousel');
+    hasNot($m[0]['html'], 'Spring launch hero', 'post 1 was reminded twice already');
     is(count(mailsTo('ops@kenda.example')), 0, 'ops@ turned reminders off');
+    is((int)q1("SELECT COUNT(*) FROM client_email_queue WHERE kind = 'remind' AND entity_type = 'post' AND entity_id = 1"), 2, 'post 1: 2 reminders in total');
+    clearMail();
+    $pass(3);
+    cron('remind=now');
+    $pass(10);
+    cron('remind=now');
+    is(count(mails()), 0, 'both items reminded twice → nothing more, ever');
+    is((int)q1("SELECT COUNT(*) FROM client_email_queue WHERE kind = 'remind' AND entity_type = 'post' AND entity_id = 2"), 2);
+    // the client is active after the last reminder → nothing sent before that activity is reminded again
+    db()->exec("DELETE FROM client_email_queue WHERE kind = 'remind'");
+    db()->exec("INSERT INTO client_email_queue (company_id, kind, entity_type, entity_id, created_at, batch_key) VALUES (1, 'remind', 'post', 1, NOW() - INTERVAL 4 DAY, 'remind:old')");
+    db()->exec("INSERT INTO activity_log (company_id, entity_type, entity_id, action, actor, summary, created_at) VALUES (1, 'post', 3, 'commented', 'client', 'c', NOW() - INTERVAL 1 DAY)");
+    cron('remind=now');
+    is(count(mails()), 0, 'a client comment elsewhere since the last reminder: stop');
+    db()->exec("DELETE FROM activity_log WHERE entity_type = 'post' AND entity_id = 3 AND actor = 'client' AND summary = 'c'");
+    $sess = (int)q1("SELECT COUNT(*) FROM client_sessions");
+    db()->exec("INSERT INTO client_sessions (contact_id, company_id, token_hash, last_seen_at, expires_at) VALUES (1, 1, '" . str_repeat('a', 64) . "', NOW() - INTERVAL 2 DAY, NOW() + INTERVAL 20 DAY)");
+    cron('remind=now');
+    is(count(mails()), 0, 'a signed-in visit since the last reminder: stop');
+    db()->exec("DELETE FROM client_sessions WHERE token_hash = '" . str_repeat('a', 64) . "'");
+    is((int)q1("SELECT COUNT(*) FROM client_sessions"), $sess);
+    cron('remind=now');
+    is(count(mailsTo('jane@kenda.example')), 1, 'no activity → it goes');
     // 0 days = off; an answer stops it
     clearMail();
-    db()->exec("UPDATE client_email_queue SET created_at = NOW() - INTERVAL 4 DAY WHERE kind = 'remind'");
+    db()->exec("DELETE FROM client_email_queue WHERE kind = 'remind'");
     db()->exec("UPDATE notify_clients SET remind_days = 0 WHERE company_id = 1");
     cron('remind=now');
     is(count(mails()), 0, '0 days → never');
     db()->exec("UPDATE notify_clients SET remind_days = 3 WHERE company_id = 1");
     clientComment(1, 'Looking at it now');
+    clientComment(2, 'And this one');
     cron('remind=now');
     is(count(clientMails()), 0, 'the client answered');
     // the preview renders
     $p = get('email-preview.php?type=remind&client=kenda', 'admin');
     is($p['code'], 200);
     has($p['body'], 'gentle reminder');
+});
+
+ftest('gentle reminders: a 30-day simulation with staggered stale items stays bounded (≤ 1 per 3 days, ≤ 2 per item, then silence)', function () {
+    db()->exec("UPDATE activity_log SET created_at = created_at - INTERVAL 60 DAY WHERE actor = 'client'");
+    db()->exec("UPDATE notify_clients SET email_remind = 1, remind_days = 3 WHERE company_id = 1");
+    db()->exec("UPDATE client_contacts SET notify_prefs = '{\"review\":1,\"reply\":1,\"live\":1,\"remind\":0}' WHERE id = 2");   // count Jane's copies only
+    $items = [0 => ['post', 1], 1 => ['post', 2], 2 => ['library_image', 7], 7 => ['library_image', 8]];   // sent for review on day 0, 1, 2 and 7
+    $days = []; $perItem = [];
+    for ($d = 0; $d < 30; $d++) {
+        if (isset($items[$d])) db()->exec("INSERT INTO activity_log (company_id, entity_type, entity_id, action, actor, summary, created_at) VALUES (1, '{$items[$d][0]}', {$items[$d][1]}, 'submitted', 'admin', 's', NOW())");
+        clearMail();
+        cron('remind=now');
+        $m = mailsTo('jane@kenda.example');
+        if ($m) $days[] = $d;
+        is(count($m), count($m) ? 1 : 0, 'day ' . $d . ': at most one email');
+        // one day passes
+        db()->exec("UPDATE activity_log SET created_at = created_at - INTERVAL 1 DAY");
+        db()->exec("UPDATE client_email_queue SET created_at = created_at - INTERVAL 1 DAY, batched_at = batched_at - INTERVAL 1 DAY");
+    }
+    foreach (rows("SELECT entity_type, entity_id, COUNT(*) AS n FROM client_email_queue WHERE kind = 'remind' GROUP BY entity_type, entity_id") as $r) $perItem[$r['entity_type'] . ':' . $r['entity_id']] = (int)$r['n'];
+    ok(count($days) >= 2 && count($days) <= 5, 'reminder days bounded: ' . json_encode($days));
+    for ($i = 1; $i < count($days); $i++) ok($days[$i] - $days[$i - 1] >= 3, 'at least 3 days apart: ' . json_encode($days));
+    foreach ($perItem as $k => $n) ok($n <= 2, $k . ' reminded ' . $n . ' times');
+    is(count($perItem), 4, 'every item got reminded: ' . json_encode($perItem));
+    ok(max($days) <= 16, 'silence after the caps: ' . json_encode($days));
+    // for comparison (audit check C): the old per-item cadence gave 10 of 15 days
+    file_put_contents(sys_get_temp_dir() . '/nfix-remind-sim.json', json_encode(['days' => $days, 'per_item' => $perItem]));
 });
 
 // =====================================================================================================================
@@ -665,6 +736,190 @@ ftest('no Slack channel: client activity emails the owner at once, at most one p
     clientComment(2, 'Other item');
     waitFor("SELECT status FROM notify_outbox WHERE kind = 'nochannel_email' AND entity_id = 2", 'sent');
     is((string)q1("SELECT status FROM notify_outbox WHERE kind = 'nochannel_email' AND entity_id = 2"), 'sent');
+});
+
+// =====================================================================================================================
+// Round 2 (scratchpad notif-rescore2.md §5): the parser bypass, Lance's own replies (SENT), held-email expiry, staging
+// detection, the hidden-post notice + asset deep links marking replies read
+// =====================================================================================================================
+/** inboundAuthCheck() on one message with the given Authentication-Results values (topmost first). */
+function authOk(string $from, array $ar, array $o = []): array {
+    $raw = rawMail(['From' => $from, 'Subject' => 'x'], 'x', $ar);
+    return appJson('echo json_encode(inboundAuthCheck(notifyMimeParse(' . var_export($raw, true) . '), ' . var_export(strtolower(preg_replace('/^.*<|>.*$/', '', $from)), true) . ', ' . var_export($o, true) . '));');
+}
+ftest('inbound sender check: quote- and comment-aware parsing; only Google’s topmost header; dmarc for exactly the From domain; aligned DKIM required', function () {
+    $L = 'lance@joustmedia.com';
+    $inj = '"x;dmarc=pass header.from=joustmedia.com"@evil.example';
+    $no = [
+        // the audit's A-e: a quoted envelope sender carrying ";dmarc=pass …", Google's real verdict dmarc=fail
+        'quoted-semicolon injection (A-e)' => [$L, ["mx.google.com;\r\n       dkim=none;\r\n       spf=softfail (google.com: domain of transitioning {$inj} does not designate 192.0.2.9 as permitted sender) smtp.mailfrom={$inj};\r\n       dmarc=fail (p=NONE sp=NONE dis=NONE) header.from=joustmedia.com"]],
+        'injection of dkim=pass + dmarc=pass, no Google dmarc' => [$L, ['mx.google.com; spf=pass smtp.mailfrom="a;dkim=pass header.d=joustmedia.com;dmarc=pass header.from=joustmedia.com"@evil.example']],
+        'escaped quote inside the quoted string' => [$L, ['mx.google.com; spf=pass smtp.mailfrom="a\";dkim=pass header.d=joustmedia.com; dmarc=pass header.from=joustmedia.com;"@evil.example; dmarc=fail header.from=joustmedia.com']],
+        'two dmarc results (pass + fail)' => [$L, ['mx.google.com; dkim=pass header.d=joustmedia.com; dmarc=pass header.from=joustmedia.com; dmarc=fail header.from=joustmedia.com']],
+        'two dmarc results (both pass)' => [$L, ['mx.google.com; dkim=pass header.d=joustmedia.com; dmarc=pass header.from=joustmedia.com; dmarc=pass header.from=joustmedia.com']],
+        'dmarc=quarantine' => [$L, ['mx.google.com; dkim=pass header.d=joustmedia.com; dmarc=quarantine header.from=joustmedia.com']],
+        'header.from of another domain' => [$L, ['mx.google.com; dkim=pass header.d=joustmedia.com; dmarc=pass header.from=evil.example']],
+        'header.from a sub-domain, not the From domain' => [$L, ['mx.google.com; dkim=pass header.d=joustmedia.com; dmarc=pass header.from=mail.joustmedia.com']],
+        'header.from given twice' => [$L, ['mx.google.com; dkim=pass header.d=joustmedia.com; dmarc=pass header.from=evil.example header.from=joustmedia.com']],
+        'comments that say pass' => [$L, ['mx.google.com; dkim=fail (dkim=pass header.d=joustmedia.com; dmarc=pass) header.d=joustmedia.com; dmarc=fail (dmarc=pass header.from=joustmedia.com) header.from=joustmedia.com']],
+        'nested comment hiding a ; and a pass' => [$L, ['mx.google.com; dkim=none (outer (inner; dmarc=pass header.from=joustmedia.com) still; dkim=pass header.d=joustmedia.com); spf=pass smtp.mailfrom=evil.example']],
+        'unterminated quoted string' => [$L, ['mx.google.com; spf=pass smtp.mailfrom="x; dkim=pass header.d=joustmedia.com; dmarc=pass header.from=joustmedia.com']],
+        'unterminated comment' => [$L, ['mx.google.com; dkim=pass header.d=joustmedia.com; dmarc=pass header.from=joustmedia.com (oops']],
+        'dmarc pass via SPF only, no DKIM' => [$L, ['mx.google.com; spf=pass smtp.mailfrom=lance@joustmedia.com; dmarc=pass header.from=joustmedia.com']],
+        'DKIM by a look-alike domain' => [$L, ['mx.google.com; dkim=pass header.d=joustmedia.com.evil.example; dmarc=pass header.from=joustmedia.com']],
+        'DKIM by evil-joustmedia.com' => [$L, ['mx.google.com; dkim=pass header.i=@evil-joustmedia.com; dmarc=pass header.from=joustmedia.com']],
+        'DKIM by a public suffix (co.uk)' => ['x@shop.example.co.uk', ['mx.google.com; dkim=pass header.d=co.uk']],
+        'a foreign header on top, Google’s pass below' => [$L, ['relay.example; dkim=pass header.d=joustmedia.com; dmarc=pass header.from=joustmedia.com', 'mx.google.com; dkim=pass header.d=joustmedia.com; dmarc=pass header.from=joustmedia.com']],
+        'Google fail on top, forged pass below' => [$L, ['mx.google.com; dkim=none; dmarc=fail header.from=joustmedia.com', 'mx.google.com; dkim=pass header.d=joustmedia.com; dmarc=pass header.from=joustmedia.com']],
+        'a contact: dmarc fail, DKIM signed by her domain' => ['jane@kenda.example', ['mx.google.com; dkim=pass header.d=kenda.example; dmarc=fail header.from=kenda.example']],
+        'no headers, SENT label but not fetched from the mailbox' => [$L, [], ['labelIds' => ['SENT']]],
+        'no headers, fetched, no SENT label' => [$L, [], ['labelIds' => ['INBOX'], 'fetched' => true]],
+        'no headers, SENT label, but not a Joust address' => ['jane@kenda.example', [], ['labelIds' => ['SENT', 'INBOX'], 'fetched' => true]],
+        'SENT label does not override a failing header' => [$L, ['mx.google.com; dkim=none; dmarc=fail header.from=joustmedia.com'], ['labelIds' => ['SENT'], 'fetched' => true]],
+    ];
+    foreach ($no as $name => $c) {
+        $r = authOk($c[0], $c[1], $c[2] ?? []);
+        is($r['ok'], false, 'rejected: ' . $name . ' → ' . $r['reason']);
+        ok(strpos((string)$r['reason'], 'Failed sender check') === 0, $name . ': ' . $r['reason']);
+    }
+    $yes = [
+        'Lance through Google' => [$L, ['mx.google.com; dkim=pass header.i=@joustmedia.com header.s=google header.b=Ab1; spf=pass (google.com: domain of "lance"@joustmedia.com designates 192.0.2.1 as permitted sender) smtp.mailfrom="lance"@joustmedia.com; dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=joustmedia.com']],
+        'versioned method and quoted values' => [$L, ['mx.google.com 1; dkim/1=pass header.d="joustmedia.com" header.s=google; dmarc=pass header.from="joustmedia.com"']],
+        'a contact without a DMARC record' => ['jane@kenda.example', ['mx.google.com; dkim=pass header.i=@kenda.example; spf=pass smtp.mailfrom=kenda.example']],
+        'dmarc=bestguesspass' => ['jane@kenda.example', ['mx.google.com; dkim=pass header.d=kenda.example; dmarc=bestguesspass header.from=kenda.example']],
+        'a sub-domain From, signed by the organizational domain' => ['jane@mail.kenda.example', ['mx.google.com; dkim=pass header.d=kenda.example; dmarc=pass header.from=mail.kenda.example']],
+        'a co.uk organizational domain' => ['x@shop.example.co.uk', ['mx.google.com; dkim=pass header.d=example.co.uk']],
+        'one failing signature, one aligned pass' => ['jane@kenda.example', ['mx.google.com; dkim=fail header.d=kenda.example; dkim=pass header.d=kenda.example; dmarc=pass header.from=kenda.example']],
+        'Lance’s own reply: no headers, SENT, fetched' => [$L, [], ['labelIds' => ['SENT', 'INBOX'], 'fetched' => true]],
+    ];
+    foreach ($yes as $name => $c) {
+        $r = authOk($c[0], $c[1], $c[2] ?? []);
+        is($r['ok'], true, 'accepted: ' . $name . ' → ' . ($r['reason'] ?? ''));
+    }
+    // the tokenizer itself: a ; inside quotes / comments never splits
+    $j = appJson('echo json_encode([count(inboundArSegments("mx.google.com; spf=pass smtp.mailfrom=\"a;b\"@c.example (x;y)")), inboundArSegments("a \"x"), inboundOrgDomain("a.b.example.com"), inboundOrgDomain("x.shop.example.co.uk")]);');
+    is($j, [2, null, 'example.com', 'example.co.uk']);
+});
+
+ftest('inbound end to end: the A-e injection is parked (no post, no client email); Lance’s own SENT reply posts as Joust', function () {
+    connectGoogle();
+    $tok = itemToken();
+    db()->exec("UPDATE client_email_queue SET batch_key = 'old' WHERE batch_key IS NULL");
+    $inj = '"x;dmarc=pass header.from=joustmedia.com"@evil.example';
+    deliver('ae1', rawMail(['From' => 'Lance <lance@joustmedia.com>', 'Subject' => 'Re: Spring launch hero [J#' . $tok . ']'], "Approved, invoice waived.",
+        ["mx.google.com;\r\n       spf=softfail (google.com: domain of transitioning {$inj} does not designate 192.0.2.9 as permitted sender) smtp.mailfrom={$inj};\r\n       dmarc=fail (p=NONE sp=NONE dis=NONE) header.from=joustmedia.com"]));
+    // Lance replying from his own Gmail: delivered internally, no Authentication-Results, Gmail labels it SENT
+    deliver('own1', rawMail(['From' => 'Lance <lance@joustmedia.com>', 'Subject' => 'Re: Spring launch hero [J#' . $tok . ']'], "Sent from my own Gmail — new render tonight.", []), ['SENT', 'INBOX']);
+    // the same without SENT (an outside message that lost its headers) → parked
+    deliver('own2', rawMail(['From' => 'Lance <lance@joustmedia.com>', 'Subject' => 'Re: Spring launch hero [J#' . $tok . ']'], "No SENT label here.", []), ['INBOX']);
+    // a contact can't use the SENT path
+    deliver('own3', rawMail(['From' => 'jane@kenda.example', 'Subject' => 'Re: Spring launch hero [J#' . $tok . ']'], "Jane with a SENT label.", []), ['SENT', 'INBOX']);
+    $c = cron();
+    is((int)$c['inbound']['posted'], 1, 'only Lance’s own reply');
+    is((int)$c['inbound']['unmatched'], 3);
+    is((int)q1("SELECT COUNT(*) FROM activity_log WHERE detail LIKE '%invoice waived%'"), 0, 'A-e never posted');
+    foreach (['ae1', 'own2', 'own3'] as $g) ok(strpos((string)q1("SELECT reason FROM email_inbound WHERE gmail_id = ?", [$g]), 'Failed sender check') === 0, $g);
+    has((string)q1("SELECT reason FROM email_inbound WHERE gmail_id = 'ae1'"), 'dmarc=fail');
+    $a = commentsOn(1, 'admin');
+    is(end($a)['detail'], 'Sent from my own Gmail — new render tonight.');
+    is((int)end($a)['author_user_id'], 1, 'as Lance');
+    is((string)q1("SELECT status FROM email_inbound WHERE gmail_id = 'own1'"), 'posted');
+    $q = rows("SELECT * FROM client_email_queue WHERE batch_key IS NULL");
+    is(count($q), 1, 'only the genuine reply is queued for the client');
+    is((int)$q[0]['activity_id'], (int)end($a)['id']);
+    // the stub honours labelIds= on list (what a SENT-only query would see)
+    $r = appJson('echo json_encode(gmailApi($pdo, "GET", "messages", null, ["labelIds" => "SENT"])["data"]["messages"] ?? []);');
+    is(array_column($r, 'id'), ['own1', 'own3']);
+});
+
+ftest('held client emails older than 72 h are dropped on release: "expired, not sent" in the Delivery log; fresh ones go; configurable', function () {
+    adminComment(1, 'OLD reply from three weeks ago');
+    db()->exec("UPDATE client_email_queue SET created_at = NOW() - INTERVAL 21 DAY WHERE batch_key IS NULL");
+    adminComment(2, 'FRESH reply from today');
+    db()->exec("UPDATE client_email_queue SET created_at = NOW() - INTERVAL 11 MINUTE WHERE batch_key IS NULL AND entity_id = 2");
+    status(post('status.php', ['action' => 'submit', 'id' => 6, 'client' => 'kenda'], 'admin', [], J), 200);
+    db()->exec("UPDATE client_email_queue SET created_at = NOW() - INTERVAL 80 HOUR WHERE batch_key IS NULL AND kind = 'review'");
+    // held while there is no transport
+    $cfg = ['mail_transport' => '', 'mail_sink_dir' => null];
+    $j = appJson('echo json_encode(clientEmailRun($pdo));', $cfg, ['sendmail_path' => '/bin/true']);
+    is((int)$j['held'], 3, 'held, nothing dropped yet');
+    // released (the test transport): the 21-day reply and the 80-hour review expire, today's reply goes
+    clearMail();
+    $c = cron();
+    is((int)$c['client_emails']['expired'], 2, 'two batches expired');
+    is((int)$c['client_emails']['reply'], 1);
+    $jane = mailsTo('jane@kenda.example');
+    is(count($jane), 1, 'only the fresh email');
+    has($jane[0]['html'], 'FRESH reply from today');
+    hasNot(json_encode(mails()), 'OLD reply from three weeks ago');
+    is((int)q1("SELECT COUNT(*) FROM client_email_queue WHERE batch_key LIKE 'expired:%'"), 2);
+    $log = rows("SELECT * FROM notify_outbox WHERE kind = 'client_email' AND status = 'skipped' ORDER BY id");
+    is(count($log), 2, 'one Delivery-log row per expired batch');
+    has((string)$log[0]['last_error'], 'expired, not sent');
+    has((string)$log[0]['last_error'], 'held longer than 72 h');
+    has(get('manage.php?section=notifications', 'admin')['body'], 'expired, not sent');
+    // a retry of an expired row never sends it
+    db()->exec("UPDATE notify_outbox SET status = 'pending', next_attempt_at = NOW() WHERE id = " . (int)$log[0]['id']);
+    appRun('notifyPump($pdo, ["ids" => [' . (int)$log[0]['id'] . ']]);');
+    is((string)q1("SELECT status FROM notify_outbox WHERE id = ?", [(int)$log[0]['id']]), 'skipped');
+    is(count(mailsTo('jane@kenda.example')), 1, 'still one');
+    // an outbox email already enqueued but held past the limit is dropped at delivery too
+    db()->exec("INSERT INTO client_email_queue (company_id, kind, entity_type, entity_id, created_at, batch_key) VALUES (1, 'review', 'post', 1, NOW() - INTERVAL 5 DAY, 'review:1:held')");
+    db()->exec("INSERT INTO notify_outbox (channel, kind, company_id, target, payload, dedupe_key) VALUES ('email', 'client_email', 1, 'jane@kenda.example', '{\"batch_key\":\"review:1:held\",\"kind\":\"review\",\"company_id\":1,\"contact_id\":1}', 'held-old')");
+    db()->exec("UPDATE notify_clients SET email_review = 1 WHERE company_id = 1");
+    $oid = (int)q1("SELECT id FROM notify_outbox WHERE dedupe_key = 'held-old'");
+    appRun('notifyPump($pdo, ["ids" => [' . $oid . ']]);');
+    $row = rows("SELECT status, last_error FROM notify_outbox WHERE id = ?", [$oid])[0];
+    is($row['status'], 'skipped');
+    has((string)$row['last_error'], 'expired, not sent');
+    // configurable
+    is(appJson('echo json_encode([clientEmailMaxAgeHours()]);'), [72]);
+    is(appJson('echo json_encode([clientEmailMaxAgeHours()]);', ['client_email_max_age_hours' => 24]), [24]);
+    is(appJson('echo json_encode([clientEmailMaxAgeHours()]);', ['client_email_max_age_hours' => 99999]), [720]);
+});
+
+ftest('staging detection: any portal_url or folder containing "staging", or the explicit environment; Manage shows it and how', function () {
+    $q = static function (string $dir, array $cfg = []) { return appJson('echo json_encode(portalEnvironmentInfo(' . var_export($dir, true) . '));', $cfg); };
+    is($q('/home/joust/public_html/portal'), ['env' => 'production', 'source' => 'default']);
+    is($q('/home/joust/public_html/portal-staging'), ['env' => 'staging', 'source' => 'folder']);
+    is($q('/home/joust/public_html/staging-portal2'), ['env' => 'staging', 'source' => 'folder']);
+    is($q('/home/joust/public_html/Portal_STAGING'), ['env' => 'staging', 'source' => 'folder']);
+    is($q('/x/portal', ['portal_url' => 'https://staging.joustmedia.com/portal']), ['env' => 'staging', 'source' => 'portal_url']);
+    is($q('/x/portal', ['portal_url' => 'https://joustmedia.com/portal-staging2']), ['env' => 'staging', 'source' => 'portal_url']);
+    is($q('/x/portal-staging', ['environment' => 'production']), ['env' => 'production', 'source' => 'config']);
+    is($q('/x/portal', ['environment' => 'Staging']), ['env' => 'staging', 'source' => 'config']);
+    is(appJson('echo json_encode([portalEnvironment(), inboundAddress()]);', ['portal_url' => 'https://joustmedia.com/my-staging']), ['staging', 'lance+ai-staging@joustmedia.com']);
+    $m = get('manage.php?section=notifications', 'admin')['body'];
+    has($m, 'data-environment="production" data-environment-source="default"');
+    has($m, 'data-environment-label>Production');
+    $orig = siteConfig(['portal_url' => (getenv('PORTAL_TEST_BASE') ?: 'http://127.0.0.1:8099/portal') . '?staging=1']);
+    try {
+        $m = get('manage.php?section=notifications', 'admin')['body'];
+        has($m, 'data-environment="staging" data-environment-source="portal_url"');
+        has($m, 'data-environment-label>Staging');
+        has($m, 'portal_url</code> contains “staging”');
+    } finally {
+        siteConfigRestore($orig);
+    }
+});
+
+ftest('Joust replies are marked read from every view the client reaches: the Needs-changes notice, a deep-linked asset, an opened series', function () {
+    // post 4 is Needs changes (the client's own view = the "Joust is updating this post" notice)
+    $b = get('posts.php?client=kenda&post=4&partial=1', 'client')['body'];
+    has($b, 'data-hidden-post');
+    has($b, 'data-seen-entity="post:4"');
+    is(get('posts.php?client=kenda&post=4&partial=1', 'admin')['code'], 200, 'the admin still gets the full sheet');
+    // assets: the deep-linked image (library / tire) and an explicitly opened series carry an on-load marker
+    has(get('assets.php?client=kenda&asset=7&kind=library', 'client')['body'], '<span hidden data-seen-on-load data-seen-entity="library_image:7"></span>');
+    $tid = (int)q1("SELECT id FROM tire_images WHERE series_id = 1 AND status = 'pending' ORDER BY id LIMIT 1");
+    $b = get('assets.php?client=kenda&view=collections&item=1&series=1&asset=' . $tid . '&kind=tire', 'client')['body'];
+    has($b, 'data-seen-entity="tire_image:' . $tid . '"');
+    hasNot($b, 'data-seen-entity="tire_series:1"', 'an image link does not mark its whole series');
+    has(get('assets.php?client=kenda&view=collections&item=1&series=1', 'client')['body'], 'data-seen-entity="tire_series:1"');
+    hasNot(get('assets.php?client=kenda&view=collections&item=1', 'client')['body'], 'data-seen-on-load', 'no marker without a link to an item');
+    // the marker posts to the same endpoint (a client may mark its own series, not another client's)
+    status(post('thread-action.php', ['action' => 'seen', 'entity' => 'tire_series:1', 'client' => 'kenda'], 'client', [], J), 200);
+    is(post('thread-action.php', ['action' => 'seen', 'entity' => 'tire_series:1', 'client' => 'privacybee'], 'client:privacybee', [], J)['code'], 403);
 });
 
 finish();

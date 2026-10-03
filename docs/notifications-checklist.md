@@ -63,7 +63,8 @@ Fill these in on the server. Manage → Notifications → **Setup** ticks each k
 Staging and production read client replies from the same Gmail mailbox. Each must read its **own** address, or staging would import (and label) production's replies.
 
 - [ ] In **staging's** `portal-staging/config.php`, set `'environment' => 'staging'`. Leave `inbound_address` blank: staging then uses `lance+ai-staging@joustmedia.com` by itself.
-- [ ] In **production's** config.php, set `'environment' => 'production'` (blank also means production unless `portal_url` says `portal-staging`).
+- [ ] In **production's** config.php, set `'environment' => 'production'`. Blank also means production, unless `portal_url` or the portal's folder name contains "staging".
+- [ ] Check Manage → Notifications → Setup → **Environment**. It shows **Staging** or **Production** and how it was decided: set in config.php, or detected from `portal_url` or the folder name.
 - [ ] If staging's `inbound_address` is ever set to production's `lance+ai@joustmedia.com`, staging **refuses to read replies**. Manage → Notifications → Setup then shows a red warning, and the **Environment** line says which address is in use.
 
 To make a random string, run `php -r 'echo bin2hex(random_bytes(24));'`, or use any password generator with 32+ characters.
@@ -117,9 +118,15 @@ Use the URL **without** `.php`. This one job runs everything time-based:
 - [ ] Optional: add **DMARC**, a TXT record with **Name** `_dmarc` and **Value** `v=DMARC1; p=none; rua=mailto:lance@joustmedia.com`.
 - [ ] Click **Send test email** on the Email card. In Gmail → ⋮ → **Show original** you should see **SPF: PASS** and **DKIM: PASS**.
 
-Until this step is done, sign-in links and your own reminders go out with PHP mail(). **Client emails are held** (kept in the queue, nothing lost) until Google is connected, and replies show **Not connected**.
+Until this step is done, sign-in links and your own reminders go out with PHP mail(). **Client emails are held** (kept in the queue) until Google is connected, and replies show **Not connected**. A held client email older than **72 hours** is dropped when Google is connected, so a weeks-old "Joust replied" never goes out late. It shows in the Delivery log as **expired, not sent**. To change the limit, set `client_email_max_age_hours` in config.php. Sign-in emails expire with their 15-minute link, as before.
 
-Every inbound reply is checked against Google's own verdict (DMARC, or a DKIM signature from the sender's domain). A reply that fails, for example a forged `From: lance@joustmedia.com`, is never posted. It waits under **Unmatched email replies** marked **Failed sender check**. Your own replies from lance@ pass once DKIM (above) is on.
+Every inbound reply is checked against Google's own verdict: the topmost `Authentication-Results` header stamped by mx.google.com. It must show no DMARC failure, a DMARC pass for exactly the From domain (when the domain has DMARC), and a **DKIM pass signed by the From domain** (or its parent domain). A reply that fails, for example a forged `From: lance@joustmedia.com`, is never posted. It waits under **Unmatched email replies** marked **Failed sender check**, and **Assign** posts it as an unnamed client message, never as Joust.
+
+Your own replies:
+
+- **From your own Gmail (lance@):** when you reply to a portal email from the connected mailbox, Gmail delivers the copy to lance+ai@ internally and it may carry **no** `Authentication-Results` at all. The portal accepts it anyway because Gmail itself labels it **SENT** in the connected mailbox, a label an outside sender cannot set. This applies only to Joust addresses and only when there are no authentication results; anything with results is checked as above.
+- **From a teammate's own mailbox:** it arrives like any outside mail and passes once DKIM (above) is on for joustmedia.com.
+- [ ] After connecting, reply to one portal email from lance@ and check that it posts (not **Failed sender check**). If it does not, use the portal or Slack and report it.
 
 ## 6. Client contacts and client emails
 
@@ -136,7 +143,7 @@ To turn them on, **after connecting Google (step 5)**:
 | **Ready for your review** | One email listing everything sent for review, 15 minutes after the last item. This includes posts, emails, pages, tire renders (one row per series) and library images, with thumbnails. |
 | **Joust replied** | Your visible replies, batched over 10 minutes. Internal notes never go out. |
 | **Live & scheduled** | Once a day, at the Morning summary hour. |
-| **Gentle reminders** | Once a day, for items still To Review with no answer after **N days** (the **Remind after** field on the same card, default 3; 0 = never). Each item is mentioned at most once every N days. |
+| **Gentle reminders** | For items still To Review with no answer after **N days** (the **Remind after** field on the same card, default 3; 0 = never). At most **one email per client every N days**, listing every such item; each item is mentioned at most **twice**; and once anyone at the client has done anything in the portal since the last reminder (a comment, a decision, a visit), nothing sent before that is reminded again. |
 
 - [ ] Repeat per client, when each one is ready.
 - [ ] Look at each template in Manage → Notifications → **Client emails** → **Preview** / **Text**.

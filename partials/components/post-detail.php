@@ -430,7 +430,8 @@ if (!function_exists('renderPostHiddenNotice')) {
     {
         $id    = (int)($post['id'] ?? 0);
         $name  = function_exists('postDisplayLabel') ? postDisplayLabel($post) : ('post #' . $id);
-        $out   = '<article class="pd pd--hidden" data-post-detail="' . $id . '" data-id="' . $id . '" data-status="denied" data-posted="0" data-hidden-post data-title="' . pdEsc($name) . '">';
+        $out   = '<article class="pd pd--hidden" data-post-detail="' . $id . '" data-id="' . $id . '" data-status="denied" data-posted="0" data-hidden-post data-title="' . pdEsc($name) . '"'
+               . (function_exists('trackingSeenAttr') ? trackingSeenAttr('post', $id) : '') . '>';   // opening it reads Joust's replies shown below
         $out  .= '<div class="pd-body" data-pd-body>';
         $out  .= '<section class="pd-hidden">'
                . '<p class="pd-hidden-lead">' . (function_exists('statusPill') ? statusPill('denied', false, ['class' => 'pd-pill']) : '') . '</p>'

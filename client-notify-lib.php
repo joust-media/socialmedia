@@ -13,13 +13,16 @@
  *   live    "Live & scheduled" — a post marked Scheduled, an email / page marked Live. Once a day (the Morning summary
  *           hour).
  *   remind  "A gentle reminder" — items still To Review with no client answer after N days (per client, default 3;
- *           0 = off): one email per client, at most once per item every N days, once a day at the summary hour.
+ *           0 = off): at most one email per client every N days covering every such item, at most 2 per item, and
+ *           none for items the client has been active since (clientEmailRemindQueue()); checked daily at the summary hour.
  *   Review covers assets too: tire renders uploaded into a series (one row per series), library uploads / FTP drops,
  *   an asset reset to To Review — with thumbnails and per-recipient links like posts.
  *
  * Off until Joust turns them on: every per-client switch defaults OFF (migrate.php 47 / 50), and nothing goes out
  * until Google is connected (clientEmailTransportOk(): transport gmail, or "Allow sending client emails without
- * Google (mail())" ticked in Manage → Notifications). Held batches stay queued; sign-in emails never wait.
+ * Google (mail())" ticked in Manage → Notifications). Held batches stay queued; sign-in emails never wait (and expire
+ * with their link). A held client email older than 72 h (config client_email_max_age_hours) is dropped when the queue
+ * is released — "expired, not sent" in the Delivery log (clientEmailExpireStale()).
  *
  * Flow: logActivity() → notifyOnActivity() → clientEmailOnActivity() appends to client_email_queue (migrate.php 49).
  * The cron (notify-cron.php → clientEmailRun()) closes a batch once its window passed (batch_key on the rows) and
@@ -255,30 +258,62 @@ if (!function_exists('clientEmailRemindDue')) {
     }
 }
 
+if (!defined('CLIENT_REMIND_MAX_PER_ITEM')) define('CLIENT_REMIND_MAX_PER_ITEM', 2);
+
+if (!function_exists('clientEmailClientLastActive')) {
+    /** When anyone at the client last did anything in the portal — a comment / decision / edit (an activity row by
+     *  the client) or a signed-in visit (client_sessions.last_seen_at). '' = never. */
+    function clientEmailClientLastActive(PDO $pdo, int $companyId): string {
+        $at = '';
+        foreach (["SELECT MAX(created_at) FROM activity_log WHERE company_id = ? AND actor = 'client'",
+                  "SELECT MAX(last_seen_at) FROM client_sessions WHERE company_id = ?"] as $sql) {
+            try {
+                $s = $pdo->prepare($sql);
+                $s->execute([$companyId]);
+                $v = (string)($s->fetchColumn() ?: '');
+                if ($v !== '' && ($at === '' || strtotime($v) > strtotime($at))) $at = $v;
+            } catch (Throwable $e) {}
+        }
+        return $at;
+    }
+}
+
 if (!function_exists('clientEmailRemindQueue')) {
     /**
-     * Stale To Review items → one gentle reminder email per client: every item waiting on the client (no answer since
-     * it was sent) for at least N days (the client's remind_days, default 3; 0 = off) and not reminded about in the
-     * last N days. → batches closed.
+     * Stale To Review items → at most ONE gentle reminder email per client every N days (the client's remind_days,
+     * default 3; 0 = off), covering every item waiting on the client (no answer since it was sent) for ≥ N days:
+     *   · per client: nothing if the client's last reminder went out less than N days ago
+     *   · per item: at most CLIENT_REMIND_MAX_PER_ITEM (2) reminders per review request, then never again
+     *   · the client is around: once anyone at the client did anything in the portal (a comment, a decision, a
+     *     signed-in visit) after the last reminder, reminders stop for everything sent before that activity — only
+     *     items sent for review after it can start a new cycle
+     * → batches closed (one per client).
      */
     function clientEmailRemindQueue(PDO $pdo): int {
         if (!clientEmailRemindReady($pdo) || !function_exists('trackingWaitingOnClient')) return 0;
         $n = 0;
         $rows = $pdo->query("SELECT company_id, remind_days FROM notify_clients WHERE email_remind = 1 AND remind_days > 0")->fetchAll();
+        $last = $pdo->prepare("SELECT MAX(created_at) FROM client_email_queue WHERE kind = 'remind' AND company_id = ?");
+        $count = $pdo->prepare("SELECT COUNT(*) FROM client_email_queue WHERE kind = 'remind' AND entity_type = ? AND entity_id = ? AND created_at >= ?");
+        $ins = $pdo->prepare("INSERT INTO client_email_queue (company_id, kind, entity_type, entity_id) VALUES (?, 'remind', ?, ?)");
         foreach ($rows as $c) {
             $cid = (int)$c['company_id']; $days = max(1, min(30, (int)$c['remind_days']));
             $cut = time() - $days * 86400;
-            $ins = $pdo->prepare("INSERT INTO client_email_queue (company_id, kind, entity_type, entity_id) VALUES (?, 'remind', ?, ?)");
-            $recent = $pdo->prepare("SELECT 1 FROM client_email_queue WHERE kind = 'remind' AND entity_type = ? AND entity_id = ? AND created_at > NOW() - INTERVAL ? DAY LIMIT 1");
-            $added = false;
+            $last->execute([$cid]);
+            $lastAt = (string)($last->fetchColumn() ?: '');
+            if ($lastAt !== '' && strtotime($lastAt) > $cut) continue;                          // one email per client per N days
+            $active = $lastAt !== '' ? clientEmailClientLastActive($pdo, $cid) : '';
+            $activeAt = ($active !== '' && strtotime($active) > strtotime($lastAt)) ? strtotime($active) : 0;   // the client is around
+            $pick = [];
             foreach (trackingWaitingOnClient($pdo, $cid) as $w) {
-                if (empty($w['since']) || strtotime((string)$w['since']) > $cut) continue;
-                $recent->execute([$w['entity_type'], (int)$w['entity_id'], $days]);
-                if ($recent->fetchColumn()) continue;
-                $ins->execute([$cid, $w['entity_type'], (int)$w['entity_id']]);
-                $added = true;
+                if (empty($w['since']) || strtotime((string)$w['since']) > $cut) continue;     // not N days old yet
+                if ($activeAt && strtotime((string)$w['since']) <= $activeAt) continue;            // seen it, chose not to answer
+                $count->execute([$w['entity_type'], (int)$w['entity_id'], (string)$w['since']]);
+                if ((int)$count->fetchColumn() >= CLIENT_REMIND_MAX_PER_ITEM) continue;          // reminded twice already
+                $pick[] = $w;
             }
-            if (!$added) continue;
+            if (!$pick) continue;
+            foreach ($pick as $w) $ins->execute([$cid, $w['entity_type'], (int)$w['entity_id']]);
             $max = (int)$pdo->query("SELECT MAX(id) FROM client_email_queue WHERE kind = 'remind' AND batch_key IS NULL AND company_id = " . $cid)->fetchColumn();
             clientEmailBatch($pdo, $cid, 'remind', $max);
             $n++;
@@ -295,6 +330,46 @@ if (!function_exists('clientEmailLiveDue')) {
     }
 }
 
+if (!function_exists('clientEmailMaxAgeHours')) {
+    /** How old a held client email may be and still go out (config client_email_max_age_hours, default 72, 1–720). */
+    function clientEmailMaxAgeHours(): int {
+        $h = (int)notifyCfg('client_email_max_age_hours', '72');
+        return $h > 0 ? min(720, $h) : 72;
+    }
+}
+
+if (!function_exists('clientEmailExpireStale')) {
+    /**
+     * Held client email that is too old to send (clientEmailMaxAgeHours()): open queue rows are closed as
+     * "expired:<kind>:<client>:<max id>" and each such batch gets one Delivery-log row (outbox status skipped,
+     * "expired, not sent …") — a weeks-old "Joust replied" or "Ready for your review" never goes out when Google is
+     * finally connected. → batches expired.
+     */
+    function clientEmailExpireStale(PDO $pdo): int {
+        $h = clientEmailMaxAgeHours();
+        $s = $pdo->prepare("SELECT company_id, kind, MAX(id) AS max_id, COUNT(*) AS n, MIN(created_at) AS oldest FROM client_email_queue
+                             WHERE batch_key IS NULL AND created_at < NOW() - INTERVAL ? HOUR GROUP BY company_id, kind");
+        $s->execute([$h]);
+        $n = 0;
+        foreach ($s->fetchAll() as $r) {
+            $cid = (int)$r['company_id']; $kind = (string)$r['kind']; $key = 'expired:' . $kind . ':' . $cid . ':' . (int)$r['max_id'];
+            $u = $pdo->prepare("UPDATE client_email_queue SET batch_key = ?, batched_at = NOW() WHERE batch_key IS NULL AND kind = ? AND company_id = ? AND id <= ?
+                                   AND created_at < NOW() - INTERVAL ? HOUR");
+            $u->execute([$key, $kind, $cid, (int)$r['max_id'], $h]);
+            if ($u->rowCount() === 0) continue;
+            $why = 'expired, not sent: held longer than ' . $h . ' h (' . $u->rowCount() . ' item' . ($u->rowCount() === 1 ? '' : 's') . ', oldest ' . $r['oldest'] . ')';
+            try {
+                $pdo->prepare("INSERT IGNORE INTO notify_outbox (channel, kind, company_id, target, payload, status, last_error, dedupe_key) VALUES ('email', 'client_email', ?, '', ?, 'skipped', ?, ?)")
+                    ->execute([$cid, json_encode(['batch_key' => $key, 'kind' => $kind, 'company_id' => $cid, 'expired' => 1], JSON_UNESCAPED_SLASHES), $why, 'ce:' . $key]);
+            } catch (Throwable $e) {
+                error_log('clientEmailExpireStale: ' . $e->getMessage());
+            }
+            $n++;
+        }
+        return $n;
+    }
+}
+
 if (!function_exists('clientEmailRun')) {
     /**
      * The cron step: close every batch whose window has passed and queue one email per recipient.
@@ -308,6 +383,7 @@ if (!function_exists('clientEmailRun')) {
             $out['held'] = (int)$pdo->query("SELECT COUNT(*) FROM client_email_queue WHERE batch_key IS NULL")->fetchColumn();
             return $out;
         }
+        $out['expired'] = clientEmailExpireStale($pdo);
         foreach (clientEmailWindows() as $kind => $min) {
             $s = $pdo->prepare("SELECT company_id, MAX(id) AS max_id FROM client_email_queue WHERE batch_key IS NULL AND kind = ?
                                 GROUP BY company_id HAVING MAX(created_at) <= NOW() - INTERVAL ? MINUTE");
@@ -412,6 +488,7 @@ if (!function_exists('clientEmailDeliver')) {
     function clientEmailDeliver(PDO $pdo, array $p): array {
         $kind = (string)($p['kind'] ?? ''); $cid = (int)($p['company_id'] ?? 0);
         if (!isset(clientEmailKinds()[$kind])) return ['ok' => false, 'permanent' => true, 'error' => 'unknown client email kind'];
+        if (!empty($p['expired'])) return ['ok' => false, 'skip' => true, 'error' => 'expired, not sent'];
         $s = $pdo->prepare("SELECT * FROM client_contacts WHERE id = ? AND company_id = ?");
         $s->execute([(int)($p['contact_id'] ?? 0), $cid]);
         $contact = $s->fetch();
@@ -424,7 +501,11 @@ if (!function_exists('clientEmailDeliver')) {
         if (!$company) return ['ok' => false, 'skip' => true, 'error' => 'unknown client'];
         $q = $pdo->prepare("SELECT * FROM client_email_queue WHERE batch_key = ? AND company_id = ? ORDER BY id ASC");
         $q->execute([(string)($p['batch_key'] ?? ''), $cid]);
-        $items = clientEmailItems($pdo, $kind, $q->fetchAll(), $cid);
+        $qrows = $q->fetchAll();
+        // an email held (or retried) past clientEmailMaxAgeHours() since the newest change it is about: too stale to send
+        $newest = $qrows ? max(array_map(static function ($r) { return strtotime((string)$r['created_at']) ?: 0; }, $qrows)) : 0;
+        if ($newest > 0 && $newest < time() - clientEmailMaxAgeHours() * 3600) return ['ok' => false, 'skip' => true, 'error' => 'expired, not sent: held longer than ' . clientEmailMaxAgeHours() . ' h'];
+        $items = clientEmailItems($pdo, $kind, $qrows, $cid);
         if (!$items) return ['ok' => false, 'skip' => true, 'error' => 'nothing left to send (the items changed since)'];
         $mail = clientEmailCompose($pdo, $kind, $company, $contact, $items);
         $res = notifyEmail($mail);

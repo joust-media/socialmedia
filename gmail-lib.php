@@ -25,17 +25,19 @@
  *   it — and that is what notify_threads / notify_email_refs keep for threading.
  *
  * ── Environments ────────────────────────────────────────────────────────────────────────────────────────────────────
- *   portalEnvironment(): config environment ('production' | 'staging'), else 'staging' when portal_url / the folder
- *   says portal-staging. Staging's inbound address defaults to lance+ai-staging@joustmedia.com; a staging install set
+ *   portalEnvironment(): config environment ('production' | 'staging'), else 'staging' when portal_url or the folder
+ *   contains "staging". Staging's inbound address defaults to lance+ai-staging@joustmedia.com; a staging install set
  *   to production's lance+ai@ refuses to poll (it would import and label production's client replies).
  *
  * ── Replies in (notify-cron.php → gmailPollInbound()) ────────────────────────────────────────────────────────────────
  *   Polls `to:<inbound address> -label:portal-processed newer_than:14d`; each message (deduped by Gmail id in
  *   email_inbound, migrate.php 46) is matched to a portal item by In-Reply-To / References against the Message-IDs the
  *   portal sent (notify_email_refs), else by the signed [J#xxxxxx] subject token (notify_threads.email_token). The
- *   From must be genuine — inboundAuthCheck(): Google's own Authentication-Results (the topmost one by mx.google.com)
- *   shows dmarc=pass, or a dkim=pass aligned with the From domain; otherwise the message waits in Unmatched as
- *   "Failed sender check" and is never posted (a forged From: lance@… would otherwise post as Joust and email the
+ *   From must be genuine — inboundAuthCheck(): Google's own Authentication-Results (the topmost header, by
+ *   mx.google.com; parsed quote- and comment-aware) has no dmarc=fail, its dmarc result (if any) is a pass for exactly
+ *   the From domain, and a dkim=pass signed by the From domain (or its organizational domain); Lance's own replies
+ *   sent from the connected mailbox (Gmail label SENT, no Authentication-Results) also count. Otherwise the message
+ *   waits in Unmatched as "Failed sender check" and is never posted (a forged From: lance@… would otherwise post as Joust and email the
  *   client). The sender must be a contact of THAT item's client (or a Joust team member); quoted history and signatures are cut
  *   (Gmail / Apple "On … wrote:", Outlook "-----Original Message-----" / "From: … Sent:", "> " lines, "-- ");
  *   the rest is posted as a comment by that person through logActivity() (so Slack hears about it like any comment).
@@ -84,16 +86,22 @@ if (!function_exists('googleExpectedAccount')) {
 if (!defined('INBOUND_PROD_ADDRESS')) define('INBOUND_PROD_ADDRESS', 'lance+ai@joustmedia.com');
 if (!defined('INBOUND_STAGING_ADDRESS')) define('INBOUND_STAGING_ADDRESS', 'lance+ai-staging@joustmedia.com');
 
-if (!function_exists('portalEnvironment')) {
-    /** 'staging' | 'production': config environment when set; else 'staging' when portal_url (or the folder the portal
-     *  runs from) says portal-staging; else 'production'. Staging must never read production's client replies. */
-    function portalEnvironment(): string {
-        $e = strtolower(notifyCfg('environment'));
-        if ($e === 'staging' || $e === 'production') return $e;
-        if (stripos(notifyCfg('portal_url'), 'portal-staging') !== false) return 'staging';
-        if (strcasecmp(basename(__DIR__), 'portal-staging') === 0) return 'staging';
-        return 'production';
+if (!function_exists('portalEnvironmentInfo')) {
+    /** ['env' => 'staging' | 'production', 'source' => 'config' | 'portal_url' | 'folder' | 'default']: config
+     *  environment when set; else 'staging' when portal_url or the folder the portal runs from contains "staging"
+     *  (portal-staging, staging-portal, staging2 …); else 'production'. Staging must never read production's client
+     *  replies. $dir: the portal folder (default this one) — a test seam. */
+    function portalEnvironmentInfo(?string $dir = null): array {
+        $e = strtolower(trim(notifyCfg('environment')));
+        if ($e === 'staging' || $e === 'production') return ['env' => $e, 'source' => 'config'];
+        if (stripos(notifyCfg('portal_url'), 'staging') !== false) return ['env' => 'staging', 'source' => 'portal_url'];
+        if (stripos(basename($dir ?? __DIR__), 'staging') !== false) return ['env' => 'staging', 'source' => 'folder'];
+        return ['env' => 'production', 'source' => 'default'];
     }
+}
+if (!function_exists('portalEnvironment')) {
+    /** 'staging' | 'production' (portalEnvironmentInfo()). */
+    function portalEnvironment(): string { return portalEnvironmentInfo()['env']; }
 }
 if (!function_exists('inboundAddress')) {
     /** Where client replies go (the Reply-To of client emails, polled by the cron): config inbound_address, default
@@ -752,53 +760,176 @@ if (!function_exists('inboundDomainsAligned')) {
     }
 }
 
+if (!function_exists('inboundArSegments')) {
+    /**
+     * One Authentication-Results value (RFC 8601) → its top-level `;` segments, each a list of tokens
+     * [kind, text, spaceBefore] with kind 'w' (a word), 'q' (a quoted string, unescaped) or '='. Comments — nested,
+     * with \-escapes — are dropped (they count as whitespace), so a `;` or a "dmarc=pass" inside a quoted string or a
+     * comment never becomes a result of its own. An unterminated quoted string or comment → null (malformed: reject).
+     */
+    function inboundArSegments(string $v): ?array {
+        $segs = []; $cur = []; $n = strlen($v); $i = 0; $sp = true;
+        while ($i < $n) {
+            $ch = $v[$i];
+            if ($ch === '(') {
+                $depth = 1; $i++;
+                while ($i < $n && $depth > 0) {
+                    $c = $v[$i];
+                    if ($c === '\\') { $i += 2; continue; }
+                    if ($c === '(') $depth++;
+                    elseif ($c === ')') $depth--;
+                    $i++;
+                }
+                if ($depth > 0) return null;
+                $sp = true;
+                continue;
+            }
+            if ($ch === '"') {
+                $s = ''; $i++; $closed = false;
+                while ($i < $n) {
+                    $c = $v[$i];
+                    if ($c === '\\' && $i + 1 < $n) { $s .= $v[$i + 1]; $i += 2; continue; }
+                    if ($c === '"') { $closed = true; $i++; break; }
+                    $s .= $c; $i++;
+                }
+                if (!$closed) return null;
+                $cur[] = ['q', $s, $sp]; $sp = false;
+                continue;
+            }
+            if ($ch === ';') { $segs[] = $cur; $cur = []; $sp = true; $i++; continue; }
+            if ($ch === '=') { $cur[] = ['=', '=', $sp]; $sp = false; $i++; continue; }
+            if ($ch === ' ' || $ch === "\t" || $ch === "\r" || $ch === "\n") { $sp = true; $i++; continue; }
+            $w = '';
+            while ($i < $n && strpos("()\";= \t\r\n", $v[$i]) === false) { $w .= $v[$i]; $i++; }
+            $cur[] = ['w', $w, $sp]; $sp = false;
+        }
+        $segs[] = $cur;
+        return $segs;
+    }
+}
+
+if (!function_exists('inboundArParse')) {
+    /**
+     * A parsed Authentication-Results value → ['authserv' => id, 'results' => [['method', 'result', 'props' => [k => v],
+     * 'dup' => bool]], 'malformed' => bool]. A result only counts when it STARTS a top-level segment
+     * (`method=result`); its properties are `ptype.prop=value` pairs (a value may be quoted, and runs on while tokens
+     * touch: "x"@evil.example). A property given twice in one result marks it 'dup' (ambiguous → never a pass).
+     */
+    function inboundArParse(string $v): array {
+        $segs = inboundArSegments($v);
+        if ($segs === null || !$segs) return ['authserv' => '', 'results' => [], 'malformed' => true];
+        $head = array_shift($segs);
+        $authserv = ($head && $head[0][0] === 'w') ? strtolower($head[0][1]) : '';
+        $results = [];
+        foreach ($segs as $t) {
+            if (count($t) < 3 || $t[0][0] !== 'w' || $t[1][0] !== '=' || $t[2][0] !== 'w') continue;   // "none", junk
+            $method = strtolower((string)preg_replace('#/\d+$#', '', $t[0][1]));
+            $r = ['method' => $method, 'result' => strtolower($t[2][1]), 'props' => [], 'dup' => false];
+            $k = 3; $cnt = count($t);
+            while ($k < $cnt) {
+                if ($k + 2 < $cnt && $t[$k][0] === 'w' && $t[$k + 1][0] === '=' && in_array($t[$k + 2][0], ['w', 'q'], true)) {
+                    $key = strtolower($t[$k][1]);
+                    $val = $t[$k + 2][1];
+                    $k += 3;
+                    while ($k < $cnt && $t[$k][0] !== '=' && !$t[$k][2]) { $val .= $t[$k][1]; $k++; }   // "x"@evil.example
+                    if (array_key_exists($key, $r['props'])) $r['dup'] = true;
+                    else $r['props'][$key] = $val;
+                    continue;
+                }
+                $k++;
+            }
+            $results[] = $r;
+        }
+        return ['authserv' => $authserv, 'results' => $results, 'malformed' => false];
+    }
+}
+
+if (!function_exists('inboundOrgDomain')) {
+    /** The organizational domain (DMARC): the registrable domain — the last two labels, or three under a known
+     *  two-label public suffix (co.uk, com.au …). No public-suffix list ships with the portal; this covers the common ones. */
+    function inboundOrgDomain(string $d): string {
+        $d = strtolower(trim($d, " .\t"));
+        $l = explode('.', $d);
+        if (count($l) < 2) return $d;
+        $two = implode('.', array_slice($l, -2));
+        $sfx = ['co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'me.uk', 'ltd.uk', 'plc.uk', 'com.au', 'net.au', 'org.au', 'edu.au', 'gov.au',
+                'co.nz', 'org.nz', 'co.jp', 'ne.jp', 'or.jp', 'co.za', 'com.br', 'com.mx', 'com.ar', 'com.cn', 'com.sg', 'com.hk',
+                'co.in', 'co.kr', 'com.tr', 'co.il', 'com.tw', 'com.my', 'com.ph', 'co.id', 'qc.ca', 'on.ca', 'bc.ca'];
+        if (in_array($two, $sfx, true) && count($l) >= 3) return implode('.', array_slice($l, -3));
+        return $two;
+    }
+}
+
 if (!function_exists('inboundAuthResults')) {
     /**
-     * The Authentication-Results header Google's receiving MX stamped on a message: the TOPMOST one whose authserv-id
-     * is mx.google.com (headers are prepended on the way in, so anything a sender forged sits below Google's own).
-     * → null when there is none, else ['dkim' => [[result, domain]], 'dmarc' => [[result, header.from]], 'spf' => [result]].
+     * The Authentication-Results header Google's receiving MX stamped on a message: ONLY the topmost header, and only
+     * when its authserv-id is mx.google.com (Google prepends its own on the way in, so anything a sender forged sits
+     * below it; a topmost header from anyone else means Google's is missing — we never look further down).
+     * → null when there is none, else ['dkim' => [[result, domain, dup]], 'dmarc' => [[result, header.from, dup]],
+     *   'spf' => [result], 'malformed' => bool].
      */
     function inboundAuthResults(array $mime): ?array {
-        foreach ((array)($mime['raw_headers']['authentication-results'] ?? []) as $v) {
-            $v = (string)$v;
-            for ($i = 0; $i < 5 && strpos($v, '(') !== false; $i++) $v = (string)preg_replace('/\([^()]*\)/', ' ', $v);   // comments
-            $parts = array_map('trim', explode(';', $v));
-            $servId = strtolower((string)preg_split('/\s+/', (string)array_shift($parts))[0]);
-            if ($servId !== 'mx.google.com') continue;
-            $out = ['dkim' => [], 'dmarc' => [], 'spf' => []];
-            foreach ($parts as $p) {
-                if (!preg_match('/^([a-z0-9_-]+)\s*=\s*([a-z]+)\b(.*)$/is', $p, $m)) continue;
-                $method = strtolower($m[1]); $result = strtolower($m[2]);
-                preg_match_all('/([a-z0-9_.-]+)\s*=\s*"?([^\s";]+)"?/i', $m[3], $pm, PREG_SET_ORDER);
-                $props = [];
-                foreach ($pm as $x) $props[strtolower($x[1])] = $x[2];
-                if ($method === 'dkim') {
-                    $d = (string)($props['header.d'] ?? '');
-                    if ($d === '' && isset($props['header.i'])) $d = (string)substr((string)strrchr((string)$props['header.i'], '@'), 1) ?: (string)$props['header.i'];
-                    $out['dkim'][] = [$result, strtolower($d)];
-                } elseif ($method === 'dmarc') {
-                    $out['dmarc'][] = [$result, strtolower((string)($props['header.from'] ?? ''))];
-                } elseif ($method === 'spf') {
-                    $out['spf'][] = $result;
-                }
+        $all = (array)($mime['raw_headers']['authentication-results'] ?? []);
+        if (!$all) return null;
+        $p = inboundArParse((string)reset($all));
+        if (!$p['malformed'] && $p['authserv'] !== 'mx.google.com') return null;
+        $out = ['dkim' => [], 'dmarc' => [], 'spf' => [], 'malformed' => $p['malformed']];
+        foreach ($p['results'] as $r) {
+            $props = $r['props'];
+            if ($r['method'] === 'dkim') {
+                $d = (string)($props['header.d'] ?? '');
+                if ($d === '' && isset($props['header.i'])) { $at = strrchr((string)$props['header.i'], '@'); $d = $at !== false ? substr($at, 1) : (string)$props['header.i']; }
+                $out['dkim'][] = [$r['result'], strtolower(trim($d)), $r['dup']];
+            } elseif ($r['method'] === 'dmarc') {
+                $out['dmarc'][] = [$r['result'], strtolower(trim((string)($props['header.from'] ?? ''))), $r['dup']];
+            } elseif ($r['method'] === 'spf') {
+                $out['spf'][] = $r['result'];
             }
-            return $out;   // only the topmost mx.google.com header counts
         }
-        return null;
+        return $out;
+    }
+}
+
+if (!function_exists('inboundIsJoustAddress')) {
+    /** The portal's own sender (the connected mailbox) or a Joust team member's address. */
+    function inboundIsJoustAddress(string $from): bool {
+        if ($from === '') return false;
+        if (strcasecmp($from, googleExpectedAccount()) === 0) return true;
+        foreach (adminUsers($GLOBALS['pdo'] ?? null) as $u) if (strcasecmp((string)$u['email'], $from) === 0) return true;
+        return false;
     }
 }
 
 if (!function_exists('inboundAuthCheck')) {
     /**
-     * Is the From address genuine? Accepted only when Google's own Authentication-Results says dmarc=pass for the
-     * From domain, or there is a dkim=pass whose signing domain is aligned with it. Everyone is checked — a From of
-     * lance@joustmedia.com (or any Joust address) most of all, since that would post as Joust.
+     * Is the From address genuine? Judged on Google's own Authentication-Results (inboundAuthResults(): the topmost
+     * header, by mx.google.com) and nothing else:
+     *   · any dmarc=fail / quarantine / reject / temperror / permerror → rejected; more than one dmarc result → rejected
+     *   · Google's dmarc result, when there is one, must be pass (or bestguesspass: the domain has no DMARC record)
+     *     for header.from = the From domain exactly
+     *   · and a dkim=pass whose signing domain (header.d) IS the From domain or its organizational domain is required
+     * Lance's own replies: a message he sent himself from the connected mailbox (to lance+ai@) may carry no
+     * Authentication-Results at all (Gmail delivers it internally). Accepted only when there is none, the From is a Joust
+     * address, and Gmail's labelIds — read from the API for the connected account ($o['fetched'] + $o['labelIds']),
+     * never from the message — include SENT, which an outside sender cannot set.
+     * Everyone is checked — a From of lance@joustmedia.com (or any Joust address) most of all, since that posts as Joust.
      * → ['ok' => bool, 'reason' => 'Failed sender check: …' when not ok, 'summary' => 'dmarc=pass …'].
      */
-    function inboundAuthCheck(array $mime, string $from): array {
+    function inboundAuthCheck(array $mime, string $from, array $o = []): array {
+        $from = strtolower(trim($from));
         $dom = strtolower((string)substr((string)strrchr($from, '@'), 1));
+        $joust = inboundIsJoustAddress($from);
+        $who = $from !== '' ? $from : 'the sender';
+        $fail = static function (string $summary, string $why) use ($joust, $from, $who): array {
+            return ['ok' => false, 'summary' => $summary,
+                    'reason' => 'Failed sender check: ' . $summary . ($why !== '' ? ' (' . $why . ')' : '') . ' — ' . ($joust ? 'claims to be Joust (' . $from . ') but ' : '') . 'not verified as ' . $who];
+        };
         $ar = inboundAuthResults($mime);
-        if ($ar === null) return ['ok' => false, 'summary' => 'none', 'reason' => 'Failed sender check: no Authentication-Results from mx.google.com (could not verify ' . ($from !== '' ? $from : 'the sender') . ')'];
+        if ($ar === null) {
+            $sent = in_array('SENT', array_map('strval', (array)($o['labelIds'] ?? [])), true);
+            if ($joust && !empty($o['fetched']) && $sent) return ['ok' => true, 'summary' => 'sent from the connected mailbox (Gmail label SENT)', 'reason' => ''];
+            return ['ok' => false, 'summary' => 'none', 'reason' => 'Failed sender check: no Authentication-Results from mx.google.com (could not verify ' . $who . ')'];
+        }
         $sum = [];
         foreach ($ar['dmarc'] as [$r]) $sum[] = 'dmarc=' . $r;
         foreach ($ar['dkim'] as [$r, $d]) $sum[] = 'dkim=' . $r . ($d !== '' ? ' (' . $d . ')' : '');
@@ -806,17 +937,22 @@ if (!function_exists('inboundAuthCheck')) {
         if (!$ar['dmarc']) $sum[] = 'dmarc=none';
         if (!$ar['dkim']) $sum[] = 'dkim=none';
         $summary = implode(', ', $sum);
-        if ($dom !== '') {
-            foreach ($ar['dmarc'] as [$r, $hf]) {
-                if ($r === 'pass' && ($hf === '' || inboundDomainsAligned($hf, $dom))) return ['ok' => true, 'summary' => $summary, 'reason' => ''];
-            }
-            foreach ($ar['dkim'] as [$r, $d]) {
-                if ($r === 'pass' && inboundDomainsAligned($d, $dom)) return ['ok' => true, 'summary' => $summary, 'reason' => ''];
-            }
+        if ($ar['malformed']) return $fail('unreadable Authentication-Results', '');
+        if ($dom === '' || strpos($dom, '.') === false) return $fail($summary, 'no From domain');
+        foreach ($ar['dmarc'] as [$r]) {
+            if (in_array($r, ['fail', 'quarantine', 'reject', 'temperror', 'permerror'], true)) return $fail($summary, 'DMARC failed');
         }
-        $joust = $from !== '' && ($from === googleExpectedAccount() || array_filter(adminUsers($GLOBALS['pdo'] ?? null), static function ($u) use ($from) { return strcasecmp((string)$u['email'], $from) === 0; }));
-        return ['ok' => false, 'summary' => $summary,
-                'reason' => 'Failed sender check: ' . $summary . ' — ' . ($joust ? 'claims to be Joust (' . $from . ') but ' : '') . 'not verified as ' . ($from !== '' ? $from : 'the sender')];
+        if (count($ar['dmarc']) > 1) return $fail($summary, 'more than one DMARC result');
+        if ($ar['dmarc']) {
+            [$r, $hf, $dup] = $ar['dmarc'][0];
+            if ($dup || !in_array($r, ['pass', 'bestguesspass'], true)) return $fail($summary, 'DMARC did not pass');
+            if ($hf !== $dom) return $fail($summary, 'DMARC was for ' . ($hf !== '' ? $hf : 'another domain') . ', not ' . $dom);
+        }
+        $org = inboundOrgDomain($dom);
+        foreach ($ar['dkim'] as [$r, $d, $dup]) {
+            if ($r === 'pass' && !$dup && $d !== '' && ($d === $dom || $d === $org)) return ['ok' => true, 'summary' => $summary, 'reason' => ''];
+        }
+        return $fail($summary, 'no DKIM signature of ' . $dom);
     }
 }
 
@@ -872,8 +1008,10 @@ if (!function_exists('inboundProcess')) {
     /**
      * One received message (raw RFC 5322) → posted / unmatched / ignored. The email_inbound row (claimed by the
      * caller, so a Gmail id is processed once) is updated with the outcome. Returns the status.
+     * $o: 'labelIds' (Gmail's labels for the message, from the API) + 'fetched' => true when it was read from the
+     * connected mailbox by gmailPollInbound() — inboundAuthCheck() trusts SENT only then.
      */
-    function inboundProcess(PDO $pdo, int $rowId, string $raw): string {
+    function inboundProcess(PDO $pdo, int $rowId, string $raw, array $o = []): string {
         $mime = notifyMimeParse($raw);
         $hd = static function (string $k) use ($mime): string { return (string)($mime['headers'][$k][0] ?? ''); };
         [$from, $fromName] = notifyParseAddress($hd('from'));
@@ -920,7 +1058,7 @@ if (!function_exists('inboundProcess')) {
         }
         // 3. the sender must be who the From header says (Google's DMARC / aligned DKIM verdict) — a forged From never
         //    posts, whatever it matched; it waits in Unmatched with the reason.
-        $auth = inboundAuthCheck($mime, $from);
+        $auth = inboundAuthCheck($mime, $from, $o);
         if (!$auth['ok']) {
             $hint = $match ? ['company_id' => $match[2], 'entity_type' => $match[0], 'entity_id' => $match[1]] : ['company_id' => $hintCompany];
             $set($base + $hint + ['status' => 'unmatched', 'reason' => mb_substr($auth['reason'], 0, 250, 'UTF-8')]);
@@ -1015,7 +1153,8 @@ if (!function_exists('gmailPollInbound')) {
                     continue;
                 }
                 try {
-                    $st = inboundProcess($pdo, $rowId, b64urlDecode((string)$g['data']['raw']));
+                    $st = inboundProcess($pdo, $rowId, b64urlDecode((string)$g['data']['raw']),
+                                         ['labelIds' => array_map('strval', (array)($g['data']['labelIds'] ?? [])), 'fetched' => true]);
                 } catch (Throwable $e) {
                     error_log('inboundProcess: ' . $e->getMessage());
                     $pdo->prepare("UPDATE email_inbound SET status = 'unmatched', reason = 'could not be read' WHERE id = ?")->execute([$rowId]);

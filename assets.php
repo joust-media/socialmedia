@@ -1199,5 +1199,13 @@ if ($isAdmin && $seriesOn && $collection) {
     include __DIR__ . '/partials/sheet.php';   // after </main> (layout-bottom prints $footExtra there), like #uiSheet
     $footExtra = (string)ob_get_clean() . $footExtra;
 }
+// Unread markers (tracking-lib.php): a deep-linked image and an explicitly opened series ARE the item — the client
+// Home "Joust replied" card links here — so tracking.js marks them seen on load ([data-seen-on-load]).
+$seenOnLoad = [];
+if ($deepOpen) $seenOnLoad[] = ($deepOpen['kind'] === 'tire' ? 'tire_image' : 'library_image') . ':' . (int)$deepOpen['id'];
+if (!$deepOpen && $seriesOn && $seriesActive !== null && ctype_digit((string)($_GET['series'] ?? '')) && (int)$_GET['series'] === (int)$seriesActive['id']) $seenOnLoad[] = 'tire_series:' . (int)$seriesActive['id'];
+if ($seenOnLoad && function_exists('trackingSeenAttr')) {
+    foreach ($seenOnLoad as $k) { [$t, $i] = explode(':', $k); $footExtra = ($footExtra ?? '') . '<span hidden data-seen-on-load' . trackingSeenAttr($t, (int)$i) . '></span>'; }
+}
 $includeSheet = $isAdmin && $seriesOn && $seriesActive !== null;   // only the admin's Rename / Delete series forms use the generic sheet
 include __DIR__ . '/partials/layout-bottom.php';
