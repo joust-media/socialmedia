@@ -614,3 +614,15 @@ video.ui-viewer-media { width: 100%; background: #000; touch-action: auto; }
 .sm-help { margin: 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); }
 .sm-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .as-series-hint .ui-btn { margin-left: 6px; vertical-align: middle; }
+
+/* ---------------------------------------------------------------------
+   Review state (admin): "All approved ✓" on the tire list, the series chips, the series head, the Reference
+   card and the tire page header — distinct from empty (no images) and Needs changes (assetsReviewState()).
+   --------------------------------------------------------------------- */
+.as-tire-state { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary); }
+.as-tire-state--allok .as-tire-state-text { color: var(--approve); font-weight: 600; }
+.as-chip-allok { margin-left: -2px; color: var(--approve); }
+.as-chip-allok .ui-icon { width: 13px; height: 13px; stroke-width: 2.4; }
+.as-chip.is-active .as-chip-allok { color: inherit; }
+.as-reference-label .ui-pill--allok, .as-series-meta .ui-pill--allok { text-transform: none; letter-spacing: var(--ls-footnote); vertical-align: 1px; }
+.as-collection-list .ui-pill--allok, .as-collection-list .ui-pill--denied { margin-right: 4px; }

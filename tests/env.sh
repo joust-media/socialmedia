@@ -19,12 +19,18 @@ PORTAL_TEST_DB="${PORTAL_TEST_DB:-portal_test}"
 PORTAL_TEST_DB_USER="${PORTAL_TEST_DB_USER:-portal_test}"
 PORTAL_TEST_DB_PASS="${PORTAL_TEST_DB_PASS:-portal_test}"
 PORTAL_TEST_BASE="http://127.0.0.1:${PORTAL_TEST_PORT}/portal"
+# Fake Slack Web API (tests/slack-stub.php, its own php -S) + where it logs calls; test emails go to MAIL_SINK_DIR.
+PORTAL_TEST_STUB_PORT="${PORTAL_TEST_STUB_PORT:-$((PORTAL_TEST_PORT + 1000))}"
+SLACK_STUB_LOG="$PORTAL_TEST_ROOT/slack-calls.jsonl"
+SLACK_STUB_PID="$PORTAL_TEST_ROOT/slack-stub.pid"
+MAIL_SINK_DIR="$PORTAL_TEST_ROOT/mail"
 export TESTS_DIR REPO_DIR PORTAL_TEST_ROOT SITE_DIR APP_DIR MEDIA_DIR SESSION_DIR SERVER_LOG SERVER_PID \
-       PORTAL_TEST_PORT PORTAL_TEST_DB PORTAL_TEST_DB_USER PORTAL_TEST_DB_PASS PORTAL_TEST_BASE
+       PORTAL_TEST_PORT PORTAL_TEST_DB PORTAL_TEST_DB_USER PORTAL_TEST_DB_PASS PORTAL_TEST_BASE \
+       PORTAL_TEST_STUB_PORT SLACK_STUB_LOG SLACK_STUB_PID MAIL_SINK_DIR
 
 # Copy the repo into the test site (code only: never .git, tests/, the real config.php or uploads/).
 sync_site() {
-    mkdir -p "$APP_DIR" "$MEDIA_DIR" "$SESSION_DIR"
+    mkdir -p "$APP_DIR" "$MEDIA_DIR" "$SESSION_DIR" "$MAIL_SINK_DIR"
     rsync -a --delete \
         --exclude '.git' --exclude '.github' --exclude 'tests' --exclude 'uploads' \
         --exclude 'config.php' --exclude 'error_log' --exclude 'node_modules' \
@@ -38,7 +44,19 @@ return [
     'username' => '${PORTAL_TEST_DB_USER}',
     'password' => '${PORTAL_TEST_DB_PASS}',
     'charset'  => 'utf8mb4',
-    'notify_to' => '',
+    // notifications (notify-lib.php) against local fakes: Slack = tests/slack-stub.php, email = JSON files
+    'portal_base_url'       => 'http://127.0.0.1:${PORTAL_TEST_PORT}/portal',
+    'machine_url_ext'       => '.php',
+    'notify_to'             => 'lance@joustmedia.com',
+    'notify_from'           => 'Joust Portal <portal@joustmedia.test>',
+    'notify_reply_to'       => 'lance@joustmedia.com',
+    'notify_message_domain' => 'joustmedia.test',
+    'mail_transport'        => 'sink',
+    'mail_sink_dir'         => '${MAIL_SINK_DIR}',
+    'notify_cron_token'     => 'test-cron-token-0123456789abcdef',
+    'slack_bot_token'       => 'xoxb-test-token',
+    'slack_signing_secret'  => 'test-signing-secret-abcdef',
+    'slack_api_base'        => 'http://127.0.0.1:${PORTAL_TEST_STUB_PORT}/api',
 ];
 PHP
 }

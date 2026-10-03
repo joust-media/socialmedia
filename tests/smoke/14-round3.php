@@ -119,7 +119,7 @@ test('#2 posts: the admin sees the client note on the left with the client name;
     is($b, [['client', 'theirs', 'Kenda Tires']], 'admin seat');
     status(post('status.php', ['id' => 1, 'comment' => 'Love it', 'actor' => 'client', 'client' => 'kenda'], 'client', [], J), 200);
     status(post('status.php', ['id' => 1, 'comment' => 'Thanks!', 'actor' => 'admin', 'client' => 'kenda'], 'admin', [], J), 200);
-    is(r3Bubbles(get('posts.php?client=kenda&post=1&partial=1', 'client')['body']), [['client', 'mine', 'You'], ['admin', 'theirs', 'Joust']], 'client seat');
+    is(r3Bubbles(get('posts.php?client=kenda&post=1&partial=1', 'client')['body']), [['client', 'mine', 'You'], ['admin', 'theirs', 'Lance at Joust']], 'client seat (named author, notify-lib.php)');
     is(r3Bubbles(get('posts.php?client=kenda&post=1&partial=1')['body']), [['client', 'theirs', 'Kenda Tires'], ['admin', 'mine', 'You']], 'admin seat');
     has(get('posts.php?client=kenda')['body'], '"names":{"client":"Kenda Tires"}', 'App.bubbleWho gets the client name');
 });

@@ -164,9 +164,9 @@ function postsAttachRelations(PDO $pdo, array &$posts, bool $hasMedia, bool $has
 
     if ($hasLog) {
         $st = $pdo->prepare("
-            SELECT entity_id, actor, detail, created_at FROM activity_log
+            SELECT entity_id, actor, detail, created_at" . activityAuthorCols($pdo) . " FROM activity_log
             WHERE entity_type = 'post' AND action = 'commented' AND entity_id IN ($ph)
-              AND detail IS NOT NULL AND detail <> ''
+              AND detail IS NOT NULL AND detail <> ''" . activityVisibleSql($pdo) . "
             ORDER BY created_at ASC, id ASC
         ");
         $st->execute($ids);

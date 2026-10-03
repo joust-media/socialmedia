@@ -54,117 +54,30 @@ if ($needsAdmin && !$isAdminSession) {
     exit;
 }
 
-// ---- Toggle posted flag ----
+// ---- Toggle posted flag ---- (rules + activity row: transitions-lib.php, shared with the Slack buttons)
 if ($action === 'toggle_posted') {
-    $postId = (int)($_POST['id'] ?? 0);
-    $target = ((string)($_POST['to'] ?? '1')) === '1' ? 1 : 0;
-    if ($postId <= 0) {
-        http_response_code(400);
-        echo json_encode(['ok' => false, 'error' => 'Invalid id']);
+    $res = transitionPostScheduled($pdo, (int)($_POST['id'] ?? 0), ((string)($_POST['to'] ?? '1')) === '1' ? 1 : 0, actorFromPost());
+    if (empty($res['ok'])) {
+        http_response_code((int)$res['code']);
+        echo json_encode(['ok' => false, 'error' => $res['error']]);
         exit;
     }
-    // Make sure the column actually exists (migrate.php may not have run).
-    $colStmt = $pdo->prepare("
-        SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME = 'posts'
-          AND COLUMN_NAME = 'posted'
-    ");
-    $colStmt->execute();
-    if ((int)$colStmt->fetchColumn() === 0) {
-        http_response_code(500);
-        echo json_encode(['ok' => false, 'error' => 'posts.posted column missing — run migrate.php']);
-        exit;
-    }
-    try {
-        // Spec §4.3: only an approved post can be marked as scheduled (a stale tab
-        // must not schedule a post the client has since denied / reset).
-        if ($target === 1) {
-            $stStmt = $pdo->prepare("SELECT status FROM posts WHERE id = ?");
-            $stStmt->execute([$postId]);
-            $curStatus = $stStmt->fetchColumn();
-            if ($curStatus !== false && $curStatus !== 'approved') {
-                http_response_code(409);
-                echo json_encode(['ok' => false, 'error' => 'Only an approved post can be marked as scheduled']);
-                exit;
-            }
-        }
-        if ($target === 1) {
-            $stmt = $pdo->prepare("UPDATE posts SET posted = 1, posted_at = NOW() WHERE id = ?");
-        } else {
-            $stmt = $pdo->prepare("UPDATE posts SET posted = 0, posted_at = NULL WHERE id = ?");
-        }
-        $stmt->execute([$postId]);
-
-        // Capture company_id for activity log
-        $coStmt = $pdo->prepare("SELECT company_id, posted_at FROM posts WHERE id = ?");
-        $coStmt->execute([$postId]);
-        $row = $coStmt->fetch();
-        $coId = (int)($row['company_id'] ?? 0);
-        $postedAt = $row['posted_at'] ?? null;
-        if ($coId > 0) {
-            logActivity($pdo, $coId, 'post', $postId,
-                $target === 1 ? 'posted' : 'unposted', actorFromPost(),
-                $target === 1 ? "Marked post #{$postId} as posted"
-                              : "Unmarked post #{$postId}");
-        }
-
-        echo json_encode([
-            'ok'        => true,
-            'id'        => $postId,
-            'posted'    => $target,
-            'posted_at' => $postedAt,
-        ]);
-    } catch (Exception $e) {
-        http_response_code(500);
-        echo json_encode(['ok' => false, 'error' => 'Update failed']);
-    }
+    echo json_encode(['ok' => true, 'id' => $res['id'], 'posted' => $res['posted'], 'posted_at' => $res['posted_at']]);
     exit;
 }
 
-// ---- Send a draft for review (draft → pending) ----
+// ---- Send a draft for review (draft → pending) ---- (transitions-lib.php, shared with the Slack buttons)
 if ($action === 'submit') {
-    $postId = (int)($_POST['id'] ?? 0);
-    if ($postId <= 0) {
-        http_response_code(400);
-        echo json_encode(['ok' => false, 'error' => 'Invalid id']);
+    $res = transitionPostSubmit($pdo, (int)($_POST['id'] ?? 0), 'admin');
+    if (empty($res['ok'])) {
+        http_response_code((int)$res['code']);
+        $out = ['ok' => false, 'error' => $res['error']];
+        if (isset($res['status'])) $out['status'] = $res['status'];
+        if (isset($res['field']))  $out['field']  = $res['field'];
+        echo json_encode($out);
         exit;
     }
-    try {
-        $pdo->beginTransaction();
-        $nameSel = hasPostsNameColumn($pdo) ? 'name' : "'' AS name";
-        $st = $pdo->prepare("SELECT company_id, status, caption, {$nameSel} FROM posts WHERE id = ? FOR UPDATE");
-        $st->execute([$postId]);
-        $row = $st->fetch();
-        if (!$row) {
-            $pdo->rollBack();
-            http_response_code(404);
-            echo json_encode(['ok' => false, 'error' => 'Post not found']);
-            exit;
-        }
-        if ($row['status'] !== 'draft') {
-            $pdo->rollBack();
-            http_response_code(409);
-            echo json_encode(['ok' => false, 'error' => 'Only a draft can be sent for review', 'status' => $row['status']]);
-            exit;
-        }
-        if (trim((string)$row['caption']) === '') {
-            $pdo->rollBack();
-            http_response_code(422);
-            echo json_encode(['ok' => false, 'error' => 'Add a caption first', 'field' => 'caption']);
-            exit;
-        }
-        $pdo->prepare("UPDATE posts SET status = 'pending' WHERE id = ?")->execute([$postId]);
-        $label = postDisplayLabel(['name' => $row['name'] ?? '', 'caption' => $row['caption'] ?? '', 'id' => $postId]);
-        logActivity($pdo, (int)$row['company_id'], 'post', $postId, 'submitted', 'admin',
-            "{$label} sent for review");
-        $pdo->commit();
-        echo json_encode(['ok' => true, 'id' => $postId, 'status' => 'pending']);
-    } catch (Exception $e) {
-        if ($pdo->inTransaction()) { $pdo->rollBack(); }
-        http_response_code(500);
-        echo json_encode(['ok' => false, 'error' => 'Update failed']);
-    }
+    echo json_encode(['ok' => true, 'id' => $res['id'], 'status' => 'pending']);
     exit;
 }
 

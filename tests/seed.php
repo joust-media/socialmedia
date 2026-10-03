@@ -220,6 +220,29 @@ $pdo->exec("INSERT INTO activity_log (company_id, entity_type, entity_id, action
     (1, 'post', 4, 'commented', 'client', 'Comment on Winter promo', 'Please use the darker render', NOW() - INTERVAL 90 MINUTE),
     (1, 'post', 6, 'created', 'admin', 'Created post #6: Behind the scenes', NULL, NOW() - INTERVAL 30 MINUTE)");
 
+// ---- notifications (migrate.php 36–39) ------------------------------------------------------------
+// Lance (admin_users 1, the test admin seat's email) is mapped to Slack user U0LANCE; Kenda and Privacy Bee post to
+// channels C0KENDA / C0PBEE on the fake Slack (tests/slack-stub.php); Hollow Mill Farm has no channel. The outbox,
+// threads and inbox start empty; the stub's call log and the mail sink are cleared.
+$has = static function (string $t) use ($pdo): bool {
+    return (int)$pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = " . $pdo->quote($t))->fetchColumn() > 0;
+};
+if ($has('notify_outbox')) {
+    foreach (['notify_outbox', 'notify_threads', 'slack_inbox', 'notify_clients', 'admin_users'] as $t) $pdo->exec("TRUNCATE TABLE `{$t}`");
+    $pdo->exec("INSERT INTO admin_users (id, name, email, slack_user_id, role) VALUES (1, 'Lance', 'lance@joustmedia.com', 'U0LANCE', 'owner')");
+    $pdo->exec("INSERT INTO notify_clients (company_id, slack_channel_id, slack_channel_name) VALUES (1, 'C0KENDA', '#portal-kenda'), (2, 'C0PBEE', '#portal-privacybee')");
+    $meta = $pdo->prepare("INSERT INTO meta (k, v) VALUES (?, ?) ON DUPLICATE KEY UPDATE v = VALUES(v)");
+    foreach ([['notify_since', date('Y-m-d H:i:s', time() - 2 * 86400)], ['notify_t1_minutes', '60'], ['notify_t2_minutes', '240'],
+              ['notify_summary_hour', '8'], ['notify_summary_last', date('Y-m-d')], ['notify_cron_last', ''], ['digest_open_last', '1970-01-01 00:00:00'],
+              ['digest_lock_until', '1970-01-01 00:00:00']] as $kv) $meta->execute($kv);
+}
+$root = dirname($app, 2);
+@unlink($root . '/slack-calls.jsonl');
+@unlink($root . '/slack-calls.jsonl.fail');
+if (!empty($cfg['mail_sink_dir']) && is_dir($cfg['mail_sink_dir'])) {
+    foreach (glob(rtrim($cfg['mail_sink_dir'], '/') . '/*') ?: [] as $f) @unlink($f);
+}
+
 $n = static fn(string $t) => (int)$pdo->query("SELECT COUNT(*) FROM `$t`")->fetchColumn();
 printf("  seeded: %d companies, %d tires, %d tire images, %d library, %d posts (%d media), %d emails, %d pages\n",
     $n('companies'), $n('tires'), $n('tire_images'), $n('library_images'), $n('posts'), $n('post_images'), $n('emails'), $n('pages'));
