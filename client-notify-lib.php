@@ -11,7 +11,15 @@
  *           minutes; a one-item email is threaded on that item's Message-ID (In-Reply-To / References) and carries the
  *           item's [J#…] subject token so an emailed answer lands on the item.
  *   live    "Live & scheduled" — a post marked Scheduled, an email / page marked Live. Once a day (the Morning summary
- *           hour). Default on, like the others.
+ *           hour).
+ *   remind  "A gentle reminder" — items still To Review with no client answer after N days (per client, default 3;
+ *           0 = off): one email per client, at most once per item every N days, once a day at the summary hour.
+ *   Review covers assets too: tire renders uploaded into a series (one row per series), library uploads / FTP drops,
+ *   an asset reset to To Review — with thumbnails and per-recipient links like posts.
+ *
+ * Off until Joust turns them on: every per-client switch defaults OFF (migrate.php 47 / 50), and nothing goes out
+ * until Google is connected (clientEmailTransportOk(): transport gmail, or "Allow sending client emails without
+ * Google (mail())" ticked in Manage → Notifications). Held batches stay queued; sign-in emails never wait.
  *
  * Flow: logActivity() → notifyOnActivity() → clientEmailOnActivity() appends to client_email_queue (migrate.php 49).
  * The cron (notify-cron.php → clientEmailRun()) closes a batch once its window passed (batch_key on the rows) and
@@ -22,7 +30,7 @@
  * (lance+ai@joustmedia.com), List-Unsubscribe + List-Unsubscribe-Post (RFC 8058 one-click).
  *
  * Who gets what: the client's switch (Manage → Clients → Client emails: notify_clients.email_review / _replies /
- * _live, default on) AND the contact's preference (client_contacts.notify_prefs JSON {review, reply, live}, a
+ * _live / _remind, default OFF) AND the contact's preference (client_contacts.notify_prefs JSON {review, reply, live}, a
  * missing key = on; unsubscribed_at = "stop all") — set on email-prefs (signed link in every email, or from the
  * client portal: Email settings).
  */
@@ -34,8 +42,60 @@ if (!function_exists('clientEmailKinds')) {
             'review' => ['Ready for your review', 'email_review', 'When Joust sends something for you to review'],
             'reply'  => ['Joust replied', 'email_replies', 'When Joust answers a comment or adds a note on an item'],
             'live'   => ['Live & scheduled', 'email_live', 'A daily note when your approved items are scheduled or go live'],
+            'remind' => ['Gentle reminders', 'email_remind', 'A short nudge when something has waited a few days for your review'],
         ];
     }
+}
+
+if (!function_exists('clientEmailAllowMail')) {
+    /** Manage → Notifications: "Allow sending client emails without Google (mail())" — off unless ticked. */
+    function clientEmailAllowMail(PDO $pdo): bool {
+        return notifyMeta($pdo, 'client_emails_allow_mail', '0') === '1';
+    }
+}
+
+if (!function_exists('clientEmailTransportOk')) {
+    /**
+     * Client emails go out only through Google (DKIM-signed, replies come back to the inbound address) — or PHP mail()
+     * when the admin explicitly allowed it. Until then they are HELD: batches stay queued (nothing is dropped) and go
+     * out once Google is connected. The test harness's sink counts as a real transport. Sign-in emails never wait.
+     */
+    function clientEmailTransportOk(PDO $pdo): bool {
+        $t = function_exists('notifyMailTransport') ? notifyMailTransport() : 'mail';
+        return $t === 'gmail' || $t === 'sink' || clientEmailAllowMail($pdo);
+    }
+}
+
+if (!function_exists('clientEmailRemindReady')) {
+    /** notify_clients.email_remind + remind_days exist (migrate.php 51). Cached per request. */
+    function clientEmailRemindReady(?PDO $pdo): bool {
+        static $ready = null;
+        if ($ready !== null) return $ready;
+        if (!$pdo) return false;
+        try {
+            return $ready = (int)$pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE()
+                AND TABLE_NAME = 'notify_clients' AND COLUMN_NAME IN ('email_remind','remind_days')")->fetchColumn() === 2;
+        } catch (Throwable $e) {
+            return $ready = false;
+        }
+    }
+}
+
+if (!function_exists('clientEmailRemindDays')) {
+    /** A client's reminder interval in days (default 3; 0 = off). */
+    function clientEmailRemindDays(PDO $pdo, int $companyId): int {
+        if (!clientEmailRemindReady($pdo)) return 0;
+        $s = $pdo->prepare("SELECT remind_days FROM notify_clients WHERE company_id = ?");
+        $s->execute([$companyId]);
+        $v = $s->fetchColumn();
+        return $v === false ? 3 : max(0, min(30, (int)$v));
+    }
+}
+
+if (!function_exists('clientEmailReviewTypes')) {
+    /** Items a "Ready for your review" email can be about: posts / emails / pages, and assets sent for review (tire
+     *  renders, grouped per series, and library images). */
+    function clientEmailReviewTypes(): array { return ['post', 'email', 'page', 'tire_image', 'tire_series', 'library_image']; }
 }
 
 if (!function_exists('clientEmailReady')) {
@@ -84,14 +144,16 @@ if (!function_exists('clientContactPrefsSave')) {
 }
 
 if (!function_exists('clientEmailClientOn')) {
-    /** The client's switch for a kind (Manage → Clients; default on). */
+    /** The client's switch for a kind (Manage → Clients; default OFF — turned on per client when ready). */
     function clientEmailClientOn(PDO $pdo, int $companyId, string $kind): bool {
         $col = clientEmailKinds()[$kind][1] ?? null;
         if (!$col || !clientEmailReady($pdo)) return false;
+        if ($kind === 'remind' && !clientEmailRemindReady($pdo)) return false;
         $s = $pdo->prepare("SELECT {$col} FROM notify_clients WHERE company_id = ?");
         $s->execute([$companyId]);
         $v = $s->fetchColumn();
-        return $v === false ? true : (bool)(int)$v;
+        // Default OFF (migrate.php 47 / 50): client emails start only when Joust turns them on per client.
+        return $v === false ? false : (bool)(int)$v;
     }
 }
 
@@ -166,6 +228,8 @@ if (!function_exists('clientEmailOnActivity')) {
             $type = (string)$row['entity_type']; $a = (string)$row['action']; $actor = (string)$row['actor'];
             $kind = null;
             if ($actor === 'admin' && in_array($type, ['post', 'email', 'page'], true) && in_array($a, ['submitted', 'reset_pending', 'created'], true)) $kind = 'review';
+            // assets sent for review: renders uploaded into a series, library uploads / FTP drops, an image reset to To Review
+            elseif ($actor === 'admin' && in_array($type, ['tire_image', 'tire_series', 'library_image'], true) && in_array($a, ['uploaded', 'reset_pending', 'submitted'], true)) $kind = 'review';
             elseif ($actor === 'admin' && $a === 'commented' && empty($row['internal']) && trim((string)($row['detail'] ?? '')) !== ''
                     && in_array($type, notifyThreadTypes(), true)) $kind = 'reply';
             elseif (in_array($a, ['posted', 'marked_live'], true) && in_array($type, ['post', 'email', 'page'], true)) $kind = 'live';
@@ -183,6 +247,46 @@ if (!function_exists('clientEmailWindows')) {
     function clientEmailWindows(): array { return ['review' => 15, 'reply' => 10]; }
 }
 
+if (!function_exists('clientEmailRemindDue')) {
+    /** The daily reminder pass: once a day at / after the Morning summary hour (New York). */
+    function clientEmailRemindDue(PDO $pdo): bool {
+        if ((int)date('G') < notifySettings($pdo)['summary_hour']) return false;
+        return notifyMeta($pdo, 'client_remind_last', '1970-01-01') !== date('Y-m-d');
+    }
+}
+
+if (!function_exists('clientEmailRemindQueue')) {
+    /**
+     * Stale To Review items → one gentle reminder email per client: every item waiting on the client (no answer since
+     * it was sent) for at least N days (the client's remind_days, default 3; 0 = off) and not reminded about in the
+     * last N days. → batches closed.
+     */
+    function clientEmailRemindQueue(PDO $pdo): int {
+        if (!clientEmailRemindReady($pdo) || !function_exists('trackingWaitingOnClient')) return 0;
+        $n = 0;
+        $rows = $pdo->query("SELECT company_id, remind_days FROM notify_clients WHERE email_remind = 1 AND remind_days > 0")->fetchAll();
+        foreach ($rows as $c) {
+            $cid = (int)$c['company_id']; $days = max(1, min(30, (int)$c['remind_days']));
+            $cut = time() - $days * 86400;
+            $ins = $pdo->prepare("INSERT INTO client_email_queue (company_id, kind, entity_type, entity_id) VALUES (?, 'remind', ?, ?)");
+            $recent = $pdo->prepare("SELECT 1 FROM client_email_queue WHERE kind = 'remind' AND entity_type = ? AND entity_id = ? AND created_at > NOW() - INTERVAL ? DAY LIMIT 1");
+            $added = false;
+            foreach (trackingWaitingOnClient($pdo, $cid) as $w) {
+                if (empty($w['since']) || strtotime((string)$w['since']) > $cut) continue;
+                $recent->execute([$w['entity_type'], (int)$w['entity_id'], $days]);
+                if ($recent->fetchColumn()) continue;
+                $ins->execute([$cid, $w['entity_type'], (int)$w['entity_id']]);
+                $added = true;
+            }
+            if (!$added) continue;
+            $max = (int)$pdo->query("SELECT MAX(id) FROM client_email_queue WHERE kind = 'remind' AND batch_key IS NULL AND company_id = " . $cid)->fetchColumn();
+            clientEmailBatch($pdo, $cid, 'remind', $max);
+            $n++;
+        }
+        return $n;
+    }
+}
+
 if (!function_exists('clientEmailLiveDue')) {
     /** The daily Live & scheduled email: once a day at / after the Morning summary hour (New York). */
     function clientEmailLiveDue(PDO $pdo): bool {
@@ -197,8 +301,13 @@ if (!function_exists('clientEmailRun')) {
      * $o['live_now'] forces the daily Live batch. → ['review' => batches, 'reply' => …, 'live' => …, 'emails' => n].
      */
     function clientEmailRun(PDO $pdo, array $o = []): array {
-        $out = ['review' => 0, 'reply' => 0, 'live' => 0, 'emails' => 0];
+        $out = ['review' => 0, 'reply' => 0, 'live' => 0, 'remind' => 0, 'emails' => 0];
         if (!clientEmailReady($pdo)) return $out;
+        if (!clientEmailTransportOk($pdo)) {
+            // Held until Google is connected (or mail() is explicitly allowed): nothing is batched or dropped.
+            $out['held'] = (int)$pdo->query("SELECT COUNT(*) FROM client_email_queue WHERE batch_key IS NULL")->fetchColumn();
+            return $out;
+        }
         foreach (clientEmailWindows() as $kind => $min) {
             $s = $pdo->prepare("SELECT company_id, MAX(id) AS max_id FROM client_email_queue WHERE batch_key IS NULL AND kind = ?
                                 GROUP BY company_id HAVING MAX(created_at) <= NOW() - INTERVAL ? MINUTE");
@@ -215,6 +324,12 @@ if (!function_exists('clientEmailRun')) {
                 $out['live']++;
             }
             if (empty($o['live_now'])) notifyMetaSet($pdo, 'client_live_last', date('Y-m-d'));
+        }
+        if (!empty($o['remind_now']) || clientEmailRemindDue($pdo)) {
+            $before = (int)$pdo->query("SELECT COUNT(*) FROM notify_outbox WHERE kind = 'client_email'")->fetchColumn();
+            $out['remind'] = clientEmailRemindQueue($pdo);
+            $out['emails'] += max(0, (int)$pdo->query("SELECT COUNT(*) FROM notify_outbox WHERE kind = 'client_email'")->fetchColumn() - $before);
+            if (empty($o['remind_now'])) notifyMetaSet($pdo, 'client_remind_last', date('Y-m-d'));
         }
         return $out;
     }
@@ -263,7 +378,8 @@ if (!function_exists('clientEmailItems')) {
             $info = notifyItemInfo($pdo, $it['type'], $it['id']);
             if (!$info['exists'] || (int)$info['company_id'] !== $companyId) continue;
             $comments = [];
-            if ($kind === 'review' && $info['status_key'] !== 'pending') continue;
+            if (($kind === 'review' || $kind === 'remind') && !in_array($info['status_key'], ['pending', 'mixed'], true)) continue;
+            if ($kind === 'remind') $info['waiting_since'] = clientEmailWaitingSince($pdo, $it['type'], $it['id']);
             if ($kind === 'live' && !in_array($info['status_key'], ['scheduled', 'live'], true)) continue;
             if ($kind === 'reply') {
                 $aids = array_values(array_unique($ids[$k] ?? []));
@@ -282,6 +398,15 @@ if (!function_exists('clientEmailItems')) {
     }
 }
 
+if (!function_exists('clientEmailWaitingSince')) {
+    /** When an item was (last) sent for review — the newest submitted / reset / created / uploaded row ('' unknown). */
+    function clientEmailWaitingSince(PDO $pdo, string $type, int $id): string {
+        $s = $pdo->prepare("SELECT MAX(created_at) FROM activity_log WHERE entity_type = ? AND entity_id = ? AND action IN ('submitted','reset_pending','created','uploaded')");
+        $s->execute([$type, $id]);
+        return (string)($s->fetchColumn() ?: '');
+    }
+}
+
 if (!function_exists('clientEmailDeliver')) {
     /** Render + send one recipient's copy of a batch. */
     function clientEmailDeliver(PDO $pdo, array $p): array {
@@ -294,6 +419,7 @@ if (!function_exists('clientEmailDeliver')) {
         $prefs = clientContactPrefs($contact);
         if ($prefs['unsubscribed'] || empty($prefs[$kind])) return ['ok' => false, 'skip' => true, 'error' => 'the contact turned these emails off'];
         if (!clientEmailClientOn($pdo, $cid, $kind)) return ['ok' => false, 'skip' => true, 'error' => 'client emails of this kind are off for the client'];
+        if (!clientEmailTransportOk($pdo)) return ['ok' => false, 'hold' => true, 'retry_in' => 3600, 'error' => 'held: client emails wait for Google (Manage → Notifications → Connect Google)'];
         $company = clientCompanyById($pdo, $cid);
         if (!$company) return ['ok' => false, 'skip' => true, 'error' => 'unknown client'];
         $q = $pdo->prepare("SELECT * FROM client_email_queue WHERE batch_key = ? AND company_id = ? ORDER BY id ASC");
@@ -319,6 +445,7 @@ if (!function_exists('clientEmailCompose')) {
             $rendered[] = [
                 'title' => (string)$info['title'], 'type' => (string)$info['type_label'], 'status' => (string)$info['status_label'],
                 'status_key' => (string)$info['status_key'],
+                'waiting' => (string)($info['waiting_since'] ?? ''),
                 'link'  => notifyItemLinkFor($pdo, $info, (string)$contact['email']),   // clientLink() — signs THIS contact in
                 'thumb' => $info['thumb'] !== '' ? notifyThumbUrl((string)$info['thumb']) : '',
                 'token' => notifyItemToken($pdo, (string)$info['entity_type'], (int)$info['entity_id'], (int)$info['company_id']),
@@ -347,6 +474,16 @@ if (!function_exists('clientEmailCompose')) {
 
 if (!function_exists('clientEmailEsc')) {
     function clientEmailEsc($s): string { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
+}
+
+if (!function_exists('clientEmailAgo')) {
+    /** '4 days ago' / 'yesterday' / 'today' for a datetime. */
+    function clientEmailAgo(string $at): string {
+        $ts = strtotime($at);
+        if (!$ts) return '';
+        $d = (int)floor((strtotime('today') - strtotime(date('Y-m-d', $ts))) / 86400);
+        return $d <= 0 ? 'today' : ($d === 1 ? 'yesterday' : $d . ' days ago');
+    }
 }
 
 if (!function_exists('clientEmailLayout')) {
@@ -408,6 +545,13 @@ if (!function_exists('clientEmailRender')) {
                               : 'Joust just sent these over for you to look at. Approve them or ask for changes right in the portal.';
                 $btn = 'Review';
                 break;
+            case 'remind':
+                $subject = $one ? 'A gentle reminder: ' . $items[0]['title'] . ' is waiting for your review' . $tok($items[0])
+                                : 'A gentle reminder: ' . $n . ' items are waiting for your review — ' . $co;
+                $title = $one ? 'Still waiting for your review' : $n . ' items still waiting for your review';
+                $intro = 'No rush — just a friendly nudge. ' . ($one ? 'This has' : 'These have') . ' been waiting a few days. Approve or ask for changes in the portal, or reply to this email.';
+                $btn = 'Review';
+                break;
             case 'reply':
                 $subject = $one ? 'Joust replied: ' . $items[0]['title'] . $tok($items[0]) : 'Joust replied on ' . $n . ' items — ' . $co;
                 $title = $one ? 'Joust replied' : 'Joust replied on ' . $n . ' items';
@@ -441,13 +585,14 @@ if (!function_exists('clientEmailRender')) {
                    . '<tr><td class="jm-thumbcell" width="78" valign="top" style="width:78px;padding:16px 14px 16px 0">' . $thumb . '</td>'
                    . '<td valign="top" style="padding:16px 0">'
                    . '<div style="font:600 16px/21px ' . $font . ';color:#000000">' . $e($it['title']) . '</div>'
-                   . '<div style="margin-top:2px;font:13px/18px ' . $font . ';color:#8E8E93">' . $e(trim($it['type'] . ' · ' . $it['status'], ' ·')) . '</div>'
+                   . '<div style="margin-top:2px;font:13px/18px ' . $font . ';color:#8E8E93">' . $e(trim($it['type'] . ' · ' . $it['status'], ' ·'))
+                   . (($it['waiting'] ?? '') !== '' ? ' · <span data-email-waiting>sent ' . $e(clientEmailAgo((string)$it['waiting'])) . '</span>' : '') . '</div>'
                    . $bubbles
                    . '<table role="presentation" class="jm-btns" cellpadding="0" cellspacing="0" border="0" style="margin-top:12px"><tr>'
                    . '<td style="padding:0 12px 0 0"><a class="jm-btn" href="' . $e($it['link']) . '" style="display:inline-block;padding:9px 18px;border-radius:10px;background:#007AFF;color:#FFFFFF;font:600 14px/18px ' . $font . ';text-decoration:none" data-email-link>' . $e($btn) . '</a></td>'
                    . ($kind !== 'live' ? '<td style="padding:0"><a href="' . $e($mailto) . '" style="font:14px/18px ' . $font . ';color:#007AFF;text-decoration:none" data-email-mailto>Reply by email</a></td>' : '')
                    . '</tr></table></td></tr></table>';
-            $text .= "\n• " . $it['title'] . ' (' . trim($it['type'] . ', ' . $it['status'], ', ') . ")\n";
+            $text .= "\n• " . $it['title'] . ' (' . trim($it['type'] . ', ' . $it['status'], ', ') . (($it['waiting'] ?? '') !== '' ? ', sent ' . clientEmailAgo((string)$it['waiting']) : '') . ")\n";
             foreach ($it['comments'] as $c) $text .= '  ' . $c['who'] . ': ' . str_replace("\n", "\n  ", $c['text']) . "\n";
             $text .= '  ' . $btn . ': ' . $it['link'] . "\n";
             if ($kind !== 'live' && $it['token'] !== '') $text .= '  Reply by email: write to ' . $replyAddr . ' with [J#' . $it['token'] . "] in the subject\n";
@@ -501,11 +646,12 @@ if (!function_exists('clientEmailSample')) {
                 $items[] = ['title' => $t, 'type_label' => $ty, 'thumb' => '', 'status_key' => 'pending', 'status_label' => 'To Review'];
             }
         }
-        $status = ['review' => ['pending', 'To Review'], 'reply' => ['pending', 'To Review'], 'live' => ['scheduled', 'Scheduled']][$kind] ?? ['pending', 'To Review'];
+        $status = ['review' => ['pending', 'To Review'], 'reply' => ['pending', 'To Review'], 'live' => ['scheduled', 'Scheduled'], 'remind' => ['pending', 'To Review']][$kind] ?? ['pending', 'To Review'];
         $out = [];
         foreach (array_slice($items, 0, $kind === 'reply' ? 1 : 3) as $i => $info) {
             $out[] = ['title' => (string)$info['title'], 'type' => (string)$info['type_label'], 'status' => $status[1], 'status_key' => $status[0],
                       'link' => '#preview', 'thumb' => ($info['thumb'] ?? '') !== '' ? notifyThumbUrl((string)$info['thumb']) : '', 'token' => 'ab12cd',
+                      'waiting' => $kind === 'remind' ? date('Y-m-d H:i:s', time() - (4 + $i) * 86400) : '',
                       'comments' => $kind === 'reply' ? [['text' => "Good catch — we swapped in the darker render and tightened the crop.\nHave another look when you get a sec?", 'who' => 'Lance at Joust', 'at' => date('Y-m-d H:i:s', time() - 600)]] : []];
         }
         return [$company, $contact, $out];

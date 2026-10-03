@@ -57,6 +57,14 @@ function b64u(string $s): string { return rtrim(strtr(base64_encode($s), '+/', '
 function deliver(string $id, string $raw): void { $b = gbox(); $b['messages'][] = ['id' => $id, 'threadId' => 't' . $id, 'raw' => b64u($raw), 'labelIds' => ['INBOX']]; gbox($b); }
 /** An RFC 5322 message (plain text, or multipart/mixed with one attachment). */
 function rawMail(array $h, string $body, ?string $attachment = null): string {
+    // What Google's receiving MX stamps on a genuine message (gmail-lib.php inboundAuthCheck() requires it): DMARC +
+    // DKIM pass for the From domain. Pass 'Authentication-Results' => null to leave it out (or your own value).
+    $dom = preg_match('/@([A-Za-z0-9.-]+)/', (string)($h['From'] ?? ''), $fm) ? strtolower($fm[1]) : 'example.com';
+    if (!array_key_exists('Authentication-Results', $h)) {
+        $h = ['Authentication-Results' => "mx.google.com;\r\n       dkim=pass header.i=@{$dom} header.s=s1 header.b=AbCdEf12;\r\n       spf=pass (google.com: domain of x@{$dom} designates 192.0.2.1 as permitted sender) smtp.mailfrom=x@{$dom};\r\n       dmarc=pass (p=NONE sp=NONE dis=NONE) header.from={$dom}"] + $h;
+    } elseif ($h['Authentication-Results'] === null) {
+        unset($h['Authentication-Results']);
+    }
     $h += ['To' => 'Joust Media <lance+ai@joustmedia.com>', 'Date' => date('r'), 'Message-ID' => '<' . bin2hex(random_bytes(6)) . '@mail.example>', 'MIME-Version' => '1.0'];
     $lines = [];
     foreach ($h as $k => $v) $lines[] = $k . ': ' . $v;
@@ -514,7 +522,7 @@ etest('unsubscribe: RFC 8058 one-click POST stops all; the preferences page save
     is(q1("SELECT unsubscribed_at FROM client_contacts WHERE id = 1"), null);
     $r = post('email-prefs.php', ['t' => $tok, 'action' => 'save', 'review' => '1', 'live' => '1'], 'anon');
     is($r['code'], 303);
-    is(json_decode((string)q1("SELECT notify_prefs FROM client_contacts WHERE id = 1"), true), ['review' => 1, 'reply' => 0, 'live' => 1]);
+    is(json_decode((string)q1("SELECT notify_prefs FROM client_contacts WHERE id = 1"), true), ['review' => 1, 'reply' => 0, 'live' => 1, 'remind' => 0]);
     $page = get('email-prefs.php?t=' . $tok . '&done=saved', 'anon');
     has($page['body'], 'jane@kenda.example');
     has($page['body'], 'data-ep-pref="reply"');
@@ -536,7 +544,7 @@ etest('preferences from the client portal: the signed-in contact, their own row 
     has($r['body'], 'jane@kenda.example');
     has($r['body'], 'Back to the portal');
     status(post('email-prefs.php', ['action' => 'save', 'review' => '1'], 'client:kenda'), 303);
-    is(json_decode((string)q1("SELECT notify_prefs FROM client_contacts WHERE id = 1"), true), ['review' => 1, 'reply' => 0, 'live' => 0]);
+    is(json_decode((string)q1("SELECT notify_prefs FROM client_contacts WHERE id = 1"), true), ['review' => 1, 'reply' => 0, 'live' => 0, 'remind' => 0]);
     is(q1("SELECT notify_prefs FROM client_contacts WHERE id = 3"), null, 'Privacy Bee untouched');
     $a = get('email-prefs.php', 'anon');
     is($a['code'], 302);

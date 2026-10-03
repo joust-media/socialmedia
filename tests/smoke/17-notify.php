@@ -180,11 +180,12 @@ ntest('client approve + caption edit ping too; Joust\'s own comments / decisions
     is(count(outbox()), $before, 'no outbox rows for Joust actions');
     is(count(slackCalls()), 0, 'nothing sent');
 });
-ntest('a client with no channel (Hollow Mill Farm) or an unmapped seat sends nothing; the activity is still logged', function () {
+ntest('a client with no channel (Hollow Mill Farm) or an unmapped seat sends nothing to Slack (an email to the owner instead); the activity is still logged', function () {
     db()->exec("DELETE FROM notify_clients WHERE company_id = 1");
     slackReset();
     clientComment(1, 'Unmapped');
-    is(count(outbox()), 0);
+    is(count(array_filter(outbox(), static function ($o) { return $o['channel'] === 'slack'; })), 0, 'nothing for Slack');
+    is(count(array_filter(outbox(), static function ($o) { return $o['kind'] === 'nochannel_email'; })), 1, 'the owner is emailed instead (tests/smoke/21-notif-fixes.php)');
     is((int)q1("SELECT COUNT(*) FROM activity_log WHERE entity_type = 'post' AND entity_id = 1 AND detail = 'Unmapped'"), 1);
     db()->exec("INSERT INTO notify_clients (company_id, slack_channel_id) VALUES (1, 'C0KENDA')");
 });

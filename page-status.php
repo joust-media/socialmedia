@@ -96,6 +96,21 @@ if ($hasCmt) {
     }
 }
 
+// ---- Internal note (admin, comment only): Joust-only — never shown to the client, no client email, Slack marks it ----
+if (array_key_exists('internal', $_POST) && (string)$_POST['internal'] !== '' && (string)$_POST['internal'] !== '0') {
+    if (!$isAdminSession) pageFail(403, 'Admin sign-in required');
+    if (!$hasCmt || $hasStat || $action !== '') pageFail(400, 'An internal note is a message only');
+    $row = pageById($pdo, $id);
+    if (!$row) pageFail(404, 'Page not found');
+    $note = (string)$comment;
+    $noteLabel = pageDisplayLabel($row);
+    activityWithContext(['internal' => 1], static function () use ($pdo, $row, $id, $noteLabel, $note) {
+        logActivity($pdo, (int)$row['company_id'], 'page', $id, 'commented', 'admin', "Internal note on {$noteLabel}", $note, newBatchId());
+    });
+    echo json_encode(['ok' => true, 'id' => $id, 'comment' => $note, 'internal' => true]);
+    exit;
+}
+
 // ---- Load + tenant check (company always comes from the row, never the form) ----
 $page = pageById($pdo, $id);
 if (!$page) {

@@ -444,6 +444,8 @@ ob_start();
 <?php
 $reviewSectionHtml = (string)ob_get_clean();
 if (!$isAdmin) echo $reviewSectionHtml;   // the client's Home opens with it; the admin's comes after "Needs your changes"
+// Client seat: "Joust replied" — items with Joust replies this contact has not read yet (tracking-lib.php).
+if (!$isAdmin && function_exists('trackingRepliedHomeHtml')) echo trackingRepliedHomeHtml($pdo, $client);
 ?>
 
 <?php // --- 1b. Admin: Needs your changes (Joust's own queue — first on the admin's Home) ---------- ?>

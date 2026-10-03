@@ -21,12 +21,22 @@
  *   In-Reply-To / References / List-Unsubscribe), base64url → POST users/me/messages/send (8 s curl timeout).
  *   notifyMailTransport() picks the transport: config mail_transport when set ('mail' | 'gmail' | 'sink'); blank /
  *   'auto' = 'gmail' once Google is connected, else PHP mail() (the fallback until Lance connects Google).
+ *   After the send, the message's real Message-ID is read back (messages.get format=metadata) — Gmail may rewrite
+ *   it — and that is what notify_threads / notify_email_refs keep for threading.
+ *
+ * ── Environments ────────────────────────────────────────────────────────────────────────────────────────────────────
+ *   portalEnvironment(): config environment ('production' | 'staging'), else 'staging' when portal_url / the folder
+ *   says portal-staging. Staging's inbound address defaults to lance+ai-staging@joustmedia.com; a staging install set
+ *   to production's lance+ai@ refuses to poll (it would import and label production's client replies).
  *
  * ── Replies in (notify-cron.php → gmailPollInbound()) ────────────────────────────────────────────────────────────────
  *   Polls `to:<inbound address> -label:portal-processed newer_than:14d`; each message (deduped by Gmail id in
  *   email_inbound, migrate.php 46) is matched to a portal item by In-Reply-To / References against the Message-IDs the
  *   portal sent (notify_email_refs), else by the signed [J#xxxxxx] subject token (notify_threads.email_token). The
- *   sender must be a contact of THAT item's client (or a Joust team member); quoted history and signatures are cut
+ *   From must be genuine — inboundAuthCheck(): Google's own Authentication-Results (the topmost one by mx.google.com)
+ *   shows dmarc=pass, or a dkim=pass aligned with the From domain; otherwise the message waits in Unmatched as
+ *   "Failed sender check" and is never posted (a forged From: lance@… would otherwise post as Joust and email the
+ *   client). The sender must be a contact of THAT item's client (or a Joust team member); quoted history and signatures are cut
  *   (Gmail / Apple "On … wrote:", Outlook "-----Original Message-----" / "From: … Sent:", "> " lines, "-- ");
  *   the rest is posted as a comment by that person through logActivity() (so Slack hears about it like any comment).
  *   Attachments are never imported ("(attachment not imported)"). No match or an unknown sender → nothing is posted;
@@ -71,12 +81,35 @@ if (!function_exists('googleExpectedAccount')) {
     /** The only mailbox that may be connected: the sender of every portal email (notify_from, default lance@joustmedia.com). */
     function googleExpectedAccount(): string { return strtolower(notifyMailSender()[0]); }
 }
+if (!defined('INBOUND_PROD_ADDRESS')) define('INBOUND_PROD_ADDRESS', 'lance+ai@joustmedia.com');
+if (!defined('INBOUND_STAGING_ADDRESS')) define('INBOUND_STAGING_ADDRESS', 'lance+ai-staging@joustmedia.com');
+
+if (!function_exists('portalEnvironment')) {
+    /** 'staging' | 'production': config environment when set; else 'staging' when portal_url (or the folder the portal
+     *  runs from) says portal-staging; else 'production'. Staging must never read production's client replies. */
+    function portalEnvironment(): string {
+        $e = strtolower(notifyCfg('environment'));
+        if ($e === 'staging' || $e === 'production') return $e;
+        if (stripos(notifyCfg('portal_url'), 'portal-staging') !== false) return 'staging';
+        if (strcasecmp(basename(__DIR__), 'portal-staging') === 0) return 'staging';
+        return 'production';
+    }
+}
 if (!function_exists('inboundAddress')) {
     /** Where client replies go (the Reply-To of client emails, polled by the cron): config inbound_address, default
-     *  lance+ai@joustmedia.com (Workspace delivers plus-addresses to lance@ by default). */
+     *  lance+ai@joustmedia.com in production and lance+ai-staging@joustmedia.com on staging (Workspace delivers
+     *  plus-addresses to lance@ by default). */
     function inboundAddress(): string {
-        $a = strtolower(notifyCfg('inbound_address', 'lance+ai@joustmedia.com'));
-        return filter_var($a, FILTER_VALIDATE_EMAIL) ? $a : 'lance+ai@joustmedia.com';
+        $def = portalEnvironment() === 'staging' ? INBOUND_STAGING_ADDRESS : INBOUND_PROD_ADDRESS;
+        $a = strtolower(notifyCfg('inbound_address', $def));
+        return filter_var($a, FILTER_VALIDATE_EMAIL) ? $a : $def;
+    }
+}
+if (!function_exists('inboundSharedWithProduction')) {
+    /** Staging configured with production's inbound address: the cron refuses to poll (it would steal and label
+     *  production's client replies) and Manage → Notifications shows a warning. */
+    function inboundSharedWithProduction(): bool {
+        return portalEnvironment() === 'staging' && inboundAddress() === INBOUND_PROD_ADDRESS;
     }
 }
 
@@ -619,7 +652,26 @@ if (!function_exists('notifyMailSend_gmail')) {
         $r = gmailApi($pdo, 'POST', 'messages/send', ['raw' => b64url($raw)]);
         googleHealth($pdo, $r['ok'], $r['ok'] ? '' : 'send: ' . $r['error']);
         if (!$r['ok']) return ['ok' => false, 'error' => 'gmail: ' . $r['error']];
-        return ['ok' => true, 'error' => '', 'provider_id' => (string)($r['data']['id'] ?? '')];
+        $gid = (string)($r['data']['id'] ?? '');
+        // Gmail may replace the Message-ID we set; threading (In-Reply-To / References on later mails, matching the
+        // client's reply) must use the one the recipient actually got.
+        $real = $gid !== '' ? gmailSentMessageId($pdo, $gid) : '';
+        return ['ok' => true, 'error' => '', 'provider_id' => $gid, 'message_id' => $real !== '' ? $real : (string)$msg['message_id']];
+    }
+}
+
+if (!function_exists('gmailSentMessageId')) {
+    /** The Message-ID header of a message in the mailbox (users.messages.get format=metadata), '' when unknown. */
+    function gmailSentMessageId(PDO $pdo, string $gmailId): string {
+        $m = gmailApi($pdo, 'GET', 'messages/' . rawurlencode($gmailId), null, ['format' => 'metadata', 'metadataHeaders' => 'Message-ID']);
+        if (!$m['ok']) return '';
+        foreach ((array)($m['data']['payload']['headers'] ?? []) as $h) {
+            if (strcasecmp((string)($h['name'] ?? ''), 'Message-ID') === 0) {
+                $ids = notifyMessageIds((string)($h['value'] ?? ''));
+                return $ids[0] ?? '';
+            }
+        }
+        return '';
     }
 }
 
@@ -690,6 +742,83 @@ if (!function_exists('notifyEmailRefAdd')) {
 // =====================================================================================================================
 // Inbound
 // =====================================================================================================================
+
+if (!function_exists('inboundDomainsAligned')) {
+    /** Relaxed DMARC alignment: the same domain, or one a subdomain of the other (both need a dot — never a bare TLD). */
+    function inboundDomainsAligned(string $a, string $b): bool {
+        $a = strtolower(trim($a, " .\t")); $b = strtolower(trim($b, " .\t"));
+        if ($a === '' || $b === '' || strpos($a, '.') === false || strpos($b, '.') === false) return false;
+        return $a === $b || substr($a, -strlen('.' . $b)) === '.' . $b || substr($b, -strlen('.' . $a)) === '.' . $a;
+    }
+}
+
+if (!function_exists('inboundAuthResults')) {
+    /**
+     * The Authentication-Results header Google's receiving MX stamped on a message: the TOPMOST one whose authserv-id
+     * is mx.google.com (headers are prepended on the way in, so anything a sender forged sits below Google's own).
+     * → null when there is none, else ['dkim' => [[result, domain]], 'dmarc' => [[result, header.from]], 'spf' => [result]].
+     */
+    function inboundAuthResults(array $mime): ?array {
+        foreach ((array)($mime['raw_headers']['authentication-results'] ?? []) as $v) {
+            $v = (string)$v;
+            for ($i = 0; $i < 5 && strpos($v, '(') !== false; $i++) $v = (string)preg_replace('/\([^()]*\)/', ' ', $v);   // comments
+            $parts = array_map('trim', explode(';', $v));
+            $servId = strtolower((string)preg_split('/\s+/', (string)array_shift($parts))[0]);
+            if ($servId !== 'mx.google.com') continue;
+            $out = ['dkim' => [], 'dmarc' => [], 'spf' => []];
+            foreach ($parts as $p) {
+                if (!preg_match('/^([a-z0-9_-]+)\s*=\s*([a-z]+)\b(.*)$/is', $p, $m)) continue;
+                $method = strtolower($m[1]); $result = strtolower($m[2]);
+                preg_match_all('/([a-z0-9_.-]+)\s*=\s*"?([^\s";]+)"?/i', $m[3], $pm, PREG_SET_ORDER);
+                $props = [];
+                foreach ($pm as $x) $props[strtolower($x[1])] = $x[2];
+                if ($method === 'dkim') {
+                    $d = (string)($props['header.d'] ?? '');
+                    if ($d === '' && isset($props['header.i'])) $d = (string)substr((string)strrchr((string)$props['header.i'], '@'), 1) ?: (string)$props['header.i'];
+                    $out['dkim'][] = [$result, strtolower($d)];
+                } elseif ($method === 'dmarc') {
+                    $out['dmarc'][] = [$result, strtolower((string)($props['header.from'] ?? ''))];
+                } elseif ($method === 'spf') {
+                    $out['spf'][] = $result;
+                }
+            }
+            return $out;   // only the topmost mx.google.com header counts
+        }
+        return null;
+    }
+}
+
+if (!function_exists('inboundAuthCheck')) {
+    /**
+     * Is the From address genuine? Accepted only when Google's own Authentication-Results says dmarc=pass for the
+     * From domain, or there is a dkim=pass whose signing domain is aligned with it. Everyone is checked — a From of
+     * lance@joustmedia.com (or any Joust address) most of all, since that would post as Joust.
+     * → ['ok' => bool, 'reason' => 'Failed sender check: …' when not ok, 'summary' => 'dmarc=pass …'].
+     */
+    function inboundAuthCheck(array $mime, string $from): array {
+        $dom = strtolower((string)substr((string)strrchr($from, '@'), 1));
+        $ar = inboundAuthResults($mime);
+        if ($ar === null) return ['ok' => false, 'summary' => 'none', 'reason' => 'Failed sender check: no Authentication-Results from mx.google.com (could not verify ' . ($from !== '' ? $from : 'the sender') . ')'];
+        $sum = [];
+        foreach ($ar['dmarc'] as [$r]) $sum[] = 'dmarc=' . $r;
+        foreach ($ar['dkim'] as [$r, $d]) $sum[] = 'dkim=' . $r . ($d !== '' ? ' (' . $d . ')' : '');
+        foreach ($ar['spf'] as $r) $sum[] = 'spf=' . $r;
+        if (!$ar['dmarc']) $sum[] = 'dmarc=none';
+        if (!$ar['dkim']) $sum[] = 'dkim=none';
+        $summary = implode(', ', $sum);
+        if ($dom !== '') {
+            foreach ($ar['dmarc'] as [$r, $hf]) {
+                if ($r === 'pass' && ($hf === '' || inboundDomainsAligned($hf, $dom))) return ['ok' => true, 'summary' => $summary, 'reason' => ''];
+            }
+            foreach ($ar['dkim'] as [$r, $d]) {
+                if ($r === 'pass' && inboundDomainsAligned($d, $dom)) return ['ok' => true, 'summary' => $summary, 'reason' => ''];
+            }
+        }
+        $joust = $from !== '' && ($from === googleExpectedAccount() || array_filter(adminUsers($GLOBALS['pdo'] ?? null), static function ($u) use ($from) { return strcasecmp((string)$u['email'], $from) === 0; }));
+        return ['ok' => false, 'summary' => $summary,
+                'reason' => 'Failed sender check: ' . $summary . ' — ' . ($joust ? 'claims to be Joust (' . $from . ') but ' : '') . 'not verified as ' . ($from !== '' ? $from : 'the sender')];
+    }
+}
 
 if (!function_exists('inboundSender')) {
     /** Who may post on $info's item from $email: ['actor' => 'client', 'contact_id'] for a contact of THAT item's client,
@@ -789,6 +918,14 @@ if (!function_exists('inboundProcess')) {
             $match = notifyItemByToken($pdo, $m[1]);
             if ($match) $how = 'subject token';
         }
+        // 3. the sender must be who the From header says (Google's DMARC / aligned DKIM verdict) — a forged From never
+        //    posts, whatever it matched; it waits in Unmatched with the reason.
+        $auth = inboundAuthCheck($mime, $from);
+        if (!$auth['ok']) {
+            $hint = $match ? ['company_id' => $match[2], 'entity_type' => $match[0], 'entity_id' => $match[1]] : ['company_id' => $hintCompany];
+            $set($base + $hint + ['status' => 'unmatched', 'reason' => mb_substr($auth['reason'], 0, 250, 'UTF-8')]);
+            return 'unmatched';
+        }
         if (!$match) {
             $set($base + ['status' => 'unmatched', 'company_id' => $hintCompany,
                           'reason' => $hintCompany ? 'a reply to an email about several items — pick the item' : 'not a reply to a portal email (no matching Message-ID or [J#…] token)']);
@@ -846,6 +983,11 @@ if (!function_exists('gmailPollInbound')) {
     function gmailPollInbound(PDO $pdo, int $limit = 25, float $budget = 20.0): array {
         $out = ['status' => 'ok', 'seen' => 0, 'posted' => 0, 'unmatched' => 0, 'ignored' => 0, 'error' => ''];
         if (!googleReady($pdo) || !googleConnected($pdo)) { $out['status'] = 'not_connected'; return $out; }
+        if (inboundSharedWithProduction()) {
+            $out['status'] = 'refused_staging';
+            $out['error'] = 'staging uses production’s inbound address (' . INBOUND_PROD_ADDRESS . ') — set inbound_address to ' . INBOUND_STAGING_ADDRESS . ' in config.php';
+            return $out;
+        }
         $t0 = microtime(true);
         $q = 'to:' . inboundAddress() . ' -label:' . GOOGLE_LABEL . ' newer_than:14d';
         $list = gmailApi($pdo, 'GET', 'messages', null, ['q' => $q, 'maxResults' => $limit]);
@@ -903,11 +1045,20 @@ if (!function_exists('inboundAssign')) {
         $text = trim((string)$row['body_text']);
         if ($text === '') return ['ok' => false, 'error' => 'The reply is empty.'];
         $who = inboundSender($pdo, $info, (string)$row['from_email']) ?? ['actor' => 'client', 'contact_id' => null];
+        // A reply that failed the sender check is never attributed to the person it claims to be (above all not Joust).
+        if (inboundFailedSenderCheck($row)) $who = ['actor' => 'client', 'contact_id' => null];
         $aid = inboundPostComment($pdo, $info, $who, $text);
         $pdo->prepare("UPDATE email_inbound SET status = 'assigned', company_id = ?, entity_type = ?, entity_id = ?, contact_id = ?, author_user_id = ?,
                        activity_id = ?, handled_at = NOW(), reason = 'assigned by Joust' WHERE id = ?")
             ->execute([(int)$info['company_id'], $type, $id, $who['contact_id'] ?? null, $who['user_id'] ?? null, $aid ?: null, $rowId]);
         return ['ok' => true, 'error' => '', 'title' => $info['title']];
+    }
+}
+
+if (!function_exists('inboundFailedSenderCheck')) {
+    /** An email_inbound row parked because its From could not be verified. */
+    function inboundFailedSenderCheck(array $row): bool {
+        return strpos((string)($row['reason'] ?? ''), 'Failed sender check') === 0;
     }
 }
 

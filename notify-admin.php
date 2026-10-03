@@ -2,7 +2,10 @@
 /**
  * Manage → Notifications endpoint (admin session, same-site POST, JSON) — static/js/notifications.js.
  *
- *   action=settings      t1, t2 (minutes; 5 ≤ t1 < t2 ≤ 10080), summary_hour (0–23, America/New_York)
+ *   action=settings      t1, t2 (minutes; 5 ≤ t1 < t2 ≤ 10080), summary_hour (0–23, America/New_York), quiet_start /
+ *                        quiet_end (escalation quiet hours 0–23, both '' = none — the default)
+ *   action=client_mail_allow   allow=1|0 → client emails may go out with PHP mail() before Google is connected
+ *   action=my_prefs      dm, email, summary (1|0) → the signed-in admin's own notification switches
  *   action=client        company_id, slack_channel_id ('' clears; C…/G… id), owner_user_id (0 = default owner)
  *   action=find_channel  company_id → looks up #portal-<slug> (conversations.list) and saves its id
  *   action=user          id (0 = new), name, email, slack_user_id ('' clears), active (0|1)
@@ -58,10 +61,34 @@ try {
             if ($t1 < 5 || $t1 > 10080) notifyAdminFail(422, 'The Slack reminder needs 5 minutes to 7 days.');
             if ($t2 <= $t1 || $t2 > 10080) notifyAdminFail(422, 'The email reminder must come after the Slack one (and within 7 days).');
             if ($hr < 0 || $hr > 23) notifyAdminFail(422, 'Pick an hour from 0 to 23.');
+            // escalation quiet hours: both blank = none (the default — around the clock)
+            $qs = $str('quiet_start'); $qe = $str('quiet_end');
+            if (($qs === '') !== ($qe === '')) notifyAdminFail(422, 'Pick both ends of the quiet hours, or None for both.');
+            if ($qs !== '' && (!preg_match('/^\d{1,2}$/', $qs) || !preg_match('/^\d{1,2}$/', $qe) || (int)$qs > 23 || (int)$qe > 23)) notifyAdminFail(422, 'Quiet hours are whole hours from 0 to 23.');
+            if ($qs !== '' && (int)$qs === (int)$qe) notifyAdminFail(422, 'Quiet hours need a different start and end.');
             notifyMetaSet($pdo, 'notify_t1_minutes', (string)$t1);
             notifyMetaSet($pdo, 'notify_t2_minutes', (string)$t2);
             notifyMetaSet($pdo, 'notify_summary_hour', (string)$hr);
+            notifyMetaSet($pdo, 'notify_quiet_start', $qs === '' ? '' : (string)(int)$qs);
+            notifyMetaSet($pdo, 'notify_quiet_end', $qe === '' ? '' : (string)(int)$qe);
             notifyAdminOut(200, ['ok' => true, 'message' => 'Saved']);
+        }
+        case 'client_mail_allow': {
+            // "Allow sending client emails without Google (mail())" — off by default; client emails wait for Google.
+            $on = $int('allow') === 1 ? '1' : '0';
+            notifyMetaSet($pdo, 'client_emails_allow_mail', $on);
+            notifyAdminOut(200, ['ok' => true, 'message' => $on === '1' ? 'Client emails may go out with PHP mail() until Google is connected' : 'Client emails wait for Google', 'allow' => $on === '1']);
+        }
+        case 'my_prefs': {
+            // My notifications: the signed-in admin's own switches (never someone else's).
+            if (!adminPrefsReady($pdo)) notifyAdminFail(409, 'Run migrate.php first (step 51).');
+            $me = currentAdminUserId($pdo);
+            if (!$me) notifyAdminFail(409, 'Your sign-in is not on the Team list yet (Manage → Notifications → Team).');
+            $j = [];
+            foreach (array_keys(adminPrefKinds()) as $k) $j[$k] = $int($k) === 1 ? 1 : 0;
+            $pdo->prepare("UPDATE admin_users SET notify_prefs = ? WHERE id = ?")->execute([json_encode($j), $me]);
+            adminUsersReset();
+            notifyAdminOut(200, ['ok' => true, 'message' => 'Saved', 'prefs' => $j]);
         }
         case 'client': {
             $c = $company($pdo, $int('company_id'));

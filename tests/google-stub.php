@@ -9,6 +9,8 @@
  *   account.txt     the address users/me/profile answers (default lance@joustmedia.com)
  *   fail.txt        a failure mode while it exists: invalid_grant (refresh refused) · no_modify (the consent grants
  *                   gmail.send only) · send500 (messages/send answers 500) · list500 (messages.list answers 500)
+ *   rewrite_mid.txt while it exists, messages/send replaces the Message-ID with its own (as Gmail may); GET
+ *                   messages/sent<n>?format=metadata&metadataHeaders=Message-ID returns what was really sent
  *   mailbox.json    {"messages": [{id, threadId, raw (base64url RFC 5322), labelIds}], "labels": [{id, name}]}
  *                   — tests drop replies in here; modify adds label ids; list honours "-label:<name>"
  *   sent/<n>.eml    every message messages/send received (decoded)
@@ -17,7 +19,7 @@
  *   GET  /o/oauth2/v2/auth?...          → 302 <redirect_uri>?code=stubcode-…&state=<state> (instant consent)
  *   POST /token                         authorization_code | refresh_token (client test-google-client-id / test-google-secret)
  *   POST /revoke                        → {}
- *   GET  /gmail/v1/users/me/profile, POST …/messages/send, GET …/messages?q=, GET …/messages/{id}?format=raw,
+ *   GET  /gmail/v1/users/me/profile, POST …/messages/send, GET …/messages/sent<n> (metadata), GET …/messages?q=, GET …/messages/{id}?format=raw,
  *   POST …/messages/{id}/modify, GET / POST …/labels        (Bearer ya29.stub-…, else 401)
  */
 $dir = rtrim((string)getenv('GOOGLE_STUB_DIR'), '/');
@@ -83,8 +85,30 @@ if ($rest === 'messages/send' && $method === 'POST') {
     $mime = $b64d((string)($body['raw'] ?? ''));
     if ($mime === '') return $json(400, ['error' => ['code' => 400, 'message' => 'Invalid raw']]);
     $n = count(glob($dir . '/sent/*.eml') ?: []) + 1;
+    // rewrite_mid.txt: behave like Gmail when it replaces the sender's Message-ID with its own
+    if (is_file($dir . '/rewrite_mid.txt')) {
+        $mime = (string)preg_replace('/^Message-ID:[^\r\n]*/mi', 'Message-ID: <CAJoustStub' . $n . '-' . bin2hex(random_bytes(4)) . '@mail.gmail.com>', $mime, 1);
+    }
     file_put_contents(sprintf('%s/sent/%04d.eml', $dir, $n), $mime);
     return $json(200, ['id' => 'sent' . $n, 'threadId' => 'thr' . $n, 'labelIds' => ['SENT']]);
+}
+
+// a sent message read back (format=metadata&metadataHeaders=Message-ID — what gmail-lib.php does after every send)
+if (preg_match('#^messages/sent(\d+)$#', $rest, $m) && $method === 'GET') {
+    $f = sprintf('%s/sent/%04d.eml', $dir, (int)$m[1]);
+    if (!is_file($f)) return $json(404, ['error' => ['code' => 404, 'message' => 'Requested entity was not found.']]);
+    $eml = (string)file_get_contents($f);
+    $want = array_map('strtolower', (array)($_GET['metadataHeaders'] ?? []));
+    $head = preg_replace("/\r?\n[ \t]+/", ' ', (string)preg_split("/\r?\n\r?\n/", $eml, 2)[0]);
+    $headers = [];
+    foreach (preg_split("/\r?\n/", (string)$head) as $line) {
+        $c = strpos($line, ':');
+        if ($c === false) continue;
+        $name = substr($line, 0, $c);
+        if ($want && !in_array(strtolower($name), $want, true)) continue;
+        $headers[] = ['name' => $name, 'value' => trim(substr($line, $c + 1))];
+    }
+    return $json(200, ['id' => 'sent' . (int)$m[1], 'threadId' => 'thr' . (int)$m[1], 'labelIds' => ['SENT'], 'payload' => ['headers' => $headers]]);
 }
 
 if ($rest === 'labels') {

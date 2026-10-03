@@ -400,6 +400,19 @@ switch ($action) {
         caReply(200, ['message' => '“' . $label . '” emails ' . ($on ? 'on' : 'off') . ' for ' . $co['name'] . '.', 'id' => $id, 'kind' => $kind, 'enabled' => $on === 1], $scope, $id);
     }
 
+    // ---- stale To Review reminders: N days (0 = never) -----------------------------
+    case 'remind_days': {
+        $co = caCompany($pdo, $id);
+        if (!$co) caReply(404, ['error' => 'Unknown client.'], $scope);
+        if (!function_exists('clientEmailRemindReady') || !clientEmailRemindReady($pdo)) caReply(409, ['error' => 'Run migrate.php first (step 51).'], $scope, $id);
+        $raw = trim((string)($_POST['days'] ?? ''));
+        if (!preg_match('/^\d{1,2}$/', $raw) || (int)$raw > 30) caReply(400, ['error' => 'Days must be 0 to 30.'], $scope, $id);
+        $days = (int)$raw;
+        $pdo->prepare("INSERT IGNORE INTO notify_clients (company_id) VALUES (?)")->execute([$id]);
+        $pdo->prepare("UPDATE notify_clients SET remind_days = ? WHERE company_id = ?")->execute([$days, $id]);
+        caReply(200, ['message' => $days > 0 ? 'Reminders after ' . $days . ' day' . ($days === 1 ? '' : 's') . ' for ' . $co['name'] . '.' : 'No reminders for ' . $co['name'] . '.', 'id' => $id, 'days' => $days], $scope, $id);
+    }
+
     // ---- settings (default hashtags, AI Builder profile) -------------------------
     case 'settings': {
         $co = caCompany($pdo, $id);

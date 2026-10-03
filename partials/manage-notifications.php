@@ -121,6 +121,18 @@ $nfItemOptions = static function (int $companyId) use ($pdo): array {
     return $cache[$companyId] = $out;
 };
 $nfWhen = static function (?string $at): string { return $at ? relativeTime($at) : 'never'; };
+// Environment (gmail-lib.php portalEnvironment()): staging must not share production's inbound address.
+$nfEnv = function_exists('portalEnvironment') ? portalEnvironment() : 'production';
+$nfInboundShared = function_exists('inboundSharedWithProduction') && inboundSharedWithProduction();
+// Client emails: held until Google (or mail() explicitly allowed) — client-notify-lib.php clientEmailTransportOk()
+$nfClientMailAllow = function_exists('clientEmailAllowMail') && clientEmailAllowMail($pdo);
+$nfClientMailOk = function_exists('clientEmailTransportOk') && clientEmailTransportOk($pdo);
+$nfClientHeld = 0;
+if ($nfReady && function_exists('clientEmailReady') && clientEmailReady($pdo)) {
+    try { $nfClientHeld = (int)$pdo->query("SELECT COUNT(*) FROM client_email_queue WHERE batch_key IS NULL")->fetchColumn(); } catch (Throwable $e) {}
+}
+$nfNoChannel = $nfReady ? notifyClientsWithoutChannel($pdo) : [];
+$nfHourLabel = static function (int $h): string { return date('g A', mktime($h, 0, 0)); };
 ?>
 <div class="nf" data-notify data-endpoint="<?= $nfH($nfEndpoint) ?>">
 <?php if (!$nfReady): ?>
@@ -137,7 +149,17 @@ $nfWhen = static function (?string $at): string { return $at ? relativeTime($at)
         <?= $nfCheck(function_exists('curl_init'), 'PHP curl', 'ask the host to enable the curl extension', 'Available', 'Missing') ?>
         <?= $nfCheck($nfCronOk, 'Cron', $nfCronLast !== '' ? 'last run ' . relativeTime($nfCronLast) . ', expected every 5 minutes' : 'add the cPanel cron below',
                      'Ran ' . ($nfCronLast !== '' ? relativeTime($nfCronLast) : ''), $nfCronLast !== '' ? 'Late' : 'Never ran') ?>
+        <li class="nf-check<?= $nfInboundShared ? ' is-missing' : ' is-ok' ?>" data-environment="<?= $nfH($nfEnv) ?>">
+          <span class="nf-check-mark" aria-hidden="true"><?= $nfInboundShared ? '!' : icon('checkmark') ?></span>
+          <span class="nf-check-body"><span class="nf-check-label">Environment</span>
+          <span class="nf-check-state"><?= $nfEnv === 'staging' ? 'Staging' : 'Production' ?> · replies to <?= $nfH(function_exists('inboundAddress') ? inboundAddress() : '') ?><?= notifyCfg('environment') === '' ? ' (set <code>environment</code> in config.php to be explicit)' : '' ?></span></span></li>
       </ul>
+      <?php if ($nfInboundShared): ?>
+        <div class="studio-alert studio-alert--error" role="alert" data-staging-inbound-warning>
+          This is <strong>staging</strong>, but its inbound address is production’s <code><?= $nfH(INBOUND_PROD_ADDRESS) ?></code>. Staging will not read replies until <code>inbound_address</code> in config.php is set to <code><?= $nfH(INBOUND_STAGING_ADDRESS) ?></code> (or left blank) — otherwise it would import and label production’s client replies.
+        </div>
+      <?php endif; ?>
+      <p class="studio-help" data-my-notifications-link>Your own Slack DMs, reminder emails and the Morning summary: <a href="<?= $nfH(portalUrl('my-notifications')) ?>">My notifications</a>. Each teammate sets theirs.</p>
       <dl class="nf-urls">
         <dt>Slack Events URL</dt><dd><code data-url="events"><?= $nfH(notifyMachineUrl('slack-events')) ?></code></dd>
         <dt>Slack Interactivity URL</dt><dd><code data-url="actions"><?= $nfH(notifyMachineUrl('slack-actions')) ?></code></dd>
@@ -195,11 +217,22 @@ $nfWhen = static function (?string $at): string { return $at ? relativeTime($at)
     <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Client emails</h3>
       <p class="ui-card-subtitle">Sent to each client’s contacts (Manage → Clients → Contacts), each with their own sign-in links. Turn a kind off per client in Manage → Clients; each contact can opt out from the link in every email.</p></div></div>
     <div class="ui-card-body">
+      <div class="nf-client-mail-gate" data-client-mail-gate="<?= $nfClientMailOk ? 'open' : 'held' ?>">
+        <?php if (!$nfClientMailOk): ?>
+          <div class="studio-alert" role="status" data-client-mail-held>Client emails are <strong>held</strong> until Google is connected<?= $nfClientHeld > 0 ? ' — ' . $nfClientHeld . ' waiting in the queue (nothing is lost)' : '' ?>. Every client also starts with its emails off: turn them on per client in Manage → Clients when you are ready. Sign-in emails always go out.</div>
+        <?php endif; ?>
+        <form class="nf-form nf-allow-mail" data-notify-form="client_mail_allow">
+          <label class="studio-export-choice"><input type="checkbox" name="allow" value="1" data-autosubmit data-client-mail-allow<?= $nfClientMailAllow ? ' checked' : '' ?>>
+            <span>Allow sending client emails without Google (mail())</span></label>
+          <p class="studio-help">Off by default. PHP mail() has no DKIM signature (more spam folders) and replies can’t be read back — connect Google instead if you can.</p>
+        </form>
+      </div>
       <ul class="nf-kinds" role="list">
         <?php
-          $nfKindWhen = ['review' => '15 minutes after the last item is sent for review — one email listing them all', 'reply' => '10 minutes after a reply from Joust (internal notes never) — threaded on the item',
-                         'live' => 'once a day at the Morning summary hour', 'weekly' => 'Mondays — to you, not clients: response times, approvals, what’s waiting'];
-          $nfKindName = ['review' => 'Ready for your review', 'reply' => 'Joust replied', 'live' => 'Live & scheduled', 'weekly' => 'Weekly owner report'];
+          $nfKindWhen = ['review' => '15 minutes after the last item is sent for review (posts, emails, pages, tire renders, library images) — one email listing them all', 'reply' => '10 minutes after a reply from Joust (internal notes never) — threaded on the item',
+                         'live' => 'once a day at the Morning summary hour', 'remind' => 'once a day — items still To Review after the client’s reminder days (default 3), each at most once every N days',
+                         'weekly' => 'Mondays — to you, not clients: response times, approvals, what’s waiting'];
+          $nfKindName = ['review' => 'Ready for your review', 'reply' => 'Joust replied', 'live' => 'Live & scheduled', 'remind' => 'Gentle reminders', 'weekly' => 'Weekly owner report'];
           foreach ($nfKindName as $k => $label):
             $pv = basePath() . '/email-preview.php?type=' . $k;
         ?>
@@ -218,7 +251,7 @@ $nfWhen = static function (?string $at): string { return $at ? relativeTime($at)
   <!-- Unmatched email replies -------------------------------------------------------- -->
   <section class="ui-card nf-card" id="unmatched" data-notify-unmatched="<?= count($nfUnmatched) ?>">
     <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Unmatched email replies<?= $nfUnmatched ? ' <span class="ui-badge">' . count($nfUnmatched) . '</span>' : '' ?></h3>
-      <p class="ui-card-subtitle">Replies to <?= $nfH(function_exists('inboundAddress') ? inboundAddress() : '') ?> the portal could not place on an item by itself — not a reply to a portal email, a reply to an email about several items, or from someone who isn’t a contact of that client. Nothing from them is posted until you assign it.</p></div></div>
+      <p class="ui-card-subtitle">Replies to <?= $nfH(function_exists('inboundAddress') ? inboundAddress() : '') ?> the portal could not place on an item by itself — not a reply to a portal email, a reply to an email about several items, from someone who isn’t a contact of that client, or one that failed Google’s sender check (a possibly forged From). Nothing from them is posted until you assign it.</p></div></div>
     <div class="ui-card-body">
       <?php if (!$nfGAcc && !$nfUnmatched): ?>
         <p class="text-secondary" data-unmatched-state="not-connected">Not connected — replies are picked up once Google is connected.</p>
@@ -240,6 +273,9 @@ $nfWhen = static function (?string $at): string { return $at ? relativeTime($at)
               <div class="nf-log-title"><?= $nfH(trim((string)$u['from_name']) !== '' ? $u['from_name'] . ' <' . $u['from_email'] . '>' : $u['from_email']) ?><?= $u['company_name'] ? ' · <span class="text-secondary">' . $nfH($u['company_name']) . '</span>' : '' ?></div>
               <div class="nf-log-meta"><?= $nfH((string)$u['subject']) ?> · <time title="<?= $nfH(absoluteTime((string)($u['received_at'] ?: $u['created_at']))) ?>"><?= $nfH(relativeTime((string)($u['received_at'] ?: $u['created_at']))) ?></time><?= !empty($u['has_attachments']) ? ' · attachment not imported' : '' ?></div>
               <?php if ($snippet !== ''): ?><blockquote class="nf-unmatched-body" data-unmatched-body><?= nl2br($nfH($snippet)) ?></blockquote><?php endif; ?>
+              <?php if (function_exists('inboundFailedSenderCheck') && inboundFailedSenderCheck($u)): ?>
+                <div class="nf-unmatched-auth" data-unmatched-auth="fail"><span class="ui-pill ui-pill--denied">Failed sender check</span> <span class="text-secondary">Google could not confirm it came from <?= $nfH((string)$u['from_email']) ?> — it may be forged. Assigning posts it as an unnamed client message, never as Joust.</span></div>
+              <?php endif; ?>
               <div class="nf-log-error nf-unmatched-why"><?= $nfH((string)$u['reason']) ?></div>
               <form class="nf-unmatched-assign" data-notify-form="inbound_assign">
                 <input type="hidden" name="id" value="<?= (int)$u['id'] ?>">
@@ -266,7 +302,7 @@ $nfWhen = static function (?string $at): string { return $at ? relativeTime($at)
   <!-- Reminders ---------------------------------------------------------------- -->
   <section class="ui-card nf-card" data-notify-settings>
     <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Reminders</h3>
-      <p class="ui-card-subtitle">Every client comment and decision posts to Slack right away (Joust’s own actions don’t). A client message nobody has answered gets a nudge — around the clock.</p></div></div>
+      <p class="ui-card-subtitle">Every client comment and decision posts to Slack right away (Joust’s own actions don’t). A client message nobody has answered gets a nudge — around the clock unless you set quiet hours.</p></div></div>
     <div class="ui-card-body">
       <form class="nf-form" data-notify-form="settings">
         <div class="studio-field-row">
@@ -279,6 +315,19 @@ $nfWhen = static function (?string $at): string { return $at ? relativeTime($at)
               <?php for ($i = 0; $i < 24; $i++): ?><option value="<?= $i ?>"<?= $i === (int)$nfSettings['summary_hour'] ? ' selected' : '' ?>><?= date('g A', mktime($i, 0, 0)) ?></option><?php endfor; ?>
             </select></div>
         </div>
+        <div class="studio-field-row" data-quiet-hours="<?= ($nfSettings['quiet_start'] ?? null) === null ? 'none' : (int)$nfSettings['quiet_start'] . '-' . (int)$nfSettings['quiet_end'] ?>">
+          <div class="studio-field"><label class="studio-label" for="nfQs">Quiet hours from</label>
+            <select class="ui-select" id="nfQs" name="quiet_start">
+              <option value=""<?= ($nfSettings['quiet_start'] ?? null) === null ? ' selected' : '' ?>>None (around the clock)</option>
+              <?php for ($i = 0; $i < 24; $i++): ?><option value="<?= $i ?>"<?= ($nfSettings['quiet_start'] ?? null) === $i ? ' selected' : '' ?>><?= $nfH($nfHourLabel($i)) ?></option><?php endfor; ?>
+            </select></div>
+          <div class="studio-field"><label class="studio-label" for="nfQe">until</label>
+            <select class="ui-select" id="nfQe" name="quiet_end">
+              <option value=""<?= ($nfSettings['quiet_end'] ?? null) === null ? ' selected' : '' ?>>None</option>
+              <?php for ($i = 0; $i < 24; $i++): ?><option value="<?= $i ?>"<?= ($nfSettings['quiet_end'] ?? null) === $i ? ' selected' : '' ?>><?= $nfH($nfHourLabel($i)) ?></option><?php endfor; ?>
+            </select></div>
+        </div>
+        <p class="studio-help">Quiet hours hold back the reminder nudges, DMs and emails (client comments still post to Slack right away); anything due goes out when they end. None by default.</p>
         <p class="studio-help">“Answered” means a comment or decision from Joust on that item after the client’s message (an internal note doesn’t count), or Resolve in Slack. Times are New York time.</p>
         <div class="studio-export-actions"><button type="submit" class="ui-btn ui-btn--filled">Save</button></div>
       </form>
@@ -286,6 +335,12 @@ $nfWhen = static function (?string $at): string { return $at ? relativeTime($at)
   </section>
 
   <!-- Channels ------------------------------------------------------------------ -->
+  <?php if ($nfNoChannel): ?>
+    <div class="studio-alert" role="status" data-no-channel-warning="<?= count($nfNoChannel) ?>">
+      <strong><?= count($nfNoChannel) === 1 ? '1 client has' : count($nfNoChannel) . ' clients have' ?> no Slack channel:</strong>
+      <?= $nfH(implode(', ', array_column($nfNoChannel, 'name'))) ?>. Their comments and decisions come to the owner by email instead (at most one per item every 15 minutes) — set a channel below to get them in Slack.
+    </div>
+  <?php endif; ?>
   <?= insetListOpen('Slack channel per client', ['attrs' => ['data-notify-channels' => '1'], 'class' => 'nf-list']) ?>
     <?php foreach ($nfCompanies as $c): $m = $nfMap[(int)$c['id']] ?? null; $ch = (string)($m['slack_channel_id'] ?? ''); ?>
       <li><form class="ui-row ui-row--leading nf-row" data-notify-form="client" data-client-row="<?= $nfH($c['slug']) ?>">

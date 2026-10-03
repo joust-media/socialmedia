@@ -77,7 +77,7 @@ itest('notifyEmail: ONE definition, the array form; the auth-mail.php shim is go
     $calls = (string)shell_exec('cd ' . escapeshellarg($REPO) . " && git grep -n 'notifyEmail(' -- '*.php' ':!tests'");
     foreach (array_filter(explode("\n", $calls)) as $line) {
         if (strpos($line, 'function notifyEmail(') !== false || preg_match('/notifyEmail\(\)/', $line)) continue;
-        ok(preg_match('/notifyEmail\((\[|\$msg|array)/', $line) === 1, 'array-form call: ' . $line);
+        ok(preg_match('/notifyEmail\((\[|\$\w+|array)/', $line) === 1, 'array-form call: ' . $line);
     }
 });
 

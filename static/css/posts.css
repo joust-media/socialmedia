@@ -416,6 +416,21 @@ li + li > .pl-card::before { left: 100px; }
   padding: 8px 14px; border-radius: 19px; resize: none;
   font-size: var(--text-subhead); line-height: var(--lh-subhead);
 }
+/* Admin: "Internal (Joust only)" switch above the input — on, the composer turns amber with a dashed edge (the same
+   dashed look an internal note has in the thread) so a note can't be mistaken for a reply the client will read. */
+.pd-composer--can-internal { flex-wrap: wrap; }
+.pd-composer--can-internal .pd-composer-input { flex: 1 1 200px; }
+.pd-composer-internal {
+  flex: 1 0 100%; display: inline-flex; align-items: center; gap: 6px; margin: 0 0 -2px 4px;
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary); cursor: pointer; user-select: none;
+}
+.pd-composer-internal input { width: 16px; height: 16px; margin: 0; accent-color: var(--pending); }
+.pd-composer-internal .ui-icon { width: 12px; height: 12px; }
+.pd-composer.is-internal .pd-composer-internal { color: var(--pending); font-weight: 600; }
+.pd-composer.is-internal .pd-composer-input {
+  background: rgba(255,149,0,.10); border: 1.5px dashed var(--pending);
+}
+.pd-composer.is-internal .pd-composer-send { background: var(--pending); }
 .pd-composer-send { width: 38px; height: 38px; min-height: 38px; flex: 0 0 auto; }
 .pd-composer-send .ui-icon { width: 20px; height: 20px; }
 .pd-deny { margin: 0 0 10px; }

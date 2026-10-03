@@ -369,6 +369,8 @@ if (!function_exists('trackingWeeklyQueue')) {
         $to = notifyCfg('notify_to');
         if ($to === '') { $o = notifyOwnerFor($pdo, 0); $to = $o ? (string)$o['email'] : ''; }
         if ($to === '') return 0;
+        $rcpt = adminUserByEmail($pdo, $to);
+        if ($rcpt && !adminUserPrefs($rcpt)['summary']) { notifyMetaSet($pdo, 'notify_weekly_last', date('Y-m-d')); return 0; }   // turned off (My notifications)
         $end = date('Y-m-d 00:00:00');
         $start = date('Y-m-d 00:00:00', strtotime('-7 days', strtotime($end)));
         notifyMetaSet($pdo, 'notify_weekly_last', date('Y-m-d'));
@@ -526,5 +528,67 @@ if (!function_exists('trackingInboxHomeHtml')) {
              . insetRow(['href' => portalUrl('inbox', array_filter(['client' => $client['slug'] ?? null])), 'icon' => 'bubble', 'title' => 'Joust Inbox',
                          'subtitle' => $sub, 'trailing' => $badge, 'attrs' => ['data-home-link' => 'inbox']])
              . insetListClose() . '</section>';
+    }
+}
+
+if (!function_exists('trackingRepliedUnread')) {
+    /** Items of a client with visible Joust replies the viewer (a signed-in contact) has not seen yet, newest first:
+     *  [['entity_type', 'entity_id', 'last_id', 'n', 'last_detail', 'last_at']]. Drafts / gone items are dropped. */
+    function trackingRepliedUnread(PDO $pdo, array $viewer, int $companyId, int $limit = 6): array {
+        if (!trackingReady($pdo) || ($viewer[0] ?? '') !== 'contact') return [];
+        $floor = (int)notifyMeta($pdo, 'unread_since', '0');
+        $types = "'" . implode("','", notifyThreadTypes()) . "'";
+        try {
+            $s = $pdo->prepare("SELECT a.entity_type, a.entity_id, MAX(a.id) AS last_id, COUNT(*) AS n, MAX(a.created_at) AS last_at
+                                  FROM activity_log a
+                                  LEFT JOIN thread_seen s ON s.viewer_type = 'contact' AND s.viewer_id = ? AND s.entity_type = a.entity_type AND s.entity_id = a.entity_id
+                                 WHERE a.company_id = ? AND a.entity_type IN ({$types}) AND a.id > ? AND a.id > COALESCE(s.last_seen_id, 0)
+                                   AND " . trackingUnreadSql('contact') . "
+                                 GROUP BY a.entity_type, a.entity_id ORDER BY last_id DESC LIMIT 30");
+            $s->execute([(int)$viewer[1], $companyId, $floor]);
+            $rows = $s->fetchAll();
+        } catch (Throwable $e) {
+            error_log('trackingRepliedUnread: ' . $e->getMessage());
+            return [];
+        }
+        $out = [];
+        $d = $pdo->prepare("SELECT detail FROM activity_log WHERE id = ?");
+        foreach ($rows as $r) {
+            $info = notifyItemInfo($pdo, (string)$r['entity_type'], (int)$r['entity_id']);
+            if (!$info['exists'] || (int)$info['company_id'] !== $companyId || $info['status_key'] === 'draft') continue;
+            $d->execute([(int)$r['last_id']]);
+            $out[] = ['entity_type' => (string)$r['entity_type'], 'entity_id' => (int)$r['entity_id'], 'last_id' => (int)$r['last_id'], 'n' => (int)$r['n'],
+                      'last_at' => (string)$r['last_at'], 'last_detail' => (string)($d->fetchColumn() ?: ''), 'info' => $info];
+            if (count($out) >= $limit) break;
+        }
+        return $out;
+    }
+}
+
+if (!function_exists('trackingRepliedHomeHtml')) {
+    /** The client Home's "Joust replied" card: items with Joust replies this contact has not read, each linking to the
+     *  item (opening it marks it read). '' when there are none, for the admin seat, or before migrate.php 48. */
+    function trackingRepliedHomeHtml(PDO $pdo, ?array $client): string {
+        if (!$client || (function_exists('isAdmin') && isAdmin())) return '';
+        $viewer = trackingViewer($pdo);
+        if (!$viewer || $viewer[0] !== 'contact' || (int)$viewer[2] !== (int)$client['id']) return '';
+        $rows = trackingRepliedUnread($pdo, $viewer, (int)$client['id']);
+        if (!$rows) return '';
+        $icons = ['post' => 'grid', 'email' => 'mail', 'page' => 'page', 'tire_image' => 'tire', 'tire_series' => 'tire', 'library_image' => 'photo'];
+        $out = '<section class="home-section" aria-labelledby="home-replied" data-home-replied="' . count($rows) . '">'
+             . '<h2 class="ui-list-header" id="home-replied">Joust replied</h2>' . insetListOpen('', ['class' => 'home-replied']);
+        foreach ($rows as $r) {
+            $info = $r['info'];
+            [$slide, $body] = commentSlideSplit($r['last_detail']);
+            $snip = $body !== '' ? '“' . (mb_strlen($body) > 110 ? rtrim(mb_substr($body, 0, 109)) . '…' : $body) . '”' : '';
+            $href = function_exists('activityDeepLink')
+                ? activityDeepLink(['entity_type' => $r['entity_type'], 'entity_id' => $r['entity_id'], 'company_slug' => $info['company_slug'], '_meta' => $info['meta']]) : '#';
+            $leading = $info['thumb'] !== '' && function_exists('pvImg') ? pvImg(trackingMediaUrl((string)$info['thumb']), 'sm', ['alt' => '']) : '';
+            $out .= insetRow(['href' => $href, 'leading' => $leading, 'icon' => $leading === '' ? ($icons[$r['entity_type']] ?? 'bubble') : null,
+                              'title' => $info['title'], 'subtitle' => trim($info['type_label'] . ' · ' . ($r['n'] > 1 ? $r['n'] . ' new replies' : 'New reply') . ($snip !== '' ? ' · ' . $snip : '')),
+                              'trailing' => '<span class="ui-unread-dot" data-unread-for="' . htmlspecialchars($r['entity_type'] . ':' . $r['entity_id'], ENT_QUOTES) . '" role="img" aria-label="New messages"></span>',
+                              'attrs' => ['data-replied-row' => $r['entity_type'] . ':' . $r['entity_id']]]);
+        }
+        return $out . insetListClose('Open one to read the reply and answer — it leaves this list once you have seen it.') . '</section>';
     }
 }

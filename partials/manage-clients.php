@@ -61,9 +61,25 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
     return implode(' · ', $bits);
 };
 ?>
+<?php
+// Client emails banner: every client starts with its emails off (migrate.php 47 / 50), and nothing goes to clients
+// until Google is connected (client-notify-lib.php clientEmailTransportOk()).
+$scMailReady = function_exists('clientEmailReady') && clientEmailReady($pdo);
+$scAnyOn = false;
+if ($scMailReady) {
+    try { $scAnyOn = (int)$pdo->query("SELECT COUNT(*) FROM notify_clients WHERE email_review = 1 OR email_replies = 1 OR email_live = 1")->fetchColumn() > 0; } catch (Throwable $e) {}
+}
+$scGoogleNeeded = $scMailReady && !(function_exists('googleConnected') && googleConnected($pdo)) && !(function_exists('clientEmailAllowMail') && clientEmailAllowMail($pdo));
+?>
 <div class="studio-clients" data-clients data-endpoint="<?= esc($scEndpoint) ?>" data-list-url="<?= esc($scListUrl) ?>">
   <?php if ($scErrFlash !== ''): ?>
     <div class="studio-alert studio-alert--error" role="alert"><?= esc($scErrFlash) ?></div>
+  <?php endif; ?>
+  <?php if ($scMailReady && (!$scAnyOn || $scGoogleNeeded)): ?>
+    <div class="studio-alert studio-client-mail-banner" role="status" data-client-emails-banner>
+      <?php if (!$scAnyOn): ?><div data-banner-off><strong>Client emails are off — turn on per client when ready.</strong> Open a client below → Client emails → Turn on.</div><?php endif; ?>
+      <?php if ($scGoogleNeeded): ?><div data-banner-google><strong>Connect Google first.</strong> Client emails wait (nothing is lost) until Google is connected in <a href="<?= esc(manageUrl('notifications') . '#google') ?>">Manage → Notifications</a>, so they are signed and replies come back to the portal.</div><?php endif; ?>
+    </div>
   <?php endif; ?>
 
   <?php if ($scEdit): ?>
@@ -206,7 +222,17 @@ $scFmt      = static function (array $co) use ($scEnabled, $scModules): string {
             </li>
           <?php endforeach; ?>
         </ul>
-        <p class="studio-help">Each contact can also turn kinds off (or unsubscribe) from the link at the bottom of every email. Previews: Manage → Notifications → Client emails.</p>
+        <?php if (function_exists('clientEmailRemindReady') && clientEmailRemindReady($pdo)): $scRemDays = clientEmailRemindDays($pdo, (int)$scEdit['id']); ?>
+        <form method="POST" action="<?= esc($scEndpoint) ?>" class="studio-inline-form studio-client-remind" data-client-form data-client-remind-days="<?= (int)$scRemDays ?>">
+          <input type="hidden" name="action" value="remind_days">
+          <input type="hidden" name="id" value="<?= (int)$scEdit['id'] ?>">
+          <label class="studio-label" for="remindDays<?= (int)$scEdit['id'] ?>">Remind after</label>
+          <input class="ui-input" type="number" min="0" max="30" step="1" name="days" id="remindDays<?= (int)$scEdit['id'] ?>" value="<?= (int)$scRemDays ?>" style="width:5.5em">
+          <span class="text-secondary">days in To Review with no answer (0 = never)</span>
+          <button type="submit" class="ui-btn ui-btn--sm ui-btn--gray">Save</button>
+        </form>
+        <?php endif; ?>
+        <p class="studio-help">Every client starts with these off — turn them on when you’re ready (after connecting Google in Manage → Notifications). Each contact can also turn kinds off (or unsubscribe) from the link at the bottom of every email. Previews: Manage → Notifications → Client emails.</p>
         <?php endif; ?>
       </div>
 

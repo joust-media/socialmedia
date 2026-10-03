@@ -4,6 +4,8 @@
  * Accepts POST: id (int), and optionally:
  *   - status (pending|approved|denied; admin also draft — "move back to drafts", once migrate.php step 35 ran)
  *   - comment (string, max 2000 chars; '' clears it)
+ *   - internal=1 (admin, with comment only): an internal note — Joust-only (activity_log.internal = 1), never on
+ *     the post's client_comment, never in a client email; posted to the item's Slack thread marked internal
  *   - scheduled_date (datetime string, parseable by strtotime)
  *   - caption (string, max 10000 chars)
  *   - hashtags (string, max 2000 chars)
@@ -141,6 +143,26 @@ if ($id <= 0) {
 if (!$hasStat && !$hasCmt && !$hasDate && !$hasCap && !$hasTag && !$hasType) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'Nothing to update']);
+    exit;
+}
+// ---- Internal note (admin, comment only): Joust-only — never shown to the client, no client email, Slack marks it ----
+if (array_key_exists('internal', $_POST) && (string)$_POST['internal'] !== '' && (string)$_POST['internal'] !== '0') {
+    if (!$isAdminSession) { http_response_code(403); echo json_encode(['ok' => false, 'error' => 'Admin sign-in required']); exit; }
+    $note = trim((string)($comment ?? ''));
+    if (!$hasCmt || $note === '' || $hasStat || $hasDate || $hasCap || $hasTag || $hasType) {
+        http_response_code(400); echo json_encode(['ok' => false, 'error' => 'An internal note is a message only']); exit;
+    }
+    if (strlen($note) > 2000) { http_response_code(400); echo json_encode(['ok' => false, 'error' => 'Comment too long (max 2000 chars)']); exit; }
+    $nameSel = hasPostsNameColumn($pdo) ? 'name' : "'' AS name";
+    $st = $pdo->prepare("SELECT id, company_id, caption, {$nameSel} FROM posts WHERE id = ?");
+    $st->execute([$id]);
+    $row = $st->fetch();
+    if (!$row) { http_response_code(404); echo json_encode(['ok' => false, 'error' => 'Post not found']); exit; }
+    $label = postDisplayLabel(['name' => $row['name'] ?? '', 'caption' => $row['caption'] ?? '', 'id' => $id]);
+    activityWithContext(['internal' => 1], static function () use ($pdo, $row, $id, $label, $note) {
+        logActivity($pdo, (int)$row['company_id'], 'post', $id, 'commented', 'admin', "Internal note on {$label}", $note, newBatchId());
+    });
+    echo json_encode(['ok' => true, 'id' => $id, 'comment' => $note, 'internal' => true]);
     exit;
 }
 $allowedStatuses = ['pending', 'approved', 'denied'];

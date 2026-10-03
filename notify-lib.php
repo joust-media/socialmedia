@@ -128,16 +128,35 @@ if (!function_exists('notifyMetaSet')) {
 }
 
 if (!function_exists('notifySettings')) {
-    /** Escalation thresholds (minutes) + Morning summary hour (0–23, America/New_York), with defaults. */
+    /** Escalation thresholds (minutes) + Morning summary hour (0–23, America/New_York) + escalation quiet hours
+     *  (quiet_start / quiet_end: hours 0–23, null = none — the default: escalations run around the clock), with defaults. */
     function notifySettings(PDO $pdo): array {
         $t1 = (int)notifyMeta($pdo, 'notify_t1_minutes', '60');
         $t2 = (int)notifyMeta($pdo, 'notify_t2_minutes', '240');
         $h  = (int)notifyMeta($pdo, 'notify_summary_hour', '8');
+        $qs = notifyMeta($pdo, 'notify_quiet_start', '');
+        $qe = notifyMeta($pdo, 'notify_quiet_end', '');
+        $hour = static function (string $v): ?int { return preg_match('/^\d{1,2}$/', $v) && (int)$v <= 23 ? (int)$v : null; };
+        $qs = $hour($qs); $qe = $hour($qe);
+        if ($qs === null || $qe === null || $qs === $qe) { $qs = null; $qe = null; }
         return [
             't1'           => $t1 > 0 ? $t1 : 60,
             't2'           => $t2 > 0 ? $t2 : 240,
             'summary_hour' => ($h >= 0 && $h <= 23) ? $h : 8,
+            'quiet_start'  => $qs,
+            'quiet_end'    => $qe,
         ];
+    }
+}
+
+if (!function_exists('notifyQuietNow')) {
+    /** Inside the escalation quiet hours (New York time; a window may wrap midnight, e.g. 22 → 7). Never when unset. */
+    function notifyQuietNow(PDO $pdo, ?int $hour = null): bool {
+        $set = notifySettings($pdo);
+        if ($set['quiet_start'] === null) return false;
+        $h = $hour ?? (int)date('G');
+        $a = $set['quiet_start']; $b = $set['quiet_end'];
+        return $a < $b ? ($h >= $a && $h < $b) : ($h >= $a || $h < $b);
     }
 }
 
@@ -263,13 +282,60 @@ if (!function_exists('adminUsers')) {
         if (isset($GLOBALS['__adminUsers']) && is_array($GLOBALS['__adminUsers'])) return $GLOBALS['__adminUsers'];
         $out = [];
         try {
-            foreach ($pdo->query("SELECT id, name, email, slack_user_id, role, active FROM admin_users ORDER BY (role = 'owner') DESC, id ASC") as $r) {
+            $prefsSel = adminPrefsReady($pdo) ? 'notify_prefs' : 'NULL AS notify_prefs';
+            foreach ($pdo->query("SELECT id, name, email, slack_user_id, role, active, {$prefsSel} FROM admin_users ORDER BY (role = 'owner') DESC, id ASC") as $r) {
                 $out[(int)$r['id']] = $r;
             }
         } catch (Throwable $e) {
             $out = [];
         }
         return $GLOBALS['__adminUsers'] = $out;
+    }
+}
+
+if (!function_exists('adminPrefsReady')) {
+    /** admin_users.notify_prefs exists (migrate.php 51). Cached per request. */
+    function adminPrefsReady(?PDO $pdo): bool {
+        static $has = null;
+        if ($has !== null) return $has;
+        if (!$pdo) return false;
+        try {
+            return $has = (int)$pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE()
+                AND TABLE_NAME = 'admin_users' AND COLUMN_NAME = 'notify_prefs'")->fetchColumn() === 1;
+        } catch (Throwable $e) {
+            return $has = false;
+        }
+    }
+}
+
+if (!function_exists('adminPrefKinds')) {
+    /** Per-person notification switches (My notifications): key → [label, help]. A missing key = on. */
+    function adminPrefKinds(): array {
+        return [
+            'dm'      => ['Slack DM reminders', 'A direct message when a client of yours has waited past the Slack reminder time'],
+            'email'   => ['Reminder emails', 'An email when a client of yours has waited past the email reminder time'],
+            'summary' => ['Morning summary & weekly report', 'The daily digest of client activity and the Monday report'],
+        ];
+    }
+}
+
+if (!function_exists('adminUserPrefs')) {
+    /** kind → bool for one admin user row (adminUsers()); every switch on unless turned off. */
+    function adminUserPrefs(?array $user): array {
+        $j = $user ? json_decode((string)($user['notify_prefs'] ?? ''), true) : null;
+        $j = is_array($j) ? $j : [];
+        $out = [];
+        foreach (array_keys(adminPrefKinds()) as $k) $out[$k] = !array_key_exists($k, $j) || !empty($j[$k]);
+        return $out;
+    }
+}
+
+if (!function_exists('adminUserByEmail')) {
+    function adminUserByEmail(?PDO $pdo, string $email): ?array {
+        $email = strtolower(trim((string)preg_replace('/^.*<([^>]+)>\s*$/', '$1', $email)));
+        if ($email === '') return null;
+        foreach (adminUsers($pdo) as $u) if (strcasecmp((string)$u['email'], $email) === 0) return $u;
+        return null;
     }
 }
 
@@ -605,6 +671,11 @@ if (!function_exists('notifyItemInfo')) {
                     $info['status_key'] = (int)$c['pending'] > 0 ? ((int)$c['approved'] + (int)$c['denied'] > 0 ? 'mixed' : 'pending')
                                         : ((int)$c['denied'] > 0 ? 'denied' : ((int)$c['total'] > 0 ? 'approved' : 'pending'));
                     $info['meta'] = ['tire_id' => (int)$t['id']];
+                    // the thumbnail: the series' first render waiting for review (else its first render)
+                    $s = $pdo->prepare("SELECT * FROM tire_images WHERE series_id = ? ORDER BY (status = 'pending') DESC, sort_order ASC, id ASC LIMIT 1");
+                    $s->execute([$id]);
+                    $img = $s->fetch();
+                    if ($img) $info['thumb'] = function_exists('tireImageSrc') ? tireImageSrc($img) : (string)$img['image_url'];
                     break;
                 }
                 case 'library_image': {
@@ -908,6 +979,12 @@ if (!function_exists('notifyFinishRow')) {
             return 'skipped';
         }
         $attempts = (int)$row['attempts'];
+        if (!empty($res['hold'])) {
+            // Waiting on something outside the message (client emails until Google is connected): not a failed try.
+            $pdo->prepare("UPDATE notify_outbox SET status = 'pending', attempts = GREATEST(attempts - 1, 0), last_error = ?, next_attempt_at = NOW() + INTERVAL ? SECOND WHERE id = ?")
+                ->execute([$err, max(60, (int)($res['retry_in'] ?? 3600)), $id]);
+            return 'retry';
+        }
         if (!empty($res['permanent']) || $attempts >= NOTIFY_MAX_ATTEMPTS) {
             $pdo->prepare("UPDATE notify_outbox SET status = 'failed', last_error = ? WHERE id = ?")->execute([$err, $id]);
             return 'failed';
@@ -983,11 +1060,23 @@ if (!function_exists('notifyOnActivity')) {
             $isClientEvent = ($row['actor'] === 'client') && empty($row['internal']) && in_array($action, notifyClientEventActions(), true)
                 && !($action === 'commented' && trim((string)($row['detail'] ?? '')) === '');
             if ($isClientEvent) {
-                if (!notifySlackConfigured() || notifyClientChannel($pdo, $cid) === '') return;
+                if (!notifySlackConfigured() || notifyClientChannel($pdo, $cid) === '') {
+                    // No Slack channel for this client: an email to the owner instead (≤ 1 per item per 15 minutes) so
+                    // nothing waits for the escalation email.
+                    notifyNoChannelEnqueue($pdo, $activityId, $type, $eid, $cid, $batchKey);
+                    return;
+                }
                 notifyEnqueue($pdo, 'slack', 'item_event',
                     ['entity_type' => $type, 'entity_id' => $eid, 'company_id' => $cid, 'activity_ids' => [$activityId]],
                     ['dedupe' => 'evt:' . $batchKey, 'merge_ids' => [$activityId], 'company_id' => $cid, 'entity_type' => $type, 'entity_id' => $eid]);
                 return;
+            }
+            // An internal note written in the portal goes to the item's Slack thread, marked internal (a note that came
+            // FROM Slack — "!internal …" — is already there).
+            if ($row['actor'] === 'admin' && !empty($row['internal']) && $action === 'commented' && trim((string)($row['detail'] ?? '')) !== ''
+                && (($GLOBALS['__activityCtx']['source'] ?? '') !== 'slack') && notifySlackConfigured() && notifyClientChannel($pdo, $cid) !== '') {
+                notifyEnqueue($pdo, 'slack', 'internal_note', ['entity_type' => $type, 'entity_id' => $eid, 'company_id' => $cid, 'activity_id' => $activityId],
+                    ['dedupe' => 'int:' . $activityId, 'company_id' => $cid, 'entity_type' => $type, 'entity_id' => $eid]);
             }
             if (!in_array($action, notifyParentActions(), true) || !notifySlackConfigured()) return;
             $t = notifyThreadRow($pdo, $type, $eid);
@@ -996,6 +1085,94 @@ if (!function_exists('notifyOnActivity')) {
                 ['dedupe' => 'upd:' . $batchKey, 'company_id' => $cid, 'entity_type' => $type, 'entity_id' => $eid]);
         } catch (Throwable $e) {
             error_log('notifyOnActivity: ' . $e->getMessage());
+        }
+    }
+}
+
+if (!function_exists('notifyNoChannelEnqueue')) {
+    /**
+     * A client event on a client with no Slack channel (or Slack not set up): one email to the client's owner (else
+     * notify_to) per item at most every 15 minutes. Events inside the window join the pending email; after a sent one,
+     * the next email waits until 15 minutes after it.
+     */
+    function notifyNoChannelEnqueue(PDO $pdo, int $activityId, string $type, int $eid, int $cid, string $batchKey): void {
+        try {
+            $owner = notifyOwnerFor($pdo, $cid);
+            $to = $owner ? (string)$owner['email'] : notifyCfg('notify_to');
+            if ($to === '') return;
+            $s = $pdo->prepare("SELECT id, status, dedupe_key, created_at, sent_at FROM notify_outbox WHERE kind = 'nochannel_email' AND entity_type = ? AND entity_id = ? ORDER BY id DESC LIMIT 1");
+            $s->execute([$type, $eid]);
+            $last = $s->fetch();
+            $o = ['merge_ids' => [$activityId], 'company_id' => $cid, 'entity_type' => $type, 'entity_id' => $eid, 'target' => $to];
+            $payload = ['entity_type' => $type, 'entity_id' => $eid, 'company_id' => $cid, 'activity_ids' => [$activityId]];
+            if ($last && in_array($last['status'], ['pending', 'sending'], true)) {
+                notifyEnqueue($pdo, 'email', 'nochannel_email', $payload, $o + ['dedupe' => (string)$last['dedupe_key'], 'defer' => true]);
+                return;
+            }
+            $lastAt = $last ? (int)strtotime((string)($last['sent_at'] ?: $last['created_at'])) : 0;
+            $now = (int)$pdo->query("SELECT UNIX_TIMESTAMP(NOW())")->fetchColumn();
+            if ($last && $now - $lastAt < 900) {
+                $id = notifyEnqueue($pdo, 'email', 'nochannel_email', $payload, $o + ['dedupe' => 'noch:' . $type . ':' . $eid . ':after' . (int)$last['id'], 'defer' => true]);
+                if ($id > 0) $pdo->prepare("UPDATE notify_outbox SET next_attempt_at = FROM_UNIXTIME(?) WHERE id = ? AND attempts = 0")->execute([$lastAt + 900, $id]);
+                return;
+            }
+            notifyEnqueue($pdo, 'email', 'nochannel_email', $payload, $o + ['dedupe' => 'noch:' . $type . ':' . $eid . ':' . $batchKey]);
+        } catch (Throwable $e) {
+            error_log('notifyNoChannelEnqueue: ' . $e->getMessage());
+        }
+    }
+}
+
+if (!function_exists('notifyDeliverNoChannel')) {
+    /** Outbox 'nochannel_email': what the client did (named contact, quoted notes) + the link, to the owner. */
+    function notifyDeliverNoChannel(PDO $pdo, array $p, string $to): array {
+        $type = (string)($p['entity_type'] ?? ''); $id = (int)($p['entity_id'] ?? 0); $cid = (int)($p['company_id'] ?? 0);
+        $info = notifyItemInfo($pdo, $type, $id);
+        if (!$info['exists'] || (int)$info['company_id'] !== $cid) return ['ok' => false, 'skip' => true, 'error' => 'the item no longer exists'];
+        $ids = array_values(array_filter(array_map('intval', (array)($p['activity_ids'] ?? []))));
+        if (!$ids || $to === '') return ['ok' => false, 'skip' => true, 'error' => 'nothing to send'];
+        $ph = implode(',', array_fill(0, count($ids), '?'));
+        $s = $pdo->prepare("SELECT id, action, actor, detail" . (activityHasContactCol($pdo) ? ', client_contact_id' : ', NULL AS client_contact_id') . ", created_at FROM activity_log
+                             WHERE id IN ($ph) AND company_id = ? AND entity_type = ? AND entity_id = ? AND actor = 'client' AND internal = 0 ORDER BY id ASC");
+        $s->execute(array_merge($ids, [$cid, $type, $id]));
+        $acts = $s->fetchAll();
+        if (!$acts) return ['ok' => false, 'skip' => true, 'error' => 'the events were removed'];
+        $e = static function ($v) { return htmlspecialchars((string)$v, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); };
+        $verbs = ['commented' => 'commented', 'approved' => 'approved it', 'denied' => 'requested changes', 'edited_caption' => 'edited the caption', 'edited_hashtags' => 'edited the hashtags'];
+        $lines = []; $html = '';
+        foreach ($acts as $a) {
+            $who = !empty($a['client_contact_id']) ? clientContactLabel($pdo, (int)$a['client_contact_id']) : '';
+            $who = $who !== '' ? $who : $info['company_name'];
+            [$slide, $body] = commentSlideSplit(trim((string)$a['detail']));
+            $verb = ($verbs[$a['action']] ?? str_replace('_', ' ', (string)$a['action'])) . ($slide > 0 ? ' on slide ' . $slide : '');
+            $lines[] = $who . ' ' . $verb . ($body !== '' ? ":\n  \"" . $body . "\"" : '.');
+            $html .= '<p style="margin:0 0 6px"><strong>' . $e($who) . '</strong> ' . $e($verb) . ($body !== '' ? ':' : '.') . '</p>'
+                   . ($body !== '' ? '<blockquote style="margin:0 0 12px;padding:8px 12px;border-left:3px solid #007aff;background:#f2f2f7">' . nl2br($e($body)) . '</blockquote>' : '');
+        }
+        $url = notifyItemLinkFor($pdo, $info, $to);
+        $first = $acts[0];
+        $subject = $info['company_name'] . ': ' . (count($acts) > 1 ? count($acts) . ' updates' : ($verbs[$first['action']] ?? 'update')) . ' on ' . $info['title'];
+        $why = notifySlackConfigured() ? 'No Slack channel is set for ' . $info['company_name'] . ' — set one in Manage → Notifications to get these in Slack instead.'
+                                       : 'Slack is not set up yet, so client activity comes by email.';
+        $res = notifyEmail(['to' => $to, 'subject' => $subject, 'kind' => 'nochannel',
+            'text' => implode("\n\n", $lines) . "\n\nOpen it: {$url}\n\n{$why}\n",
+            'html' => '<div style="font:15px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;color:#1c1c1e;max-width:560px">'
+                    . '<p style="margin:0 0 12px;color:#8e8e93">' . $e($info['company_name']) . ' · ' . $e($info['type_label']) . ' · ' . $e($info['title']) . '</p>' . $html
+                    . '<p><a href="' . $e($url) . '" style="display:inline-block;background:#007aff;color:#fff;padding:10px 16px;border-radius:10px;text-decoration:none;font-weight:600">Open in portal</a></p>'
+                    . '<p style="color:#8e8e93;font-size:13px" data-nochannel-why>' . $e($why) . '</p></div>']);
+        return $res['ok'] ? ['ok' => true, 'provider_id' => $res['message_id']] : ['ok' => false, 'error' => 'email: ' . $res['error']];
+    }
+}
+
+if (!function_exists('notifyClientsWithoutChannel')) {
+    /** Clients with no Slack channel (Manage → Notifications warning): [['id', 'name', 'slug']]. */
+    function notifyClientsWithoutChannel(PDO $pdo): array {
+        if (!notifyReady($pdo)) return [];
+        try {
+            return $pdo->query("SELECT c.id, c.name, c.slug FROM companies c LEFT JOIN notify_clients n ON n.company_id = c.id
+                                 WHERE n.slack_channel_id IS NULL OR n.slack_channel_id = '' ORDER BY c.name")->fetchAll();
+        } catch (Throwable $e) {
+            return [];
         }
     }
 }
@@ -1373,6 +1550,24 @@ if (!function_exists('notifyDeliver')) {
                                     'thread' => ['entity_type' => $info['entity_type'], 'entity_id' => (int)$info['entity_id'], 'company_id' => (int)$info['company_id']]]);
                 return $res['ok'] ? ['ok' => true, 'provider_id' => $res['message_id']] : ['ok' => false, 'error' => 'email: ' . $res['error']];
             }
+            case 'internal_note': {
+                $info = notifyItemInfo($pdo, (string)$p['entity_type'], (int)$p['entity_id']);
+                if (!$info['exists'] || (int)$info['company_id'] !== (int)($p['company_id'] ?? 0)) return ['ok' => false, 'skip' => true, 'error' => 'the item no longer exists'];
+                $s = $pdo->prepare("SELECT detail, author_user_id FROM activity_log WHERE id = ? AND internal = 1 AND actor = 'admin' AND entity_type = ? AND entity_id = ?");
+                $s->execute([(int)($p['activity_id'] ?? 0), (string)$p['entity_type'], (int)$p['entity_id']]);
+                $note = $s->fetch();
+                if (!$note) return ['ok' => false, 'skip' => true, 'error' => 'the note was removed'];
+                $channel = notifyClientChannel($pdo, (int)$info['company_id']);
+                if ($channel === '') return ['ok' => false, 'skip' => true, 'error' => 'no Slack channel set for ' . $info['company_name']];
+                $thread = notifySlackEnsureThread($pdo, $info, $channel);
+                if (empty($thread['ok'])) return $thread;
+                $u = adminUserById($pdo, (int)($note['author_user_id'] ?? 0));
+                $text = ':lock: *Internal note* (Joust only — the client never sees it) from *' . notifySlackEscape($u ? adminUserFirstName($u) : 'Joust') . "*:\n" . notifyQuote((string)$note['detail']);
+                $r = slackApi('chat.postMessage', ['channel' => $thread['channel'], 'thread_ts' => $thread['ts'], 'text' => $text, 'unfurl_links' => false, 'unfurl_media' => false]);
+                return notifySlackResult($r, 'internal note');
+            }
+            case 'nochannel_email':
+                return notifyDeliverNoChannel($pdo, $p, (string)($row['target'] ?? ''));
             case 'summary':
                 return notifyDeliverSummary($pdo, $p);
             case 'client_email':   // client-notify-lib.php: Ready for review / Joust replied / Live & scheduled (rendered now, per recipient)
@@ -1466,6 +1661,9 @@ if (!function_exists('notifyEscalate')) {
     function notifyEscalate(PDO $pdo): array {
         $out = ['t1' => 0, 't2' => 0];
         if (!notifyReady($pdo)) return $out;
+        // Quiet hours (Manage → Notifications; none by default): nothing is sent now — each step goes out on the first
+        // run after the window, once (the dedupe keys below).
+        if (notifyQuietNow($pdo)) return $out + ['quiet' => true];
         $set = notifySettings($pdo);
         $floor = max((int)strtotime(notifyMeta($pdo, 'notify_since', '1970-01-02 00:00:00')), time() - 7 * 86400);
         $now = (int)$pdo->query("SELECT UNIX_TIMESTAMP(NOW())")->fetchColumn();
@@ -1473,6 +1671,7 @@ if (!function_exists('notifyEscalate')) {
             $age = (int)floor(($now - (int)strtotime((string)$w['first_at'])) / 60);
             if ($age < $set['t1']) continue;
             $owner = notifyOwnerFor($pdo, (int)$w['company_id']);
+            $prefs = adminUserPrefs($owner);   // the owner's own switches (My notifications)
             $base = ['entity_type' => $w['entity_type'], 'entity_id' => (int)$w['entity_id'], 'company_id' => (int)$w['company_id'],
                      'first_id' => (int)$w['first_id'], 'owner_user_id' => $owner ? (int)$owner['id'] : 0];
             $o = ['company_id' => (int)$w['company_id'], 'entity_type' => $w['entity_type'], 'entity_id' => (int)$w['entity_id'], 'defer' => true];
@@ -1480,11 +1679,11 @@ if (!function_exists('notifyEscalate')) {
                 if (notifyClientChannel($pdo, (int)$w['company_id']) !== '') {
                     if (notifyEnqueueOnce($pdo, 'slack', 'escalate_thread', $base + ['minutes' => $set['t1']], $o + ['dedupe' => 'esc1t:' . $w['first_id']])) $out['t1']++;
                 }
-                if ($owner && trim((string)$owner['slack_user_id']) !== '') {
+                if ($owner && trim((string)$owner['slack_user_id']) !== '' && $prefs['dm']) {
                     notifyEnqueueOnce($pdo, 'slack', 'escalate_dm', $base + ['minutes' => $set['t1']], $o + ['dedupe' => 'esc1d:' . $w['first_id'], 'target' => (string)$owner['slack_user_id']]);
                 }
             }
-            if ($age >= $set['t2'] && ($owner || notifyCfg('notify_to') !== '')) {
+            if ($age >= $set['t2'] && ($owner || notifyCfg('notify_to') !== '') && $prefs['email']) {
                 if (notifyEnqueueOnce($pdo, 'email', 'escalate_email', $base + ['minutes' => $set['t2']], $o + ['dedupe' => 'esc2:' . $w['first_id'], 'target' => $owner ? (string)$owner['email'] : notifyCfg('notify_to')])) $out['t2']++;
             }
         }
@@ -1704,8 +1903,9 @@ if (!function_exists('notifyEmail')) {
      *   item: the first message's id is stored in notify_threads.email_message_id and later ones reply to it).
      * Transport = gmail-lib.php notifyMailTransport(): config mail_transport when set ('mail' | 'gmail' | 'sink'); blank =
      * 'gmail' once Google is connected, else 'mail' ('sink' when only the harness's mail_sink_dir is set),
-     * dispatched to notifyMailSend_<transport>(array $msg): ['ok' => bool, 'error' => string, 'provider_id' => ?string].
-     * Returns ['ok', 'error', 'message_id', 'transport'].
+     * dispatched to notifyMailSend_<transport>(array $msg): ['ok' => bool, 'error' => string, 'provider_id' => ?string,
+     * 'message_id' => the Message-ID as sent, when the transport knows it differs (Gmail rewrites it)].
+     * Returns ['ok', 'error', 'message_id' (as sent — stored for threading), 'transport', 'generated_message_id'].
      */
     function notifyEmail(array $msg): array {
         // gmail-lib.php notifyMailTransport(): config mail_transport when set, else Gmail once Google is connected, else mail()
@@ -1735,16 +1935,19 @@ if (!function_exists('notifyEmail')) {
         }
         $res = $fn($msg);
         $ok = !empty($res['ok']);
+        // The Message-ID the recipient really got: a transport may report a rewritten one (Gmail) — threading uses it.
+        $sentId = ($ok && !empty($res['message_id'])) ? notifyEmailClean((string)$res['message_id']) : $msg['message_id'];
         if ($ok && is_array($thread) && $pdo instanceof PDO && notifyReady($pdo)) {
             try {
                 $pdo->prepare("INSERT INTO notify_threads (company_id, entity_type, entity_id, email_message_id) VALUES (?, ?, ?, ?)
                                ON DUPLICATE KEY UPDATE email_message_id = COALESCE(NULLIF(email_message_id, ''), VALUES(email_message_id))")
-                    ->execute([(int)($thread['company_id'] ?? 0), (string)$thread['entity_type'], (int)$thread['entity_id'], $msg['message_id']]);
+                    ->execute([(int)($thread['company_id'] ?? 0), (string)$thread['entity_type'], (int)$thread['entity_id'], $sentId]);
             } catch (Throwable $e) {
                 error_log('notifyEmail thread: ' . $e->getMessage());
             }
         }
-        return ['ok' => $ok, 'error' => $ok ? '' : (string)($res['error'] ?? 'send failed'), 'message_id' => $msg['message_id'], 'transport' => $transport];
+        return ['ok' => $ok, 'error' => $ok ? '' : (string)($res['error'] ?? 'send failed'), 'message_id' => $sentId, 'transport' => $transport,
+                'generated_message_id' => $msg['message_id']];
     }
 }
 
@@ -1850,6 +2053,8 @@ if (!function_exists('notifyMorningSummary')) {
             $to = $owner ? (string)$owner['email'] : '';
         }
         if ($to === '') return ['status' => 'error', 'message' => 'No recipient: set notify_to in config.php.'];
+        $rcpt = adminUserByEmail($pdo, $to);
+        if ($rcpt && !adminUserPrefs($rcpt)['summary']) return ['status' => 'off', 'message' => $rcpt['name'] . ' turned the Morning summary off (My notifications).'];
         $lock = $pdo->prepare("UPDATE meta SET v = ? WHERE k = 'digest_lock_until' AND v < NOW()");
         $lock->execute([date('Y-m-d H:i:s', time() + 300)]);
         if ($lock->rowCount() === 0) return ['status' => 'locked', 'message' => 'Another summary run is in progress; try again in a few minutes.'];
@@ -1964,6 +2169,7 @@ if (!function_exists('notifyKindLabel')) {
             'item_event' => 'Client activity', 'parent_update' => 'Status update', 'escalate_thread' => 'Reminder in thread',
             'escalate_dm' => 'Reminder DM', 'escalate_email' => 'Reminder email', 'summary' => 'Morning summary', 'slack_test' => 'Test message',
             'sign_in' => 'Sign-in link', 'email' => 'Email', 'client_email' => 'Client email', 'weekly' => 'Weekly report',
+            'internal_note' => 'Internal note', 'nochannel_email' => 'Client activity email (no Slack channel)',
         ];
         return $map[$kind] ?? ucfirst(str_replace('_', ' ', $kind));
     }

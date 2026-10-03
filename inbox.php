@@ -8,6 +8,7 @@
  *   ?tab=client     Waiting on client: To Review items nobody at the client has answered yet, oldest first.
  *   ?tab=resolved   Resolved recently: client messages answered in the last 14 days — by whom, how fast.
  *   &client=<slug>  one client only (the scoped Home links here).
+ *   &mine=1         only the clients the signed-in teammate owns ("Mine"; owner per client in Manage → Notifications).
  * Reached from Home (the "Joust Inbox" row) and the Home tab's badge (= Waiting on Joust across clients) — the admin
  * bar keeps its ≤ 6 tabs (partials/tabbar.php).
  */
@@ -25,6 +26,18 @@ $cid = $client ? (int)$client['id'] : null;
 $joust = $ready ? trackingWaitingOnJoust($pdo, $cid) : [];
 $theirs = $ready ? trackingWaitingOnClient($pdo, $cid) : [];
 $resolved = $ready ? trackingResolvedRecently($pdo, 14, $cid) : [];
+// "Mine": only the clients the signed-in teammate owns (notify_clients.owner_user_id; unowned → the default owner)
+$mine = !$client && (string)($_GET['mine'] ?? '') === '1';
+$meId = currentAdminUserId($pdo);
+if ($mine && $ready) {
+    $myCo = [];
+    foreach ($pdo->query("SELECT id FROM companies") as $c) {
+        $o = notifyOwnerFor($pdo, (int)$c['id']);
+        if ($o && $meId && (int)$o['id'] === $meId) $myCo[(int)$c['id']] = true;
+    }
+    $keep = static function (array $rows) use ($myCo): array { return array_values(array_filter($rows, static function ($r) use ($myCo) { return isset($myCo[(int)$r['company_id']]); })); };
+    $joust = $keep($joust); $theirs = $keep($theirs); $resolved = $keep($resolved);
+}
 $rows = $tab === 'joust' ? $joust : ($tab === 'client' ? $theirs : $resolved);
 
 $companies = [];
@@ -47,7 +60,14 @@ $bodyClass   = 'page-inbox';
 $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/notify.css')) . '">';
 include __DIR__ . '/partials/layout-top.php';
 
-$segUrl = static function (string $t) use ($client): string { return portalUrl('inbox', array_filter(['client' => $client['slug'] ?? null, 'tab' => $t === 'joust' ? null : $t])); };
+$segUrl = static function (string $t) use ($client, $mine): string { return portalUrl('inbox', array_filter(['client' => $client['slug'] ?? null, 'tab' => $t === 'joust' ? null : $t, 'mine' => $mine ? 1 : null])); };
+if (!$client) {
+    $whoUrl = static function (bool $m) use ($tab): string { return portalUrl('inbox', array_filter(['tab' => $tab === 'joust' ? null : $tab, 'mine' => $m ? 1 : null])); };
+    echo '<div class="ibx-who" data-inbox-who="' . ($mine ? 'mine' : 'all') . '">' . segmented([
+        ['label' => 'All clients', 'href' => $whoUrl(false), 'active' => !$mine, 'attrs' => ['data-inbox-filter' => 'all']],
+        ['label' => 'Mine', 'href' => $whoUrl(true), 'active' => $mine, 'attrs' => ['data-inbox-filter' => 'mine']],
+    ], ['label' => 'Whose clients']) . ' <a class="ibx-my-settings t-footnote" href="' . h(portalUrl('my-notifications')) . '" data-my-notifications-link>My notifications</a></div>';
+}
 echo '<div class="ibx-head">' . segmented([
     ['label' => 'Waiting on Joust', 'href' => $segUrl('joust'), 'active' => $tab === 'joust', 'count' => count($joust), 'attrs' => ['data-inbox-tab' => 'joust']],
     ['label' => 'Waiting on client', 'href' => $segUrl('client'), 'active' => $tab === 'client', 'count' => count($theirs), 'attrs' => ['data-inbox-tab' => 'client']],

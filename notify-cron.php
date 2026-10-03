@@ -17,7 +17,9 @@
  *   "not_connected" until Google is connected), client email batches (client-notify-lib.php clientEmailRun: Ready
  *   for review 15 min after the last change, Joust replied 10 min, Live & scheduled once a day) and the Monday owner
  *   report (tracking-lib.php) run before step 3, so what they queue goes out in the same run.
- *   ?summary=now / ?live=now / ?weekly=now force those steps (testing).
+ *   for review 15 min after the last change, Joust replied 10 min, Live & scheduled and gentle reminders once a day;
+ *   all held until Google is connected) …
+ *   ?summary=now / ?live=now / ?weekly=now / ?remind=now force those steps (testing).
  * Replies JSON {ok, reclaimed, escalated: {t1, t2}, inbound, client_emails, weekly, delivered: {sent, failed, retry, skipped}, summary}.
  */
 
@@ -52,17 +54,17 @@ try {
     $out['reclaimed'] = notifyReclaimStale($pdo);
     $out['escalated'] = notifyEscalate($pdo);
     $out['inbound'] = function_exists('gmailPollInbound') ? gmailPollInbound($pdo) : ['status' => 'unavailable'];
-    $out['client_emails'] = function_exists('clientEmailRun') ? clientEmailRun($pdo, ['live_now' => ($_GET['live'] ?? '') === 'now']) : [];
+    $out['client_emails'] = function_exists('clientEmailRun') ? clientEmailRun($pdo, ['live_now' => ($_GET['live'] ?? '') === 'now', 'remind_now' => ($_GET['remind'] ?? '') === 'now']) : [];
     $out['weekly'] = 'not due';
     if (function_exists('trackingWeeklyDue') && (trackingWeeklyDue($pdo) || (($_GET['weekly'] ?? '') === 'now'))) {
-        $out['weekly'] = trackingWeeklyQueue($pdo) > 0 ? 'queued' : 'no recipient';
+        $out['weekly'] = trackingWeeklyQueue($pdo) > 0 ? 'queued' : 'not sent (no recipient, or turned off)';
     }
     $out['delivered'] = notifyPump($pdo, ['limit' => 60, 'budget' => 20.0]);
     $out['summary'] = 'not due';
     if (notifySummaryDue($pdo) || (($_GET['summary'] ?? '') === 'now')) {
         $res = notifyMorningSummary($pdo, 'cron');
         $out['summary'] = $res['status'];
-        if (in_array($res['status'], ['sent', 'empty', 'queued'], true)) notifyMetaSet($pdo, 'notify_summary_last', date('Y-m-d'));
+        if (in_array($res['status'], ['sent', 'empty', 'queued', 'off'], true)) notifyMetaSet($pdo, 'notify_summary_last', date('Y-m-d'));
     }
 } catch (Throwable $e) {
     error_log('notify-cron: ' . $e->getMessage());

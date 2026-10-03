@@ -71,6 +71,12 @@
 
 /* Joust Inbox (inbox.php) */
 .ibx-head { margin-bottom: 14px; }
+.ibx-who { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.ibx-my-settings { color: var(--accent); text-decoration: none; }
+/* Unmatched replies that failed Google's sender check */
+.nf-unmatched-auth { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; margin: 6px 0 2px; font-size: var(--text-footnote); line-height: var(--lh-footnote); }
+.nf-allow-mail { margin: 0 0 12px; }
+.nf-client-mail-gate .studio-alert { margin-bottom: 10px; }
 .ibx-row { display: flex; align-items: center; gap: 4px; padding-right: 12px; transition: opacity .3s var(--ease-out, ease), transform .3s var(--ease-out, ease); }
 .ibx-row + .ibx-row { box-shadow: inset 0 0.5px 0 var(--separator); }
 .ibx-row.is-resolved { opacity: 0; transform: translateX(16px); }

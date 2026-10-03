@@ -22,6 +22,10 @@ return [
     // request's host (fine in the browser, but cron / Slack-triggered messages may then use the wrong host — set it).
     // Older name still accepted: portal_base_url.
     'portal_url' => '',          // e.g. 'https://joustmedia.com/portal' (staging: 'https://joustmedia.com/portal-staging')
+    // 'production' or 'staging'. Blank = 'staging' when portal_url (or the portal's folder) says portal-staging, else
+    // 'production'. On staging the inbound address defaults to lance+ai-staging@joustmedia.com, and staging refuses to
+    // read replies at production's lance+ai@ (Manage → Notifications shows a warning) — the two never share mail.
+    'environment' => '',
     // Machine endpoints (notify-thumb, notify-cron, slack-events, slack-actions, google-oauth, email-prefs) are linked WITHOUT '.php' because the
     // live host 301-redirects 'x.php' to 'x' and Slack does not follow redirects. Set to '.php' only on a host with
     // no extension-less rewrite (the test harness does). Leave blank on the live server.
@@ -66,7 +70,8 @@ return [
     // characters: php -r 'echo bin2hex(random_bytes(24));'. Changing it means pressing Connect Google again.
     'google_token_key'     => '',
     // Where clients' email replies go (the Reply-To of client emails; the cron reads it through Gmail and posts the
-    // replies on the right item). Blank = lance+ai@joustmedia.com (Workspace delivers +ai mail to lance@ by default).
+    // replies on the right item). Blank = lance+ai@joustmedia.com in production, lance+ai-staging@joustmedia.com on
+    // staging (Workspace delivers plus-address mail to lance@ by default). Never give staging production's address.
     'inbound_address'      => '',
     // API bases. Leave blank (= https://gmail.googleapis.com and https://oauth2.googleapis.com). Only the test harness
     // points them at a local stub (tests/google-stub.php).

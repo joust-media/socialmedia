@@ -250,13 +250,19 @@ if ($has('notify_outbox')) {
               ['digest_lock_until', '1970-01-01 00:00:00']] as $kv) $meta->execute($kv);
 }
 // ---- email through Google, client emails, tracking (migrate.php 45–49) ------------------------------------------------
-// Google starts disconnected; no inbound mail, no queued client emails, nothing "seen"; every client switch on (the
-// notify_clients defaults) and every contact subscribed (contacts were re-created above). The fake Google's state
+// Google starts disconnected; no inbound mail, no queued client emails, nothing "seen"; Kenda's and Privacy Bee's
+// client email switches on (set below — the app's default is off) and every contact subscribed (contacts were re-created above). The fake Google's state
 // (tests/google-stub.php: mailbox, sent mail, call log, failure mode) is wiped.
 if ($has('google_account')) {
     foreach (['google_account', 'email_inbound', 'notify_email_refs', 'client_email_queue', 'thread_seen'] as $t) $pdo->exec("TRUNCATE TABLE `{$t}`");
     $meta = $pdo->prepare("INSERT INTO meta (k, v) VALUES (?, ?) ON DUPLICATE KEY UPDATE v = VALUES(v)");
     foreach ([['unread_since', '0'], ['client_live_last', date('Y-m-d')], ['notify_weekly_last', date('Y-m-d')], ['client_email_since', date('Y-m-d H:i:s', time() - 86400)]] as $kv) $meta->execute($kv);
+    // Client emails start OFF in the app (migrate.php 47 / 50); the suites that exercise them want Kenda and Privacy Bee
+    // on (Hollow Mill Farm has no row → off). Reminders off, mail() not allowed, no quiet hours.
+    $cols = $pdo->query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'notify_clients'")->fetchAll(PDO::FETCH_COLUMN);
+    if (in_array('email_review', $cols, true)) $pdo->exec("UPDATE notify_clients SET email_review = 1, email_replies = 1, email_live = 1 WHERE company_id IN (1, 2)");
+    if (in_array('email_remind', $cols, true)) $pdo->exec("UPDATE notify_clients SET email_remind = 0, remind_days = 3");
+    foreach ([['client_emails_allow_mail', '0'], ['notify_quiet_start', ''], ['notify_quiet_end', ''], ['client_remind_last', date('Y-m-d')]] as $kv) $meta->execute($kv);
 }
 $root = dirname($app, 2);
 $gdir = $root . '/google';

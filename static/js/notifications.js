@@ -34,10 +34,16 @@
         e.preventDefault();
         var params = { action: form.getAttribute('data-notify-form') };
         new FormData(form).forEach(function (v, k) { params[k] = v; });
-        // an unchecked "Active" box sends nothing: say so explicitly
-        var active = form.querySelector('input[type="checkbox"][name="active"]');
-        if (active && !active.checked) params.active = '0';
+        // an unchecked box sends nothing: say so explicitly ("Active", the allow-mail() switch, My notifications)
+        Array.prototype.forEach.call(form.querySelectorAll('input[type="checkbox"][name]'), function (cb) { if (!cb.checked) params[cb.name] = '0'; });
         send(endpoint, params, form.querySelector('[type="submit"]'));
+      });
+      // a switch that saves by itself ([data-autosubmit] inside a [data-notify-form])
+      root.addEventListener('change', function (e) {
+        if (!e.target.matches || !e.target.matches('[data-autosubmit]')) return;
+        var form = e.target.closest('[data-notify-form]');
+        if (!form) return;
+        if (form.requestSubmit) form.requestSubmit(); else form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
       });
       root.addEventListener('click', function (e) {
         var btn = e.target.closest('[data-notify-action]');

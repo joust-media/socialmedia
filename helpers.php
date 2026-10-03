@@ -869,6 +869,11 @@ function syncLibraryImages(PDO $pdo, $companyId, $slug) {
         ");
         foreach ($onDisk as $f) {
             $ins->execute([$companyId, $f]);
+            // a new file dropped in (FTP / Drive) is sent for review: the client's "Ready for your review" email hears of it
+            if ($ins->rowCount() === 1) {
+                $newId = (int)$pdo->lastInsertId();
+                if ($newId > 0) logActivity($pdo, (int)$companyId, 'library_image', $newId, 'uploaded', 'admin', 'New image in Library for review', null, newBatchId());
+            }
         }
     }
 

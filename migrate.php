@@ -1744,7 +1744,8 @@ if (!$errors) {
 
         // 47. Client email preferences: per contact (client_contacts.notify_prefs JSON {review, replies, live} — a
         //     missing key = on; unsubscribed_at = the one-click "stop all"), and per client (notify_clients
-        //     email_review / email_replies / email_live — Manage → Clients, default on).
+        //     email_review / email_replies / email_live — Manage → Clients, default OFF: Joust turns them on per
+        //     client once Google is connected; step 50 brings older installs in line).
         $ccAdd = [];
         if (!columnExists($pdo, 'client_contacts', 'notify_prefs'))   $ccAdd[] = "ADD COLUMN notify_prefs VARCHAR(255) NULL DEFAULT NULL";
         if (!columnExists($pdo, 'client_contacts', 'unsubscribed_at')) $ccAdd[] = "ADD COLUMN unsubscribed_at DATETIME NULL DEFAULT NULL";
@@ -1756,7 +1757,7 @@ if (!$errors) {
         }
         $ncAdd = [];
         foreach (['email_review', 'email_replies', 'email_live'] as $col) {
-            if (!columnExists($pdo, 'notify_clients', $col)) $ncAdd[] = "ADD COLUMN {$col} TINYINT(1) NOT NULL DEFAULT 1";
+            if (!columnExists($pdo, 'notify_clients', $col)) $ncAdd[] = "ADD COLUMN {$col} TINYINT(1) NOT NULL DEFAULT 0";
         }
         if ($ncAdd) {
             $pdo->exec("ALTER TABLE notify_clients " . implode(', ', $ncAdd));
@@ -1810,6 +1811,62 @@ if (!$errors) {
             $steps[] = "✓ Created `client_email_queue` table.";
         } else {
             $steps[] = "• `client_email_queue` already exists — skipped.";
+        }
+    } catch (Exception $e) {
+        $errors[] = $e->getMessage();
+    }
+}
+
+// 50–51. Notification fixes: client emails start OFF, stale-review reminders, per-person notification settings.
+if (!$errors) {
+    try {
+        // 50. Client email switches default OFF. The column default becomes 0 (a new client starts off), and on an
+        //     install where step 47 already created the switches ON, every existing row is turned off — but ONLY if no
+        //     client email has ever been sent (an install already emailing clients keeps its choices). Runs once:
+        //     meta client_email_default_off records it; the probe is the column default.
+        $defOn = 0;
+        foreach (['email_review', 'email_replies', 'email_live'] as $col) {
+            $st = $pdo->prepare("SELECT COLUMN_DEFAULT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'notify_clients' AND COLUMN_NAME = ?");
+            $st->execute([$col]);
+            if (trim((string)$st->fetchColumn(), "'") === '1') {
+                $pdo->exec("ALTER TABLE notify_clients MODIFY COLUMN {$col} TINYINT(1) NOT NULL DEFAULT 0");
+                $defOn++;
+            }
+        }
+        $flag = $pdo->query("SELECT v FROM meta WHERE k = 'client_email_default_off'")->fetchColumn();
+        if ($flag === false) {
+            $sent = (int)$pdo->query("SELECT COUNT(*) FROM notify_outbox WHERE kind = 'client_email' AND status = 'sent'")->fetchColumn();
+            $off = 0;
+            if ($sent === 0) {
+                $off = $pdo->exec("UPDATE notify_clients SET email_review = 0, email_replies = 0, email_live = 0 WHERE email_review <> 0 OR email_replies <> 0 OR email_live <> 0");
+            }
+            $pdo->prepare("INSERT INTO meta (k, v) VALUES ('client_email_default_off', ?)")->execute([date('Y-m-d H:i:s') . ($sent === 0 ? ' off:' . (int)$off : ' kept (emails already sent)')]);
+            $steps[] = $sent === 0
+                ? "✓ Client emails now start off: " . (int)$off . " client(s) switched off (no client email had been sent yet) — turn them on per client in Manage → Clients."
+                : "✓ Client emails start off for new clients; existing switches kept ({$sent} client email(s) already sent).";
+        } elseif ($defOn > 0) {
+            $steps[] = "✓ Client email switches default to off.";
+        } else {
+            $steps[] = "• Client emails already start off — skipped.";
+        }
+
+        // 51. Stale-review reminders + per-person settings: notify_clients.email_remind (the "Gentle reminders" switch,
+        //     default off like the others) and remind_days (N, default 3; 0 = off); admin_users.notify_prefs (JSON
+        //     {dm, email, summary} — a missing key = on; My notifications).
+        $rmAdd = [];
+        if (!columnExists($pdo, 'notify_clients', 'email_remind')) $rmAdd[] = "ADD COLUMN email_remind TINYINT(1) NOT NULL DEFAULT 0";
+        if (!columnExists($pdo, 'notify_clients', 'remind_days'))  $rmAdd[] = "ADD COLUMN remind_days TINYINT UNSIGNED NOT NULL DEFAULT 3";
+        if ($rmAdd) {
+            $pdo->exec("ALTER TABLE notify_clients " . implode(', ', $rmAdd));
+            $steps[] = "✓ Added client reminder settings (notify_clients.email_remind, remind_days).";
+        } else {
+            $steps[] = "• Client reminder settings already exist — skipped.";
+        }
+        if (!columnExists($pdo, 'admin_users', 'notify_prefs')) {
+            $pdo->exec("ALTER TABLE admin_users ADD COLUMN notify_prefs VARCHAR(255) NULL DEFAULT NULL");
+            $steps[] = "✓ Added admin_users.notify_prefs (per-person notification settings).";
+        } else {
+            $steps[] = "• admin_users.notify_prefs already exists — skipped.";
         }
     } catch (Exception $e) {
         $errors[] = $e->getMessage();

@@ -21,7 +21,8 @@
  *     when the surrounding detail contains a video; clicking it inserts "m:ss — "
  *     at the caret. $opts: 'placeholder', 'endpoint' (default 'status.php'),
  *     'entity' ('post'), 'stamp' (default true), 'slides' (slide count — ≥ 2 adds the
- *     optional [data-comment-slide] picker; the comment is stored as "[Slide N] text").
+ *     optional [data-comment-slide] picker; the comment is stored as "[Slide N] text"), 'internal' (default: the
+ *     admin seat) — the "Internal (Joust only)" switch ([data-comment-internal]; sent as internal=1).
  *
  *   commentSlideSplit(string $text): [int $slide, string $rest] — parse the "[Slide N] " prefix (helpers.php).
  *   commentSlideChip(int $n, string $thumb): string — the chip a slide comment shows in the thread
@@ -152,7 +153,16 @@ if (!function_exists('commentComposer')) {
             for ($i = 1; $i <= $nSlides; $i++) $slidePick .= '<option value="' . $i . '">Slide ' . $i . '</option>';
             $slidePick .= '</select>';
         }
-        return '<form class="pd-composer' . ($slidePick !== '' ? ' pd-composer--slides' : '') . '" data-comment-form data-id="' . (int)$postId . '" data-endpoint="' . $esc($endpoint) . '" autocomplete="off">'
+        // Admins: "Internal (Joust only)" — the message becomes an internal note (never shown to the client, no client
+        // email, posted to Slack marked internal). Off by default; the form turns amber while it is on (tracking.js).
+        $internalOk  = !array_key_exists('internal', $opts) ? (function_exists('isAdmin') && isAdmin()) : (bool)$opts['internal'];
+        $internalTog = $internalOk
+            ? '<label class="pd-composer-internal" title="Only Joust sees internal notes">'
+              . '<input type="checkbox" name="internal" value="1" data-comment-internal>'
+              . (function_exists('icon') ? icon('lock') : '') . '<span>Internal (Joust only)</span></label>'
+            : '';
+        return '<form class="pd-composer' . ($slidePick !== '' ? ' pd-composer--slides' : '') . ($internalOk ? ' pd-composer--can-internal' : '') . '" data-comment-form data-id="' . (int)$postId . '" data-endpoint="' . $esc($endpoint) . '" autocomplete="off">'
+             . $internalTog
              . $slidePick
              . ($stamp
                  ? '<button type="button" class="ui-pill ui-pill--accent ui-pill--nodot pd-composer-stamp" data-video-stamp hidden title="Insert the current video time" aria-label="Insert the current video time">'

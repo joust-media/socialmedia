@@ -35,6 +35,8 @@ Two terms used below:
 | 36–39 | Notifications: the team, the outbox, Slack threads |
 | 40–44 | Client sign-in: contacts, magic links, sessions |
 | 45–49 | Google email, inbound replies, client emails, the Inbox and unread markers |
+| 50 | Client emails start **off**. If no client email has ever been sent, every client's switches are turned off (once). |
+| 51 | Gentle reminders (per client) and per-person settings (My notifications) |
 
 - [ ] For staging, open `…/portal-staging/migrate.php` too.
 
@@ -45,6 +47,7 @@ Fill these in on the server. Manage → Notifications → **Setup** ticks each k
 | Key | Value | Needed for |
 |---|---|---|
 | `portal_url` | `https://joustmedia.com/portal` (staging: `…/portal-staging`) | every link in Slack and email |
+| `environment` | `'production'`; staging: **`'staging'`** | keeps staging off production's client replies (see below) |
 | `client_link_secret` | 32+ random characters | signed links in client emails, reply tokens, unsubscribe links |
 | `notify_cron_token` | 32+ random characters | the cron (step 4) |
 | `notify_to` | `lance@joustmedia.com` | Morning summary, reminder emails, weekly report |
@@ -53,7 +56,15 @@ Fill these in on the server. Manage → Notifications → **Setup** ticks each k
 | `slack_bot_token`, `slack_signing_secret` | from the Slack app (step 3) | Slack |
 | `google_client_id`, `google_client_secret` | from Google Cloud (step 5) | Gmail sending and replies |
 | `google_token_key` | 32+ random characters | encrypts the stored Google token |
-| `inbound_address` | blank (= `lance+ai@joustmedia.com`); staging: `lance+ai-staging@joustmedia.com` | where client replies go |
+| `inbound_address` | blank (= `lance+ai@joustmedia.com` in production, `lance+ai-staging@joustmedia.com` on staging) | where client replies go |
+
+### The staging environment setting
+
+Staging and production read client replies from the same Gmail mailbox. Each must read its **own** address, or staging would import (and label) production's replies.
+
+- [ ] In **staging's** `portal-staging/config.php`, set `'environment' => 'staging'`. Leave `inbound_address` blank: staging then uses `lance+ai-staging@joustmedia.com` by itself.
+- [ ] In **production's** config.php, set `'environment' => 'production'` (blank also means production unless `portal_url` says `portal-staging`).
+- [ ] If staging's `inbound_address` is ever set to production's `lance+ai@joustmedia.com`, staging **refuses to read replies**. Manage → Notifications → Setup then shows a red warning, and the **Environment** line says which address is in use.
 
 To make a random string, run `php -r 'echo bin2hex(random_bytes(24));'`, or use any password generator with 32+ characters.
 
@@ -106,22 +117,31 @@ Use the URL **without** `.php`. This one job runs everything time-based:
 - [ ] Optional: add **DMARC**, a TXT record with **Name** `_dmarc` and **Value** `v=DMARC1; p=none; rua=mailto:lance@joustmedia.com`.
 - [ ] Click **Send test email** on the Email card. In Gmail → ⋮ → **Show original** you should see **SPF: PASS** and **DKIM: PASS**.
 
-Until this step is done, email keeps going out with PHP mail() as before, and replies show **Not connected**.
+Until this step is done, sign-in links and your own reminders go out with PHP mail(). **Client emails are held** (kept in the queue, nothing lost) until Google is connected, and replies show **Not connected**.
+
+Every inbound reply is checked against Google's own verdict (DMARC, or a DKIM signature from the sender's domain). A reply that fails, for example a forged `From: lance@joustmedia.com`, is never posted. It waits under **Unmatched email replies** marked **Failed sender check**. Your own replies from lance@ pass once DKIM (above) is on.
 
 ## 6. Client contacts and client emails
 
-- [ ] In Manage → Clients, for each client, add the people who review under **Contacts**. They sign in with a one-time emailed link; no passwords.
-- [ ] On the same card, check the **Client emails** switches. All are **On** by default:
+**Client emails are OFF by default.** Adding contacts (so clients can sign in) does not email anyone. Manage → Clients shows a banner, *"Client emails are off — turn on per client when ready"*, plus *"Connect Google first"* until step 5 is done.
+
+To turn them on, **after connecting Google (step 5)**:
+
+- [ ] In Manage → Clients, for each client, add the people who review under **Contacts**. They sign in with a one-time emailed link; no passwords. Sign-in emails always go out, even before Google.
+- [ ] Check that Manage → Notifications → **Email** says **Sending with: Gmail API**. Until then, client emails stay held in the queue.
+- [ ] Open a client's card in Manage → Clients → **Client emails** and click **Turn on** for each kind it should get:
 
 | Email | When it is sent |
 |---|---|
-| **Ready for your review** | One email listing everything sent for review, 15 minutes after the last item. |
+| **Ready for your review** | One email listing everything sent for review, 15 minutes after the last item. This includes posts, emails, pages, tire renders (one row per series) and library images, with thumbnails. |
 | **Joust replied** | Your visible replies, batched over 10 minutes. Internal notes never go out. |
 | **Live & scheduled** | Once a day, at the Morning summary hour. |
+| **Gentle reminders** | Once a day, for items still To Review with no answer after **N days** (the **Remind after** field on the same card, default 3; 0 = never). Each item is mentioned at most once every N days. |
 
+- [ ] Repeat per client, when each one is ready.
 - [ ] Look at each template in Manage → Notifications → **Client emails** → **Preview** / **Text**.
 - [ ] Each contact can turn kinds off, or unsubscribe, from the link in every email, or from the portal (tab bar → **Email settings**).
-- [ ] Turn a client's switches **Off** if they should not get email yet.
+- [ ] Only if you must email clients before Google is connected: tick **Allow sending client emails without Google (mail())** on the Client emails card. These emails are not DKIM-signed (more spam folders), so connecting Google is better.
 
 ## 7. Clean links
 
@@ -130,7 +150,10 @@ Until this step is done, email keeps going out with PHP mail() as before, and re
 ## 8. Team
 
 - [ ] In Manage → Notifications → **Team**, add anyone else at Joust (name, email, Slack ID). Their portal comments and Slack replies carry their name.
-- [ ] In **Slack channel per client**, pick who gets @mentioned for each client.
+- [ ] In **Slack channel per client**, pick who gets @mentioned for each client. That person is the client's **owner**: their reminders go to them, and their Inbox **Mine** filter shows that client.
+- [ ] Each person can open **My notifications** (link in the Inbox and on Manage → Notifications) to turn off their Slack DM reminders, reminder emails, or the Morning summary and weekly report.
+- A client with **no Slack channel** is listed in a warning on Manage → Notifications. Its comments and decisions are emailed to the owner instead, at most one email per item every 15 minutes.
+- **Internal notes:** in any comment box, tick **Internal (Joust only)**. The box turns amber, the client never sees the note or gets an email about it, and Slack shows it in the item's thread marked internal.
 
 ## 9. The Inbox and reports
 
@@ -146,10 +169,12 @@ The **Joust Inbox** is Home → **Joust Inbox**. The Home tab's red badge counts
 - Blue dots mark threads with messages you have not opened yet. Clients see the same dots for your replies.
 - Every **Monday**, at the Morning summary hour, you get the **weekly report**: median and slowest first reply, items approved, items waiting over 24 hours, and per-client numbers. Preview it in Manage → Notifications → Client emails → **Weekly owner report**.
 - [ ] Change the reminder times and the Morning summary hour in Manage → Notifications → **Reminders** if you want.
+- [ ] **Quiet hours** (same card) hold back reminder nudges, DMs and emails during a window, for example 10 PM to 7 AM. The default is **None**: reminders run around the clock. Anything due goes out when the window ends.
+- The Inbox has **All clients / Mine** at the top. **Mine** shows only the clients you own.
 
 ## 10. Final end-to-end check (10 minutes)
 
-- [ ] Add your personal address as a contact of Hollow Mill Farm, create a post there, and click **Send for review**.
+- [ ] Add your personal address as a contact of Hollow Mill Farm, turn on its **Ready for your review** and **Joust replied** emails (Manage → Clients → Hollow Mill Farm → Client emails), create a post there, and click **Send for review**.
 - [ ] About 15 minutes later you get **"Ready for your review"**. **Review** opens the post, already signed in.
 - [ ] Reply to that email. Within 5 minutes the comment is on the post, Slack pings you in `#portal-hmf`, and the Inbox lists it under **Waiting on Joust** with a blue dot.
 - [ ] Answer it in the portal, or in the Slack thread. About 10 minutes later **"Joust replied"** arrives in the same email thread, and the item moves to **Resolved**.
@@ -159,4 +184,5 @@ If something does not arrive, start at Manage → Notifications:
 
 - **Delivery log** shows every Slack message and email with the error.
 - The **Email** card shows Google's last error.
-- **Unmatched email replies** lists replies that could not be placed on an item.
+- **Unmatched email replies** lists replies that could not be placed on an item, including any that **Failed sender check**.
+- Client emails not arriving at all? Check the **Client emails** card for *held* (Google not connected) and the client's switches in Manage → Clients (they start off).

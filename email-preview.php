@@ -2,7 +2,7 @@
 /**
  * Email template previews (Manage → Notifications → Client emails → Preview) — admin only, nothing is sent or written.
  *
- *   ?type=review|reply|live|weekly   which template (Ready for your review · Joust replied · Live & scheduled · the
+ *   ?type=review|reply|live|remind|weekly   which template (Ready for your review · Joust replied · Live & scheduled · Gentle reminder · the
  *                                    Monday owner report)
  *   &client=<slug>                   whose name / items the sample uses (default: the first client)
  *   &format=text                     the plain-text part instead of the HTML
@@ -15,7 +15,7 @@ require_once __DIR__ . '/auth.php';
 requireAdmin();
 
 $type = (string)($_GET['type'] ?? 'review');
-if (!in_array($type, ['review', 'reply', 'live', 'weekly'], true)) $type = 'review';
+if (!in_array($type, ['review', 'reply', 'live', 'remind', 'weekly'], true)) $type = 'review';
 $co = $client;
 if (!$co) {
     try { $co = $pdo->query("SELECT id, name, slug, logo_url FROM companies ORDER BY name ASC LIMIT 1")->fetch() ?: null; } catch (Throwable $e) { $co = null; }
