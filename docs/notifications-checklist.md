@@ -140,7 +140,7 @@ Use the URL **without** `.php`. This one job runs everything time-based:
   v=DMARC1; p=none; rua=mailto:lance@joustmedia.com
   ```
 
-  With a DMARC record, Google always writes a real `dmarc=` verdict, so a forged `From: lance@joustmedia.com` shows `dmarc=fail`. Check it with `dig +short TXT _dmarc.joustmedia.com` or any online DMARC checker.
+  DMARC is required because it protects joustmedia.com from spoofing everywhere, not just in the portal, and because the spoof test below needs it: with a DMARC record, Google writes a real `dmarc=` verdict, so a forged `From: lance@joustmedia.com` shows `dmarc=fail`. The portal itself never accepts a Joust From on DKIM / DMARC alone (only a reply sent from the connected mailbox). Check it with `dig +short TXT _dmarc.joustmedia.com` or any online DMARC checker.
   After two to four weeks of clean aggregate reports (they arrive at lance@) with nothing legitimate failing, tighten it to `v=DMARC1; p=quarantine; pct=100; rua=mailto:lance@joustmedia.com` (later, optionally, `p=reject`).
 - [ ] Click **Send test email** on the Email card. In Gmail → ⋮ → **Show original** you should see **SPF: PASS**, **DKIM: PASS** and **DMARC: PASS**.
 
@@ -188,7 +188,7 @@ To turn them on, **after connecting Google (step 5)**:
 
 ## 8. Team
 
-- [ ] **Check the Team list now** (Manage → Notifications → **Team**). Today only Lance exists, so nothing changes. Make sure it shows **only Lance**, with email **exactly** `lance@joustmedia.com` (the same as `notify_to`). Otherwise Lance gets a second, scoped "Morning summary (teammate)" and a second weekly report.
+- [ ] **Check the Team list now** (Manage → Notifications → **Team**). Today only Lance exists, so nothing changes. Make sure it shows **only Lance**, with email **exactly** `lance@joustmedia.com` (the same as `notify_to`). Otherwise the Morning summary and weekly report go to the `notify_to` address, and Lance's own row is treated as a teammate (its summary and weekly switches start off), so Lance may get neither.
 - [ ] Add anyone else at Joust (name, email, Slack ID). Their portal comments and Slack replies carry their name.
 - [ ] In **Slack channel per client**, pick who gets @mentioned for each client. That person is the client's **owner**: their reminders go to them, and their Inbox **Mine** filter shows that client.
 - **Adding a teammate starts no emails.** A new teammate's **Morning summary** and **Weekly report** switches start **off**; their **Slack DM** and **Escalation email** switches start on (those only fire for clients they own).
@@ -215,7 +215,9 @@ The **Joust Inbox** is Home → **Joust Inbox**. The Home tab's red badge counts
 - [ ] **Quiet hours** (same card) hold back reminder nudges, DMs and emails during a window, for example 10 PM to 7 AM. The default is **None**: reminders run around the clock. When the window ends, each waiting item gets **one** combined reminder (the email if it is due, else the DM, else the thread nudge) instead of every step at once. The catch-up skips the Slack thread re-ping, so the channel's parent message is not bumped; the Delivery log shows the others as "combined into #…".
 - The Inbox has **All clients / Mine** at the top. **Mine** shows only the clients you own.
 
-## 10. Final end-to-end check (10 minutes)
+## 10. Final end-to-end check (10 minutes, mandatory)
+
+**Do not skip this, and do it on production.** Staging cannot test the client email-reply path: staging only emails @joustmedia.com contacts, and an email reply from a Joust address always lands in Unmatched. This is the first real test of it. Do it before turning on client emails for any real client.
 
 - [ ] Add your personal address as a contact of Hollow Mill Farm, turn on its **Ready for your review** and **Joust replied** emails (Manage → Clients → Hollow Mill Farm → Client emails), create a post there, and click **Send for review**.
 - [ ] About 15 minutes later you get **"Ready for your review"**. **Review** opens the post, already signed in.
