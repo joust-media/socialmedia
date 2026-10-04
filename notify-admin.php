@@ -5,10 +5,12 @@
  *   action=settings      t1, t2 (minutes; 5 ≤ t1 < t2 ≤ 10080), summary_hour (0–23, America/New_York), quiet_start /
  *                        quiet_end (escalation quiet hours 0–23, both '' = none — the default)
  *   action=client_mail_allow   allow=1|0 → client emails may go out with PHP mail() before Google is connected
- *   action=my_prefs      dm, email, summary (1|0) → the signed-in admin's own notification switches
+ *   action=my_prefs      summary, weekly, dm, email (1|0) → the signed-in admin's own notification switches
  *   action=client        company_id, slack_channel_id ('' clears; C…/G… id), owner_user_id (0 = default owner)
  *   action=find_channel  company_id → looks up #portal-<slug> (conversations.list) and saves its id
- *   action=user          id (0 = new), name, email, slack_user_id ('' clears), active (0|1)
+ *   action=user          id (0 = new), name, email, slack_user_id ('' clears), active (0|1), pref_summary / pref_weekly /
+ *                        pref_dm / pref_email (1|0, optional) → that teammate's notification switches (Lance sets them
+ *                        here: there is one admin login). A new teammate starts with summary + weekly OFF.
  *   action=find_user     id → users.lookupByEmail(email) and saves the Slack user id
  *   action=test          company_id (0 = DM to me) → a test message, delivered now; reply carries the result
  *   action=retry         id → that outbox row back in the queue and delivered now
@@ -84,8 +86,9 @@ try {
             if (!adminPrefsReady($pdo)) notifyAdminFail(409, 'Run migrate.php first (step 51).');
             $me = currentAdminUserId($pdo);
             if (!$me) notifyAdminFail(409, 'Your sign-in is not on the Team list yet (Manage → Notifications → Team).');
+            $cur = adminUserPrefs(adminUserById($pdo, $me));
             $j = [];
-            foreach (array_keys(adminPrefKinds()) as $k) $j[$k] = $int($k) === 1 ? 1 : 0;
+            foreach (array_keys(adminPrefKinds()) as $k) $j[$k] = isset($_POST[$k]) ? ($int($k) === 1 ? 1 : 0) : (int)!empty($cur[$k]);   // unposted → unchanged
             $pdo->prepare("UPDATE admin_users SET notify_prefs = ? WHERE id = ?")->execute([json_encode($j), $me]);
             adminUsersReset();
             notifyAdminOut(200, ['ok' => true, 'message' => 'Saved', 'prefs' => $j]);
@@ -125,15 +128,27 @@ try {
             if (!filter_var($email, FILTER_VALIDATE_EMAIL)) notifyAdminFail(422, 'That email does not look right');
             if ($slack !== '' && !preg_match('/^[UW][A-Z0-9]{6,20}$/', $slack)) notifyAdminFail(422, 'A Slack user ID looks like U0123ABCD (profile → ⋯ → Copy member ID).');
             $active = $int('active', 1) ? 1 : 0;
+            // the teammate's notification switches (pref_summary / pref_weekly / pref_dm / pref_email, 1|0): only the
+            // ones posted change; a new teammate starts from adminNewUserPrefs() (Morning summary + weekly OFF).
+            $prefsIn = [];
+            foreach (array_keys(adminPrefKinds()) as $k) if (isset($_POST['pref_' . $k])) $prefsIn[$k] = $int('pref_' . $k) === 1 ? 1 : 0;
+            $prefsOk = adminPrefsReady($pdo);
             if ($id > 0) {
-                if (!adminUserById($pdo, $id)) notifyAdminFail(404, 'Unknown team member');
+                $prev = adminUserById($pdo, $id);
+                if (!$prev) notifyAdminFail(404, 'Unknown team member');
                 $pdo->prepare("UPDATE admin_users SET name = ?, email = ?, slack_user_id = ?, active = ? WHERE id = ?")->execute([$name, $email, $slack !== '' ? $slack : null, $active, $id]);
+                if ($prefsOk && $prefsIn) {
+                    $j = $prefsIn + array_map('intval', adminUserPrefs($prev));   // unposted keys keep their current (effective) value
+                    $pdo->prepare("UPDATE admin_users SET notify_prefs = ? WHERE id = ?")->execute([json_encode($j), $id]);
+                }
             } else {
                 $pdo->prepare("INSERT INTO admin_users (name, email, slack_user_id, active) VALUES (?, ?, ?, ?)")->execute([$name, $email, $slack !== '' ? $slack : null, $active]);
                 $id = (int)$pdo->lastInsertId();
+                if ($prefsOk) $pdo->prepare("UPDATE admin_users SET notify_prefs = ? WHERE id = ?")->execute([json_encode($prefsIn + adminNewUserPrefs()), $id]);
             }
             adminUsersReset();
-            notifyAdminOut(200, ['ok' => true, 'message' => $name . ' saved', 'id' => $id]);
+            $u = adminUserById($pdo, $id);
+            notifyAdminOut(200, ['ok' => true, 'message' => $name . ' saved', 'id' => $id, 'prefs' => $u ? adminUserPrefs($u) : null]);
         }
         case 'find_user': {
             $u = adminUserById($pdo, $int('id'));

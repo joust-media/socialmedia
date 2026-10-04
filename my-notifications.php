@@ -1,11 +1,15 @@
 <?php
 /**
- * My notifications (admin) — each Joust teammate's own switches (notify-lib.php adminPrefKinds(); admin_users.notify_prefs,
- * migrate.php 51; a missing key = on):
+ * My notifications (admin) — the signed-in person's own switches (notify-lib.php adminPrefKinds(); admin_users.notify_prefs,
+ * migrate.php 51; defaults in adminUserPrefs()):
+ *   summary  the Morning summary — every active teammate with it on gets their own, scoped to the clients they own
+ *            (else every client); notify_to (Lance) always gets every client (notifyMemberSummaries())
+ *   weekly   the Monday weekly report, scoped the same way
  *   dm       Slack DM reminders when a client of yours waits past the Slack reminder time
- *   email    reminder emails when a client of yours waits past the email reminder time
- *   summary  the Morning summary and the Monday weekly report — every active teammate gets their own, scoped to the
- *            clients they own (else every client); notify_to (Lance) always gets every client (notifyMemberSummaries())
+ *   email    reminder (escalation) emails when a client of yours waits past the email reminder time
+ * Lance's own record: everything on unless he turns it off. A teammate: Morning summary + weekly OFF until turned on.
+ * There is one admin login, so Lance sets a teammate's switches in Manage → Notifications → Team (notify-admin.php
+ * action=user, pref_*); this page edits only the signed-in person's row.
  * "Yours" = the clients you own (Manage → Notifications → Slack channel per client → @ owner; unowned clients go to the
  * first active teammate). The Inbox's "Mine" filter shows the same clients. Saves through notify-admin.php action=my_prefs
  * (static/js/notifications.js). Signed-in admin only; every teammate sees and changes only their own row.

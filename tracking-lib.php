@@ -378,7 +378,7 @@ if (!function_exists('trackingWeeklyDue')) {
 
 if (!function_exists('trackingWeeklyQueue')) {
     /** Queue the report for the 7 days before today 00:00: the main one (notify_to, else the owner — every client), plus
-     *  one per teammate with "Morning summary & weekly report" on (notifySummaryMembers(): scoped to the clients they
+     *  one per teammate with "Weekly report" on (notifySummaryMembers($pdo, 'weekly'): scoped to the clients they
      *  own, else every client; dedupe weekly:u<id>:<date>). → how many were queued (0 = none: no recipient / all off). */
     function trackingWeeklyQueue(PDO $pdo): int {
         $end = date('Y-m-d 00:00:00');
@@ -387,10 +387,10 @@ if (!function_exists('trackingWeeklyQueue')) {
         $n = 0;
         $to = function_exists('notifySummaryPrimary') ? notifySummaryPrimary($pdo) : notifyCfg('notify_to');
         $rcpt = $to !== '' ? adminUserByEmail($pdo, $to) : null;
-        if ($to !== '' && (!$rcpt || adminUserPrefs($rcpt)['summary'])) {   // the main recipient may turn it off (My notifications)
+        if ($to !== '' && (!$rcpt || adminUserPrefs($rcpt)['weekly'])) {   // the main recipient may turn it off (My notifications)
             if (notifyEnqueue($pdo, 'email', 'weekly', ['to' => $to, 'from' => $start, 'until' => $end], ['dedupe' => 'weekly:' . date('Y-m-d'), 'target' => $to, 'defer' => true]) > 0) $n++;
         }
-        foreach (function_exists('notifySummaryMembers') ? notifySummaryMembers($pdo) : [] as $m) {
+        foreach (function_exists('notifySummaryMembers') ? notifySummaryMembers($pdo, 'weekly') : [] as $m) {
             $dedupe = 'weekly:u' . (int)$m['user']['id'] . ':' . date('Y-m-d');
             if (notifyEnqueueOnce($pdo, 'email', 'weekly', ['to' => (string)$m['user']['email'], 'user_id' => (int)$m['user']['id'], 'from' => $start, 'until' => $end,
                                                            'company_ids' => $m['scope'] === null ? null : array_keys($m['scope'])],
@@ -405,7 +405,7 @@ if (!function_exists('trackingDeliverWeekly')) {
         if (!empty($p['user_id'])) {   // a teammate's copy: still active, still wanted
             $u = adminUserById($pdo, (int)$p['user_id']);
             if (!$u || empty($u['active'])) return ['ok' => false, 'skip' => true, 'error' => 'that teammate is no longer active'];
-            if (!adminUserPrefs($u)['summary']) return ['ok' => false, 'skip' => true, 'error' => $u['name'] . ' turned the weekly report off (My notifications)'];
+            if (!adminUserPrefs($u)['weekly']) return ['ok' => false, 'skip' => true, 'error' => $u['name'] . '’s weekly report is off (My notifications / Manage → Team)'];
         }
         $ids = isset($p['company_ids']) && is_array($p['company_ids']) ? array_map('intval', $p['company_ids']) : null;
         $r = trackingWeeklyRender(trackingWeeklyStats($pdo, (string)$p['from'], (string)$p['until'], $ids));

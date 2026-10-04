@@ -309,25 +309,51 @@ if (!function_exists('adminPrefsReady')) {
 }
 
 if (!function_exists('adminPrefKinds')) {
-    /** Per-person notification switches (My notifications): key → [label, help]. A missing key = on. */
+    /** Per-person notification switches (My notifications; Lance can set a teammate's in Manage → Notifications → Team):
+     *  key → [label, help]. Defaults: adminUserPrefs(). */
     function adminPrefKinds(): array {
         return [
+            'summary' => ['Morning summary', 'The daily digest of client activity — for the clients you own (every client if you own none)'],
+            'weekly'  => ['Weekly report', 'The Monday report — for the clients you own (every client if you own none)'],
             'dm'      => ['Slack DM reminders', 'A direct message when a client of yours has waited past the Slack reminder time'],
             'email'   => ['Reminder emails', 'An email when a client of yours has waited past the email reminder time'],
-            'summary' => ['Morning summary & weekly report', 'The daily digest of client activity and the Monday report — for the clients you own (every client if you own none)'],
         ];
     }
 }
 
+if (!function_exists('adminUserIsPrimary')) {
+    /** The main recipient (config notify_to — Lance): his record keeps every switch on by default, as before. When
+     *  notify_to is not set, the team owner (role owner) is. */
+    function adminUserIsPrimary(?array $user): bool {
+        if (!$user) return false;
+        $to = strtolower(trim((string)preg_replace('/^.*<([^>]+)>\s*$/', '$1', notifyCfg('notify_to'))));
+        if ($to !== '') return strcasecmp(trim((string)$user['email']), $to) === 0;
+        return (string)($user['role'] ?? '') === 'owner';
+    }
+}
+
 if (!function_exists('adminUserPrefs')) {
-    /** kind → bool for one admin user row (adminUsers()); every switch on unless turned off. */
+    /** kind → bool for one admin user row (adminUsers()). A key that was never saved: Slack DMs and reminder emails
+     *  on; the Morning summary and weekly report on only for the main recipient (adminUserIsPrimary() — Lance), OFF for
+     *  every other teammate, so adding someone never starts emails they did not ask for. An older row that saved only
+     *  'summary' (one switch for both) keeps that value for the weekly report too. */
     function adminUserPrefs(?array $user): array {
         $j = $user ? json_decode((string)($user['notify_prefs'] ?? ''), true) : null;
         $j = is_array($j) ? $j : [];
+        if (!array_key_exists('weekly', $j) && array_key_exists('summary', $j)) $j['weekly'] = $j['summary'];
+        $primary = adminUserIsPrimary($user);
         $out = [];
-        foreach (array_keys(adminPrefKinds()) as $k) $out[$k] = !array_key_exists($k, $j) || !empty($j[$k]);
+        foreach (array_keys(adminPrefKinds()) as $k) {
+            $def = in_array($k, ['summary', 'weekly'], true) ? $primary : true;
+            $out[$k] = array_key_exists($k, $j) ? !empty($j[$k]) : $def;
+        }
         return $out;
     }
+}
+
+if (!function_exists('adminNewUserPrefs')) {
+    /** What a teammate added in Manage → Team starts with: DMs and reminder emails on, Morning summary + weekly OFF. */
+    function adminNewUserPrefs(): array { return ['summary' => 0, 'weekly' => 0, 'dm' => 1, 'email' => 1]; }
 }
 
 if (!function_exists('adminUserByEmail')) {
@@ -2188,16 +2214,17 @@ if (!function_exists('notifyUserCompanyScope')) {
 }
 
 if (!function_exists('notifySummaryMembers')) {
-    /** Teammates who get their own Morning summary + weekly report: every ACTIVE admin user with "Morning summary &
-     *  weekly report" on (My notifications) other than the main recipient (notifySummaryPrimary()), each with their
-     *  scope → [['user' => row, 'scope' => [company_id => name] | null (all clients)]]. */
-    function notifySummaryMembers(PDO $pdo): array {
+    /** Teammates who get their own Morning summary ($kind 'summary') or weekly report ($kind 'weekly'): every ACTIVE
+     *  admin user with that switch on (My notifications, or Manage → Team; off by default for teammates —
+     *  adminUserPrefs()) other than the main recipient (notifySummaryPrimary()), each with their scope
+     *  → [['user' => row, 'scope' => [company_id => name] | null (all clients)]]. */
+    function notifySummaryMembers(PDO $pdo, string $kind = 'summary'): array {
         $primary = strtolower(trim((string)preg_replace('/^.*<([^>]+)>\s*$/', '$1', notifySummaryPrimary($pdo))));
         $out = [];
         foreach (adminUsers($pdo) as $u) {
             $email = strtolower(trim((string)$u['email']));
             if (empty($u['active']) || $email === '' || $email === $primary || !filter_var($email, FILTER_VALIDATE_EMAIL)) continue;
-            if (!adminUserPrefs($u)['summary']) continue;
+            if (empty(adminUserPrefs($u)[$kind])) continue;
             $out[] = ['user' => $u, 'scope' => notifyUserCompanyScope($pdo, $u)];
         }
         return $out;

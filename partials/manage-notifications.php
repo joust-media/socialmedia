@@ -127,6 +127,12 @@ $nfEnv = $nfEnvInfo['env'];
 $nfEnvHow = ['config' => 'set by <code>environment</code> in config.php', 'portal_url' => 'detected: <code>portal_url</code> contains “staging”',
              'folder' => 'detected: the portal folder name contains “staging”', 'default' => 'no staging signs — set <code>environment</code> in config.php to be explicit'][$nfEnvInfo['source']] ?? '';
 $nfInboundShared = function_exists('inboundSharedWithProduction') && inboundSharedWithProduction();
+// Staging: client emails only to test contacts (client-notify-lib.php clientEmailStagingAllows())
+$nfStagingDomains = function_exists('clientEmailStagingDomains') ? clientEmailStagingDomains() : [];
+$nfStagingBlocked = 0;
+if ($nfReady && $nfEnv === 'staging') {
+    try { $nfStagingBlocked = (int)$pdo->query("SELECT COUNT(*) FROM notify_outbox WHERE kind = 'client_email' AND status = 'skipped' AND last_error LIKE 'blocked on staging%'")->fetchColumn(); } catch (Throwable $e) {}
+}
 // Client emails: held until Google (or mail() explicitly allowed) — client-notify-lib.php clientEmailTransportOk()
 $nfClientMailAllow = function_exists('clientEmailAllowMail') && clientEmailAllowMail($pdo);
 $nfClientMailOk = function_exists('clientEmailTransportOk') && clientEmailTransportOk($pdo);
@@ -157,12 +163,17 @@ $nfHourLabel = static function (int $h): string { return date('g A', mktime($h, 
           <span class="nf-check-body"><span class="nf-check-label">Environment</span>
           <span class="nf-check-state"><strong data-environment-label><?= $nfEnv === 'staging' ? 'Staging' : 'Production' ?></strong> · replies to <?= $nfH(function_exists('inboundAddress') ? inboundAddress() : '') ?> <span class="text-secondary" data-environment-how>(<?= $nfEnvHow ?>)</span></span></span></li>
       </ul>
+      <?php if ($nfEnv === 'staging'): ?>
+        <p class="studio-help" data-staging-email-rule data-staging-blocked="<?= (int)$nfStagingBlocked ?>">
+          <strong>Staging:</strong> client emails go only to contacts at <?= $nfH(implode(', ', array_map(static function ($d) { return '@' . $d; }, $nfStagingDomains))) ?> (<code>staging_allowed_email_domains</code> in config.php). Every other copy is held back and logged as “blocked on staging” in the Delivery log<?= $nfStagingBlocked > 0 ? ' — ' . (int)$nfStagingBlocked . ' so far' : '' ?>.
+        </p>
+      <?php endif; ?>
       <?php if ($nfInboundShared): ?>
         <div class="studio-alert studio-alert--error" role="alert" data-staging-inbound-warning>
           This is <strong>staging</strong>, but its inbound address is production’s <code><?= $nfH(INBOUND_PROD_ADDRESS) ?></code>. Staging will not read replies until <code>inbound_address</code> in config.php is set to <code><?= $nfH(INBOUND_STAGING_ADDRESS) ?></code> (or left blank) — otherwise it would import and label production’s client replies.
         </div>
       <?php endif; ?>
-      <p class="studio-help" data-my-notifications-link>Your own Slack DMs, reminder emails and the Morning summary: <a href="<?= $nfH(portalUrl('my-notifications')) ?>">My notifications</a>. Each teammate sets theirs.</p>
+      <p class="studio-help" data-my-notifications-link>Your own Slack DMs, reminder emails, Morning summary and weekly report: <a href="<?= $nfH(portalUrl('my-notifications')) ?>">My notifications</a>. A teammate’s: their row under Team below (new teammates start with the summary and weekly report off).</p>
       <dl class="nf-urls">
         <dt>Slack Events URL</dt><dd><code data-url="events"><?= $nfH(notifyMachineUrl('slack-events')) ?></code></dd>
         <dt>Slack Interactivity URL</dt><dd><code data-url="actions"><?= $nfH(notifyMachineUrl('slack-actions')) ?></code></dd>
@@ -383,6 +394,14 @@ $nfHourLabel = static function (int $h): string { return date('g A', mktime($h, 
             <input class="ui-input" name="email" type="email" value="<?= $nfH($u['email']) ?>" aria-label="Email" required>
             <input class="ui-input" name="slack_user_id" value="<?= $nfH((string)$u['slack_user_id']) ?>" placeholder="Slack ID, e.g. U0123ABCD" aria-label="Slack user ID" autocomplete="off" spellcheck="false">
           </div>
+          <?php if (function_exists('adminPrefsReady') && adminPrefsReady($pdo)): $nfUp = adminUserPrefs($u); ?>
+          <fieldset class="nf-user-prefs" data-user-prefs="<?= (int)$u['id'] ?>">
+            <legend class="nf-user-prefs-legend">Notifications</legend>
+            <?php foreach (['summary' => 'Morning summary', 'weekly' => 'Weekly report', 'dm' => 'Slack DM', 'email' => 'Escalation email'] as $nfK => $nfL): ?>
+              <label class="studio-export-choice" data-user-pref="<?= $nfH($nfK) ?>"><input type="checkbox" name="pref_<?= $nfH($nfK) ?>" value="1"<?= !empty($nfUp[$nfK]) ? ' checked' : '' ?>> <span><?= $nfH($nfL) ?></span></label>
+            <?php endforeach; ?>
+          </fieldset>
+          <?php endif; ?>
           <div class="nf-row-actions">
             <label class="studio-export-choice"><input type="checkbox" name="active" value="1"<?= !empty($u['active']) ? ' checked' : '' ?>> <span>Active</span></label>
             <button type="submit" class="ui-btn ui-btn--gray ui-btn--sm">Save</button>
@@ -403,7 +422,7 @@ $nfHourLabel = static function (int $h): string { return date('g A', mktime($h, 
         <div class="nf-row-actions"><button type="submit" class="ui-btn ui-btn--tinted ui-btn--sm">Add</button></div>
       </div>
     </form></li>
-  <?= insetListClose('Names show on comments (“Lance at Joust” for clients). A Slack reply or button press counts as that person; replies starting with !internal stay internal notes.') ?>
+  <?= insetListClose('Names show on comments (“Lance at Joust” for clients). A Slack reply or button press counts as that person; replies starting with !internal stay internal notes. Notifications: what each person gets — a new teammate starts with the Morning summary and weekly report off. Turning these off never changes who owns a client; Inactive removes the person entirely (no emails, not an owner or @mention / DM target).') ?>
 
   <!-- Delivery log ------------------------------------------------------------------ -->
   <section class="ui-card nf-card nf-log-card" data-notify-log>

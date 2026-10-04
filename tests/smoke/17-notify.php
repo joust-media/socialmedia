@@ -16,6 +16,7 @@ const J       = ['Accept' => 'application/json'];
 
 // The app pins MySQL sessions to America/New_York (db.php); NOW() here must mean the same wall clock.
 db()->exec("SET time_zone = '" . (new DateTime('now', new DateTimeZone('America/New_York')))->format('P') . "'");
+date_default_timezone_set('America/New_York');   // the app's clock (date('Y-m-d') below must match it after 8 PM ET too)
 
 function nroot(): string { return rtrim((string)(getenv('PORTAL_TEST_ROOT') ?: '/tmp/portal-test'), '/'); }
 /** Every call the fake Slack received, oldest first: [{method, auth, body}]. */

@@ -189,17 +189,21 @@ ftest('inbound: a forged From: lance@joustmedia.com with the right [J#] tag → 
     is($last['client_contact_id'], null);
 });
 
-ftest('inbound: genuine mail passes — DMARC pass from Lance posts as Joust; an aligned DKIM pass from a contact posts as Jane', function () {
+ftest('inbound: genuine mail passes — Lance’s own reply (connected mailbox, SENT) posts as Joust; an aligned DKIM pass from a contact posts as Jane; Lance via DMARC alone does not', function () {
     connectGoogle();
     $tok = itemToken();
     db()->exec("UPDATE client_email_queue SET batch_key = 'old' WHERE batch_key IS NULL");
-    deliver('g1', rawMail(['From' => 'Lance <lance@joustmedia.com>', 'Subject' => 'Re: Spring launch hero [J#' . $tok . ']'], "Will do, Jane.",
+    deliver('g1', rawMail(['From' => 'Lance <lance@joustmedia.com>', 'Subject' => 'Re: Spring launch hero [J#' . $tok . ']'], "Will do, Jane.", []), ['SENT', 'INBOX']);
+    // round 4: a Joust From is never accepted on DKIM / DMARC, however perfect — only from the connected mailbox
+    deliver('g0', rawMail(['From' => 'Lance <lance@joustmedia.com>', 'Subject' => 'Re: Spring launch hero [J#' . $tok . ']'], "From outside the mailbox.",
         [googleAr('pass', 'joustmedia.com', 'pass', 'pass', 'joustmedia.com')]));
     // DMARC not evaluated (the domain has no DMARC record), DKIM pass signed by the From domain
     deliver('g2', rawMail(['From' => 'Jane Kenda <jane@kenda.example>', 'Subject' => 'Re: Spring launch hero [J#' . $tok . ']'], "Thanks, looks great.",
         ["mx.google.com;\r\n       dkim=pass header.i=@kenda.example header.s=k1 header.b=Q1;\r\n       spf=softfail smtp.mailfrom=jane@kenda.example"]));
     $c = cron();
     is((int)$c['inbound']['posted'], 2);
+    has((string)q1("SELECT reason FROM email_inbound WHERE gmail_id = 'g0'"), 'never on DKIM / DMARC');
+    has((string)q1("SELECT reason FROM email_inbound WHERE gmail_id = 'g0'"), 'dmarc=pass');
     $a = commentsOn(1, 'admin');
     is(end($a)['detail'], 'Will do, Jane.');
     is((int)end($a)['author_user_id'], 1, 'Lance');
@@ -640,12 +644,12 @@ ftest('escalation quiet hours: none by default; inside the window nothing escala
 ftest('My notifications: each admin’s own switches (DM, reminder email, summary) are honoured; the Inbox "Mine" filter', function () {
     $p = get('my-notifications.php', 'admin');
     is($p['code'], 200);
-    foreach (['dm', 'email', 'summary'] as $k) has($p['body'], 'data-my-pref="' . $k . '"');
+    foreach (['dm', 'email', 'summary', 'weekly'] as $k) has($p['body'], 'data-my-pref="' . $k . '"');
     has($p['body'], 'data-my-client="kenda"', 'Lance owns the clients by default');
     is(get('my-notifications.php', 'client:kenda')['code'], 302, 'admin only');
     is(post('notify-admin.php', ['action' => 'my_prefs', 'dm' => 0, 'email' => 0, 'summary' => 0], 'client:kenda', [], J)['code'], 403);
     status(post('notify-admin.php', ['action' => 'my_prefs', 'dm' => 0, 'email' => 0, 'summary' => 1], 'admin', [], J), 200);
-    is(json_decode((string)q1("SELECT notify_prefs FROM admin_users WHERE id = 1"), true), ['dm' => 0, 'email' => 0, 'summary' => 1]);
+    is(json_decode((string)q1("SELECT notify_prefs FROM admin_users WHERE id = 1"), true), ['summary' => 1, 'weekly' => 1, 'dm' => 0, 'email' => 0], 'weekly not posted → unchanged (on for Lance)');
     ok(preg_match('#id="myPref-dm"[^>]*>#', get('my-notifications.php', 'admin')['body'], $mm) === 1 && strpos($mm[0], 'checked') === false, 'DM shows off');
     // escalation honours them: the thread re-ping still happens, no DM, no email
     clientComment(1, 'Hello?');
@@ -743,9 +747,9 @@ ftest('no Slack channel: client activity emails the owner at once, at most one p
 // detection, the hidden-post notice + asset deep links marking replies read
 // =====================================================================================================================
 /** inboundAuthCheck() on one message with the given Authentication-Results values (topmost first). */
-function authOk(string $from, array $ar, array $o = []): array {
+function authOk(string $from, array $ar, array $o = [], array $cfg = []): array {
     $raw = rawMail(['From' => $from, 'Subject' => 'x'], 'x', $ar);
-    return appJson('echo json_encode(inboundAuthCheck(notifyMimeParse(' . var_export($raw, true) . '), ' . var_export(strtolower(preg_replace('/^.*<|>.*$/', '', $from)), true) . ', ' . var_export($o, true) . '));');
+    return appJson('echo json_encode(inboundAuthCheck(notifyMimeParse(' . var_export($raw, true) . '), ' . var_export(strtolower(preg_replace('/^.*<|>.*$/', '', $from)), true) . ', ' . var_export($o, true) . '));', $cfg);
 }
 ftest('inbound sender check: quote- and comment-aware parsing; only Google’s topmost header; dmarc for exactly the From domain; aligned DKIM required', function () {
     $L = 'lance@joustmedia.com';
@@ -783,8 +787,8 @@ ftest('inbound sender check: quote- and comment-aware parsing; only Google’s t
         ok(strpos((string)$r['reason'], 'Failed sender check') === 0, $name . ': ' . $r['reason']);
     }
     $yes = [
-        'Lance through Google' => [$L, ['mx.google.com; dkim=pass header.i=@joustmedia.com header.s=google header.b=Ab1; spf=pass (google.com: domain of "lance"@joustmedia.com designates 192.0.2.1 as permitted sender) smtp.mailfrom="lance"@joustmedia.com; dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=joustmedia.com']],
-        'versioned method and quoted values' => [$L, ['mx.google.com 1; dkim/1=pass header.d="joustmedia.com" header.s=google; dmarc=pass header.from="joustmedia.com"']],
+        'a contact through Google, quoted local part in a comment' => ['jane@kenda.example', ['mx.google.com; dkim=pass header.i=@kenda.example header.s=google header.b=Ab1; spf=pass (google.com: domain of "jane"@kenda.example designates 192.0.2.1 as permitted sender) smtp.mailfrom="jane"@kenda.example; dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=kenda.example']],
+        'versioned method and quoted values' => ['jane@kenda.example', ['mx.google.com 1; dkim/1=pass header.d="kenda.example" header.s=google; dmarc=pass header.from="kenda.example"']],
         'a contact without a DMARC record' => ['jane@kenda.example', ['mx.google.com; dkim=pass header.i=@kenda.example; spf=pass smtp.mailfrom=kenda.example']],
         'dmarc=bestguesspass' => ['jane@kenda.example', ['mx.google.com; dkim=pass header.d=kenda.example; dmarc=bestguesspass header.from=kenda.example']],
         'a sub-domain From, signed by the organizational domain' => ['jane@mail.kenda.example', ['mx.google.com; dkim=pass header.d=kenda.example; dmarc=pass header.from=mail.kenda.example']],
@@ -990,6 +994,7 @@ ftest('client tab badges: To Review + unread Joust replies, never counted twice;
 ftest('Morning summary + weekly report for teammates: every active one with the switch on, scoped to "Mine", one per person per day; Lance still gets everything', function () {
     db()->exec("INSERT INTO admin_users (id, name, email, role, active) VALUES (2, 'Sam', 'sam@joustmedia.com', 'admin', 1), (3, 'Ana', 'ana@joustmedia.com', 'admin', 1),
                 (4, 'Bob', 'bob@joustmedia.com', 'admin', 1), (5, 'Old', 'old@joustmedia.com', 'admin', 0)");
+    db()->exec("UPDATE admin_users SET notify_prefs = '{\"summary\":1,\"weekly\":1}' WHERE id IN (2, 3, 5)");   // teammates start off; turned on
     db()->exec("UPDATE admin_users SET notify_prefs = '{\"summary\":0}' WHERE id = 4");
     db()->exec("UPDATE notify_clients SET owner_user_id = 2 WHERE company_id = 2");   // Sam owns Privacy Bee; Ana owns nothing
     clearMail();
@@ -1084,6 +1089,254 @@ ftest('quiet hours catch-up: an item that came due while it was quiet gets ONE c
     // unit: when the window last ended
     is(appJson('notifyMetaSet($pdo, "notify_quiet_start", "22"); notifyMetaSet($pdo, "notify_quiet_end", "7"); $t = mktime(9, 30, 0, 3, 10, 2026); $u = mktime(6, 0, 0, 3, 10, 2026);'
              . ' echo json_encode([date("Y-m-d H:i", notifyQuietLastEnd($pdo, $t)), date("Y-m-d H:i", notifyQuietLastEnd($pdo, $u))]);'), ['2026-03-10 07:00', '2026-03-09 07:00']);
+});
+
+// =====================================================================================================================
+// Round 4 (scratchpad notif-rescore3.md §5): comment-embedded injection (n1–n3) closed — quoted strings inside
+// comments are opaque, nothing in a comment is trusted, malformed / ambiguous rejects; a Joust address only ever via
+// the connected mailbox's SENT path (never DKIM / DMARC), and only the mailbox + its aliases; teammates' switches in
+// Manage → Team (summary + weekly default OFF for teammates); staging emails only test contacts
+// =====================================================================================================================
+ftest('sender check, round 4: the comment-embedded injection (n1–n3) and its variants are rejected; genuine Google headers still parse', function () {
+    $L = 'lance@joustmedia.com';
+    // the auditor's n1 / n2 / n3 verbatim (scratchpad audit4-extra.php): Google echoes the envelope sender in the spf comment
+    $q = '"x);dkim=pass header.d=joustmedia.com;spf=pass (y"@evil.example';
+    $n1 = "mx.google.com;\r\n       dkim=pass header.i=@evil.example header.s=s1 header.b=abc;\r\n       spf=pass (google.com: domain of {$q} designates 1.2.3.4 as permitted sender) smtp.mailfrom={$q}";
+    $n2 = $n1 . ";\r\n       dmarc=fail (p=NONE sp=NONE dis=NONE) header.from=joustmedia.com";
+    $q2 = '"x);dmarc=pass header.from=joustmedia.com;dkim=pass header.d=joustmedia.com;spf=pass (y"@evil.example';
+    $n3 = "mx.google.com;\r\n       spf=pass (google.com: domain of {$q2} designates 1.2.3.4 as permitted sender) smtp.mailfrom={$q2}";
+    // the same tricks against a CONTACT (no Joust rule in the way: the parser alone must hold)
+    $k = '"x);dkim=pass header.d=kenda.example;spf=pass (y"@evil.example';
+    $k3 = '"x);dmarc=pass header.from=kenda.example;dkim=pass header.d=kenda.example;spf=pass (y"@evil.example';
+    $J = 'jane@kenda.example';
+    $no = [
+        'n1: comment injection, no dmarc result' => [$L, [$n1]],
+        'n2: comment injection + Google’s dmarc=fail' => [$L, [$n2]],
+        'n3: comment injection of dmarc=pass + dkim=pass' => [$L, [$n3]],
+        'n1 against a contact' => [$J, ["mx.google.com; dkim=pass header.i=@evil.example; spf=pass (google.com: domain of {$k} designates 1.2.3.4 as permitted sender) smtp.mailfrom={$k}"]],
+        'n3 against a contact' => [$J, ["mx.google.com; spf=pass (google.com: domain of {$k3} designates 1.2.3.4 as permitted sender) smtp.mailfrom={$k3}"]],
+        'nested quotes and comments inside a comment' => [$J, ['mx.google.com; spf=pass (outer "q ) ; dkim=pass header.d=kenda.example" (inner "x)" ; dmarc=pass) ok) smtp.mailfrom=evil.example; dkim=pass header.d=evil.example']],
+        'escaped quote inside a quoted string in a comment' => [$J, ['mx.google.com; spf=pass (domain of "a\");dkim=pass header.d=kenda.example;spf=pass (b"@evil.example ok) smtp.mailfrom=evil.example; dkim=pass header.d=evil.example']],
+        'escaped ) inside a comment' => [$J, ['mx.google.com; spf=pass (x \) ; dkim=pass header.d=kenda.example ; dmarc=pass header.from=kenda.example) smtp.mailfrom=evil.example']],
+        'a quote left open inside a comment' => [$J, ['mx.google.com; spf=pass (domain of "x@evil.example) smtp.mailfrom=x@evil.example; dkim=pass header.d=kenda.example']],
+        'unbalanced ( — comment never closes' => [$J, ['mx.google.com; spf=pass (unclosed ( comment) smtp.mailfrom=x; dkim=pass header.d=kenda.example']],
+        'unbalanced ) — a stray close' => [$J, ['mx.google.com; spf=pass x) ; dkim=pass header.d=kenda.example; dmarc=pass header.from=kenda.example']],
+        'fake header.d inside a comment' => [$J, ['mx.google.com; dkim=pass (header.d=kenda.example) header.d=evil.example; dmarc=none']],
+        'fake header.d inside a trailing comment' => [$J, ['mx.google.com; dkim=pass header.i=@evil.example (header.d=kenda.example; dmarc=pass header.from=kenda.example)']],
+        'a whole result inside a comment' => [$J, ['mx.google.com; spf=none (dkim=pass header.d=kenda.example)']],
+        'comments nested deeper than 8' => [$J, ['mx.google.com; dkim=pass header.d=kenda.example (((((((((x)))))))))']],
+        'a control byte' => [$J, ["mx.google.com; dkim=pass header.d=kenda.example\x01; dmarc=pass header.from=kenda.example"]],
+        'a dangling backslash' => [$J, ['mx.google.com; dkim=pass header.d=kenda.example; spf=pass (x \\']],
+        'a backslash outside quotes' => [$J, ['mx.google.com; dkim=pass header.d=kenda.ex\ample']],
+    ];
+    foreach ($no as $name => $c) {
+        $r = authOk($c[0], $c[1], $c[2] ?? []);
+        is($r['ok'], false, 'rejected: ' . $name . ' → ' . $r['reason']);
+        ok(strpos((string)$r['reason'], 'Failed sender check') === 0, $name . ': ' . $r['reason']);
+    }
+    // the malformed ones say so
+    has(authOk($J, ['mx.google.com; spf=pass x) ; dkim=pass header.d=kenda.example'])['reason'], 'unreadable Authentication-Results');
+    has(authOk($J, ['mx.google.com; spf=pass (domain of "x@evil.example) smtp.mailfrom=x; dkim=pass header.d=kenda.example'])['reason'], 'malformed or ambiguous');
+    // genuine headers with quotes and parentheses in Google's comment still pass for a contact
+    $yes = [
+        'a quoted local part with ) in the spf comment' => [$J, ['mx.google.com; dkim=pass header.i=@kenda.example header.s=s1; spf=pass (google.com: domain of "jane)x"@kenda.example designates 192.0.2.1 as permitted sender) smtp.mailfrom="jane)x"@kenda.example; dmarc=pass (p=NONE sp=NONE dis=NONE) header.from=kenda.example']],
+        'nested comments, balanced' => [$J, ['mx.google.com; dkim=pass (good (2048-bit key)) header.d=kenda.example; dmarc=pass (p=REJECT) header.from=kenda.example']],
+    ];
+    foreach ($yes as $name => $c) {
+        $r = authOk($c[0], $c[1]);
+        is($r['ok'], true, 'accepted: ' . $name . ' → ' . ($r['reason'] ?? ''));
+    }
+    // the tokenizer: n1 is three top-level segments (header, dkim, spf); nothing from inside the comment leaks out
+    $j = appJson('$s = inboundArSegments(' . var_export($n1, true) . '); $p = inboundArParse(' . var_export($n1, true) . ');'
+        . ' echo json_encode([count($s), array_column($p["results"], "method"), $p["results"][0]["props"]["header.i"] ?? null, inboundArSegments("a (b \"c) d"), inboundArSegments("a) b"), inboundArSegments("a (b \\"\\\\\\") c\\") d")]);');
+    is($j[0], 3, 'three segments');
+    is($j[1], ['dkim', 'spf']);
+    is($j[2], '@evil.example');
+    is($j[3], null, 'quote left open in a comment → null');
+    is($j[4], null, 'stray ) → null');
+    ok(is_array($j[5]) && count($j[5]) === 1, 'escaped quote inside a quoted string in a comment: one segment');
+});
+
+ftest('sender check, round 4: a Joust address is accepted ONLY from the connected mailbox (SENT, no Authentication-Results) — never on DKIM / DMARC; aliases configurable', function () {
+    $sentO = ['labelIds' => ['SENT', 'INBOX'], 'fetched' => true];
+    $pass = static function (string $d): string { return "mx.google.com; dkim=pass header.i=@{$d} header.s=google; spf=pass smtp.mailfrom={$d}; dmarc=pass (p=NONE) header.from={$d}"; };
+    $no = [
+        'Lance with a perfect Google DKIM + DMARC pass (outside the mailbox)' => ['lance@joustmedia.com', [$pass('joustmedia.com')], ['labelIds' => ['INBOX'], 'fetched' => true]],
+        'Lance, perfect pass AND SENT (a header present → not his own internal copy)' => ['lance@joustmedia.com', [$pass('joustmedia.com')], $sentO],
+        'Lance, SENT, a foreign header on top (s7)' => ['lance@joustmedia.com', ['evil.example; dmarc=pass header.from=joustmedia.com'], $sentO],
+        'an active teammate, SENT, no header (s5)' => ['sam@joustmedia.com', [], $sentO],
+        'any other @joustmedia.com with a perfect pass' => ['billing@joustmedia.com', [$pass('joustmedia.com')]],
+        'a sub-domain of joustmedia.com with a perfect pass' => ['lance@mail.joustmedia.com', [$pass('mail.joustmedia.com')]],
+        'an alias that is not configured, SENT' => ['hello@joustmedia.com', [], $sentO],
+        'Lance, no header, SENT but not fetched from the API' => ['lance@joustmedia.com', [], ['labelIds' => ['SENT']]],
+    ];
+    db()->exec("INSERT INTO admin_users (id, name, email, role, active) VALUES (2, 'Sam', 'sam@joustmedia.com', 'admin', 1)");
+    foreach ($no as $name => $c) {
+        $r = authOk($c[0], $c[1], $c[2] ?? []);
+        is($r['ok'], false, 'rejected: ' . $name . ' → ' . $r['reason']);
+        has((string)$r['reason'], 'claims to be Joust', $name);
+    }
+    has(authOk('lance@joustmedia.com', [$pass('joustmedia.com')])['reason'], 'never on DKIM / DMARC');
+    has(authOk('sam@joustmedia.com', [], $sentO)['reason'], 'only from the connected mailbox lance@joustmedia.com');
+    is(authOk('lance@joustmedia.com', [], $sentO)['ok'], true, 'Lance’s own reply from the connected mailbox');
+    is(authOk('Lance@JoustMedia.com', [], $sentO)['ok'], true, 'case-insensitive');
+    // a configured send-as alias may use the SENT path (array or comma list); still never via DKIM
+    is(authOk('hello@joustmedia.com', [], $sentO, ['google_mailbox_aliases' => ['hello@joustmedia.com']])['ok'], true, 'alias (array)');
+    is(authOk('hello@joustmedia.com', [], $sentO, ['google_mailbox_aliases' => 'ops@joustmedia.com, hello@joustmedia.com'])['ok'], true, 'alias (list)');
+    is(authOk('hello@joustmedia.com', [$pass('joustmedia.com')], ['labelIds' => ['INBOX'], 'fetched' => true], ['google_mailbox_aliases' => ['hello@joustmedia.com']])['ok'], false, 'alias via DKIM: no');
+    // contacts are unaffected: a genuine Google pass is still enough
+    is(authOk('jane@kenda.example', [$pass('kenda.example')])['ok'], true);
+    is(appJson('echo json_encode([inboundIsJoustAddress("x@joustmedia.com"), inboundIsJoustAddress("x@a.joustmedia.com"), inboundIsJoustAddress("x@joustmedia.com.evil.example"), inboundIsJoustAddress("x@evil-joustmedia.com"), inboundMailboxAddresses()]);', ['google_mailbox_aliases' => 'Hello@JoustMedia.com, not-an-address']),
+       [true, true, false, false, ['lance@joustmedia.com', 'hello@joustmedia.com']]);
+});
+
+ftest('inbound end to end, round 4: n1 / n3 / an outside Lance reply / a teammate’s SENT copy all wait in Unmatched; Lance’s own SENT reply posts', function () {
+    connectGoogle();
+    $tok = itemToken();
+    db()->exec("UPDATE client_email_queue SET batch_key = 'old' WHERE batch_key IS NULL");
+    db()->exec("INSERT INTO admin_users (id, name, email, role, active) VALUES (2, 'Sam', 'sam@joustmedia.com', 'admin', 1)");
+    $subj = 'Re: Spring launch hero [J#' . $tok . ']';
+    $q = '"x);dkim=pass header.d=joustmedia.com;spf=pass (y"@evil.example';
+    $q2 = '"x);dmarc=pass header.from=joustmedia.com;dkim=pass header.d=joustmedia.com;spf=pass (y"@evil.example';
+    deliver('r4n1', rawMail(['From' => 'Lance <lance@joustmedia.com>', 'Subject' => $subj], 'N1 approved, no invoice.',
+        ["mx.google.com;\r\n       dkim=pass header.i=@evil.example header.s=s1 header.b=abc;\r\n       spf=pass (google.com: domain of {$q} designates 1.2.3.4 as permitted sender) smtp.mailfrom={$q}"]));
+    deliver('r4n3', rawMail(['From' => 'Lance <lance@joustmedia.com>', 'Subject' => $subj], 'N3 approved, no invoice.',
+        ["mx.google.com;\r\n       spf=pass (google.com: domain of {$q2} designates 1.2.3.4 as permitted sender) smtp.mailfrom={$q2}"]));
+    deliver('r4out', rawMail(['From' => 'Lance <lance@joustmedia.com>', 'Subject' => $subj], 'From my phone’s other account.',
+        ['mx.google.com; dkim=pass header.i=@joustmedia.com header.s=google; spf=pass smtp.mailfrom=lance@joustmedia.com; dmarc=pass (p=NONE) header.from=joustmedia.com']));
+    deliver('r4sam', rawMail(['From' => 'Sam <sam@joustmedia.com>', 'Subject' => $subj], 'Sam via send-as.', []), ['SENT', 'INBOX']);
+    deliver('r4own', rawMail(['From' => 'Lance <lance@joustmedia.com>', 'Subject' => $subj], 'Own reply — new render tonight.', []), ['SENT', 'INBOX']);
+    $c = cron();
+    is((int)$c['inbound']['posted'], 1, 'only Lance’s own');
+    is((int)$c['inbound']['unmatched'], 4);
+    foreach (['r4n1', 'r4n3', 'r4out', 'r4sam'] as $g) {
+        $row = rows("SELECT status, reason FROM email_inbound WHERE gmail_id = ?", [$g])[0];
+        ok(strpos((string)$row['reason'], 'Failed sender check') === 0, $g . ': ' . $row['reason']);
+    }
+    is((int)q1("SELECT COUNT(*) FROM activity_log WHERE detail LIKE '%no invoice%' OR detail LIKE '%other account%' OR detail LIKE 'Sam via%'"), 0, 'none posted');
+    $a = commentsOn(1, 'admin');
+    is(end($a)['detail'], 'Own reply — new render tonight.');
+    is((int)end($a)['author_user_id'], 1);
+    is(count(rows("SELECT * FROM client_email_queue WHERE batch_key IS NULL")), 1, 'only the genuine reply reaches the client');
+    $m = get('manage.php?section=notifications', 'admin')['body'];
+    has($m, 'data-notify-unmatched="4"');
+    // Assign on a failed-check Joust message posts as the client, never as Joust
+    $fid = (int)q1("SELECT id FROM email_inbound WHERE gmail_id = 'r4out'");
+    status(post('notify-admin.php', ['action' => 'inbound_assign', 'id' => $fid, 'entity' => 'post:1'], 'admin', [], J), 200);
+    $last = rows("SELECT actor, author_user_id FROM activity_log WHERE entity_type = 'post' AND entity_id = 1 AND action = 'commented' ORDER BY id DESC LIMIT 1")[0];
+    is($last['actor'], 'client');
+    ok(empty($last['author_user_id']), 'never as Joust');
+});
+
+ftest('Manage → Team: Lance sets each teammate’s Morning summary / weekly / Slack DM / escalation email; new teammates start with summary + weekly OFF; Lance unchanged; Inactive stays separate', function () {
+    // Lance's own record: untouched (NULL), every switch on
+    is(q1("SELECT notify_prefs FROM admin_users WHERE id = 1"), null);
+    is(appJson('echo json_encode(adminUserPrefs(adminUserById($pdo, 1)));'), ['summary' => true, 'weekly' => true, 'dm' => true, 'email' => true]);
+    $m = get('manage.php?section=notifications', 'admin')['body'];
+    has($m, 'data-user-prefs="1"');
+    foreach (['summary', 'weekly', 'dm', 'email'] as $k) ok(preg_match('#data-user-prefs="1".*?data-user-pref="' . $k . '"><input type="checkbox" name="pref_' . $k . '" value="1" checked#s', $m) === 1, 'Lance: ' . $k . ' on');
+    has($m, 'Escalation email');
+    // add a teammate (no prefs posted): summary + weekly OFF, DM + email on
+    $r = post('notify-admin.php', ['action' => 'user', 'id' => 0, 'name' => 'Kim', 'email' => 'kim@joustmedia.com', 'active' => 1], 'admin', [], J);
+    status($r, 200);
+    $kim = (int)$r['json']['id'];
+    is(json_decode((string)q1("SELECT notify_prefs FROM admin_users WHERE id = ?", [$kim]), true), ['summary' => 0, 'weekly' => 0, 'dm' => 1, 'email' => 1]);
+    is($r['json']['prefs'], ['summary' => false, 'weekly' => false, 'dm' => true, 'email' => true]);
+    $m = get('manage.php?section=notifications', 'admin')['body'];
+    ok(preg_match('#data-user-prefs="' . $kim . '".*?name="pref_summary" value="1"(?! checked)>#s', $m) === 1, 'Kim: summary shows off');
+    // nothing reaches Kim the next morning or Monday
+    clearMail();
+    clientComment(1, 'Morning note for the team');
+    $c = cron('summary=now');
+    is($c['summary'], 'sent', 'Lance');
+    is($c['summary_members']['queued'] ?? null, 0, 'no teammate summary');
+    cron('weekly=now'); cron();
+    is(count(mailsTo('kim@joustmedia.com')), 0, 'no surprise emails');
+    // a row inserted without prefs (an older install) defaults the same way; an old {"summary":x} row keeps x for the weekly
+    db()->exec("INSERT INTO admin_users (id, name, email, role, active) VALUES (7, 'Legacy', 'legacy@joustmedia.com', 'admin', 1), (8, 'Old on', 'oldon@joustmedia.com', 'admin', 1)");
+    db()->exec("UPDATE admin_users SET notify_prefs = '{\"dm\":1,\"email\":1,\"summary\":1}' WHERE id = 8");
+    is(appJson('adminUsersReset(); echo json_encode([adminUserPrefs(adminUserById($pdo, 7)), adminUserPrefs(adminUserById($pdo, 8))]);'),
+       [['summary' => false, 'weekly' => false, 'dm' => true, 'email' => true], ['summary' => true, 'weekly' => true, 'dm' => true, 'email' => true]]);
+    // Lance turns Kim's summary + weekly on from her row (only the posted keys change)
+    status(post('notify-admin.php', ['action' => 'user', 'id' => $kim, 'name' => 'Kim', 'email' => 'kim@joustmedia.com', 'active' => 1, 'pref_summary' => 1, 'pref_weekly' => 1], 'admin', [], J), 200);
+    is(json_decode((string)q1("SELECT notify_prefs FROM admin_users WHERE id = ?", [$kim]), true), ['summary' => 1, 'weekly' => 1, 'dm' => 1, 'email' => 1]);
+    status(post('notify-admin.php', ['action' => 'user', 'id' => $kim, 'name' => 'Kim', 'email' => 'kim@joustmedia.com', 'active' => 1, 'pref_dm' => 0, 'pref_email' => 0], 'admin', [], J), 200);
+    is(json_decode((string)q1("SELECT notify_prefs FROM admin_users WHERE id = ?", [$kim]), true), ['dm' => 0, 'email' => 0, 'summary' => 1, 'weekly' => 1]);
+    db()->exec("DELETE FROM meta WHERE k LIKE 'summary_member_last_%'");
+    db()->exec("DELETE FROM notify_outbox WHERE dedupe_key LIKE 'summary:u%' OR kind = 'weekly'");
+    clearMail();
+    clientComment(1, 'Another morning note');
+    $c = cron('summary=now');
+    ok(($c['summary_members']['queued'] ?? 0) >= 1, 'Kim now gets her summary: ' . json_encode($c['summary_members'] ?? null));
+    cron('weekly=now'); cron();
+    $kimMail = mailsTo('kim@joustmedia.com');
+    is(count(array_filter($kimMail, static function ($x) { return strpos((string)$x['subject'], 'Morning summary') === 0; })), 1);
+    is(count(array_filter($kimMail, static function ($x) { return strpos((string)$x['subject'], 'Weekly report') === 0; })), 1);
+    is(count(mailsTo('legacy@joustmedia.com')), 0, 'the legacy row (no prefs) gets nothing');
+    // weekly alone: off → no weekly, summary still on
+    status(post('notify-admin.php', ['action' => 'user', 'id' => $kim, 'name' => 'Kim', 'email' => 'kim@joustmedia.com', 'active' => 1, 'pref_weekly' => 0], 'admin', [], J), 200);
+    is(appJson('echo json_encode(array_map(function ($m) { return (int)$m["user"]["id"]; }, notifySummaryMembers($pdo, "weekly")));'), [8], 'Kim off the weekly list; the old {"summary":1} row stays on');
+    ok(in_array($kim, appJson('echo json_encode(array_map(function ($m) { return (int)$m["user"]["id"]; }, notifySummaryMembers($pdo)));'), true), 'Kim still on the summary list');
+    // switches never touch ownership: Kim owns Privacy Bee with every switch off, and stays its owner (Inactive is the only thing that drops her)
+    db()->exec("UPDATE notify_clients SET owner_user_id = {$kim} WHERE company_id = 2");
+    status(post('notify-admin.php', ['action' => 'user', 'id' => $kim, 'name' => 'Kim', 'email' => 'kim@joustmedia.com', 'active' => 1, 'pref_summary' => 0, 'pref_weekly' => 0, 'pref_dm' => 0, 'pref_email' => 0], 'admin', [], J), 200);
+    is((int)q1("SELECT owner_user_id FROM notify_clients WHERE company_id = 2"), $kim);
+    is(appJson('echo json_encode([(int)(notifyOwnerFor($pdo, 2)["id"] ?? 0), (int)adminUserById($pdo, ' . $kim . ')["active"]]);'), [$kim, 1], 'still owner, still active');
+    // Lance's row saved from Manage (no pref fields posted) stays NULL = unchanged
+    status(post('notify-admin.php', ['action' => 'user', 'id' => 1, 'name' => 'Lance', 'email' => 'lance@joustmedia.com', 'slack_user_id' => 'U0LANCE', 'active' => 1], 'admin', [], J), 200);
+    is(q1("SELECT notify_prefs FROM admin_users WHERE id = 1"), null, 'Lance unchanged');
+    // the client can't touch any of it
+    is(post('notify-admin.php', ['action' => 'user', 'id' => $kim, 'name' => 'Kim', 'email' => 'kim@joustmedia.com', 'pref_summary' => 1], 'client:kenda', [], J)['code'], 403);
+});
+
+ftest('staging: client emails go only to contacts in staging_allowed_email_domains (default joustmedia.com); the rest are held back as "blocked on staging" and shown in Manage', function () {
+    $f = static function (array $cfg) { return appJson('echo json_encode([clientEmailStagingAllows("jane@kenda.example"), clientEmailStagingAllows("test@joustmedia.com"), clientEmailStagingAllows("x@qa.joustmedia.com"), clientEmailStagingAllows("x@joustmedia.com.evil.example"), clientEmailStagingDomains()]);', $cfg); };
+    is($f([]), [true, true, true, true, ['joustmedia.com']], 'production: everyone');
+    is($f(['environment' => 'staging']), [false, true, true, false, ['joustmedia.com']], 'staging: joustmedia.com only');
+    is($f(['environment' => 'staging', 'staging_allowed_email_domains' => 'kenda.example, @Example.org']), [true, false, false, false, ['kenda.example', 'example.org']]);
+    is($f(['environment' => 'staging', 'staging_allowed_email_domains' => ['joustmedia.com', 'kenda.example']])[0], true);
+    hasNot(get('manage.php?section=notifications', 'admin')['body'], 'data-staging-email-rule', 'production: no staging line');
+    // end to end on a staging config: a test contact gets the email, the real ones are blocked and logged
+    db()->exec("INSERT INTO client_contacts (id, company_id, email, name) VALUES (9, 1, 'qa@joustmedia.com', 'QA')");
+    $orig = siteConfig(['environment' => 'staging']);
+    try {
+        clearMail();
+        adminComment(1, 'Staging reply');
+        ageQueue(11);
+        cron();
+        is(count(mailsTo('qa@joustmedia.com')), 1, 'the test contact');
+        is(count(mailsTo('jane@kenda.example')) + count(mailsTo('ops@kenda.example')), 0, 'no real client');
+        $blocked = rows("SELECT target, status, last_error FROM notify_outbox WHERE kind = 'client_email' AND status = 'skipped' ORDER BY target");
+        is(array_column($blocked, 'target'), ['jane@kenda.example', 'ops@kenda.example']);
+        foreach ($blocked as $b) has((string)$b['last_error'], 'blocked on staging: ' . $b['target'] . ' is not in staging_allowed_email_domains (joustmedia.com)');
+        $m = get('manage.php?section=notifications', 'admin')['body'];
+        has($m, 'data-staging-email-rule data-staging-blocked="2"');
+        has($m, '@joustmedia.com');
+        has($m, 'blocked on staging');
+        // a retry never sends it
+        $id = (int)q1("SELECT id FROM notify_outbox WHERE target = 'jane@kenda.example' AND kind = 'client_email'");
+        db()->exec("UPDATE notify_outbox SET status = 'pending', next_attempt_at = NOW() WHERE id = {$id}");
+        cron();
+        is((string)q1("SELECT status FROM notify_outbox WHERE id = {$id}"), 'skipped');
+        is(count(mailsTo('jane@kenda.example')), 0);
+    } finally {
+        siteConfigRestore($orig);
+    }
+    // back in production the next one goes to everyone
+    clearMail();
+    adminComment(1, 'Production reply');
+    ageQueue(11);
+    cron();
+    is(count(mailsTo('jane@kenda.example')), 1);
+});
+
+ftest('My notifications: the large title fits at 390 (no "My notificatio…") — phone sizing for this page', function () {
+    $css = (string)file_get_contents(dirname(__DIR__, 2) . '/static/css/notify.css');
+    has($css, '.page-my-notifications .ui-nav-title { font-size: clamp(20px, 6.2vw, 30px)');
+    $p = get('my-notifications.php', 'admin')['body'];
+    has($p, 'page-my-notifications');
+    has($p, '<h1 class="ui-nav-title">My notifications</h1>');
+    has($p, 'css/notify.css');
 });
 
 finish();

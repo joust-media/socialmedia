@@ -54,7 +54,7 @@ function gbox(?array $set = null): array {
 }
 function b64u(string $s): string { return rtrim(strtr(base64_encode($s), '+/', '-_'), '='); }
 /** Drop a received message into the fake mailbox. */
-function deliver(string $id, string $raw): void { $b = gbox(); $b['messages'][] = ['id' => $id, 'threadId' => 't' . $id, 'raw' => b64u($raw), 'labelIds' => ['INBOX']]; gbox($b); }
+function deliver(string $id, string $raw, array $labels = ['INBOX']): void { $b = gbox(); $b['messages'][] = ['id' => $id, 'threadId' => 't' . $id, 'raw' => b64u($raw), 'labelIds' => $labels]; gbox($b); }
 /** An RFC 5322 message (plain text, or multipart/mixed with one attachment). */
 function rawMail(array $h, string $body, ?string $attachment = null): string {
     // What Google's receiving MX stamps on a genuine message (gmail-lib.php inboundAuthCheck() requires it): DMARC +
@@ -695,9 +695,9 @@ etest('inbound: sender must be a contact of THAT item’s client; unknown / unma
     hasNot($r['body'], 'Let me in');
 });
 
-etest('inbound: Lance answering by email posts as Lance (admin), which queues the client’s “Joust replied”', function () {
+etest('inbound: Lance answering by email (from the connected mailbox: Gmail label SENT) posts as Lance (admin), which queues the client’s “Joust replied”', function () {
     [, $tok] = setupReplyThread();
-    deliver('l1', rawMail(['From' => 'Lance <lance@joustmedia.com>', 'Subject' => 'Re: Spring launch hero [J#' . $tok . ']'], "Will do, Jane.\n\nOn Sat … wrote:\n> x"));
+    deliver('l1', rawMail(['From' => 'Lance <lance@joustmedia.com>', 'Subject' => 'Re: Spring launch hero [J#' . $tok . ']', 'Authentication-Results' => null], "Will do, Jane.\n\nOn Sat … wrote:\n> x"), ['SENT', 'INBOX']);
     db()->exec("UPDATE client_email_queue SET batch_key = 'old' WHERE batch_key IS NULL");
     cron();
     $a = commentsOn(1, 'admin');

@@ -26,6 +26,9 @@ return [
     // 'production'. On staging the inbound address defaults to lance+ai-staging@joustmedia.com, and staging refuses to
     // read replies at production's lance+ai@ (Manage → Notifications shows a warning) — the two never share mail.
     'environment' => '',
+    // Staging only: client emails go ONLY to contacts whose email domain is listed here (sub-domains count); every
+    // other copy is held back and logged as "blocked on staging" (Manage → Notifications). Ignored in production.
+    'staging_allowed_email_domains' => ['joustmedia.com'],
     // Machine endpoints (notify-thumb, notify-cron, slack-events, slack-actions, google-oauth, email-prefs) are linked WITHOUT '.php' because the
     // live host 301-redirects 'x.php' to 'x' and Slack does not follow redirects. Set to '.php' only on a host with
     // no extension-less rewrite (the test harness does). Leave blank on the live server.
@@ -73,6 +76,11 @@ return [
     // replies on the right item). Blank = lance+ai@joustmedia.com in production, lance+ai-staging@joustmedia.com on
     // staging (Workspace delivers plus-address mail to lance@ by default). Never give staging production's address.
     'inbound_address'      => '',
+    // Lance's own email replies (posted as Joust) are accepted only from the connected mailbox — a message in its
+    // Sent mail (Gmail label SENT) with no Authentication-Results. List here any send-as aliases of that mailbox that
+    // may also answer (e.g. ['hello@joustmedia.com']); leave empty otherwise. Any other @joustmedia.com From is never
+    // accepted as Joust (it waits in Unmatched email replies), whatever its DKIM / DMARC says.
+    'google_mailbox_aliases' => [],
     // API bases. Leave blank (= https://gmail.googleapis.com and https://oauth2.googleapis.com). Only the test harness
     // points them at a local stub (tests/google-stub.php).
     'google_api_base'      => '',

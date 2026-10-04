@@ -145,7 +145,7 @@ joustmedia.com may have **only one** SPF record, which is a TXT record on `@` th
 
   Keep the host's include while the `mail()` fallback may still be used (staging, or before you connect). Once Gmail sends everything you can drop it.
 
-Optional but recommended once SPF and DKIM pass: add a DMARC record with TXT Name `_dmarc` and Value `v=DMARC1; p=none; rua=mailto:lance@joustmedia.com`.
+**Required** (before you test your own replies): add a DMARC record with TXT Name `_dmarc` and Value `v=DMARC1; p=none; rua=mailto:lance@joustmedia.com`. With it, Google always writes a real DMARC verdict, so a forged `From: lance@joustmedia.com` is marked `dmarc=fail`. After two to four weeks of clean reports, tighten it to `v=DMARC1; p=quarantine; pct=100; rua=mailto:lance@joustmedia.com`. See `docs/notifications-checklist.md` §5 for the spoof test.
 
 ## 10. Test it
 

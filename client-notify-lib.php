@@ -32,6 +32,10 @@
  * connected, else mail()), From "Joust Media" <lance@joustmedia.com>, Reply-To the inbound address
  * (lance+ai@joustmedia.com), List-Unsubscribe + List-Unsubscribe-Post (RFC 8058 one-click).
  *
+ * Staging (gmail-lib.php portalEnvironment()): client emails go only to contacts whose email domain is in config
+ * staging_allowed_email_domains (default joustmedia.com); every other copy is held back and logged in the Delivery
+ * log as "blocked on staging: …" (clientEmailStagingAllows()) — Manage → Notifications shows the rule and the count.
+ *
  * Who gets what: the client's switch (Manage → Clients → Client emails: notify_clients.email_review / _replies /
  * _live / _remind, default OFF) AND the contact's preference (client_contacts.notify_prefs JSON {review, reply, live}, a
  * missing key = on; unsubscribed_at = "stop all") — set on email-prefs (signed link in every email, or from the
@@ -66,6 +70,30 @@ if (!function_exists('clientEmailTransportOk')) {
     function clientEmailTransportOk(PDO $pdo): bool {
         $t = function_exists('notifyMailTransport') ? notifyMailTransport() : 'mail';
         return $t === 'gmail' || $t === 'sink' || clientEmailAllowMail($pdo);
+    }
+}
+
+if (!function_exists('clientEmailStagingDomains')) {
+    /** Staging only: the email domains client emails may go to (config staging_allowed_email_domains — an array or a
+     *  comma-separated list; default joustmedia.com). Sub-domains count. */
+    function clientEmailStagingDomains(): array {
+        $cfg = notifyConfig()['staging_allowed_email_domains'] ?? null;
+        $list = is_array($cfg) ? $cfg : (is_scalar($cfg) && trim((string)$cfg) !== '' ? preg_split('/[\s,;]+/', (string)$cfg) : ['joustmedia.com']);
+        return array_values(array_unique(array_filter(array_map(static function ($d) { return strtolower(trim((string)$d, " .\t@")); }, $list))));
+    }
+}
+
+if (!function_exists('clientEmailStagingAllows')) {
+    /** May a client email go to $email here? Always in production; on staging (portalEnvironment()) only to an
+     *  address in clientEmailStagingDomains() — a staging copy with real client contacts never emails a real client. */
+    function clientEmailStagingAllows(string $email): bool {
+        if (!function_exists('portalEnvironment') || portalEnvironment() !== 'staging') return true;
+        $dom = strtolower((string)substr((string)strrchr(trim($email), '@'), 1));
+        if ($dom === '') return false;
+        foreach (clientEmailStagingDomains() as $d) {
+            if ($dom === $d || substr($dom, -strlen('.' . $d)) === '.' . $d) return true;
+        }
+        return false;
     }
 }
 
@@ -493,6 +521,9 @@ if (!function_exists('clientEmailDeliver')) {
         $s->execute([(int)($p['contact_id'] ?? 0), $cid]);
         $contact = $s->fetch();
         if (!$contact) return ['ok' => false, 'skip' => true, 'error' => 'the contact was removed'];
+        if (!clientEmailStagingAllows((string)$contact['email'])) {   // staging: test contacts only — held back, logged, never sent
+            return ['ok' => false, 'skip' => true, 'error' => 'blocked on staging: ' . $contact['email'] . ' is not in staging_allowed_email_domains (' . implode(', ', clientEmailStagingDomains()) . ')'];
+        }
         $prefs = clientContactPrefs($contact);
         if ($prefs['unsubscribed'] || empty($prefs[$kind])) return ['ok' => false, 'skip' => true, 'error' => 'the contact turned these emails off'];
         if (!clientEmailClientOn($pdo, $cid, $kind)) return ['ok' => false, 'skip' => true, 'error' => 'client emails of this kind are off for the client'];

@@ -187,10 +187,31 @@ async function seenStored(page, viewerType, type, id) {
       await page.goto(url('my-notifications.php'));
       await page.waitForSelector('[data-my-prefs]');
       await page.screenshot({ path: shot(`my-notifications-${w}.png`), fullPage: true });
+      // the large title fits (390 used to show "My notificatio…")
+      const fit = await page.$eval('.ui-nav-title', (el) => [el.textContent, el.scrollWidth <= el.clientWidth]);
+      expect.eq(JSON.stringify(fit), JSON.stringify(['My notifications', true]), 'title fits');
       await page.locator('#myPref-dm').uncheck();
       await Promise.all([page.waitForEvent('load'), page.locator('[data-notify-form="my_prefs"] [type="submit"]').click()]);
       await page.waitForSelector('#myPref-dm:not(:checked)');
       expect.eq(JSON.parse(sql(`SELECT notify_prefs FROM admin_users WHERE id = 1`)[0].notify_prefs).dm, 0);
+    });
+    await test('Manage → Team: Lance turns a new teammate’s Morning summary on (it starts off)', async (page) => {
+      sql(`DELETE FROM admin_users WHERE id = 3`);
+      sql(`INSERT INTO admin_users (id, name, email, role, active) VALUES (3, 'Kim', 'kim@joustmedia.com', 'admin', 1)`);
+      await page.goto(url('manage.php?section=notifications'));
+      const row = page.locator('[data-user-row="3"]');
+      await row.locator('[data-user-prefs="3"]').scrollIntoViewIfNeeded();
+      expect.eq(await row.locator('input[name="pref_summary"]').isChecked(), false);
+      expect.eq(await row.locator('input[name="pref_weekly"]').isChecked(), false);
+      expect.eq(await row.locator('input[name="pref_dm"]').isChecked(), true);
+      await row.screenshot({ path: shot(`team-prefs-${w}.png`) });
+      await row.locator('input[name="pref_summary"]').check();
+      await Promise.all([page.waitForEvent('load'), row.locator('[type="submit"]').click()]);
+      await page.waitForSelector('[data-user-row="3"] input[name="pref_summary"]:checked');
+      const pr = JSON.parse(sql(`SELECT notify_prefs FROM admin_users WHERE id = 3`)[0].notify_prefs);
+      expect.eq(JSON.stringify([pr.summary, pr.weekly, pr.dm, pr.email]), '[1,0,1,1]');
+      expect.eq(Number(sql(`SELECT active FROM admin_users WHERE id = 3`)[0].active), 1, 'still active');
+      sql(`DELETE FROM admin_users WHERE id = 3`);
     });
     await test('Inbox: All clients / Mine', async (page) => {
       sql(`INSERT INTO admin_users (id, name, email, role) VALUES (2, 'Sam', 'sam@joustmedia.com', 'admin')`);

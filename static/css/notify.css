@@ -34,6 +34,9 @@
 .nf-row-fields--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .nf-row-fields .ui-input, .nf-row-fields .ui-select { min-height: 36px; padding: 6px 10px; font-size: var(--text-subhead); }
 .nf-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+/* Manage → Team: a teammate's notification switches (set by Lance — there is one admin login) */
+.nf-user-prefs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 8px 0 0; padding: 0; border: 0; min-width: 0; }
+.nf-user-prefs-legend { float: left; width: 100%; padding: 0; font-size: var(--text-caption); color: var(--label-secondary); }
 @media (max-width: 600px) { .nf-row-fields, .nf-row-fields--3 { grid-template-columns: 1fr; } }
 
 /* Delivery log */
@@ -121,3 +124,8 @@
 .ep-danger { background: var(--deny); }
 .ep-danger-link { color: var(--deny); }
 .ep-or { margin: 16px 0 8px; font-size: var(--text-footnote); color: var(--label-secondary); text-transform: uppercase; letter-spacing: .3px; font-weight: 600; }
+/* My notifications: the longest large title in the app — on phones it scales down a little more than the
+   default (base.css) so "My notifications" fits beside "+ New" and Appearance at 390px instead of "My notificatio…". */
+@media (max-width: 599.98px) {
+  .page-my-notifications .ui-nav-title { font-size: clamp(20px, 6.2vw, 30px); line-height: 1.2; }
+}
