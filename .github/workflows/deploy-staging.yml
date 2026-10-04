@@ -116,6 +116,8 @@ jobs:
           #     image previews (.thumbs/), chunk-upload spool (.spool/), export zips and
           #     preview-job files (.exports/), logs, host PHP ini files, and media/ in case
           #     a media folder is ever created inside the app folder
+          #   - .htaccess.bak-<stamp>: backups the Manage → Tools → Clean links installer writes
+          #     next to the portal's .htaccess
           exclude: |
             **/.git*
             **/.git*/**
@@ -124,6 +126,8 @@ jobs:
             uploads/**
             .htaccess
             **/.htaccess
+            .htaccess.bak-*
+            **/.htaccess.bak-*
             error_log
             README.md
             redirect-old-folder/**
