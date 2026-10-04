@@ -15,6 +15,9 @@
  *   &section=tools          Tools: New tire, the client's tires (→ Manage series), AI Builder, Prompt / Vehicle
  *                           Library, Projects, Emails import / export + Audiences, and Maintenance: Pages server rules,
  *                           Send digest, Image previews (preview-job.php; #previews — every client when unscoped).
+ *   &section=notifications  Notifications (partials/manage-notifications.php → notify-admin.php): config status (set /
+ *                           not set, never values), Slack + cron URLs, test message, reminder thresholds + Morning
+ *                           summary hour, Slack channel + owner per client, Team (named admins), delivery log + Retry.
  *   &msg=…                  flash after a save (shown once)
  *
  * Old Studio / Classic admin URLs land here through legacyAdminTarget() (helpers.php).
@@ -35,6 +38,7 @@ if (!isset(MANAGE_SECTIONS[$section])) $section = 'clients';
 if ($section === 'drive') { header('Location: ' . manageUrl('drive'), true, 302); exit; }
 
 $flash = trim(is_string($_GET['msg'] ?? null) ? $_GET['msg'] : '');
+$flashErr = $section !== 'clients' ? trim(is_string($_GET['err'] ?? null) ? $_GET['err'] : '') : '';   // Clients shows its own err=
 
 /** A client list whose rows open this section for that client (the unscoped Export / Tools). */
 $clientPicker = static function (PDO $pdo, string $section, string $footnote): string {
@@ -115,13 +119,15 @@ $activeTab   = 'manage';
 $navTrailing = $client ? clientAvatar($client) : joustAvatar();
 // One frame for every top-level page (the default 720px column, titles in the label colour) — Export included.
 $bodyClass   = 'page-studio page-manage page-manage--' . $section;
-$headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">';
+$headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/studio.css')) . '">'
+             . ($section === 'notifications' ? '<link rel="stylesheet" href="' . h(staticUrl('css/notify.css')) . '">' : '');
 $studioConfig = ['base' => basePath(), 'client' => $client['slug'] ?? '', 'clientAdmin' => basePath() . '/client-admin.php',
                  'clientsUrl' => manageUrl('clients')];
 if ($exportConfig) $studioConfig['export'] = $exportConfig;
 $footExtra   = '<script>window.StudioConfig = ' . json_encode($studioConfig, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n"
              . '<script src="' . h(staticUrl('js/studio.js')) . '" defer></script>'
-             . ($section === 'tools' ? "\n" . '<script src="' . h(staticUrl('js/studio-previews.js')) . '" defer></script>' : '');   // Tools → Maintenance → Image previews (preview-job.php)
+             . ($section === 'tools' ? "\n" . '<script src="' . h(staticUrl('js/studio-previews.js')) . '" defer></script>' : '')
+             . ($section === 'notifications' ? "\n" . '<script src="' . h(staticUrl('js/notifications.js')) . '" defer></script>' : '');   // Tools → Maintenance → Image previews (preview-job.php)
 
 include __DIR__ . '/partials/layout-top.php';
 ?>
@@ -130,6 +136,9 @@ include __DIR__ . '/partials/layout-top.php';
 
 <?php if ($flash !== ''): ?>
   <div class="studio-alert studio-alert--ok" role="status" data-manage-flash><?= h($flash) ?></div>
+<?php endif; ?>
+<?php if ($flashErr !== ''): ?>
+  <div class="studio-alert studio-alert--error" role="alert" data-manage-error><?= h($flashErr) ?></div>
 <?php endif; ?>
 
 <?php if ($section === 'clients'): ?>
@@ -225,6 +234,12 @@ include __DIR__ . '/partials/layout-top.php';
   <p class="studio-help manage-moved-note" data-previews-moved>Image previews are in <a href="<?= h(manageUrl('tools') . '#previews') ?>">Tools → Maintenance</a>.</p>
 </section>
 
+<?php elseif ($section === 'notifications'): ?>
+<!-- Notifications ---------------------------------------------------------- -->
+<section class="studio-section manage-section" data-manage-section="notifications">
+  <?php include __DIR__ . '/partials/manage-notifications.php'; ?>
+</section>
+
 <?php elseif ($section === 'tools'): ?>
 <!-- Tools ----------------------------------------------------------------- -->
 <section class="studio-section manage-section" data-manage-section="tools">
@@ -310,6 +325,23 @@ include __DIR__ . '/partials/layout-top.php';
   <?php endif; ?>
 
   <?= insetListOpen('Maintenance', ['attrs' => ['data-tools-maintenance' => '1']]) ?>
+    <?php // Clean links (url-lib.php): writes the guarded rewrite block into the portal's own .htaccess, checks it live, rolls back on failure.
+      $clOn = cleanLinksInstalled();
+      $clForced = portalConfig('clean_urls', null);
+      $clSub = $clOn
+          ? 'On — links look like ' . basePath() . '/' . ($client['slug'] ?? 'kenda') . '/posts/12. Old links redirect to them.'
+          : 'Off — links look like ' . basePath() . '/posts.php?client=' . ($client['slug'] ?? 'kenda') . '&post=12. Install writes the server rules (.htaccess, backed up first) and checks them live.';
+      if ($clForced !== null && $clForced !== '') $clSub .= ' (config.php clean_urls = ' . ($clForced ? 'true' : 'false') . ' overrides this.)';
+      $clForm = '<form method="POST" action="' . h(basePath() . '/client-admin.php' . ($client ? '?client=' . rawurlencode($client['slug']) : '')) . '" class="studio-inline-form"'
+              . ($clOn ? ' data-confirm-submit="Turn clean links off? The rules are taken out of .htaccess (a backup is kept); every link keeps working in the classic form."' : '') . '>'
+              . '<input type="hidden" name="action" value="' . ($clOn ? 'clean_links_remove' : 'clean_links_install') . '">'
+              . '<button type="submit" class="ui-btn ' . ($clOn ? 'ui-btn--gray' : 'ui-btn--tinted') . ' ui-btn--sm" data-clean-links-' . ($clOn ? 'remove' : 'install') . '>' . ($clOn ? 'Turn off' : 'Install') . '</button></form>'
+              . ($clOn ? '<form method="POST" action="' . h(basePath() . '/client-admin.php' . ($client ? '?client=' . rawurlencode($client['slug']) : '')) . '" class="studio-inline-form"><input type="hidden" name="action" value="clean_links_install"><button type="submit" class="ui-btn ui-btn--plain ui-btn--sm" data-clean-links-repair>Repair</button></form>' : '');
+    ?>
+    <?= insetRow(['icon' => 'sliders', 'title' => 'Clean links', 'subtitle' => $clSub, 'chevron' => false,
+                  'trailing' => '<span class="studio-inline-actions">' . statusPill($clOn ? 'approved' : 'neutral', false, ['label' => $clOn ? 'On' : 'Off', 'attrs' => ['data-clean-links-state' => $clOn ? 'on' : 'off']]) . $clForm . '</span>',
+                  'attrs' => ['data-tool' => 'clean-links', 'id' => 'clean-links']]) ?>
+    <?php unset($clOn, $clForced, $clSub, $clForm); ?>
     <?php if ($client && $toolHasPages): ?>
       <?= insetRow(['icon' => 'page', 'title' => 'Pages: repair server rules',
                     'subtitle' => 'Rewrite the media/pages/ rules (.htaccess) and make every uploaded file readable (0644 / 0755)', 'chevron' => false,
@@ -317,8 +349,8 @@ include __DIR__ . '/partials/layout-top.php';
                     'attrs' => ['data-tool' => 'pages-repair']]) ?>
     <?php endif; ?>
     <?php if (hasActivityLog($pdo)): ?>
-      <?= insetRow(['icon' => 'mail', 'title' => 'Activity digest', 'subtitle' => 'Email the digest of recent client activity now', 'chevron' => false,
-                    'trailing' => '<form method="POST" action="' . h(basePath() . '/digest.php') . '" target="digest_iframe" data-digest-form><input type="hidden" name="source" value="manual"><button type="submit" class="ui-btn ui-btn--gray ui-btn--sm">Send digest</button></form>',
+      <?= insetRow(['icon' => 'mail', 'title' => 'Morning summary', 'subtitle' => 'Email the summary of client activity since the last one now (it also goes out daily — Notifications)', 'chevron' => false,
+                    'trailing' => '<form method="POST" action="' . h(basePath() . '/digest.php') . '" target="digest_iframe" data-digest-form><input type="hidden" name="source" value="manual"><button type="submit" class="ui-btn ui-btn--gray ui-btn--sm">Send now</button></form>',
                     'attrs' => ['data-tool' => 'digest']]) ?>
     <?php endif; ?>
   <?= insetListClose() ?>

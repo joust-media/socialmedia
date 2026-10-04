@@ -89,6 +89,7 @@ if (!$client) {
     $headExtra  = '<link rel="stylesheet" href="' . h(staticUrl('css/home.css')) . '">' . "\n";
     include __DIR__ . '/partials/layout-top.php';
     ?>
+    <?= $isAdmin && function_exists('trackingInboxHomeHtml') ? trackingInboxHomeHtml($pdo, null) : '' ?>
     <section class="home-section home-chooser">
       <?= insetListOpen('Choose a client') ?>
       <?php foreach ($companies as $co): ?>
@@ -254,6 +255,7 @@ $needsEmails = 0;
 $needsPages  = 0;
 $needsAssets = ['tire' => 0, 'library' => 0];
 $needsNotes  = [];
+$unansweredTotal = 0;
 if ($isAdmin) {
     try {
         $deniedPostWhere = $hasPosted ? "status = 'denied' AND posted = 0" : "status = 'denied'";
@@ -275,206 +277,44 @@ if ($isAdmin) {
             $needsAssets['library'] = (int)$st->fetchColumn();
         }
 
-        if ($hasLog && $needsPosts > 0) {
-            $noteNameSel = $hasName ? 'p.name AS post_name' : "'' AS post_name";
-            $pDenied     = $hasPosted ? "p.status = 'denied' AND p.posted = 0" : "p.status = 'denied'";
-            $st = $pdo->prepare("
-                SELECT c.entity_id, c.detail, c.created_at, p.caption AS post_caption, {$noteNameSel}
-                  FROM activity_log c
-                 INNER JOIN posts p ON p.id = c.entity_id
-                 WHERE c.company_id = ? AND c.entity_type = 'post' AND c.action = 'commented' AND c.actor = 'client'
-                   AND c.detail IS NOT NULL AND c.detail <> '' AND {$pDenied}
-                 ORDER BY c.created_at DESC, c.id DESC
-                 LIMIT 12
-            ");
-            $st->execute([$cid]);
-            $seen = [];
-            foreach ($st->fetchAll() as $r) {
-                $pid = (int)$r['entity_id'];
-                if (isset($seen[$pid])) continue;           // one note per post — the newest
-                $seen[$pid] = true;
-                $name = trim((string)($r['post_name'] ?? ''));
-                if ($name === '' || activityLooksLikeFilename($name)) $name = homeFirstLine($r['post_caption'] ?? '', 60);
-                // "[Slide 3] text" → lead "On slide 3" + the text (the raw prefix is never shown)
-                [$slideNo, $noteText] = commentSlideSplit(trim((string)$r['detail']));
+        // Emails / pages in Needs changes (the client notes for every item come from notifyUnanswered() below).
+        if ($hasEmails) {
+            $needsEmails = (int)$emailCounts['denied'];
+        }
+
+        if ($hasPages) {
+            $needsPages = (int)$pageCounts['denied'];
+        }
+
+        // Latest notes: EVERY item (post, email, page, tire / library image, series) whose newest client comments
+        // have no answer from Joust yet — an admin comment (not an internal note), a decision / status move, or a
+        // Slack "Resolve" after them (notifyUnanswered(), notify-lib.php; the same rule the escalations use).
+        // Whatever the item's status: a question on a To Review post or an approved email is still waiting on Joust.
+        // One row per item (its newest message, "+N more" when there are several), oldest wait first in the query,
+        // shown newest first; the 60-day window keeps ancient history out.
+        if ($hasLog) {
+            $waitingRows = function_exists('notifyUnanswered')
+                ? notifyUnanswered($pdo, $cid, date('Y-m-d H:i:s', time() - 60 * 86400), 100) : [];
+            foreach ($waitingRows as $w) {
+                $info = notifyItemInfo($pdo, (string)$w['entity_type'], (int)$w['entity_id']);
+                if (!$info['exists'] || (int)$info['company_id'] !== $cid) continue;
+                $unansweredTotal++;
+                [$slideNo, $noteText] = commentSlideSplit(trim((string)$w['last_detail']));
+                $on = (string)$info['title'];
+                if ($w['entity_type'] === 'tire_image' && activityLooksLikeFilename($on)) $on = 'an image';
                 $needsNotes[] = [
                     'text' => trim($noteText),
                     'lead' => $slideNo > 0 ? 'On slide ' . $slideNo : '',
-                    'on'   => $name !== '' ? $name : 'Post #' . $pid,
-                    'when' => relativeTime($r['created_at']),
-                    'href' => clientUrl('posts', ['post' => $pid]),
-                    'ts'   => (int)strtotime((string)$r['created_at']),
+                    'on'   => $on,
+                    'when' => relativeTime($w['last_at']),
+                    'more' => max(0, (int)$w['n'] - 1),
+                    'href' => activityDeepLink(['entity_type' => $w['entity_type'], 'entity_id' => (int)$w['entity_id'],
+                                                'company_slug' => $client['slug'], '_meta' => $info['meta']]),
+                    'ts'   => (int)strtotime((string)$w['last_at']),
+                    'kind' => 'waiting',
                 ];
-                if (count($needsNotes) >= 3) break;
             }
-        }
-
-        // Emails: same shape as the posts query (design §9) — the newest client
-        // note per Needs-changes email, merged with the post notes by time.
-        if ($hasEmails) {
-            $needsEmails = (int)$emailCounts['denied'];
-            if ($hasLog && $needsEmails > 0) {
-                $st = $pdo->prepare("
-                    SELECT c.entity_id, c.detail, c.created_at, e.code, e.title
-                      FROM activity_log c
-                     INNER JOIN emails e ON e.id = c.entity_id
-                     WHERE c.company_id = ? AND c.entity_type = 'email' AND c.action = 'commented' AND c.actor = 'client'
-                       AND c.detail IS NOT NULL AND c.detail <> '' AND e.status = 'denied' AND e.live = 0
-                     ORDER BY c.created_at DESC, c.id DESC
-                     LIMIT 12
-                ");
-                $st->execute([$cid]);
-                $seen = []; $emailNotes = [];
-                foreach ($st->fetchAll() as $r) {
-                    $eid = (int)$r['entity_id'];
-                    if (isset($seen[$eid])) continue;       // one note per email — the newest
-                    $seen[$eid] = true;
-                    $emailNotes[] = [
-                        'text' => trim((string)$r['detail']),
-                        'on'   => emailDisplayLabel(['id' => $eid, 'code' => $r['code'] ?? '', 'title' => $r['title'] ?? '']),
-                        'when' => relativeTime($r['created_at']),
-                        'href' => emailUrl(['id' => $eid]),
-                        'ts'   => (int)strtotime((string)$r['created_at']),
-                    ];
-                    if (count($emailNotes) >= 3) break;
-                }
-                if ($emailNotes) {
-                    $needsNotes = array_merge($needsNotes, $emailNotes);
-                    usort($needsNotes, static function ($a, $b) { return $b['ts'] <=> $a['ts']; });
-                    $needsNotes = array_slice($needsNotes, 0, 3);
-                }
-            }
-        }
-
-        // Pages: same shape as the emails query — the newest client note per
-        // Needs-changes page, merged with the other notes by time.
-        if ($hasPages) {
-            $needsPages = (int)$pageCounts['denied'];
-            if ($hasLog && $needsPages > 0) {
-                $st = $pdo->prepare("
-                    SELECT c.entity_id, c.detail, c.created_at, pg.title, pg.slug
-                      FROM activity_log c
-                     INNER JOIN pages pg ON pg.id = c.entity_id
-                     WHERE c.company_id = ? AND c.entity_type = 'page' AND c.action = 'commented' AND c.actor = 'client'
-                       AND c.detail IS NOT NULL AND c.detail <> '' AND pg.status = 'denied' AND pg.live = 0
-                     ORDER BY c.created_at DESC, c.id DESC
-                     LIMIT 12
-                ");
-                $st->execute([$cid]);
-                $seen = []; $pageNotes = [];
-                foreach ($st->fetchAll() as $r) {
-                    $pid = (int)$r['entity_id'];
-                    if (isset($seen[$pid])) continue;       // one note per page — the newest
-                    $seen[$pid] = true;
-                    $pageNotes[] = [
-                        'text' => trim((string)$r['detail']),
-                        'on'   => pageDisplayLabel(['id' => $pid, 'title' => $r['title'] ?? '', 'slug' => $r['slug'] ?? '']),
-                        'when' => relativeTime($r['created_at']),
-                        'href' => pageUrl(['id' => $pid]),
-                        'ts'   => (int)strtotime((string)$r['created_at']),
-                    ];
-                    if (count($pageNotes) >= 3) break;
-                }
-                if ($pageNotes) {
-                    $needsNotes = array_merge($needsNotes, $pageNotes);
-                    usort($needsNotes, static function ($a, $b) { return $b['ts'] <=> $a['ts']; });
-                    $needsNotes = array_slice($needsNotes, 0, 3);
-                }
-            }
-        }
-
-        // Assets: the newest client comment per tire / library image from the last 7 days,
-        // whatever the image's status (a comment on an approved render is still a request),
-        // each deep-linking to the viewer. Merged with the post / email notes by time.
-        if ($hasLog) {
-            $st = $pdo->prepare("
-                SELECT c.entity_type, c.entity_id, c.detail, c.created_at
-                  FROM activity_log c
-                 WHERE c.company_id = ? AND c.entity_type IN ('tire_image', 'library_image')
-                   AND c.action = 'commented' AND c.actor = 'client'
-                   AND c.detail IS NOT NULL AND c.detail <> '' AND c.created_at >= ?
-                 ORDER BY c.created_at DESC, c.id DESC
-                 LIMIT 12
-            ");
-            $st->execute([$cid, date('Y-m-d H:i:s', time() - 7 * 86400)]);
-            $seen = []; $assetRows = [];
-            foreach ($st->fetchAll() as $r) {
-                $k = $r['entity_type'] . ':' . (int)$r['entity_id'];
-                if (isset($seen[$k])) continue;                 // one note per image — the newest
-                $seen[$k] = true;
-                $assetRows[] = $r;
-                if (count($assetRows) >= 3) break;
-            }
-            if ($assetRows) {
-                // Name the tire images "<series or tire> · <display label>" (one lookup; a row that no
-                // longer exists — image deleted — is dropped). Library images are just "an image in Library".
-                $tireIds = [];
-                foreach ($assetRows as $r) { if ($r['entity_type'] === 'tire_image') $tireIds[] = (int)$r['entity_id']; }
-                $imgMeta = [];
-                if ($tireIds) {
-                    $ph        = implode(',', array_fill(0, count($tireIds), '?'));
-                    $seriesOn  = function_exists('hasTireSeries') && hasTireSeries($pdo);
-                    $hasDn     = false;
-                    try { $hasDn = $pdo->query("SHOW COLUMNS FROM tire_images LIKE 'display_name'")->rowCount() > 0; } catch (Throwable $e) {}
-                    $dnSel     = $hasDn ? 'ti.display_name' : "'' AS display_name";
-                    $serSel    = $seriesOn ? 'ti.series_id' : 'NULL AS series_id';
-                    $st = $pdo->prepare("
-                        SELECT ti.id, ti.tire_id, ti.caption, {$dnSel}, {$serSel}, t.name AS tire_name
-                          FROM tire_images ti
-                         INNER JOIN tires t ON t.id = ti.tire_id
-                         WHERE t.company_id = ? AND ti.id IN ($ph)
-                    ");
-                    $st->execute(array_merge([$cid], $tireIds));
-                    $seriesIds = [];
-                    foreach ($st->fetchAll() as $r) {
-                        $sid = !empty($r['series_id']) ? (int)$r['series_id'] : 0;
-                        if ($sid > 0) $seriesIds[] = $sid;
-                        $imgMeta[(int)$r['id']] = [
-                            'tire_id'   => (int)$r['tire_id'],
-                            'series_id' => $sid,
-                            'tire_name' => trim((string)($r['tire_name'] ?? '')),
-                            'name'      => imageDisplayLabel(['display_name' => $r['display_name'] ?? '', 'caption' => $r['caption'] ?? '', 'id' => (int)$r['id']]),
-                        ];
-                    }
-                    $seriesNames = [];
-                    if ($seriesIds && $seriesOn) {
-                        try {
-                            $ph = implode(',', array_fill(0, count($seriesIds), '?'));
-                            $st = $pdo->prepare("SELECT id, name FROM tire_series WHERE id IN ($ph)");
-                            $st->execute(array_values(array_unique($seriesIds)));
-                            foreach ($st->fetchAll() as $r) { $seriesNames[(int)$r['id']] = (string)$r['name']; }
-                        } catch (Throwable $e) { $seriesNames = []; }
-                    }
-                }
-                $assetNotes = [];
-                foreach ($assetRows as $r) {
-                    $eid = (int)$r['entity_id'];
-                    if ($r['entity_type'] === 'tire_image') {
-                        if (!isset($imgMeta[$eid])) continue;
-                        $m = $imgMeta[$eid];
-                        $prefix = ($m['series_id'] > 0 && isset($seriesNames[$m['series_id']])) ? $seriesNames[$m['series_id']] : $m['tire_name'];
-                        $name = activityLooksLikeFilename($m['name']) ? 'an image' : $m['name'];
-                        $on   = ($prefix !== '' ? $prefix . ' · ' : '') . $name;
-                        $href = activityDeepLink(['entity_type' => 'tire_image', 'entity_id' => $eid, 'company_slug' => $client['slug'],
-                                                  '_meta' => ['tire_id' => $m['tire_id'], 'series_id' => $m['series_id']]]);
-                    } else {
-                        $on   = 'an image in Library';
-                        $href = activityDeepLink(['entity_type' => 'library_image', 'entity_id' => $eid, 'company_slug' => $client['slug']]);
-                    }
-                    $assetNotes[] = [
-                        'text' => trim((string)$r['detail']),
-                        'on'   => $on,
-                        'when' => relativeTime($r['created_at']),
-                        'href' => $href,
-                        'ts'   => (int)strtotime((string)$r['created_at']),
-                    ];
-                }
-                if ($assetNotes) {
-                    $needsNotes = array_merge($needsNotes, $assetNotes);
-                    usort($needsNotes, static function ($a, $b) { return $b['ts'] <=> $a['ts']; });
-                    $needsNotes = array_slice($needsNotes, 0, 3);
-                }
-            }
+            usort($needsNotes, static function ($a, $b) { return $b['ts'] <=> $a['ts']; });
 
             // Copy edits by the client from the last 7 days (any status — a client may edit a caption
             // until the post is scheduled): a note-like row "Edited the caption: '<new text>'" per post,
@@ -510,9 +350,8 @@ if ($isAdmin) {
                 if (count($editNotes) >= 3) break;
             }
             if ($editNotes) {
+                // copy edits follow the waiting notes (they are FYI, not questions)
                 $needsNotes = array_merge($needsNotes, $editNotes);
-                usort($needsNotes, static function ($a, $b) { return $b['ts'] <=> $a['ts']; });
-                $needsNotes = array_slice($needsNotes, 0, 3);
             }
         }
     } catch (Throwable $e) {
@@ -605,6 +444,8 @@ ob_start();
 <?php
 $reviewSectionHtml = (string)ob_get_clean();
 if (!$isAdmin) echo $reviewSectionHtml;   // the client's Home opens with it; the admin's comes after "Needs your changes"
+// Client seat: "Joust replied" — items with Joust replies this contact has not read yet (tracking-lib.php).
+if (!$isAdmin && function_exists('trackingRepliedHomeHtml')) echo trackingRepliedHomeHtml($pdo, $client);
 ?>
 
 <?php // --- 1b. Admin: Needs your changes (Joust's own queue — first on the admin's Home) ---------- ?>
@@ -667,8 +508,8 @@ if (!$isAdmin) echo $reviewSectionHtml;   // the client's Home opens with it; th
         }
         echo actionCardStack($changeCards);
     }
-    // Latest client notes: deny notes on posts / emails in the queues + comments on assets (any status),
-    // so a comment on an approved image still reaches Joust even when nothing is denied.
+    // Latest client notes: every unanswered client comment, on any item and in any status (notifyUnanswered()),
+    // then the client's recent copy edits.
     if ($needsNotes) {
         $notesHtml = '<ul class="home-notes" role="list">';
         foreach ($needsNotes as $n) {
@@ -677,11 +518,13 @@ if (!$isAdmin) echo $reviewSectionHtml;   // the client's Home opens with it; th
             $body = !empty($n['lead'])
                 ? '<span class="home-note-text"><span class="home-note-lead">' . h($n['lead']) . ':</span> <q>' . h($q) . '</q></span>'
                 : '<q>' . h($q) . '</q>';
-            $notesHtml .= '<li><a class="home-note" href="' . h($n['href']) . '">' . $body
-                        . '<span class="home-note-meta">on ' . h($n['on']) . ' · ' . h($n['when']) . '</span></a></li>';
+            $more = !empty($n['more']) ? ' · +' . (int)$n['more'] . ' more' : '';
+            $notesHtml .= '<li><a class="home-note' . (($n['kind'] ?? '') === 'waiting' ? ' home-note--waiting' : '') . '" href="' . h($n['href']) . '"'
+                        . (($n['kind'] ?? '') === 'waiting' ? ' data-note-waiting' : '') . '>' . $body
+                        . '<span class="home-note-meta">on ' . h($n['on']) . ' · ' . h($n['when']) . h($more) . '</span></a></li>';
         }
         $notesHtml .= '</ul>';
-        echo card($notesHtml, ['subtitle' => 'Latest notes from ' . $client['name'], 'class' => 'home-changes-notes']);
+        echo card($notesHtml, ['subtitle' => 'Latest notes from ' . $client['name'] . ($unansweredTotal > 0 ? ' · ' . $unansweredTotal . ' waiting on you' : ''), 'class' => 'home-changes-notes']);
     }
   ?>
 </section>
@@ -746,6 +589,7 @@ if (!$isAdmin) echo $reviewSectionHtml;   // the client's Home opens with it; th
 <?php // --- 3. Admin: Joust links (server-side gated) — above Activity; "+ New" in the nav bar is the one
       //     place to create (New post / Upload / New tire …), so no duplicate New post / Upload tiles here ---- ?>
 <?php if ($isAdmin): ?>
+<?= function_exists('trackingInboxHomeHtml') ? trackingInboxHomeHtml($pdo, $client) : '' ?>
 <section class="home-section" aria-labelledby="home-manage" data-home-admin>
   <h2 class="ui-list-header" id="home-manage">Joust</h2>
   <?= insetListOpen('', ['class' => 'home-manage', 'attrs' => ['data-home-manage' => '1']]) ?>
@@ -771,6 +615,10 @@ if (!$isAdmin) echo $reviewSectionHtml;   // the client's Home opens with it; th
     <p class="t-footnote text-secondary home-appearance-note">Auto follows your device's light or dark setting. Your choice is remembered on this device.</p>
   </div>
 </section>
+<?php if ($homeSess = currentClientSession($pdo)): // phones: the sidebar's sign-out line is not there ?>
+<p class="home-signout t-footnote text-secondary" data-client-signout>Signed in as <?= h($homeSess['email']) ?> · <a href="<?= h(pagePath('sign-out')) ?>">Sign out</a></p>
+<?php if (function_exists('clientEmailReady') && clientEmailReady($pdo)): ?><p class="home-email-settings t-footnote text-secondary"><span><a href="<?= h(notifyMachineUrl('email-prefs')) ?>" data-email-settings-home>Email settings</a></span></p><?php endif; ?>
+<?php endif; ?>
 <?php endif; ?>
 
 <?php include __DIR__ . '/partials/layout-bottom.php'; ?>

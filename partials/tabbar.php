@@ -4,7 +4,7 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
 /**
  * Role-aware tab bar — fixed bottom on mobile, left sidebar at ≥1024px.
  *
- *   Client: Home · Assets · [Tires] · Posts · [Emails] · [Pages] · Projects   (unchanged)
+ *   Client: Home · Assets · [Tires] · Posts · [Emails] · [Pages] · Projects   (unchanged; footer: Email settings · Sign out)
  *   Admin:  Home · Assets · [Tires] · Posts · [Emails] · [Pages] · Manage — never more than 6
  *           (UI_TABS_MAX_ADMIN): when Tires, Emails and Pages are all on, Emails and Pages share one
  *           "Emails/Pages" destination (short label "Emails" in the phone bar; emails.php / pages.php
@@ -25,7 +25,10 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
  * SCRIPT_NAME; on assets.php, ?view=collections (or a tire deep link, kind=tire) → Tires.
  * 'tires' falls back to Assets when the company has no Tires tab; 'pages' → the merged Emails/Pages tab.
  *
- * Badges on Assets, Tires, Posts, Emails and Pages = items awaiting the client's action
+ * Client badges = To Review + items with Joust replies the contact has not read (trackingClientTabReplies(); an item
+ * already To Review is not counted twice; aria-label "3 to review, 1 new reply"). Admin badges are unchanged.
+ * Admin Home badge = conversations waiting on Joust across clients (the Joust Inbox, inbox.php — reached from Home,
+ * so the Inbox costs no tab). Badges on Assets, Tires, Posts, Emails and Pages = items awaiting the client's action
  * (pending), scoped to the current client. With a Tires tab present the Assets
  * badge is pending library images only and Tires is pending tire images, so a
  * render never counts twice; without it Assets carries both. A DB hiccup can
@@ -159,6 +162,20 @@ if (!empty($client['id']) && isset($pdo) && $pdo instanceof PDO) {
     }
     if ($uiMergeMail) { $uiBadges['emails'] += $uiBadges['pages']; }
 }
+// Client badges also count items with Joust replies this contact has not read yet (thread_seen, tracking-lib.php) —
+// an item already counted as To Review is not counted again. The <a> carries data-badge-review (the To Review part) and
+// data-badge-replies (the unread items' keys) so App.tabBadge / App.tabBadgeSeen (app.js) keep the number right after a
+// decision or once tracking.js marks an item seen.
+$uiReview = $uiBadges; $uiReplies = [];
+if (!$uiIsAdmin && !empty($client['id']) && isset($pdo) && $pdo instanceof PDO && function_exists('trackingClientTabReplies')) {
+    try { $uiReplies = trackingClientTabReplies($pdo, $client, $uiHasTires); } catch (Throwable $uiErr) { $uiReplies = []; }
+    foreach ($uiReplies as $uiKey => $uiKeys) { if (isset($uiBadges[$uiKey])) $uiBadges[$uiKey] += count($uiKeys); }
+}
+// Admin Home badge = conversations waiting on Joust across every client (tracking-lib.php) — the Joust Inbox lives
+// under Home (Home → Joust Inbox), so the bar keeps its ≤ UI_TABS_MAX_ADMIN tabs.
+if ($uiIsAdmin && isset($pdo) && $pdo instanceof PDO && function_exists('trackingWaitingCount')) {
+    $uiBadges['home'] = trackingWaitingCount($pdo);
+}
 
 $uiBrandName = !empty($client['name']) ? $client['name'] : 'Joust Media';
 $uiBrandHref = clientUrl('index.php');
@@ -176,9 +193,14 @@ $uiBrandHref = clientUrl('index.php');
       $uiIsActive = ($uiKey === $uiActive);
       $uiCount    = $uiBadges[$uiKey] ?? 0;
       $uiCls      = 'ui-tab ui-tab--' . $uiKey . ($uiIsActive ? ' is-active' : '');
+      $uiNRep     = count($uiReplies[$uiKey] ?? []);
+      $uiNRev     = (int)($uiReview[$uiKey] ?? 0);
+      $uiAria     = $uiKey === 'home' ? $uiCount . ' waiting on Joust'
+                  : ($uiIsAdmin ? $uiCount . $uiBadgeLabel : (function_exists('trackingTabBadgeLabel') ? trackingTabBadgeLabel($uiNRev, $uiNRep) : $uiCount . $uiBadgeLabel));
+      $uiData     = (!$uiIsAdmin && isset($uiReview[$uiKey])) ? ' data-badge-review="' . $uiNRev . '" data-badge-replies="' . esc(implode(' ', $uiReplies[$uiKey] ?? [])) . '"' : '';
     ?>
       <li>
-        <a class="<?= esc($uiCls) ?>" href="<?= esc(clientUrl($uiTab['page'], $uiTab['query'] ?? [])) ?>"<?= $uiIsActive ? ' aria-current="page"' : '' ?> data-tab="<?= esc($uiKey) ?>">
+        <a class="<?= esc($uiCls) ?>" href="<?= esc(clientUrl($uiTab['page'], $uiTab['query'] ?? [])) ?>"<?= $uiIsActive ? ' aria-current="page"' : '' ?> data-tab="<?= esc($uiKey) ?>"<?= $uiData ?>>
           <?= icon($uiTab['icon']) ?>
           <?php if (!empty($uiTab['short'])): // merged tab: full label in the sidebar, the short one in the phone bar ?>
             <span class="ui-tab-label ui-tab-label--long"><?= esc($uiTab['label']) ?></span><span class="ui-tab-label ui-tab-label--short"><?= esc($uiTab['short']) ?></span>
@@ -186,7 +208,7 @@ $uiBrandHref = clientUrl('index.php');
             <span class="ui-tab-label"><?= esc($uiTab['label']) ?></span>
           <?php endif; ?>
           <?php if ($uiCount > 0): ?>
-            <span class="ui-badge ui-tab-badge" aria-label="<?= esc($uiCount . $uiBadgeLabel) ?>" data-queue="<?= esc($uiQueue) ?>"><?= $uiCount > 99 ? '99+' : (int)$uiCount ?></span>
+            <span class="ui-badge ui-tab-badge" aria-label="<?= esc($uiAria) ?>" data-queue="<?= esc($uiKey === 'home' ? 'inbox' : $uiQueue) ?>"><?= $uiCount > 99 ? '99+' : (int)$uiCount ?></span>
           <?php endif; ?>
         </a>
       </li>
@@ -194,6 +216,9 @@ $uiBrandHref = clientUrl('index.php');
   </ul>
   <?php if ($uiIsAdmin): ?>
     <div class="ui-tabbar-footer">Signed in as Joust · <a href="<?= esc(pagePath('logout')) ?>">Sign out</a></div>
+  <?php elseif (function_exists('currentClientSession') && ($uiSess = currentClientSession())): ?>
+    <?php if (function_exists('clientEmailReady') && isset($pdo) && clientEmailReady($pdo)): ?><div class="ui-tabbar-footer ui-tabbar-footer--links"><a href="<?= esc(notifyMachineUrl('email-prefs')) ?>" data-email-settings>Email settings</a></div><?php endif; ?>
+    <div class="ui-tabbar-footer" data-client-signout>Signed in as <?= esc($uiSess['email']) ?> · <a href="<?= esc(pagePath('sign-out')) ?>">Sign out</a></div>
   <?php endif; ?>
 </nav>
-<?php unset($uiMergeMail, $uiCountTabs, $uiTabs, $uiTiresLabel, $uiIsAdmin, $uiHasEmails, $uiHasTires, $uiHasPages, $uiModules, $uiActive, $uiScript, $uiKey, $uiTab, $uiBadges, $uiQueue, $uiBadgeLabel, $uiCid, $uiSt, $uiErr, $uiBrandName, $uiBrandHref, $uiIsActive, $uiCount, $uiCls); ?>
+<?php unset($uiSess, $uiMergeMail, $uiCountTabs, $uiTabs, $uiTiresLabel, $uiIsAdmin, $uiHasEmails, $uiHasTires, $uiHasPages, $uiModules, $uiActive, $uiScript, $uiKey, $uiTab, $uiBadges, $uiQueue, $uiBadgeLabel, $uiCid, $uiSt, $uiErr, $uiBrandName, $uiBrandHref, $uiIsActive, $uiCount, $uiCls, $uiReview, $uiReplies, $uiKeys, $uiNRep, $uiNRev, $uiAria, $uiData); ?>

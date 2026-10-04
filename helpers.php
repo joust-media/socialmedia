@@ -15,17 +15,16 @@
 
 // $pdo must be included before this file.
 
-$clientSlug = '';
-$client     = null;
+require_once __DIR__ . '/url-lib.php';          // portalUrl() / the clean-link map / cleanUrlsOn()
+require_once __DIR__ . '/client-auth-lib.php';  // client sign-in: sessions, contacts, deep links, the access gate
 
-if (!empty($_GET['client'])) {
-    $slugCandidate = strtolower(trim((string)$_GET['client']));
-    $slugCandidate = preg_replace('/[^a-z0-9\-]/', '', $slugCandidate);
-    if ($slugCandidate !== '' && isset($pdo)) {
-        // Probe for optional, migration-gated columns so we don't blow up
-        // before migrate.php has run. default_hashtags, product_type and
-        // industry are all added by later migration steps.
+if (!function_exists('helpersLoadCompany')) {
+    /** The company row pages scope to (id, name, slug, feature_label, logo_url + the migration-gated profile
+     *  columns, '' until migrate.php adds them) for a slug, or null. */
+    function helpersLoadCompany(PDO $pdo, string $slug): ?array {
         static $extraCompanyCols = null;
+        $slug = preg_replace('/[^a-z0-9\-]/', '', strtolower(trim($slug)));
+        if ($slug === '') return null;
         if ($extraCompanyCols === null) {
             $present = $pdo->query("
                 SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
@@ -42,8 +41,22 @@ if (!empty($_GET['client'])) {
             $extraCol .= $exists ? ", {$col}" : ", '' AS {$col}";
         }
         $stmt = $pdo->prepare("SELECT id, name, slug, feature_label, logo_url{$extraCol} FROM companies WHERE slug = ?");
-        $stmt->execute([$slugCandidate]);
+        $stmt->execute([$slug]);
         $row = $stmt->fetch();
+        return $row ?: null;
+    }
+}
+
+$clientSlug = '';
+$client     = null;
+$askedClientSlug = '';
+
+if (!empty($_GET['client']) && is_string($_GET['client'])) {
+    // Probe for optional, migration-gated columns so we don't blow up before migrate.php has run
+    // (helpersLoadCompany: default_hashtags, product_type and industry come from later steps).
+    $askedClientSlug = preg_replace('/[^a-z0-9\-]/', '', strtolower(trim((string)$_GET['client'])));
+    if ($askedClientSlug !== '' && isset($pdo)) {
+        $row = helpersLoadCompany($pdo, $askedClientSlug);
         if ($row) {
             $client     = $row;
             $clientSlug = $row['slug'];
@@ -57,16 +70,28 @@ if (!empty($_GET['client'])) {
 // functions when included; currentAdmin() starts the jsm_admin session,
 // which is safe here because helpers.php is included before any output.
 // Pages that also include auth.php must use require_once (they do).
+//
+// Access (client-auth-lib.php portalAccessGate): on every client-facing script a visitor must be the admin or a
+// client signed in for THIS client (a session with no ?client= is scoped to its own client); otherwise pages go to
+// sign-in and endpoints answer 401 / 403. Admin-only scripts keep requireAdmin(); machine endpoints are not gated.
 // ---------------------------------------------------------------------
 require_once __DIR__ . '/auth.php';
-$role = currentAdmin() ? 'admin' : 'client';
-
-/** True when the visitor is the signed-in admin (session-based). */
+if (isset($pdo) && $pdo instanceof PDO) {
+    portalAccessGate($pdo, $client, $clientSlug, $askedClientSlug, static function (string $slug) use ($pdo) { return helpersLoadCompany($pdo, $slug); });
+}
+/** True when the visitor is the signed-in admin (session-based) — false on the client-facing pages of the client
+ *  the admin is "viewing as" (Manage → Clients → View as client), so they render exactly the client's view. */
 if (!function_exists('isAdmin')) {
     function isAdmin(): bool {
-        return function_exists('currentAdmin') && currentAdmin() !== null;
+        if (!function_exists('currentAdmin') || currentAdmin() === null) return false;
+        $as = adminViewAsSlug();
+        if ($as === '' || $as !== ($GLOBALS['clientSlug'] ?? '')) return true;
+        // Viewing as this client: only its client-facing pages / endpoints render the client seat; Manage and the
+        // other admin tools stay admin.
+        return !in_array(portalScriptName(basename((string)($_SERVER['SCRIPT_NAME'] ?? ''))), portalClientScripts(), true);
     }
 }
+$role = isAdmin() ? 'admin' : 'client';
 
 /** Shared escaper for partials. Pages keep their own page-local h(); this
  *  name is unique so nothing can collide. */
@@ -93,9 +118,10 @@ if (!function_exists('adminToolsUrl')) {
     function adminToolsUrl(): string { return manageUrl('tools'); }
 }
 
-/** Manage (manage.php) — the admin's settings hub. Sections: clients · export · drive (drive.php) · tools. */
+/** Manage (manage.php) — the admin's settings hub. Sections: clients · export · drive (drive.php) · tools ·
+ *  notifications (partials/manage-notifications.php: Slack / email setup, reminders, team, delivery log). */
 if (!defined('MANAGE_SECTIONS')) {
-    define('MANAGE_SECTIONS', ['clients' => 'Clients', 'export' => 'Export', 'drive' => 'Drive', 'tools' => 'Tools']);
+    define('MANAGE_SECTIONS', ['clients' => 'Clients', 'export' => 'Export', 'drive' => 'Drive', 'tools' => 'Tools', 'notifications' => 'Notifications']);
 }
 
 if (!function_exists('manageUrl')) {
@@ -163,8 +189,7 @@ if (!function_exists('legacyAdminTarget')) {
         $msg   = isset($q['msg']) && is_string($q['msg']) && trim($q['msg']) !== '' ? trim($q['msg']) : null;
         $int   = static function (string $k) use ($q) { $v = is_scalar($q[$k] ?? null) ? (int)$q[$k] : 0; return $v > 0 ? $v : null; };
         $build = static function (string $page, array $extra) use ($slug) {
-            $extra = array_filter(($slug !== '' ? ['client' => $slug] : []) + $extra, static function ($v) { return $v !== null && $v !== ''; });
-            return pagePath($page) . ($extra ? '?' . http_build_query($extra) : '');
+            return portalUrl($page, ($slug !== '' ? ['client' => $slug] : []) + $extra);
         };
         if (!empty($q['upload'])) {   // an Upload sheet deep link keeps its destination
             $keep = ['upload' => '1'];
@@ -230,39 +255,35 @@ function clientQs() {
  *  admin.php's digest shutdown trigger uses. Cached per-request because SCRIPT_NAME never
  *  changes mid-flight. */
 function basePath() {
-    static $cached = null;
-    if ($cached !== null) return $cached;
-    $script = $_SERVER['SCRIPT_NAME'] ?? '/index.php';
-    $dir = rtrim(str_replace('\\', '/', dirname($script)), '/');
-    if ($dir === '.' || $dir === '') $dir = '';
-    return $cached = $dir;
+    return portalBasePath();
 }
 
-/** URL style switch for clientUrl() / pagePath().
+/** URL style switch for pagePath() when clean links are off.
  *
  *  false (default) → explicit script URLs: '/portal/posts.php?client=hmf'. Works on
  *                    any Apache folder with or without an extension-less rewrite, so the
  *                    portal never depends on the host's .htaccess being in place.
- *  true            → pretty URLs: '/portal/posts?client=hmf'. Only flip this once the
- *                    server's .htaccess rewrite (name → name.php) is confirmed working.
- *  Home is the folder root ('/portal/') in both modes. Guarded so a config.php or a
- *  test harness can define it first. */
+ *  true            → extensionless URLs: '/portal/posts?client=hmf'.
+ *  Clean links (url-lib.php cleanUrlsOn(): Manage → Tools → Clean links installed, or config 'clean_urls')
+ *  supersede both: '/portal/hmf/posts'. Home is the folder root ('/portal/', '/portal/hmf/') in every mode.
+ *  Guarded so a config.php or a test harness can define it first. */
 if (!defined('CLEAN_URLS')) { define('CLEAN_URLS', false); }
 
-/** Root-rooted path for a page name honouring CLEAN_URLS:
- *    pagePath('posts') / pagePath('posts.php') → '/portal/posts.php' (or '/portal/posts')
+/** Root-rooted path for an unscoped page name (url-lib.php portalUrl()):
+ *    pagePath('posts') / pagePath('posts.php') → '/portal/posts.php' (or '/portal/posts' with clean links)
  *    pagePath('index') / pagePath('index.php') / pagePath('') → '/portal/'
- *  Paths with a directory component ('legacy/admin.php') are treated the same way. */
+ *    pagePath('manage') with clean links → '/portal/manage'
+ *  Paths with a directory component ('legacy/admin.php') keep their own form. */
 function pagePath($page) {
     $name = preg_replace('/\.php$/', '', (string)$page);
     if ($name === '' || $name === 'index') { return basePath() . '/'; }   // homepage = folder root
-    return basePath() . '/' . $name . (CLEAN_URLS ? '' : '.php');
+    if (strpos($name, '/') !== false) return basePath() . '/' . $name . (CLEAN_URLS ? '' : '.php');   // the clean-links block maps top-level names only
+    return portalUrl($name);
 }
 
-/** Build URL to a page preserving client scope and merging extras.
- *  Output is always root-rooted ('/posts.php?client=hmf', '/portal/posts.php?client=hmf'),
- *  so the same href works from any page in the app. The page name may be given with or
- *  without '.php' — see pagePath() / CLEAN_URLS for the emitted form. */
+/** Build URL to a page preserving client scope and merging extras (an extra 'client' replaces the scope;
+ *  null / '' extras are dropped). Always root-rooted and always through portalUrl(), so it prints the clean
+ *  form ('/portal/hmf/posts/12') when clean links are on and '/portal/posts.php?client=hmf&post=12' otherwise. */
 function clientUrl($page, $extra = []) {
     global $clientSlug;
     $qs = [];
@@ -270,7 +291,23 @@ function clientUrl($page, $extra = []) {
     foreach ($extra as $k => $v) {
         if ($v !== null && $v !== '') { $qs[$k] = $v; }
     }
-    return pagePath($page) . ($qs ? '?' . http_build_query($qs) : '');
+    return portalUrl((string)$page, $qs);
+}
+
+/** JSON for window.PortalUrls (layout-top.php): the folder, whether clean links are on, the scoped client, this
+ *  page's script + params, and the route map — static/js/app.js App.urls builds every link from it. */
+function portalUrlsConfig(): array {
+    global $clientSlug;
+    $routes = [];
+    foreach (portalRouteTable() as $r) $routes[] = [$r[0], $r[1], (object)($r[2] ?? []), (object)($r[3] ?? [])];
+    $cur = portalCurrentRequest();
+    return ['base' => basePath(), 'clean' => cleanUrlsOn(), 'ext' => (CLEAN_URLS || cleanUrlsOn()) ? '' : '.php',
+            'client' => (string)$clientSlug, 'script' => $cur['script'], 'params' => (object)$cur['params'], 'routes' => $routes,
+            'reserved' => portalReservedSegments()];
+}
+
+function portalUrlsScript(): string {
+    return '<script>window.PortalUrls = ' . json_encode(portalUrlsConfig(), JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP) . ';</script>' . "\n";
 }
 
 /**
@@ -832,6 +869,11 @@ function syncLibraryImages(PDO $pdo, $companyId, $slug) {
         ");
         foreach ($onDisk as $f) {
             $ins->execute([$companyId, $f]);
+            // a new file dropped in (FTP / Drive) is sent for review: the client's "Ready for your review" email hears of it
+            if ($ins->rowCount() === 1) {
+                $newId = (int)$pdo->lastInsertId();
+                if ($newId > 0) logActivity($pdo, (int)$companyId, 'library_image', $newId, 'uploaded', 'admin', 'New image in Library for review', null, newBatchId());
+            }
         }
     }
 
@@ -852,24 +894,70 @@ function syncLibraryImages(PDO $pdo, $companyId, $slug) {
 
 /**
  * Insert one row into activity_log. Swallows any exception — a logging
- * failure must never break the user-facing mutation.
+ * failure must never break the user-facing mutation. Returns the new row id (0 on failure).
+ *
+ * Once migrate.php 37 ran it also records the named author (author_user_id: the signed-in admin's
+ * admin_users row for actor 'admin', or the one activityWithContext() names — a Slack reply) and the
+ * internal flag (activityWithContext(['internal' => 1])), then hands the row to notifyOnActivity()
+ * (notify-lib.php), which decides whether Slack hears about it.
  */
 function logActivity(PDO $pdo, $companyId, $entityType, $entityId,
                      $action, $actor, $summary,
                      $detail = null, $batchId = null) {
     try {
-        $stmt = $pdo->prepare("
-            INSERT INTO activity_log
-                (company_id, entity_type, entity_id, action, actor, batch_id, summary, detail)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ");
-        $stmt->execute([
-            (int)$companyId, $entityType, (int)$entityId, $action,
-            $actor, $batchId, mb_substr((string)$summary, 0, 500), $detail,
-        ]);
+        $ctx      = $GLOBALS['__activityCtx'] ?? [];
+        $named    = function_exists('activityHasNotifyCols') && activityHasNotifyCols($pdo);
+        $author   = null;
+        $internal = 0;
+        if ($named) {
+            $author = array_key_exists('author_user_id', $ctx)
+                ? ($ctx['author_user_id'] !== null ? (int)$ctx['author_user_id'] : null)
+                : ($actor === 'admin' && function_exists('currentAdminUserId') ? currentAdminUserId($pdo) : null);
+            $internal = !empty($ctx['internal']) ? 1 : 0;
+            // The signed-in client contact behind a client row (migrate.php 44): "Jane (Kenda Tires)" in Slack / admin.
+            $contactCol = function_exists('activityHasContactCol') && activityHasContactCol($pdo);
+            $contact = null;
+            if ($contactCol && $actor === 'client') {
+                $contact = array_key_exists('client_contact_id', $ctx)
+                    ? ($ctx['client_contact_id'] !== null ? (int)$ctx['client_contact_id'] : null)
+                    : activityCurrentClientContactId($pdo, (int)$companyId);
+            }
+            $stmt = $pdo->prepare("
+                INSERT INTO activity_log
+                    (company_id, entity_type, entity_id, action, actor, author_user_id, internal, batch_id, summary, detail"
+                    . ($contactCol ? ", client_contact_id" : "") . ")
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?" . ($contactCol ? ", ?" : "") . ")
+            ");
+            $vals = [
+                (int)$companyId, $entityType, (int)$entityId, $action,
+                $actor, $author, $internal, $batchId, mb_substr((string)$summary, 0, 500), $detail,
+            ];
+            if ($contactCol) $vals[] = $contact;
+            $stmt->execute($vals);
+        } else {
+            $stmt = $pdo->prepare("
+                INSERT INTO activity_log
+                    (company_id, entity_type, entity_id, action, actor, batch_id, summary, detail)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([
+                (int)$companyId, $entityType, (int)$entityId, $action,
+                $actor, $batchId, mb_substr((string)$summary, 0, 500), $detail,
+            ]);
+        }
+        $id = (int)$pdo->lastInsertId();
     } catch (Throwable $e) {
         error_log('logActivity failed: ' . $e->getMessage());
+        return 0;
     }
+    if ($id > 0 && function_exists('notifyOnActivity')) {
+        notifyOnActivity($pdo, $id, [
+            'company_id' => (int)$companyId, 'entity_type' => (string)$entityType, 'entity_id' => (int)$entityId,
+            'action' => (string)$action, 'actor' => (string)$actor, 'batch_id' => $batchId, 'detail' => $detail,
+            'internal' => $internal,
+        ]);
+    }
+    return $id;
 }
 
 /** 16-hex-char id used to group multi-field edits in one feed line. */
@@ -900,21 +988,14 @@ if (!function_exists('postedClientSlug')) {
 }
 
 /** Tenant scoping for the client seat. Admin sessions always pass. A non-admin
- *  request passes only when the posted client slug resolves to $companyId
- *  (one companies lookup per request). Callers answer 403 on false. */
+ *  request passes only when its signed-in client session (client-auth-lib.php) belongs to
+ *  $companyId — never on a posted slug alone. Callers answer 403 on false. */
 if (!function_exists('clientOwnsCompany')) {
     function clientOwnsCompany(PDO $pdo, int $companyId): bool {
         if (function_exists('currentAdmin') && currentAdmin()) return true;
-        $slug = postedClientSlug();
-        if ($slug === '' || $companyId <= 0) return false;
-        try {
-            $st = $pdo->prepare("SELECT slug FROM companies WHERE id = ?");
-            $st->execute([$companyId]);
-            $have = $st->fetchColumn();
-        } catch (Throwable $e) {
-            return false;
-        }
-        return is_string($have) && $have !== '' && $have === $slug;
+        if ($companyId <= 0) return false;
+        $sess = currentClientSession($pdo);
+        return $sess !== null && (int)$sess['company_id'] === $companyId;
     }
 }
 
@@ -943,13 +1024,14 @@ require_once __DIR__ . '/media-lib.php';
  * Used to render chat-style comment history on posts and tire images.
  */
 function commentThread(PDO $pdo, $entityType, $entityId) {
+    // author_user_id / internal (notify-lib.php): named Joust authors; internal notes only for the admin seat
     $stmt = $pdo->prepare("
-        SELECT actor, detail, created_at
+        SELECT actor, detail, created_at" . activityAuthorCols($pdo) . "
           FROM activity_log
          WHERE entity_type = ?
            AND entity_id = ?
            AND action = 'commented'
-           AND detail IS NOT NULL AND detail <> ''
+           AND detail IS NOT NULL AND detail <> ''" . activityVisibleSql($pdo) . "
          ORDER BY created_at ASC, id ASC
     ");
     $stmt->execute([$entityType, (int)$entityId]);
@@ -992,7 +1074,7 @@ function latestCommentDates(PDO $pdo, $entityType, array $entityIds) {
         SELECT entity_id, MAX(created_at) AS last_at
           FROM activity_log
          WHERE entity_type = ? AND action = 'commented'
-           AND entity_id IN ($placeholders)
+           AND entity_id IN ($placeholders)" . activityVisibleSql($pdo) . "
          GROUP BY entity_id
     ");
     $stmt->execute(array_merge([$entityType], $entityIds));
@@ -1015,7 +1097,7 @@ function commentCounts(PDO $pdo, $entityType, array $entityIds) {
           FROM activity_log
          WHERE entity_type = ? AND action = 'commented'
            AND detail IS NOT NULL AND detail <> ''
-           AND entity_id IN ($placeholders)
+           AND entity_id IN ($placeholders)" . activityVisibleSql($pdo) . "
          GROUP BY entity_id
     ");
     $stmt->execute(array_merge([$entityType], $entityIds));
@@ -1032,7 +1114,7 @@ function commentCounts(PDO $pdo, $entityType, array $entityIds) {
 function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
     $sql = "
         SELECT a.id, a.company_id, a.entity_type, a.entity_id, a.action, a.actor,
-               a.batch_id, a.summary, a.detail, a.created_at,
+               a.batch_id, a.summary, a.detail, a.created_at" . activityAuthorCols($pdo, 'a') . ",
                c.name AS company_name, c.slug AS company_slug, c.logo_url AS company_logo_url
           FROM activity_log a
           LEFT JOIN companies c ON c.id = a.company_id
@@ -1042,6 +1124,9 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
         $sql .= " WHERE a.company_id = ? ";
         $params[] = (int)$companyId;
     }
+    // Internal notes (notify-lib.php) never reach the client seat's feed.
+    $vis = activityVisibleSql($pdo, 'a');
+    if ($vis !== '') $sql .= ($companyId ? '' : ' WHERE 1 = 1 ') . $vis . ' ';
     $sql .= " ORDER BY a.created_at DESC LIMIT " . (int)max(1, $limit * 3);
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
@@ -1062,6 +1147,9 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
                     'entity_type'  => $r['entity_type'],
                     'entity_id'    => $r['entity_id'],
                     'actor'        => $r['actor'],
+                    'author_user_id' => $r['author_user_id'] ?? null,
+                    'client_contact_id' => $r['client_contact_id'] ?? null,
+                    'internal'     => (int)($r['internal'] ?? 0),
                     'created_at'   => $r['created_at'],
                     'batch_id'     => $r['batch_id'],
                     'actions'      => [],
@@ -1086,6 +1174,9 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
                 'entity_type'  => $r['entity_type'],
                 'entity_id'    => $r['entity_id'],
                 'actor'        => $r['actor'],
+                'author_user_id' => $r['author_user_id'] ?? null,
+                'client_contact_id' => $r['client_contact_id'] ?? null,
+                'internal'     => (int)($r['internal'] ?? 0),
                 'created_at'   => $r['created_at'],
                 'batch_id'     => null,
                 'actions'      => [$r['action']],
@@ -1344,6 +1435,7 @@ function actionLabel($action) {
         'unposted'             => 'unmarked scheduled',
         'commented'            => 'commented',
         'uncommented'          => 'cleared comment',
+        'resolved'             => 'marked the note answered',   // Slack "Resolve" (an internal row: admin seat only)
         'edited_caption'       => 'edited caption',
         'edited_hashtags'      => 'edited hashtags',
         'edited_schedule'      => 'rescheduled',
@@ -1649,7 +1741,17 @@ if (!function_exists('humanizeActivityRows')) {
             $action  = activityPrimaryAction($actions);
             $pn      = activityParentName($e);
             $isYou   = ($actor === $viewerRole);
-            if ($isYou) {
+            // Named Joust authors (notify-lib.php) on the admin seat: a teammate's row reads "Sam", your own "You".
+            // The client seat keeps "Joust" as the team's name in feed sentences.
+            $named = ($actor === 'admin' && $viewerRole === 'admin' && function_exists('activityAuthorLabel'))
+                ? activityAuthorLabel($e, 'admin') : '';
+            // The client contact behind a client row (migrate.php 44), for Joust: "Jane Kenda (Kenda Tires)".
+            $contactWho = ($actor === 'client' && $viewerRole === 'admin' && function_exists('activityClientLabel')) ? activityClientLabel($e) : '';
+            if ($named !== '' && $named !== 'You') {
+                $who = $named; $isYou = false;
+            } elseif ($contactWho !== '' && !$isYou) {
+                $who = $contactWho;
+            } elseif ($isYou) {
                 $who = 'You';
             } elseif ($actor === 'admin') {
                 $who = 'Joust';
@@ -1830,6 +1932,9 @@ if (!function_exists('activityFinalizeRows')) {
                 case 'commented':
                     $verb = 'commented'; $icon = 'ellipsis'; $tone = 'accent';
                     $t = "$who commented on $objT"; $hh = "$whoH commented on $objH"; break;
+                case 'resolved':
+                    $verb = 'marked the note answered'; $icon = 'checkmark'; $tone = 'neutral';
+                    $t = "$who marked the note on $objT answered"; $hh = "$whoH marked the note on $objH answered"; break;
                 case 'uncommented':
                     $verb = 'cleared a comment'; $icon = 'ellipsis'; $tone = 'neutral';
                     $t = "$who cleared a comment on $objT"; $hh = "$whoH cleared a comment on $objH"; break;
@@ -2350,3 +2455,15 @@ require_once __DIR__ . '/preview-lib.php';
 
 // Render-side wrappers over preview-lib.php: pvImg() / pvUrls() / pvSizes() (sm tiles, lg viewer). Definitions only.
 require_once __DIR__ . '/preview-ui.php';
+
+// Notifications (named authors, internal notes, Slack / email outbox) and the Joust-side status transitions shared
+// by the portal endpoints and the Slack buttons. Function definitions only.
+require_once __DIR__ . '/transitions-lib.php';
+require_once __DIR__ . '/notify-lib.php';
+
+// Email through Google (Gmail API transport, OAuth, inbound replies), client notification emails (Ready for review /
+// Joust replied / Live, preferences, unsubscribe) and tracking (Joust Inbox, unread markers, weekly report).
+// Function definitions only.
+require_once __DIR__ . '/gmail-lib.php';
+require_once __DIR__ . '/client-notify-lib.php';
+require_once __DIR__ . '/tracking-lib.php';

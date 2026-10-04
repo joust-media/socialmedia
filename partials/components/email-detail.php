@@ -98,7 +98,8 @@ if (!function_exists('renderEmailDetail')) {
         $approvedLine = 'Approved' . ($approvedAt ? ' ' . date('M j', $approvedAt) : '') . ' · Joust will make it live';
 
         $out  = '<article class="pd ed" data-email-detail="' . $id . '" data-id="' . $id . '" data-status="' . edEsc($status) . '" data-live="' . ($live ? '1' : '0') . '"'
-              . ' data-key="' . edEsc($key) . '" data-past="' . ($datePast ? '1' : '0') . '" data-code="' . edEsc($code) . '" data-endpoint="' . edEsc($endpoint) . '">';
+              . ' data-key="' . edEsc($key) . '" data-past="' . ($datePast ? '1' : '0') . '" data-code="' . edEsc($code) . '" data-endpoint="' . edEsc($endpoint) . '"'
+              . (function_exists('trackingSeenAttr') ? trackingSeenAttr('email', $id) : '') . '>';
         $out .= '<div class="pd-body" data-pd-body>';
 
         // ---- Top meta row: "EMAIL · C1" · status pill · edited ---------------------
@@ -111,7 +112,7 @@ if (!function_exists('renderEmailDetail')) {
         // Admin ⋯: Move to client… · Add to flow… · Set audiences… (assign.js sheets → assign.php)
         if ($admin && function_exists('assignMenuHtml')) {
             $out .= assignMenuHtml('email', $id, function_exists('emailDisplayLabel') ? emailDisplayLabel($email) : ($code !== '' ? $code : 'Email'),
-                ['admin' => true, 'extra' => reviewMenuItemsHtml('email', $key, $editUrl, 'data-delete-email')]);
+                ['admin' => true, 'extra' => (function_exists('trackingResolveMenuItem') ? trackingResolveMenuItem('email', $id) : '') . reviewMenuItemsHtml('email', $key, $editUrl, 'data-delete-email')]);
         }
         $out .= '</div>';
 

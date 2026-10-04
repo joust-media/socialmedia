@@ -21,6 +21,72 @@ Social Media Builder
 with `migrate.php`, deterministic fixtures) and runs the HTTP smoke suites and the Playwright
 checks. See `tests/README.md`. `tests/` is never deployed.
 
+## Client sign-in and clean links
+
+Clients sign in; a bare `?client=<slug>` link no longer opens anything by itself.
+
+- **Contacts** (Manage → Clients → a client → *Contacts*): the email addresses (name optional) that may
+  sign in for that client — `client_contacts`, `migrate.php` step 40 (an old `companies.email` /
+  `contact_email` / `client_email` / `notify_email` / `emails` column is copied in once, if one exists).
+  Validated (a real address, ≤ 190 chars, unique per client, ≤ 50 per client). Removing a contact signs
+  them out everywhere and kills their emailed links.
+- **Sign-in** (`sign-in.php`, `/portal/sign-in` · `/portal/<client>/sign-in` for the client-branded page):
+  the client types their email; when it is on a contact list the portal emails a one-time link (15 minutes,
+  single use, only its sha256 stored — `client_login_tokens`, step 41). The page answers exactly the same
+  for an unknown address, and the email goes out after the response is flushed. Rate limit: 3 requests per
+  address and 10 per IP per 15 minutes (`auth_attempts`, step 43; unknown addresses count too). The link
+  opens a *Continue* button (mail scanners that pre-open links cannot spend it) → a 30-day session:
+  cookie `jsm_client` (random 256-bit token, HttpOnly, SameSite=Lax, Secure on HTTPS, path = the portal
+  folder) + a `client_sessions` row (step 42) holding only the token's sha256, so it can be revoked. A
+  fresh token on every sign-in (and `session_regenerate_id()` when a PHP session is open). Sign out:
+  `sign-out.php` (tab bar footer on desktop, under Appearance on the client's Home on phones).
+- **Signed in** (Manage → Clients → a client): every live device (who, browser, when, via email or link)
+  with *Sign out* per device, *Sign out everywhere* per contact (also voids that contact's emailed deep
+  links) and *Sign everyone out*.
+- **View as client** (same card): the admin sees that client's portal exactly as the client does, without
+  a magic link (an orange banner with *Exit*; `view-as.php`). The admin keeps admin rights on endpoints.
+- **Access** (`client-auth-lib.php` `portalAccessGate()`, run by `helpers.php`): every client-facing page
+  and endpoint (`portalClientScripts()`) needs the admin session or a client session **for that client**.
+  Pages redirect to sign-in with a return path and a friendly line; JSON endpoints answer 401 (no session,
+  with a `signIn` URL — `App.post` follows it) or 403 (another client's). `clientOwnsCompany()` checks the
+  session's company, never a posted slug. Admin-only scripts keep `requireAdmin()` (→ `login.php`); machine
+  endpoints (`drive-ingest`, the digest cron, Slack / notify endpoints) are not gated by it. `preview.php`
+  keeps its HMAC-signed URLs; **media files** (`media/`, `uploads/`) are still served statically by Apache
+  with no session check, exactly as before.
+- **Signed deep links** for emails: `clientLink($slug, 'posts/12', $email, $ttlDays = 30)` (absolute URL with
+  `?k=<contact id>.<expiry>.<HMAC>`; the HMAC binds the company, contact, email, expiry and the contact's
+  `link_epoch`). Opening it signs that contact in (unless the browser is already signed in for that client)
+  and lands on the item. Set `client_link_secret` in the server's `config.php`.
+- **Clean links**: `/portal/<client>/` (Home), `/<client>/posts[/<id>]`, `/<client>/assets`,
+  `/<client>/tires[/<id>]`, `/<client>/emails[/<id>]`, `/<client>/pages[/<id>]`, `/<client>/flows[/<id>]`,
+  `/<client>/projects`, `/<client>/emails/new`, `/<client>/emails/<id>/edit` (same for pages; tires
+  `new` / `<id>/edit`), `/<client>/build`, `/<client>/manage[/<section>]`, `/portal/manage[/<section>]`,
+  `/portal/sign-in`, `/portal/sign-out` — the full map is `portalRouteTable()` in `url-lib.php`. Every link
+  is built by `portalUrl()` (PHP; `clientUrl()` / `pagePath()` / `manageUrl()` go through it) or
+  `App.urls` (JS, from `window.PortalUrls`). Turn them on in **Manage → Tools → Clean links → Install**: it
+  backs up `portal/.htaccess` (`.htaccess.bak-<time>`, never web-readable), puts its own block first and
+  keeps everything else, every directive inside `<IfModule mod_rewrite.c>`, then requests
+  `/portal/__clean-links-check`, `/portal/` and `/portal/sign-in` on the live server and puts the old file
+  back if any of them fails. Clean links are printed only while that block is in place (or `clean_urls` in
+  `config.php` forces it); without it every link stays `posts.php?client=…`. With it, old query-string URLs
+  301 to the clean form. Extensionless scripts (`/portal/drive-ingest`, `/portal/slack-events`,
+  `/portal/notify-cron`, …) are served by their `.php` first and never reach the router (`route.php`).
+  Slugs that would shadow a portal page (`manage`, `posts`, `sign-in`, …) are refused for new clients.
+- **Config keys** (server `config.php`; every key, once, in `config.example.php`): `client_link_secret`
+  (deep-link HMAC key, 32+ random chars), `portal_url` (e.g. `https://joustmedia.com/portal` — every absolute
+  link: Slack, emails, sign-in links), `clean_urls` (true / false to force), and the shared email keys below.
+  Older names are still read as aliases (`url-lib.php` `portalConfigAliases()`): `portal_base_url` → `portal_url`,
+  `mail_capture_dir` → `mail_sink_dir`, `auth_mail_from` / `auth_mail_from_name` / `auth_mail_reply_to` /
+  `auth_mail_envelope` → `notify_from` / `notify_from_name` / `notify_reply_to` / `notify_envelope`.
+- **Email**: one function, `notifyEmail(array $msg)` in `notify-lib.php` (`to`, `subject`, `text`, `html`, …).
+  The sign-in email goes through the notifications outbox with an immediate send attempt
+  (`notifySendEmailNow()`): it shows in Manage → Notifications → Delivery log, a failed first attempt is retried by
+  the cron while the link is still valid, and the link is scrubbed from the row once handled. Sender: `notify_from`
+  (default `lance@joustmedia.com`) with `notify_from_name` (default `Joust Media`). Any link a client receives by
+  email is a `clientLink()` (`notifyItemLinkFor()`); Joust's own messages carry the plain admin URL.
+- **Who said it**: a client comment records the signed-in contact (`activity_log.client_contact_id`, migrate step
+  44); Slack thread replies and the admin's threads / feeds read "Jane Kenda (Kenda Tires)" (name, else email).
+
 ## Navigation and Manage (admin)
 
 - **Tab bar** (`partials/tabbar.php`; bottom bar on phones, sidebar from 1024px). Admin: **Home · Assets ·
@@ -62,7 +128,7 @@ checks. See `tests/README.md`. `tests/` is never deployed.
   | Classic admin | Now |
   |---|---|
   | Client picker / Switch client | Home → Choose a client; Manage → Clients |
-  | Recent activity + Send digest now | Home activity feeds; Manage → Tools → Activity digest |
+  | Recent activity + Send digest now | Home activity feeds; Manage → Tools → Morning summary |
   | Default hashtags | Manage → Clients → Settings |
   | AI Builder profile (product type, industry) | Manage → Clients → Settings |
   | Add a Post | "+ New → New post" |
@@ -93,11 +159,20 @@ checks. See `tests/README.md`. `tests/` is never deployed.
   removes current media on edit.
 - **+ New** (admin, top right of every page): New post · Upload · New email · New page.
 
-## Daily digest cron (cPanel > Cron Jobs)
+## Notifications: Slack, reminders, Morning summary (cPanel > Cron Jobs)
+
+Setup: `docs/slack-setup.md` (Slack app from `docs/slack-app-manifest.yml`, secrets in `config.php` — template
+`config.example.php`; `config.php` is not in git). Code: `notify-lib.php` (outbox, Slack threads, escalation,
+`notifyEmail()`), `notify-cron.php`, `slack-events.php`, `slack-actions.php`, `notify-thumb.php`, `notify-admin.php`
+(Manage → Notifications), `transitions-lib.php` (status rules shared with the Slack buttons), `digest-lib.php`.
+One cron every 5 minutes runs retries, reminders and the daily Morning summary:
 
 ```
-0 13 * * * curl -fsS "https://joustmedia.com/portal/digest.php?source=cron" >/dev/null 2>&1
+*/5 * * * * curl -fsS -H "X-Notify-Token: <notify_cron_token>" "https://joustmedia.com/portal/notify-cron" >/dev/null 2>&1
 ```
+
+The old `digest.php?source=cron` URL needs `&token=<notify_cron_token>` once that key is set (403 without); before
+that it still runs, at most once per 20 hours. Remove the old digest cron when adding the one above.
 
 ## Emails
 
@@ -625,8 +700,8 @@ request exactly as before. The surfaces and their endpoints:
 
 - **Manage → Clients** (admin, `manage.php?section=clients` — the default Manage section; scoped to a
   client it opens that client's card, `&edit=0` shows the list) lists every company and is the one place
-  that creates or edits one: name, slug (auto from the name, `[a-z0-9-]{2,40}`, unique — the review link
-  is `?client=<slug>`), feature label (the Tires tab's name), logo upload / replace / remove,
+  that creates or edits one: name, slug (auto from the name, `[a-z0-9-]{2,40}`, unique, not a reserved
+  portal word — the portal address is `/portal/<slug>/`), contacts and signed-in devices (see *Client sign-in*), feature label (the Tires tab's name), logo upload / replace / remove,
   **Settings** (default hashtags pre-filled on new posts; AI Builder product type + industry) and the
   Tires / Emails / Pages module toggles — the only module toggles in the portal. Everything posts to
   `client-admin.php` (admin + same-site only; `action=settings` for the Settings form). Clients are

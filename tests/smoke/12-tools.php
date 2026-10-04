@@ -212,7 +212,12 @@ test('unscoped Assets: a client chooser in place (no bounce to Home); unscoped T
     has($t, 'data-assets-clients="tires"');
     has($t, 'assets.php?client=kenda&amp;view=collections');
     hasNot($t, 'client=privacybee', 'privacybee has no Tires');
-    is(get('assets.php', 'client')['code'], 400, 'client seat without a client: the missing-client page');
+    $r = get('assets.php', 'anon');   // nobody signed in and no client named: the sign-in page (client sign-in, smoke/18-auth.php)
+    is($r['code'], 302, 'no client and no session → sign-in');
+    has($r['location'], 'sign-in');
+    $r = get('assets.php', 'client:kenda');   // a signed-in client without ?client= → their own Assets
+    is($r['code'], 302);
+    has($r['location'], 'client=kenda');
 });
 
 // ---- New tire ----------------------------------------------------------------------------------------------

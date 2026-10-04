@@ -49,29 +49,166 @@
   App.$ = $; App.$$ = $$;
 
   /* ---------------------------------------------------------------- */
+  /* Links — the JS twin of url-lib.php (window.PortalUrls, written by */
+  /* helpers.php portalUrlsScript()):                                  */
+  /*   App.urls.build('posts', {client: 'kenda', post: 12})            */
+  /*     → /portal/kenda/posts/12   (clean links on)                   */
+  /*     → /portal/posts.php?client=kenda&post=12   (off)              */
+  /*   App.urls.parse(href) → {script, params}  (both URL styles)      */
+  /*   App.urls.withParams({post: 12})  this page's URL with params set */
+  /*     (null removes one) — what history.pushState should get       */
+  /*   App.urls.abs('status.php') → '/portal/status.php'               */
+  /* ---------------------------------------------------------------- */
+  App.urls = (function () {
+    var PU = window.PortalUrls || {};
+    var base = String(PU.base || ''), clean = !!PU.clean, ext = PU.ext === undefined ? '.php' : String(PU.ext);
+    var routes = PU.routes || [], reserved = {};
+    (PU.reserved || []).forEach(function (r) { reserved[r] = 1; });
+    function paramOk(name, v) {
+      v = String(v);
+      if (/^__[A-Z_]+__$/.test(v)) return name !== 'client';
+      if (name === 'client') return /^[a-z0-9][a-z0-9-]{0,39}$/.test(v) && !reserved[v];
+      if (name === 'section') return /^[a-z]{2,20}$/.test(v);
+      return /^[1-9][0-9]{0,9}$/.test(v);
+    }
+    function names(pattern) { var out = [], re = /\{([a-z_]+)\}/g, m; while ((m = re.exec(pattern))) out.push(m[1]); return out; }
+    function qs(obj) {
+      var u = new URLSearchParams();
+      Object.keys(obj).forEach(function (k) { u.append(k, String(obj[k])); });
+      var s = u.toString();
+      return s ? '?' + s : '';
+    }
+    function tidy(params) {
+      var out = {};
+      Object.keys(params || {}).forEach(function (k) { var v = params[k]; if (v !== null && v !== undefined && v !== '') out[k] = v; });
+      return out;
+    }
+    function build(script, params) {
+      script = String(script || 'index').replace(/\.php$/, '').replace(/^\/+|\/+$/g, '') || 'index';
+      var p = tidy(params);
+      if (clean) {
+        var best = null, bestScore = -1;
+        routes.forEach(function (r) {
+          if (r[1] !== script) return;
+          var ns = names(r[0]), fixed = r[2] || {}, defs = r[3] || {};
+          if ((ns.indexOf('client') >= 0) !== (p.client !== undefined)) return;
+          for (var i = 0; i < ns.length; i++) { if (p[ns[i]] === undefined || !paramOk(ns[i], p[ns[i]])) return; }
+          for (var k in fixed) { if (Object.prototype.hasOwnProperty.call(fixed, k) && String(p[k]) !== String(fixed[k])) return; }
+          var score = ns.length * 2 + Object.keys(fixed).length;
+          if (score <= bestScore) return;
+          var rest = {};
+          Object.keys(p).forEach(function (k2) { if (ns.indexOf(k2) < 0 && !(k2 in fixed)) rest[k2] = p[k2]; });
+          Object.keys(defs).forEach(function (k3) { if (rest[k3] !== undefined && String(rest[k3]) === String(defs[k3])) delete rest[k3]; });
+          var path = r[0].replace(/\{([a-z_]+)\}/g, function (_, n) { return encodeURIComponent(String(p[n])); });
+          best = base + '/' + path + qs(rest); bestScore = score;
+        });
+        if (best !== null) return best;
+        return base + '/' + (script === 'index' ? '' : script) + qs(p);
+      }
+      return base + '/' + (script === 'index' ? '' : script + ext) + qs(p);
+    }
+    function parse(href) {
+      var u;
+      try { u = new URL(href || window.location.href, window.location.href); } catch (e) { return { script: 'index', params: {} }; }
+      var params = {};
+      u.searchParams.forEach(function (v, k) { params[k] = v; });
+      var path = decodeURIComponent(u.pathname), rel;
+      if (base && path.indexOf(base + '/') === 0) rel = path.slice(base.length + 1);
+      else if (base && path === base) rel = '';
+      else rel = path.replace(/^\/+/, '');
+      if (rel === '' || rel === 'index.php') return { script: 'index', params: params };
+      if (/^[A-Za-z0-9_-]+\.php$/.test(rel)) return { script: rel.replace(/\.php$/, ''), params: params };
+      var segs = rel.replace(/\/+$/, '').split('/');
+      for (var i = 0; i < routes.length; i++) {
+        var r = routes[i], ps = r[0].replace(/\/+$/, '').split('/');
+        if (ps.length !== segs.length) continue;
+        var got = {}, ok = true;
+        for (var j = 0; j < ps.length; j++) {
+          var m = /^\{([a-z_]+)\}$/.exec(ps[j]);
+          if (m) { if (!paramOk(m[1], segs[j])) { ok = false; break; } got[m[1]] = segs[j]; }
+          else if (ps[j] !== segs[j].toLowerCase()) { ok = false; break; }
+        }
+        if (!ok) continue;
+        var fixed = r[2] || {};
+        Object.keys(fixed).forEach(function (k) { got[k] = String(fixed[k]); });
+        Object.keys(got).forEach(function (k) { params[k] = got[k]; });
+        return { script: r[1], params: params };
+      }
+      if (segs.length === 1) return { script: segs[0], params: params };
+      return { script: 'index', params: params };
+    }
+    function withParams(changes, href) {
+      var cur = parse(href), p = cur.params;
+      Object.keys(changes || {}).forEach(function (k) {
+        var v = changes[k];
+        if (v === null || v === undefined || v === '') delete p[k]; else p[k] = String(v);
+      });
+      var hash = '';
+      try { hash = new URL(href || window.location.href, window.location.href).hash; } catch (e) {}
+      return build(cur.script, p) + hash;
+    }
+    function abs(u) {
+      u = String(u || '');
+      if (u === '' || /^([a-z][a-z0-9+.-]*:|\/|#|\?)/i.test(u)) return u;
+      return base + '/' + u;
+    }
+    return { base: base, clean: clean, build: build, parse: parse, withParams: withParams, abs: abs,
+             current: function () { return parse(window.location.href); } };
+  })();
+
+  /* ---------------------------------------------------------------- */
   /* Tab-bar badges: the viewer's own queue (partials/tabbar.php)      */
   /* ---------------------------------------------------------------- */
   /** The status the viewer's tab badges count: the client's To Review ('pending'), Joust's Needs changes ('denied'). */
   App.queueStatus = function () { return App.role === 'admin' ? 'denied' : 'pending'; };
-  /** Set the badge of a tab (data-tab key or a .ui-tab element) to n — created when missing, removed at 0. */
-  App.tabBadge = function (tab, n) {
-    var el = typeof tab === 'string' ? ($('.ui-tab[data-tab="' + tab + '"]') || $('.ui-tab--' + tab)) : tab;
-    if (!el) return;
-    n = Math.max(0, parseInt(n, 10) || 0);
+  function tabEl(tab) { return typeof tab === 'string' ? ($('.ui-tab[data-tab="' + tab + '"]') || $('.ui-tab--' + tab)) : tab; }
+  /** A client tab's unread-reply keys (data-badge-replies="post:4 post:7", partials/tabbar.php). */
+  function tabReplyKeys(el) { return (el.getAttribute('data-badge-replies') || '').split(/\s+/).filter(Boolean); }
+  /** "3 to review, 1 new reply" (the client's badge label; tracking-lib.php trackingTabBadgeLabel()). */
+  function clientBadgeLabel(review, replies) {
+    var parts = [];
+    if (review > 0) parts.push(review + ' to review');
+    if (replies > 0) parts.push(replies + ' new ' + (replies === 1 ? 'reply' : 'replies'));
+    return parts.join(', ');
+  }
+  function renderTabBadge(el, review, replies) {
+    var n = review + replies;
     var badge = $('.ui-badge', el);
     if (!n) { if (badge) badge.remove(); return; }
     if (!badge) { badge = document.createElement('span'); badge.className = 'ui-badge ui-tab-badge'; el.appendChild(badge); }
     badge.hidden = false;
     badge.textContent = n > 99 ? '99+' : String(n);
-    badge.setAttribute('aria-label', n + (App.queueStatus() === 'denied' ? ' need changes' : ' to review'));
+    badge.setAttribute('aria-label', App.queueStatus() === 'denied' ? n + ' need changes' : clientBadgeLabel(review, replies));
     badge.setAttribute('data-queue', App.queueStatus());
+  }
+  /** Set the To Review / Needs changes part of a tab's badge (data-tab key or a .ui-tab element) to n — created when
+   *  missing, removed at 0. A client tab keeps its unread-reply part (data-badge-replies) on top. */
+  App.tabBadge = function (tab, n) {
+    var el = tabEl(tab);
+    if (!el) return;
+    n = Math.max(0, parseInt(n, 10) || 0);
+    var client = el.hasAttribute('data-badge-review');
+    if (client) el.setAttribute('data-badge-review', String(n));
+    renderTabBadge(el, n, client ? tabReplyKeys(el).length : 0);
   };
-  /** Move a tab badge by delta (its current number + delta). */
+  /** Move a tab badge's queue part by delta (its current queue number + delta). */
   App.bumpTabBadge = function (tab, delta) {
-    var el = typeof tab === 'string' ? ($('.ui-tab[data-tab="' + tab + '"]') || $('.ui-tab--' + tab)) : tab;
+    var el = tabEl(tab);
     if (!el || !delta) return;
-    var badge = $('.ui-badge', el), cur = badge && !badge.hidden ? (parseInt(badge.textContent, 10) || 0) : 0;
+    var cur;
+    if (el.hasAttribute('data-badge-review')) cur = parseInt(el.getAttribute('data-badge-review'), 10) || 0;
+    else { var badge = $('.ui-badge', el); cur = badge && !badge.hidden ? (parseInt(badge.textContent, 10) || 0) : 0; }
     App.tabBadge(el, cur + delta);
+  };
+  /** An item's Joust replies were just read (tracking.js, key "post:4"): drop it from the client tab badge counting it. */
+  App.tabBadgeSeen = function (key) {
+    Array.prototype.forEach.call(document.querySelectorAll('.ui-tab[data-badge-replies]'), function (el) {
+      var keys = tabReplyKeys(el), i = keys.indexOf(key);
+      if (i < 0) return;
+      keys.splice(i, 1);
+      el.setAttribute('data-badge-replies', keys.join(' '));
+      renderTabBadge(el, parseInt(el.getAttribute('data-badge-review'), 10) || 0, keys.length);
+    });
   };
 
   /* ---------------------------------------------------------------- */
@@ -336,7 +473,8 @@
     if (!body.has('client') && document.body && document.body.dataset.client) {
       body.append('client', document.body.dataset.client);
     }
-    return fetch(endpoint, {
+    // Relative endpoints ('status.php') resolve against the portal folder, not a clean-link path (/portal/kenda/posts/12).
+    return fetch(App.urls.abs(endpoint), {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8', 'Accept': 'application/json' },
@@ -345,6 +483,10 @@
       return res.text().then(function (text) {
         var data = null;
         try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
+        // The client's session ended (signed out elsewhere, revoked, 30 days up): back to sign-in with this page as the return.
+        if (res.status === 401 && data && data.signIn && App.role !== 'admin') {
+          setTimeout(function () { window.location.href = data.signIn; }, 1200);
+        }
         var ok = res.ok && !!data && data.ok !== false;
         return {
           ok: ok, status: res.status, data: data,

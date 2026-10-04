@@ -485,7 +485,7 @@ if (!function_exists('emailLatestNotes')) {
               FROM activity_log
              WHERE entity_type = 'email' AND action = 'commented'
                AND detail IS NOT NULL AND detail <> ''
-               AND entity_id IN ($ph)
+               AND entity_id IN ($ph)" . (function_exists('activityVisibleSql') ? activityVisibleSql($pdo) : '') . "
              ORDER BY created_at DESC, id DESC
         ");
         $s->execute($ids);

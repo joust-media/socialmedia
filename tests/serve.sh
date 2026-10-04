@@ -12,8 +12,18 @@ stop() {
         kill "$(cat "$SERVER_PID")" 2>/dev/null || true
         rm -f "$SERVER_PID"
     fi
-    # anything else still bound to the port from an earlier run
+    if [ -f "$SLACK_STUB_PID" ]; then
+        kill "$(cat "$SLACK_STUB_PID")" 2>/dev/null || true
+        rm -f "$SLACK_STUB_PID"
+    fi
+    if [ -f "$GOOGLE_STUB_PID" ]; then
+        kill "$(cat "$GOOGLE_STUB_PID")" 2>/dev/null || true
+        rm -f "$GOOGLE_STUB_PID"
+    fi
+    # anything else still bound to the ports from an earlier run
     pkill -f "php .*-S 127.0.0.1:${PORTAL_TEST_PORT}" 2>/dev/null || true
+    pkill -f "php .*-S 127.0.0.1:${PORTAL_TEST_STUB_PORT}" 2>/dev/null || true
+    pkill -f "php .*-S 127.0.0.1:${GOOGLE_STUB_PORT}" 2>/dev/null || true
 }
 
 case "${1:-start}" in
@@ -27,13 +37,23 @@ esac
 stop
 sync_site
 : > "$SERVER_LOG"
-PORTAL_TEST=1 setsid nohup php \
+# Workers: Manage → Tools → Clean links checks the rules with a request to this same server (url-lib.php
+# cleanLinksSelfCheck), which a single-worker php -S would deadlock on.
+PORTAL_TEST=1 PHP_CLI_SERVER_WORKERS=4 setsid nohup php \
     -d "auto_prepend_file=$TESTS_DIR/test-auth.php" \
     -d "session.save_path=$SESSION_DIR" \
     -d display_errors=0 -d log_errors=1 -d error_log="$SERVER_LOG" \
     -d upload_max_filesize=64M -d post_max_size=80M -d memory_limit=512M \
     -S "127.0.0.1:${PORTAL_TEST_PORT}" -t "$SITE_DIR" "$TESTS_DIR/router.php" >>"$SERVER_LOG" 2>&1 &
 echo $! > "$SERVER_PID"
+# the fake Slack Web API (tests/slack-stub.php) — its own server, so the app can call it while serving a request
+SLACK_STUB_LOG="$SLACK_STUB_LOG" setsid nohup php -d display_errors=0 -d log_errors=1 -d error_log="$SERVER_LOG" \
+    -S "127.0.0.1:${PORTAL_TEST_STUB_PORT}" "$TESTS_DIR/slack-stub.php" >/dev/null 2>&1 &
+echo $! > "$SLACK_STUB_PID"
+# the fake Google (tests/google-stub.php: OAuth + Gmail API) — its own server too
+GOOGLE_STUB_DIR="$GOOGLE_STUB_DIR" setsid nohup php -d display_errors=0 -d log_errors=1 -d error_log="$SERVER_LOG" \
+    -S "127.0.0.1:${GOOGLE_STUB_PORT}" "$TESTS_DIR/google-stub.php" >/dev/null 2>&1 &
+echo $! > "$GOOGLE_STUB_PID"
 for _ in $(seq 1 50); do
     if curl -fsS -o /dev/null "${PORTAL_TEST_BASE}/login.php" 2>/dev/null; then
         echo "serve: ${PORTAL_TEST_BASE}/ (pid $(cat "$SERVER_PID"))"

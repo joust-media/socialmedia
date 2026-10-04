@@ -1,0 +1,131 @@
+/* =====================================================================
+   Manage → Notifications (partials/manage-notifications.php). Design tokens only (tokens.css).
+   ===================================================================== */
+.nf { display: flex; flex-direction: column; gap: 18px; }
+.nf-card .ui-card-body { display: flex; flex-direction: column; gap: 12px; }
+.nf-hint { font-size: var(--text-footnote); }
+
+/* Setup: config keys as a checklist (set / not set — never the values) */
+.nf-checks { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+.nf-check { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: var(--radius-list); background: var(--fill-tertiary); }
+.nf-check-mark { flex: 0 0 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  font-weight: 700; color: var(--label-tertiary); background: var(--bg-elevated); }
+.nf-check.is-ok .nf-check-mark { color: #fff; background: var(--approve); }
+.nf-check.is-ok .nf-check-mark .ui-icon { width: 14px; height: 14px; }
+.nf-check.is-missing .nf-check-mark { color: var(--pending); }
+.nf-check-body { display: flex; flex-direction: column; min-width: 0; }
+.nf-check-label { font-size: var(--text-subhead); line-height: var(--lh-subhead); font-weight: 600; }
+.nf-check-state { font-size: var(--text-caption); line-height: var(--lh-caption); color: var(--label-secondary); }
+.nf-check.is-missing .nf-check-state { color: var(--pending); }
+.nf-urls { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; font-size: var(--text-footnote); }
+.nf-urls dt { color: var(--label-secondary); }
+.nf-urls dd { margin: 0; min-width: 0; }
+.nf-urls code { word-break: break-all; }
+@media (max-width: 600px) { .nf-urls { grid-template-columns: 1fr; } .nf-urls dd { margin-bottom: 6px; } }
+
+/* Reminders */
+.nf-unit { display: flex; align-items: center; gap: 8px; }
+.nf-unit .ui-input { max-width: 110px; }
+.nf-unit span { color: var(--label-secondary); font-size: var(--text-subhead); }
+
+/* Channels + Team rows: a form per row */
+.nf-list .nf-row { align-items: flex-start; padding-top: 10px; padding-bottom: 10px; }
+.nf-row-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 200px); gap: 8px; margin-top: 8px; }
+.nf-row-fields--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.nf-row-fields .ui-input, .nf-row-fields .ui-select { min-height: 36px; padding: 6px 10px; font-size: var(--text-subhead); }
+.nf-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+/* Manage → Team: a teammate's notification switches (set by Lance — there is one admin login) */
+.nf-user-prefs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 8px 0 0; padding: 0; border: 0; min-width: 0; }
+.nf-user-prefs-legend { float: left; width: 100%; padding: 0; font-size: var(--text-caption); color: var(--label-secondary); }
+@media (max-width: 600px) { .nf-row-fields, .nf-row-fields--3 { grid-template-columns: 1fr; } }
+
+/* Delivery log */
+.nf-log-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.nf-log-head .ui-segmented { max-width: 520px; }
+.nf-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.nf-log-row { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-top: 0.5px solid var(--separator); }
+.nf-log-row:first-child { border-top: 0; }
+.nf-log-icon { flex: 0 0 28px; height: 28px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--fill-tertiary); color: var(--label-secondary); }
+.nf-log-icon .ui-icon { width: 16px; height: 16px; }
+.nf-log-body { flex: 1 1 auto; min-width: 0; }
+.nf-log-title { font-size: var(--text-subhead); line-height: var(--lh-subhead); font-weight: 600; overflow-wrap: anywhere; }
+.nf-log-title .text-secondary { font-weight: 400; }
+.nf-log-meta { font-size: var(--text-caption); line-height: var(--lh-caption); color: var(--label-secondary); }
+.nf-log-error { margin-top: 2px; font-size: var(--text-caption); line-height: var(--lh-caption); color: var(--deny); overflow-wrap: anywhere; }
+.nf-log-trailing { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: 0 0 auto; }
+.nf-log-empty { padding: 12px 0; }
+
+.nf-err { color: var(--deny); }
+
+/* Client emails: kinds + Preview links */
+.nf-kinds { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.nf-kind { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 0.5px solid var(--separator); }
+.nf-kind:first-child { border-top: 0; }
+.nf-kind-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.nf-kind-actions { flex: none; display: flex; gap: 2px; }
+
+/* Unmatched email replies */
+.nf-unmatched-body { margin: 6px 0 4px; padding: 8px 12px; border-left: 3px solid var(--fill-secondary, var(--separator)); border-radius: 4px;
+  background: var(--fill-tertiary); color: var(--label); font-size: var(--text-footnote); line-height: var(--lh-footnote); overflow-wrap: anywhere; }
+.nf-unmatched-why { color: var(--pending); }
+.nf-unmatched-assign { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.nf-unmatched-assign .ui-select { min-height: 34px; padding: 4px 10px; font-size: var(--text-subhead); max-width: 100%; flex: 1 1 220px; }
+
+/* Joust Inbox (inbox.php) */
+.ibx-head { margin-bottom: 14px; }
+.ibx-who { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.ibx-my-settings { color: var(--accent); text-decoration: none; }
+/* Unmatched replies that failed Google's sender check */
+.nf-unmatched-auth { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; margin: 6px 0 2px; font-size: var(--text-footnote); line-height: var(--lh-footnote); }
+.nf-allow-mail { margin: 0 0 12px; }
+.nf-client-mail-gate .studio-alert { margin-bottom: 10px; }
+.ibx-row { display: flex; align-items: center; gap: 4px; padding-right: 12px; transition: opacity .3s var(--ease-out, ease), transform .3s var(--ease-out, ease); }
+.ibx-row + .ibx-row { box-shadow: inset 0 0.5px 0 var(--separator); }
+.ibx-row.is-resolved { opacity: 0; transform: translateX(16px); }
+.ibx-link { flex: 1 1 auto; min-width: 0; }
+.ibx-thumb { width: 52px; height: 52px; border-radius: 10px; overflow: hidden; display: flex; align-items: center; justify-content: center;
+  background: var(--fill-tertiary); color: var(--label-secondary); }
+.ibx-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ibx-thumb .ui-icon { width: 22px; height: 22px; }
+.ibx-title { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ibx-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ibx-snippet { margin-top: 2px; font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ibx-trailing { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.ibx-age { font-size: var(--text-footnote); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--label-secondary);
+  padding: 2px 8px; border-radius: 999px; background: var(--fill-tertiary); white-space: nowrap; }
+.ibx-age--warn { color: var(--pending); background: color-mix(in srgb, var(--pending) 14%, transparent); }
+.ibx-age--late { color: var(--deny); background: color-mix(in srgb, var(--deny) 14%, transparent); }
+.ibx-empty { padding: 28px 16px; }
+@media (max-width: 600px) {
+  .ibx-row { padding-right: 8px; }
+  .ibx-thumb { width: 44px; height: 44px; }
+  .ibx-trailing .ui-btn { padding-left: 6px; padding-right: 6px; }
+}
+
+/* Email preferences (email-prefs.php; the sign-in card) */
+.ep-card { max-width: 440px; }
+.ep-list { list-style: none; margin: 0 0 14px; padding: 0; border-radius: 12px; background: var(--fill-tertiary); }
+.ep-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; }
+.ep-row + .ep-row { box-shadow: inset 0 0.5px 0 var(--separator); }
+.ep-label { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; cursor: pointer; }
+.ep-title { font-weight: 600; font-size: var(--text-body); line-height: var(--lh-body); }
+.ep-help { font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary); }
+.ep-switch { appearance: none; -webkit-appearance: none; flex: none; position: relative; width: 51px; height: 31px; margin: 0; border-radius: 999px;
+  background: var(--fill-secondary, rgba(120,120,128,.32)); cursor: pointer; transition: background .2s ease; }
+.ep-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: #fff;
+  box-shadow: 0 3px 8px rgba(0,0,0,.15), 0 1px 1px rgba(0,0,0,.16); transition: transform .2s ease; }
+.ep-switch:checked { background: var(--approve); }
+.ep-switch:checked::after { transform: translateX(20px); }
+.ep-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ep-unsub { margin-bottom: 8px; }
+.ep-unsub-text { margin: 0 0 12px; font-size: var(--text-subhead); line-height: var(--lh-subhead); }
+.ep-danger { background: var(--deny); }
+.ep-danger-link { color: var(--deny); }
+.ep-or { margin: 16px 0 8px; font-size: var(--text-footnote); color: var(--label-secondary); text-transform: uppercase; letter-spacing: .3px; font-weight: 600; }
+/* My notifications: the longest large title in the app — on phones it scales down a little more than the
+   default (base.css) so "My notifications" fits beside "+ New" and Appearance at 390px instead of "My notificatio…". */
+@media (max-width: 599.98px) {
+  .page-my-notifications .ui-nav-title { font-size: clamp(20px, 6.2vw, 30px); line-height: 1.2; }
+}

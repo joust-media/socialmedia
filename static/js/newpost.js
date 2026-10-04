@@ -1208,10 +1208,17 @@
     var u; try { u = new URL(window.location.href); } catch (e) { return; }
     var np = u.searchParams.get('newpost');
     if (!np) return;
-    var post = u.searchParams.get('post'), refs = refsFrom(u.searchParams.get('newpost_assets'));
-    u.searchParams.delete('newpost'); u.searchParams.delete('newpost_assets');
-    if (np === 'edit') u.searchParams.delete('post');
-    try { history.replaceState(history.state, '', u.pathname + u.search + u.hash); } catch (e) {}
+    // The post id may sit in the path (/portal/<client>/posts/ID?newpost=edit — clean links): App.urls reads both forms.
+    var cur = App.urls ? App.urls.current().params : {};
+    var post = cur.post || u.searchParams.get('post'), refs = refsFrom(u.searchParams.get('newpost_assets'));
+    var drop = { newpost: null, newpost_assets: null };
+    if (np === 'edit') drop.post = null;
+    if (App.urls) { try { history.replaceState(history.state, '', App.urls.withParams(drop)); } catch (e) {} }
+    else {
+      u.searchParams.delete('newpost'); u.searchParams.delete('newpost_assets');
+      if (np === 'edit') u.searchParams.delete('post');
+      try { history.replaceState(history.state, '', u.pathname + u.search + u.hash); } catch (e) {}
+    }
     var go = function () {
       if (np === 'edit' && post) open({ postId: post });
       else open({ pane: np === 'upload' ? 'upload' : 'approved', preselect: refs });

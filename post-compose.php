@@ -419,7 +419,7 @@ function npLatestNote(PDO $pdo, array $p, string $clientName): ?array {
     if ((string)$p['status'] !== 'denied' || !function_exists('hasActivityLog') || !hasActivityLog($pdo)) return null;
     require_once __DIR__ . '/partials/components/review-actions.php';
     $st = $pdo->prepare("SELECT actor, detail, created_at FROM activity_log WHERE entity_type = 'post' AND action = 'commented' AND entity_id = ?
-                         AND detail IS NOT NULL AND detail <> '' ORDER BY created_at ASC, id ASC");
+                         AND detail IS NOT NULL AND detail <> ''" . activityVisibleSql($pdo) . " ORDER BY created_at ASC, id ASC");
     $st->execute([(int)$p['id']]);
     $n = reviewLatestNote($st->fetchAll(), $clientName);
     if ($n && function_exists('relativeTime') && $n['at'] !== '') $n['when'] = relativeTime($n['at']);

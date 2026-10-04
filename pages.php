@@ -144,9 +144,9 @@ function pagesAttachRelations(PDO $pdo, array &$rows): void {
     if (!hasActivityLog($pdo)) return;
     try {
         $st = $pdo->prepare("
-            SELECT entity_id, actor, detail, created_at FROM activity_log
+            SELECT entity_id, actor, detail, created_at" . activityAuthorCols($pdo) . " FROM activity_log
             WHERE entity_type = 'page' AND action = 'commented' AND entity_id IN ($ph)
-              AND detail IS NOT NULL AND detail <> ''
+              AND detail IS NOT NULL AND detail <> ''" . activityVisibleSql($pdo) . "
             ORDER BY created_at ASC, id ASC
         ");
         $st->execute($ids);
@@ -156,7 +156,9 @@ function pagesAttachRelations(PDO $pdo, array &$rows): void {
         });
         foreach ($all as $row) {
             $eid = (int)$row['entity_id'];
-            if (isset($byId[$eid])) $byId[$eid]['comments'][] = ['actor' => $row['actor'], 'detail' => $row['detail'], 'created_at' => $row['created_at']];
+            if (isset($byId[$eid])) $byId[$eid]['comments'][] = ['actor' => $row['actor'], 'detail' => $row['detail'], 'created_at' => $row['created_at'],
+                                                          'author_user_id' => $row['author_user_id'] ?? null, 'internal' => (int)($row['internal'] ?? 0),
+                                                          'client_contact_id' => $row['client_contact_id'] ?? null];
         }
         $st = $pdo->prepare("
             SELECT entity_id, MAX(created_at) AS at FROM activity_log
@@ -395,6 +397,7 @@ include __DIR__ . '/partials/layout-top.php';
     <?php if ($admin): ?><?= assignSelectButtonHtml('page') ?><?php endif; ?>
   </h2>
   <ul class="ui-list posts-list pages-list" role="list" data-pages-items>
+    <?php if (function_exists('trackingUnreadPreload')) trackingUnreadPreload($pdo, 'page', array_column($pages, 'id')); ?>
     <?php foreach ($pages as $page):
         $pid      = (int)$page['id'];
         $key      = pageStatusKey($page);
@@ -427,7 +430,7 @@ include __DIR__ . '/partials/layout-top.php';
           <div class="ui-row-leading pgl-tile pgl-tile--<?= h($key) ?>" aria-hidden="true"><?= icon('page') ?></div>
           <div class="ui-row-body">
             <div class="pl-top">
-              <div class="ui-row-title pl-title"><?= h($rowTitle) ?></div>
+              <div class="ui-row-title pl-title"><?= function_exists('trackingUnreadDot') ? trackingUnreadDot('page', $pid) : '' ?><?= h($rowTitle) ?></div>
               <span class="pl-when">
                 <?php if ($updated !== '' && relativeTime($updated) !== ''): ?><time class="pl-date" datetime="<?= h(date('Y-m-d', strtotime($updated) ?: time())) ?>" title="<?= h(absoluteTime($updated)) ?>"><?= h(relativeTime($updated)) ?></time><?php endif; ?>
               </span>

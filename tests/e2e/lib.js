@@ -5,7 +5,7 @@
  *     await test('opens', async (page) => { await page.goto(url('posts.php?client=kenda')); … });
  *   }, { role: 'admin', viewports: ['desktop', 'phone'] });
  *
- * opts: role 'admin' | 'client', viewports ['desktop', 'phone' (390), 'w320', 'w360', 'w430'], reseed 'viewport' | 'test' (tests that write).
+ * opts: role 'admin' | 'client' | 'client:<slug>' | 'anon' | 'none' (no seat cookie), viewports ['desktop', 'phone' (390), 'w320', 'w360', 'w430'], reseed 'viewport' | 'test' (tests that write).
  * Every test gets a fresh page per viewport; a failing test saves a screenshot to
  * $PORTAL_TEST_ROOT/shots/. Uncaught page errors (pageerror) fail the test they happen in.
  */
@@ -50,7 +50,8 @@ async function run(suite, body, opts = {}) {
     for (const vp of viewports) {
       if (opts.reseed === 'viewport') reseed();
       const ctx = await browser.newContext({ viewport: VIEWPORTS[vp] || vp, deviceScaleFactor: 1 });
-      await ctx.addCookies([{ name: 'portal_test_role', value: role, url: BASE.replace(/\/portal$/, '') }]);
+      // role 'none': no seat cookie at all — the browser's own cookies decide (real sign-in flows, 14-auth.js)
+      if (role !== 'none') await ctx.addCookies([{ name: 'portal_test_role', value: role, url: BASE.replace(/\/portal$/, '') }]);
       const errors = [];
       let page = null;
       const fresh = async () => {

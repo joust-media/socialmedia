@@ -578,6 +578,9 @@ if (!function_exists('uploadLibraryStore')) {
             error_log('upload library insert: ' . $e->getMessage());
             return ['code' => 500, 'body' => ['ok' => false, 'error' => 'Database error']];
         }
+        // sent for review: the client's "Ready for your review" email (client-notify-lib.php) hears of it
+        logActivity($pdo, (int)$company['id'], 'library_image', $id, 'uploaded', (function_exists('isAdmin') && isAdmin()) ? 'admin' : 'client',
+            'Uploaded ' . $name . ' to the Library for review', null, newBatchId());
         if (function_exists('ensureLibraryMediaHtaccess')) ensureLibraryMediaHtaccess();   // media/library/.htaccess: static only + 7-day caching
         if (!$isVideo && function_exists('previewAfterStore')) { try { previewReleaseSession(); previewAfterStore($dest); } catch (Throwable $e) { /* previews are best-effort */ } }
         $url = libraryFileUrl($slug, $name);

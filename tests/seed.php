@@ -26,7 +26,11 @@
  *               flow "Welcome" = W1 → W2 → W3
  *   pages       privacybee: 1 pending (url), 2 approved + live (url), 3 draft (url)
  *   tasks       kenda: 2
+ *   contacts    1 jane@kenda.example (Jane Kenda) · 2 ops@kenda.example · 3 pat@privacybee.example · 4 farm@hmf.example
+ *               (no sessions, tokens or rate-limit rows; clean links off — <app>/.htaccess removed)
  *   activity    a client approve / deny, an admin "created" row for draft post 6 (must never reach the client feed)
+ *   email       Google disconnected, no inbound mail / client email queue / seen markers; every client email switch on,
+ *               every contact subscribed; the fake Google (tests/google-stub.php) emptied
  */
 
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
@@ -95,7 +99,8 @@ $colors = [[30, 60, 110], [110, 40, 30], [30, 90, 50], [90, 60, 120], [120, 100,
 $pdo->exec("SET FOREIGN_KEY_CHECKS = 0");
 foreach (['activity_log', 'company_modules', 'tire_images', 'tire_series', 'tires', 'library_images', 'post_images',
           'post_categories', 'posts', 'emails', 'email_groups', 'email_group_map', 'email_flows', 'email_flow_steps',
-          'pages', 'page_files', 'tasks', 'companies'] as $t) {
+          'pages', 'page_files', 'tasks', 'companies',
+          'client_contacts', 'client_login_tokens', 'client_sessions', 'auth_attempts'] as $t) {
     $pdo->exec("TRUNCATE TABLE `{$t}`");
 }
 $pdo->exec("SET FOREIGN_KEY_CHECKS = 1");
@@ -104,6 +109,14 @@ $pdo->exec("INSERT INTO companies (id, name, slug, feature_label, logo_url, defa
     (1, 'Kenda Tires', 'kenda', 'Tires', '', '#Kenda #KendaTires', 'tires', 'automotive'),
     (2, 'Privacy Bee', 'privacybee', NULL, '', '#PrivacyBee', 'software', 'privacy'),
     (3, 'Hollow Mill Farm', 'hmf', NULL, '', '', '', '')");
+// Client contacts (sign-in): the test seat (tests/test-auth.php ?__role=client) signs in as the FIRST contact of a client.
+$pdo->exec("INSERT INTO client_contacts (id, company_id, email, name) VALUES
+    (1, 1, 'jane@kenda.example', 'Jane Kenda'),
+    (2, 1, 'ops@kenda.example', NULL),
+    (3, 2, 'pat@privacybee.example', 'Pat Bee'),
+    (4, 3, 'farm@hmf.example', NULL)");
+// Clean links start OFF in every suite (a suite that installs them writes <app>/.htaccess; the harness router emulates it).
+foreach (array_merge([$app . '/.htaccess'], glob($app . '/.htaccess.bak-*') ?: []) as $f) { if (is_file($f)) @unlink($f); }
 $mods = $pdo->query("SELECT slug, id FROM modules")->fetchAll(PDO::FETCH_KEY_PAIR);
 $cm = $pdo->prepare("INSERT INTO company_modules (company_id, module_id) VALUES (?, ?)");
 $cm->execute([1, $mods['tires']]);
@@ -219,6 +232,49 @@ $pdo->exec("INSERT INTO activity_log (company_id, entity_type, entity_id, action
     (1, 'post', 4, 'denied', 'client', 'Winter promo denied', NULL, NOW() - INTERVAL 90 MINUTE),
     (1, 'post', 4, 'commented', 'client', 'Comment on Winter promo', 'Please use the darker render', NOW() - INTERVAL 90 MINUTE),
     (1, 'post', 6, 'created', 'admin', 'Created post #6: Behind the scenes', NULL, NOW() - INTERVAL 30 MINUTE)");
+
+// ---- notifications (migrate.php 36–39) ------------------------------------------------------------
+// Lance (admin_users 1, the test admin seat's email) is mapped to Slack user U0LANCE; Kenda and Privacy Bee post to
+// channels C0KENDA / C0PBEE on the fake Slack (tests/slack-stub.php); Hollow Mill Farm has no channel. The outbox,
+// threads and inbox start empty; the stub's call log and the mail sink are cleared.
+$has = static function (string $t) use ($pdo): bool {
+    return (int)$pdo->query("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = " . $pdo->quote($t))->fetchColumn() > 0;
+};
+if ($has('notify_outbox')) {
+    foreach (['notify_outbox', 'notify_threads', 'slack_inbox', 'notify_clients', 'admin_users'] as $t) $pdo->exec("TRUNCATE TABLE `{$t}`");
+    $pdo->exec("INSERT INTO admin_users (id, name, email, slack_user_id, role) VALUES (1, 'Lance', 'lance@joustmedia.com', 'U0LANCE', 'owner')");
+    $pdo->exec("INSERT INTO notify_clients (company_id, slack_channel_id, slack_channel_name) VALUES (1, 'C0KENDA', '#portal-kenda'), (2, 'C0PBEE', '#portal-privacybee')");
+    $meta = $pdo->prepare("INSERT INTO meta (k, v) VALUES (?, ?) ON DUPLICATE KEY UPDATE v = VALUES(v)");
+    foreach ([['notify_since', date('Y-m-d H:i:s', time() - 2 * 86400)], ['notify_t1_minutes', '60'], ['notify_t2_minutes', '240'],
+              ['notify_summary_hour', '8'], ['notify_summary_last', date('Y-m-d')], ['notify_cron_last', ''], ['digest_open_last', '1970-01-01 00:00:00'],
+              ['digest_lock_until', '1970-01-01 00:00:00']] as $kv) $meta->execute($kv);
+}
+// ---- email through Google, client emails, tracking (migrate.php 45–49) ------------------------------------------------
+// Google starts disconnected; no inbound mail, no queued client emails, nothing "seen"; Kenda's and Privacy Bee's
+// client email switches on (set below — the app's default is off) and every contact subscribed (contacts were re-created above). The fake Google's state
+// (tests/google-stub.php: mailbox, sent mail, call log, failure mode) is wiped.
+if ($has('google_account')) {
+    foreach (['google_account', 'email_inbound', 'notify_email_refs', 'client_email_queue', 'thread_seen'] as $t) $pdo->exec("TRUNCATE TABLE `{$t}`");
+    $meta = $pdo->prepare("INSERT INTO meta (k, v) VALUES (?, ?) ON DUPLICATE KEY UPDATE v = VALUES(v)");
+    foreach ([['unread_since', '0'], ['client_live_last', date('Y-m-d')], ['notify_weekly_last', date('Y-m-d')], ['client_email_since', date('Y-m-d H:i:s', time() - 86400)]] as $kv) $meta->execute($kv);
+    // Client emails start OFF in the app (migrate.php 47 / 50); the suites that exercise them want Kenda and Privacy Bee
+    // on (Hollow Mill Farm has no row → off). Reminders off, mail() not allowed, no quiet hours.
+    $cols = $pdo->query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'notify_clients'")->fetchAll(PDO::FETCH_COLUMN);
+    if (in_array('email_review', $cols, true)) $pdo->exec("UPDATE notify_clients SET email_review = 1, email_replies = 1, email_live = 1 WHERE company_id IN (1, 2)");
+    if (in_array('email_remind', $cols, true)) $pdo->exec("UPDATE notify_clients SET email_remind = 0, remind_days = 3");
+    foreach ([['client_emails_allow_mail', '0'], ['notify_quiet_start', ''], ['notify_quiet_end', ''], ['client_remind_last', date('Y-m-d')]] as $kv) $meta->execute($kv);
+    $pdo->exec("DELETE FROM meta WHERE k LIKE 'summary\\_member\\_last\\_%'");   // teammates' Morning summary watermarks
+}
+$root = dirname($app, 2);
+$gdir = $root . '/google';
+if (is_dir($gdir)) {
+    foreach (array_merge(glob($gdir . '/*') ?: [], glob($gdir . '/sent/*') ?: []) as $f) { if (is_file($f)) @unlink($f); }
+}
+@unlink($root . '/slack-calls.jsonl');
+@unlink($root . '/slack-calls.jsonl.fail');
+if (!empty($cfg['mail_sink_dir']) && is_dir($cfg['mail_sink_dir'])) {
+    foreach (glob(rtrim($cfg['mail_sink_dir'], '/') . '/*') ?: [] as $f) @unlink($f);
+}
 
 $n = static fn(string $t) => (int)$pdo->query("SELECT COUNT(*) FROM `$t`")->fetchColumn();
 printf("  seeded: %d companies, %d tires, %d tire images, %d library, %d posts (%d media), %d emails, %d pages\n",

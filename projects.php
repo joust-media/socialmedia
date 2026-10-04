@@ -195,7 +195,7 @@ include __DIR__ . '/partials/layout-top.php';
 
 <div class="pj" id="projects"
      data-projects
-     data-endpoint="task.php"
+     data-endpoint="<?= esc(basePath() . '/task.php') ?>"
      data-scoped="<?= $scoped ? '1' : '0' ?>"
      data-can-create="<?= $canCreate ? '1' : '0' ?>"
      data-can-edit="<?= $canEdit ? '1' : '0' ?>"

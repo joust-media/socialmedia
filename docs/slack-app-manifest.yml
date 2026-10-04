@@ -1,0 +1,36 @@
+# Slack app manifest for the Joust portal (Joust-internal; one channel per client, a thread per portal item).
+# Create the app at https://api.slack.com/apps → Create New App → From an app manifest → paste this file.
+# Setup steps: docs/slack-setup.md. The endpoints are EXTENSIONLESS on purpose: the live host 301-redirects
+# "slack-events.php" to "slack-events" and Slack never follows redirects.
+display_information:
+  name: Joust Portal
+  description: Client comments and decisions from the Joust portal, one thread per item.
+  background_color: "#ff6a3d"
+features:
+  bot_user:
+    display_name: Joust Portal
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - chat:write            # post parent messages + thread replies, chat.update the parent
+      - chat:write.public     # post in a client channel even before the bot is invited
+      - channels:read         # Manage → Notifications "Find #portal-<client>" (conversations.list)
+      - groups:read           # the same for private client channels
+      - channels:history      # receive thread replies in public channels (message.channels)
+      - groups:history        # receive thread replies in private channels (message.groups)
+      - im:write              # DM the owner when a client message waits past the first threshold
+      - users:read            # resolve users
+      - users:read.email      # "Find in Slack by email" maps Lance (and later teammates) to their Slack ID
+settings:
+  event_subscriptions:
+    request_url: https://joustmedia.com/portal/slack-events
+    bot_events:
+      - message.channels
+      - message.groups
+  interactivity:
+    is_enabled: true
+    request_url: https://joustmedia.com/portal/slack-actions
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

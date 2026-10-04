@@ -196,6 +196,8 @@ if (($_GET['partial'] ?? '') === 'comments') {
         exit;
     }
     $rows = $hasLog ? commentThread($pdo, $cKind === 'tire' ? 'tire_image' : 'library_image', $cId) : [];
+    // the Comments panel is open = the thread was read (tracking-lib.php unread markers)
+    if (function_exists('trackingViewer') && ($tv = trackingViewer($pdo))) trackingMarkSeen($pdo, $tv, $cKind === 'tire' ? 'tire_image' : 'library_image', $cId);
     $rows = array_values(array_filter($rows, static function ($r) { return trim((string)($r['detail'] ?? '')) !== ''; }));
     echo json_encode([
         'ok'    => true,
@@ -365,6 +367,8 @@ if (!function_exists('assetsRefStripHtml')) {
         $shown = array_slice($rows, 0, $max);
         $label = $mode === 'approved' ? 'Reference · <span data-ref-count>' . $nA . '</span> approved'
                : ($mode === 'pending' ? 'Reference · <span class="as-refstrip-label">To Review</span>' : 'Reference');
+        // Admin: every reference image approved, nothing pending or denied → "All approved ✓"
+        if ($admin && $mode === 'approved' && $nP === 0 && $nD === 0) $label .= ' ' . assetsAllOkHtml('reference');
         $toReview = $nP + $nD;
         $link = '';
         if ($mode === 'approved' && $toReview > 0) {
@@ -411,6 +415,32 @@ if (!function_exists('assetsRefStripHtml')) {
                   . '</button>';
         }
         return $out . '</div></section>';
+    }
+}
+
+/**
+ * Review state of a tire / series / the Reference set from its counts (pending, approved, denied, total):
+ *   'empty' (no images) · 'denied' (Needs changes outstanding) · 'pending' (something to review) · 'allok' (every image
+ *   approved, nothing left to review). The admin's tire views mark 'allok' with a green "All approved ✓".
+ */
+if (!function_exists('assetsReviewState')) {
+    function assetsReviewState(array $c): string {
+        $p = (int)($c['pending'] ?? 0); $a = (int)($c['approved'] ?? 0); $d = (int)($c['denied'] ?? 0);
+        $t = max((int)($c['total'] ?? 0), $p + $a + $d);
+        if ($t === 0) return 'empty';
+        if ($d > 0) return 'denied';
+        if ($p > 0) return 'pending';
+        return 'allok';
+    }
+}
+
+/** The green "All approved ✓" pill (data-allok="<scope>"); $short → just "✓" with the words for screen readers. */
+if (!function_exists('assetsAllOkHtml')) {
+    function assetsAllOkHtml(string $scope, bool $short = false): string {
+        if ($short) {
+            return '<span class="as-chip-allok ui-allok" data-allok="' . esc($scope) . '" title="All approved" aria-label="All approved">' . icon('checkmark') . '</span>';
+        }
+        return '<span class="ui-pill ui-pill--nodot ui-pill--allok" data-allok="' . esc($scope) . '">All approved ' . icon('checkmark') . '</span>';
     }
 }
 
@@ -809,12 +839,18 @@ include __DIR__ . '/partials/layout-top.php';
         $driveGlyph = !empty($seriesSummary[$tid]['drive'])
             ? '<span class="as-collection-drive" data-collection-drive title="Also in Google Drive" aria-label="Also in Google Drive">' . icon('drive') . '</span>'
             : '';
+        // Admin: a tire with nothing left to review and every image approved gets "All approved ✓"; one with Needs
+        // changes outstanding a red count — so neither reads like an empty tire ("No images yet").
+        $state = assetsReviewState(['pending' => $p, 'approved' => $a, 'denied' => $d, 'total' => (int)$c['total_count']]);
+        $stateHtml = '';
+        if ($isAdmin && $state === 'allok')  $stateHtml = assetsAllOkHtml('tire');
+        if ($isAdmin && $state === 'denied') $stateHtml = '<span class="ui-pill ui-pill--nodot ui-pill--denied" data-tire-denied>' . $d . ' need' . ($d === 1 ? 's' : '') . ' changes</span>';
         echo insetRow([
             'href'     => clientUrl('assets.php', ['view' => 'collections', 'item' => $tid]),
             'leading'  => $thumb,
             'title'    => (string)$c['name'],
             'subtitle' => implode(' · ', $parts),
-            'trailing' => $driveGlyph . ($p > 0 ? '<span class="ui-badge">' . ($p > 99 ? '99+' : $p) . '</span>' : ''),
+            'trailing' => $driveGlyph . $stateHtml . ($p > 0 ? '<span class="ui-badge">' . ($p > 99 ? '99+' : $p) . '</span>' : ''),
             'chevron'  => true,
             'attrs'    => ['id' => 'collection-' . $tid, 'data-collection' => $tid],
         ]);
@@ -845,6 +881,30 @@ include __DIR__ . '/partials/layout-top.php';
             . '</div>';
     }
   ?>
+    <?php if ($isAdmin): // ---- the tire's review state, under the page title (admin): All approved ✓ / needs changes / to review / empty ----
+      $tireAll = ['pending' => 0, 'approved' => 0, 'denied' => 0, 'total' => 0];
+      foreach (array_merge([$refCounts], array_map(static function ($sr) { return (array)($sr['counts'] ?? []); }, $seriesList)) as $tc) {
+          foreach ($tireAll as $k => $v) $tireAll[$k] = $v + (int)($tc[$k] ?? 0);
+      }
+      if (!$seriesOn) {
+          $st = $pdo->prepare("SELECT SUM(status = 'pending') AS pending, SUM(status = 'approved') AS approved, SUM(status = 'denied') AS denied, COUNT(*) AS total FROM tire_images WHERE tire_id = ?");
+          $st->execute([$itemId]);
+          $tireAll = array_map('intval', (array)$st->fetch()) + $tireAll;
+      }
+      $tireState = assetsReviewState($tireAll);
+    ?>
+      <div class="as-tire-state as-tire-state--<?= esc($tireState) ?>" data-tire-state="<?= esc($tireState) ?>">
+        <?php if ($tireState === 'allok'): ?>
+          <?= assetsAllOkHtml('page') ?><span class="as-tire-state-text">Nothing left to review — all <?= (int)$tireAll['approved'] ?> image<?= (int)$tireAll['approved'] === 1 ? '' : 's' ?> approved.</span>
+        <?php elseif ($tireState === 'denied'): ?>
+          <span class="ui-pill ui-pill--denied">Needs changes</span><span class="as-tire-state-text"><?= (int)$tireAll['denied'] ?> image<?= (int)$tireAll['denied'] === 1 ? '' : 's' ?> waiting on Joust<?= (int)$tireAll['pending'] > 0 ? ' · ' . (int)$tireAll['pending'] . ' to review' : '' ?>.</span>
+        <?php elseif ($tireState === 'pending'): ?>
+          <span class="ui-pill ui-pill--pending">To Review</span><span class="as-tire-state-text"><?= (int)$tireAll['pending'] ?> image<?= (int)$tireAll['pending'] === 1 ? '' : 's' ?> waiting on <?= esc($client['name']) ?>.</span>
+        <?php else: ?>
+          <span class="ui-pill">No images yet</span>
+        <?php endif; ?>
+      </div>
+    <?php endif; ?>
     <?php if ($seriesOn): // ---- Reference card + strip: the tire's approved reference images, always on top (above the switcher) ----
       $refView = static function (string $f): string { return assetsUrl(['series' => 'ref', 'filter' => $f, 'offset' => null, 'type' => null]); };
       echo assetsRefStripHtml([
@@ -884,12 +944,14 @@ include __DIR__ . '/partials/layout-top.php';
           // One meaning per chip: its count is the number of images in the ACTIVE status filter (To Review /
           // Approved / Needs changes) — the same number the grid shows when you open that series.
           $filterNoun = ['pending' => 'to review', 'approved' => 'approved', 'denied' => 'need changes'][$filter] ?? $filter;
-          $chips = [['key' => 'ref', 'label' => 'Reference', 'n' => (int)($refCounts[$filter] ?? 0), 'drive' => false, 'videos' => $vidsOf($videoCounts['reference'] ?? [])]];
-          foreach ($seriesList as $sr) { $chips[] = ['key' => (string)(int)$sr['id'], 'label' => (string)$sr['name'], 'n' => (int)($sr['counts'][$filter] ?? 0), 'drive' => !empty($sr['drive_url']), 'videos' => $vidsOf($videoCounts['series'][(int)$sr['id']] ?? [])]; }
+          $chips = [['key' => 'ref', 'label' => 'Reference', 'n' => (int)($refCounts[$filter] ?? 0), 'drive' => false, 'videos' => $vidsOf($videoCounts['reference'] ?? []),
+                     'allok' => $isAdmin && assetsReviewState($refCounts) === 'allok']];
+          foreach ($seriesList as $sr) { $chips[] = ['key' => (string)(int)$sr['id'], 'label' => (string)$sr['name'], 'n' => (int)($sr['counts'][$filter] ?? 0), 'drive' => !empty($sr['drive_url']), 'videos' => $vidsOf($videoCounts['series'][(int)$sr['id']] ?? []),
+                                       'allok' => $isAdmin && assetsReviewState((array)($sr['counts'] ?? [])) === 'allok']; }
           foreach ($chips as $ch): $on = $ch['key'] === $seriesKey; ?>
           <a class="as-chip as-series-chip<?= $on ? ' is-active' : '' ?>" href="<?= esc(assetsUrl(['series' => $ch['key'], 'offset' => null, 'type' => null])) ?>"
              data-series-chip="<?= esc($ch['key']) ?>"<?= $on ? ' aria-current="page"' : '' ?>>
-            <?= esc($ch['label']) ?><span class="as-chip-count<?= $filter === 'pending' && $ch['n'] > 0 ? ' as-chip-count--pending' : '' ?>" data-series-count="<?= esc($ch['key']) ?>" data-series-filter="<?= esc($filter) ?>" title="<?= esc($ch['n'] . ' ' . $filterNoun) ?>"><?= $ch['n'] ?></span><?= $ch['drive'] ? '<span class="as-chip-drive" data-series-drive-chip="' . esc($ch['key']) . '" title="Also in Google Drive" aria-label="Also in Google Drive">' . icon('drive') . '</span>' : '' ?><?= $ch['videos'] > 0 ? '<span class="as-chip-videos" data-series-videos="' . esc($ch['key']) . '" title="' . esc($ch['videos'] . ($ch['videos'] === 1 ? ' video' : ' videos')) . '" aria-label="' . esc($ch['videos'] . ($ch['videos'] === 1 ? ' video' : ' videos')) . '">' . $ch['videos'] . icon('play') . '</span>' : '' ?>
+            <?= esc($ch['label']) ?><?= !empty($ch['allok']) ? assetsAllOkHtml('series-' . $ch['key'], true) : '' ?><span class="as-chip-count<?= $filter === 'pending' && $ch['n'] > 0 ? ' as-chip-count--pending' : '' ?>" data-series-count="<?= esc($ch['key']) ?>" data-series-filter="<?= esc($filter) ?>" title="<?= esc($ch['n'] . ' ' . $filterNoun) ?>"><?= $ch['n'] ?></span><?= $ch['drive'] ? '<span class="as-chip-drive" data-series-drive-chip="' . esc($ch['key']) . '" title="Also in Google Drive" aria-label="Also in Google Drive">' . icon('drive') . '</span>' : '' ?><?= $ch['videos'] > 0 ? '<span class="as-chip-videos" data-series-videos="' . esc($ch['key']) . '" title="' . esc($ch['videos'] . ($ch['videos'] === 1 ? ' video' : ' videos')) . '" aria-label="' . esc($ch['videos'] . ($ch['videos'] === 1 ? ' video' : ' videos')) . '">' . $ch['videos'] . icon('play') . '</span>' : '' ?>
           </a>
         <?php endforeach; ?>
       </nav>
@@ -907,7 +969,7 @@ include __DIR__ . '/partials/layout-top.php';
       <section class="as-series-head" data-series-head data-series-id="<?= esc($seriesKey) ?>"<?= $showType ? ' data-series-type="' . esc($typeEff) . '"' : '' ?> aria-label="<?= esc($seriesActive ? $seriesActive['name'] : 'Reference images') ?>">
         <div class="as-series-body">
           <h2 class="as-series-title" data-series-title><?= esc($seriesActive ? $seriesActive['name'] : 'Reference images') ?></h2>
-          <p class="as-series-meta" data-series-meta><?= esc(assetsCountsLine($headCounts, $isAdmin, true)) ?></p>
+          <p class="as-series-meta" data-series-meta><?= esc(assetsCountsLine($headCounts, $isAdmin, true)) ?><?= $isAdmin && assetsReviewState($headCounts) === 'allok' ? ' ' . assetsAllOkHtml('head') : '' ?></p>
           <?php if ($showType): // Photos N · Videos N — the same markup as segmented(); counts follow the status filter like the chips above ?>
             <div class="ui-segmented ui-segmented--auto as-type" role="tablist" aria-label="Media type" data-type-switch>
               <?php foreach (['photos' => 'Photos', 'videos' => 'Videos'] as $tk => $tl): $on = $typeEff === $tk; ?>
@@ -1136,6 +1198,14 @@ if ($isAdmin && $seriesOn && $collection) {
     ob_start();
     include __DIR__ . '/partials/sheet.php';   // after </main> (layout-bottom prints $footExtra there), like #uiSheet
     $footExtra = (string)ob_get_clean() . $footExtra;
+}
+// Unread markers (tracking-lib.php): a deep-linked image and an explicitly opened series ARE the item — the client
+// Home "Joust replied" card links here — so tracking.js marks them seen on load ([data-seen-on-load]).
+$seenOnLoad = [];
+if ($deepOpen) $seenOnLoad[] = ($deepOpen['kind'] === 'tire' ? 'tire_image' : 'library_image') . ':' . (int)$deepOpen['id'];
+if (!$deepOpen && $seriesOn && $seriesActive !== null && ctype_digit((string)($_GET['series'] ?? '')) && (int)$_GET['series'] === (int)$seriesActive['id']) $seenOnLoad[] = 'tire_series:' . (int)$seriesActive['id'];
+if ($seenOnLoad && function_exists('trackingSeenAttr')) {
+    foreach ($seenOnLoad as $k) { [$t, $i] = explode(':', $k); $footExtra = ($footExtra ?? '') . '<span hidden data-seen-on-load' . trackingSeenAttr($t, (int)$i) . '></span>'; }
 }
 $includeSheet = $isAdmin && $seriesOn && $seriesActive !== null;   // only the admin's Rename / Delete series forms use the generic sheet
 include __DIR__ . '/partials/layout-bottom.php';

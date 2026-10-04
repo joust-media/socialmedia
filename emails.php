@@ -152,9 +152,9 @@ function emailsAttachComments(PDO $pdo, array &$rows): void {
     $ph  = implode(',', array_fill(0, count($ids), '?'));
     try {
         $st = $pdo->prepare("
-            SELECT entity_id, actor, detail, created_at FROM activity_log
+            SELECT entity_id, actor, detail, created_at" . activityAuthorCols($pdo) . " FROM activity_log
             WHERE entity_type = 'email' AND action = 'commented' AND entity_id IN ($ph)
-              AND detail IS NOT NULL AND detail <> ''
+              AND detail IS NOT NULL AND detail <> ''" . activityVisibleSql($pdo) . "
             ORDER BY created_at ASC, id ASC
         ");
         $st->execute($ids);
@@ -164,7 +164,9 @@ function emailsAttachComments(PDO $pdo, array &$rows): void {
         });
         foreach ($all as $row) {
             $eid = (int)$row['entity_id'];
-            if (isset($byId[$eid])) $byId[$eid]['comments'][] = ['actor' => $row['actor'], 'detail' => $row['detail'], 'created_at' => $row['created_at']];
+            if (isset($byId[$eid])) $byId[$eid]['comments'][] = ['actor' => $row['actor'], 'detail' => $row['detail'], 'created_at' => $row['created_at'],
+                                                          'author_user_id' => $row['author_user_id'] ?? null, 'internal' => (int)($row['internal'] ?? 0),
+                                                          'client_contact_id' => $row['client_contact_id'] ?? null];
         }
         $st = $pdo->prepare("
             SELECT entity_id, MAX(created_at) AS at FROM activity_log
@@ -438,6 +440,7 @@ include __DIR__ . '/partials/layout-top.php';
     <?php if ($admin): ?><?= assignSelectButtonHtml('email') ?><?php endif; ?>
   </h2>
   <ul class="ui-list posts-list emails-list" role="list" data-emails-items>
+    <?php if (function_exists('trackingUnreadPreload')) trackingUnreadPreload($pdo, 'email', array_column($emails, 'id')); ?>
     <?php foreach ($emails as $email):
         $eid      = (int)$email['id'];
         $key      = emailStatusKey($email);
@@ -477,7 +480,7 @@ include __DIR__ . '/partials/layout-top.php';
           </div>
           <div class="ui-row-body">
             <div class="pl-top">
-              <div class="ui-row-title pl-title"><?= h($rowTitle) ?></div>
+              <div class="ui-row-title pl-title"><?= function_exists('trackingUnreadDot') ? trackingUnreadDot('email', $eid) : '' ?><?= h($rowTitle) ?></div>
               <span class="pl-when">
                 <?php if ($isPast): ?><span class="pl-past" title="This email's send date has passed">Past</span><?php endif; ?>
                 <?php if ($dateLbl !== ''): ?><time class="pl-date" datetime="<?= h(date('Y-m-d', $ts)) ?>"><?= h($dateLbl) ?></time><?php endif; ?>

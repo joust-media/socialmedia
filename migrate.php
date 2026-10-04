@@ -1360,8 +1360,517 @@ try {
     } else {
         $steps[] = "• posts.status already has Draft — skipped.";
     }
+
+    // 36–39. Notifications (notify-lib.php; Manage → Notifications). notifyReady() (notify-lib.php) gates every
+    //     read / write until these have run, so the portal keeps working on a deploy that has not migrated yet.
+    // 36. admin_users — named Joust identities (who wrote a comment, who gets the Slack @mention / escalation
+    //     email). Lance is seeded from the single login in auth.php (ADMIN_EMAIL), which keeps working unchanged:
+    //     currentAdminUserId() maps the signed-in email to a row. password_hash is reserved for per-person logins.
+    if (!tableExists($pdo, 'admin_users')) {
+        $pdo->exec("
+            CREATE TABLE admin_users (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                name VARCHAR(80) NOT NULL,
+                email VARCHAR(190) NOT NULL,
+                slack_user_id VARCHAR(32) NULL DEFAULT NULL,
+                password_hash VARCHAR(255) NULL DEFAULT NULL,
+                role VARCHAR(20) NOT NULL DEFAULT 'admin',
+                active TINYINT(1) NOT NULL DEFAULT 1,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_email (email),
+                KEY ix_slack (slack_user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `admin_users` table.";
+    } else {
+        $steps[] = "• `admin_users` already exists — skipped.";
+    }
+    $seedEmail = defined('ADMIN_EMAIL') ? (string)ADMIN_EMAIL : '';
+    if ($seedEmail !== '' && (int)$pdo->query("SELECT COUNT(*) FROM admin_users")->fetchColumn() === 0) {
+        $pdo->prepare("INSERT INTO admin_users (name, email, role) VALUES ('Lance', ?, 'owner')")->execute([$seedEmail]);
+        $steps[] = "✓ Seeded admin user Lance ({$seedEmail}) from the current login.";
+    } else {
+        $steps[] = "• admin_users already has people — seed skipped.";
+    }
+
+    // 37. activity_log.author_user_id (which admin_users row wrote it; NULL = the client seat / legacy rows) and
+    //     activity_log.internal (1 = a Joust-only note: hidden from the client seat in every surface — threads,
+    //     feeds, counts, Home — and never in the Morning summary or a client email). Plus the notification
+    //     settings in `meta` (escalation thresholds in minutes, Morning summary hour) and notify_since, the floor
+    //     below which old client messages never escalate (so the first deploy does not page about history).
+    $alAdd = [];
+    if (!columnExists($pdo, 'activity_log', 'author_user_id')) $alAdd[] = "ADD COLUMN author_user_id INT UNSIGNED NULL DEFAULT NULL AFTER actor";
+    if (!columnExists($pdo, 'activity_log', 'internal'))       $alAdd[] = "ADD COLUMN internal TINYINT(1) NOT NULL DEFAULT 0 AFTER author_user_id";
+    if ($alAdd) {
+        $pdo->exec("ALTER TABLE activity_log " . implode(', ', $alAdd));
+        $steps[] = "✓ Added activity_log author / internal columns.";
+    } else {
+        $steps[] = "• activity_log.author_user_id / internal already exist — skipped.";
+    }
+    $metaIns = $pdo->prepare("INSERT IGNORE INTO meta (k, v) VALUES (?, ?)");
+    $metaNew = 0;
+    foreach ([
+        ['notify_since', date('Y-m-d H:i:s')],
+        ['notify_t1_minutes', '60'],
+        ['notify_t2_minutes', '240'],
+        ['notify_summary_hour', '8'],
+        ['notify_summary_last', '1970-01-01'],
+    ] as $kv) {
+        $metaIns->execute($kv);
+        $metaNew += $metaIns->rowCount();
+    }
+    $steps[] = $metaNew > 0 ? "✓ Seeded {$metaNew} notification settings." : "• Notification settings already seeded — skipped.";
+
+    // 38. notify_outbox — every outbound Slack / email message (delivery log + retry with backoff; dedupe_key makes
+    //     enqueueing idempotent) — and notify_clients — per client: its Slack channel and the Joust owner to @mention.
+    if (!tableExists($pdo, 'notify_outbox')) {
+        $pdo->exec("
+            CREATE TABLE notify_outbox (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                channel ENUM('slack','email') NOT NULL,
+                kind VARCHAR(30) NOT NULL,
+                company_id INT UNSIGNED NULL DEFAULT NULL,
+                entity_type VARCHAR(20) NULL DEFAULT NULL,
+                entity_id INT UNSIGNED NULL DEFAULT NULL,
+                target VARCHAR(190) NULL DEFAULT NULL,
+                payload MEDIUMTEXT NOT NULL,
+                status ENUM('pending','sending','sent','failed','skipped') NOT NULL DEFAULT 'pending',
+                attempts SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+                next_attempt_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_error VARCHAR(500) NULL DEFAULT NULL,
+                dedupe_key VARCHAR(120) NULL DEFAULT NULL,
+                provider_id VARCHAR(190) NULL DEFAULT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                sent_at DATETIME NULL DEFAULT NULL,
+                UNIQUE KEY uq_dedupe (dedupe_key),
+                KEY ix_due (status, next_attempt_at),
+                KEY ix_entity (entity_type, entity_id),
+                KEY ix_created (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `notify_outbox` table.";
+    } else {
+        $steps[] = "• `notify_outbox` already exists — skipped.";
+    }
+    if (!tableExists($pdo, 'notify_clients')) {
+        $pdo->exec("
+            CREATE TABLE notify_clients (
+                company_id INT UNSIGNED NOT NULL PRIMARY KEY,
+                slack_channel_id VARCHAR(32) NULL DEFAULT NULL,
+                slack_channel_name VARCHAR(80) NULL DEFAULT NULL,
+                owner_user_id INT UNSIGNED NULL DEFAULT NULL,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `notify_clients` table.";
+    } else {
+        $steps[] = "• `notify_clients` already exists — skipped.";
+    }
+
+    // 39. notify_threads — one row per portal item that has a conversation outside the portal: its Slack parent
+    //     message (channel + ts, the parent's last rendered hash) and the email Message-ID later mails thread on
+    //     (In-Reply-To / References). slack_inbox — every verified Slack delivery by event_id (dedupe of Slack's
+    //     retries) with what the portal did with it.
+    if (!tableExists($pdo, 'notify_threads')) {
+        $pdo->exec("
+            CREATE TABLE notify_threads (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                company_id INT UNSIGNED NOT NULL,
+                entity_type VARCHAR(20) NOT NULL,
+                entity_id INT UNSIGNED NOT NULL,
+                slack_channel VARCHAR(32) NULL DEFAULT NULL,
+                slack_ts VARCHAR(32) NULL DEFAULT NULL,
+                slack_claimed_at DATETIME NULL DEFAULT NULL,
+                parent_hash CHAR(40) NULL DEFAULT NULL,
+                email_message_id VARCHAR(190) NULL DEFAULT NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_entity (entity_type, entity_id),
+                KEY ix_slack (slack_channel, slack_ts),
+                KEY ix_company (company_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `notify_threads` table.";
+    } else {
+        $steps[] = "• `notify_threads` already exists — skipped.";
+    }
+    if (!tableExists($pdo, 'slack_inbox')) {
+        $pdo->exec("
+            CREATE TABLE slack_inbox (
+                id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                event_id VARCHAR(80) NOT NULL,
+                kind VARCHAR(30) NOT NULL DEFAULT '',
+                channel VARCHAR(32) NULL DEFAULT NULL,
+                user_id VARCHAR(32) NULL DEFAULT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'received',
+                note VARCHAR(255) NULL DEFAULT NULL,
+                activity_id INT UNSIGNED NULL DEFAULT NULL,
+                received_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                processed_at DATETIME NULL DEFAULT NULL,
+                UNIQUE KEY uq_event (event_id),
+                KEY ix_received (received_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ");
+        $steps[] = "✓ Created `slack_inbox` table.";
+    } else {
+        $steps[] = "• `slack_inbox` already exists — skipped.";
+    }
 } catch (Exception $e) {
     $errors[] = $e->getMessage();
+}
+
+// 40–43. Client sign-in (client-auth-lib.php): per-client contact emails, one-time magic links, 30-day sessions,
+//        and the rate-limit ledger. A separate block so steps 36–39 (notifications) can sit above it untouched.
+if (!$errors) {
+    try {
+        // 40. client_contacts — the per-client list of addresses that may sign in (Manage → Clients → Contacts).
+        //     link_epoch: bumped by "Sign out everywhere" to void that contact's emailed deep links.
+        if (!tableExists($pdo, 'client_contacts')) {
+            $pdo->exec("
+                CREATE TABLE client_contacts (
+                    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                    company_id INT UNSIGNED NOT NULL,
+                    email VARCHAR(190) NOT NULL,
+                    name VARCHAR(120) NULL DEFAULT NULL,
+                    link_epoch INT UNSIGNED NOT NULL DEFAULT 0,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    last_login_at DATETIME NULL DEFAULT NULL,
+                    UNIQUE KEY uq_company_email (company_id, email),
+                    KEY ix_email (email)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $steps[] = "✓ Created `client_contacts` table.";
+        } else {
+            $steps[] = "• `client_contacts` already exists — skipped.";
+        }
+        // 40b. Carry over any client email column an older install may have (companies.email / emails / contact_email /
+        //      client_email / notify_email — comma, semicolon or space separated). INSERT IGNORE: re-runs add nothing.
+        $legacyCols = $pdo->query("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE()
+            AND TABLE_NAME = 'companies' AND COLUMN_NAME IN ('email', 'emails', 'contact_email', 'client_email', 'notify_email')")->fetchAll(PDO::FETCH_COLUMN);
+        $carried = 0;
+        foreach ($legacyCols as $col) {
+            $ins = $pdo->prepare("INSERT IGNORE INTO client_contacts (company_id, email) VALUES (?, ?)");
+            foreach ($pdo->query("SELECT id, `{$col}` AS v FROM companies WHERE `{$col}` IS NOT NULL AND `{$col}` <> ''")->fetchAll() as $row) {
+                foreach (preg_split('/[\s,;]+/', strtolower((string)$row['v'])) as $addr) {
+                    if ($addr !== '' && strlen($addr) <= 190 && filter_var($addr, FILTER_VALIDATE_EMAIL)) {
+                        $ins->execute([(int)$row['id'], $addr]);
+                        $carried += $ins->rowCount();
+                    }
+                }
+            }
+        }
+        if ($legacyCols) {
+            $steps[] = $carried > 0 ? "✓ Copied {$carried} client email address(es) into `client_contacts`." : "• Client email columns already copied — skipped.";
+        }
+
+        // 41. client_login_tokens — one-time sign-in links (sha256 of the token only), 15-minute expiry, single use.
+        if (!tableExists($pdo, 'client_login_tokens')) {
+            $pdo->exec("
+                CREATE TABLE client_login_tokens (
+                    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                    contact_id INT UNSIGNED NOT NULL,
+                    token_hash CHAR(64) NOT NULL,
+                    return_path VARCHAR(1000) NULL DEFAULT NULL,
+                    ip VARCHAR(45) NULL DEFAULT NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    expires_at DATETIME NOT NULL,
+                    used_at DATETIME NULL DEFAULT NULL,
+                    UNIQUE KEY uq_token (token_hash),
+                    KEY ix_contact (contact_id),
+                    KEY ix_expires (expires_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $steps[] = "✓ Created `client_login_tokens` table.";
+        } else {
+            $steps[] = "• `client_login_tokens` already exists — skipped.";
+        }
+
+        // 42. client_sessions — a signed-in browser (cookie jsm_client = random token, sha256 stored), 30 days,
+        //     revocable from Manage → Clients.
+        if (!tableExists($pdo, 'client_sessions')) {
+            $pdo->exec("
+                CREATE TABLE client_sessions (
+                    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                    contact_id INT UNSIGNED NOT NULL,
+                    company_id INT UNSIGNED NOT NULL,
+                    token_hash CHAR(64) NOT NULL,
+                    via VARCHAR(12) NOT NULL DEFAULT 'magic',
+                    ip VARCHAR(45) NULL DEFAULT NULL,
+                    user_agent VARCHAR(255) NULL DEFAULT NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    last_seen_at DATETIME NULL DEFAULT NULL,
+                    expires_at DATETIME NOT NULL,
+                    revoked_at DATETIME NULL DEFAULT NULL,
+                    revoked_by VARCHAR(20) NULL DEFAULT NULL,
+                    UNIQUE KEY uq_token (token_hash),
+                    KEY ix_company_live (company_id, revoked_at, expires_at),
+                    KEY ix_contact (contact_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $steps[] = "✓ Created `client_sessions` table.";
+        } else {
+            $steps[] = "• `client_sessions` already exists — skipped.";
+        }
+
+        // 43. auth_attempts — sign-in request ledger for the per-address and per-IP rate limits (hashed keys).
+        if (!tableExists($pdo, 'auth_attempts')) {
+            $pdo->exec("
+                CREATE TABLE auth_attempts (
+                    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                    scope VARCHAR(10) NOT NULL,
+                    key_hash CHAR(64) NOT NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    KEY ix_scope_key (scope, key_hash, created_at),
+                    KEY ix_created (created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $steps[] = "✓ Created `auth_attempts` table.";
+        } else {
+            $steps[] = "• `auth_attempts` already exists — skipped.";
+        }
+    } catch (Exception $e) {
+        $errors[] = $e->getMessage();
+    }
+}
+
+// 44. activity_log.client_contact_id — which signed-in client contact (client_contacts.id) wrote a client row, so
+//     Slack and the admin views can say "Jane (Kenda Tires)" instead of just the client. NULL = unknown (rows from
+//     before sign-in, the admin's "reply as client", a removed contact). Probed by activityHasContactCol()
+//     (notify-lib.php); every reader works without it.
+if (!$errors) {
+    try {
+        if (!columnExists($pdo, 'activity_log', 'client_contact_id')) {
+            $pdo->exec("ALTER TABLE activity_log ADD COLUMN client_contact_id INT UNSIGNED NULL DEFAULT NULL");
+            $steps[] = "✓ Added activity_log.client_contact_id (which client contact wrote it).";
+        } else {
+            $steps[] = "• activity_log.client_contact_id already exists — skipped.";
+        }
+    } catch (Exception $e) {
+        $errors[] = $e->getMessage();
+    }
+}
+
+// 45–49. Email through Google (gmail-lib.php), client notification emails (client-notify-lib.php) and tracking
+//        (tracking-lib.php): Inbox, unread markers, weekly report. Every reader probes for its tables first.
+if (!$errors) {
+    try {
+        // 45. google_account — the ONE connected Google Workspace mailbox (lance@joustmedia.com): the OAuth refresh
+        //     token and the cached access token, both ENCRYPTED (gmail-lib.php googleEncrypt(): libsodium secretbox, or
+        //     AES-256-GCM, key derived from config google_token_key); never stored or shown in clear. Plus the health
+        //     line Manage → Notifications shows (last success / last error) and the "portal-processed" label id.
+        if (!tableExists($pdo, 'google_account')) {
+            $pdo->exec("
+                CREATE TABLE google_account (
+                    id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
+                    account_email VARCHAR(190) NOT NULL,
+                    refresh_token_enc TEXT NOT NULL,
+                    access_token_enc TEXT NULL DEFAULT NULL,
+                    access_expires_at DATETIME NULL DEFAULT NULL,
+                    scopes VARCHAR(500) NULL DEFAULT NULL,
+                    label_id VARCHAR(64) NULL DEFAULT NULL,
+                    connected_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    connected_by VARCHAR(190) NULL DEFAULT NULL,
+                    last_success_at DATETIME NULL DEFAULT NULL,
+                    last_error VARCHAR(500) NULL DEFAULT NULL,
+                    last_error_at DATETIME NULL DEFAULT NULL,
+                    last_poll_at DATETIME NULL DEFAULT NULL,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $steps[] = "✓ Created `google_account` table.";
+        } else {
+            $steps[] = "• `google_account` already exists — skipped.";
+        }
+
+        // 46. Inbound email replies: email_inbound (every Gmail message the cron looked at, deduped by Gmail id, with
+        //     what happened: posted / unmatched / dismissed / assigned / ignored), notify_email_refs (every Message-ID
+        //     the portal sent to a client → its client, item and contact: replies are matched on In-Reply-To /
+        //     References), notify_threads.email_token (the short signed [J#…] subject token per item, the fallback match).
+        if (!tableExists($pdo, 'email_inbound')) {
+            $pdo->exec("
+                CREATE TABLE email_inbound (
+                    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                    gmail_id VARCHAR(64) NOT NULL,
+                    thread_id VARCHAR(64) NULL DEFAULT NULL,
+                    message_id VARCHAR(190) NULL DEFAULT NULL,
+                    from_email VARCHAR(190) NOT NULL DEFAULT '',
+                    from_name VARCHAR(190) NULL DEFAULT NULL,
+                    subject VARCHAR(500) NULL DEFAULT NULL,
+                    body_text MEDIUMTEXT NULL,
+                    received_at DATETIME NULL DEFAULT NULL,
+                    has_attachments TINYINT(1) NOT NULL DEFAULT 0,
+                    status VARCHAR(20) NOT NULL DEFAULT 'unmatched',
+                    reason VARCHAR(255) NULL DEFAULT NULL,
+                    company_id INT UNSIGNED NULL DEFAULT NULL,
+                    entity_type VARCHAR(20) NULL DEFAULT NULL,
+                    entity_id INT UNSIGNED NULL DEFAULT NULL,
+                    contact_id INT UNSIGNED NULL DEFAULT NULL,
+                    author_user_id INT UNSIGNED NULL DEFAULT NULL,
+                    activity_id INT UNSIGNED NULL DEFAULT NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    handled_at DATETIME NULL DEFAULT NULL,
+                    UNIQUE KEY uq_gmail (gmail_id),
+                    KEY ix_status (status, created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $steps[] = "✓ Created `email_inbound` table.";
+        } else {
+            $steps[] = "• `email_inbound` already exists — skipped.";
+        }
+        if (!tableExists($pdo, 'notify_email_refs')) {
+            $pdo->exec("
+                CREATE TABLE notify_email_refs (
+                    message_id VARCHAR(190) NOT NULL PRIMARY KEY,
+                    company_id INT UNSIGNED NOT NULL,
+                    entity_type VARCHAR(20) NULL DEFAULT NULL,
+                    entity_id INT UNSIGNED NULL DEFAULT NULL,
+                    contact_id INT UNSIGNED NULL DEFAULT NULL,
+                    kind VARCHAR(20) NOT NULL DEFAULT '',
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    KEY ix_entity (entity_type, entity_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $steps[] = "✓ Created `notify_email_refs` table.";
+        } else {
+            $steps[] = "• `notify_email_refs` already exists — skipped.";
+        }
+        if (!columnExists($pdo, 'notify_threads', 'email_token')) {
+            $pdo->exec("ALTER TABLE notify_threads ADD COLUMN email_token VARCHAR(12) NULL DEFAULT NULL, ADD UNIQUE KEY uq_email_token (email_token)");
+            $steps[] = "✓ Added notify_threads.email_token (the [J#…] subject token).";
+        } else {
+            $steps[] = "• notify_threads.email_token already exists — skipped.";
+        }
+
+        // 47. Client email preferences: per contact (client_contacts.notify_prefs JSON {review, replies, live} — a
+        //     missing key = on; unsubscribed_at = the one-click "stop all"), and per client (notify_clients
+        //     email_review / email_replies / email_live — Manage → Clients, default OFF: Joust turns them on per
+        //     client once Google is connected; step 50 brings older installs in line).
+        $ccAdd = [];
+        if (!columnExists($pdo, 'client_contacts', 'notify_prefs'))   $ccAdd[] = "ADD COLUMN notify_prefs VARCHAR(255) NULL DEFAULT NULL";
+        if (!columnExists($pdo, 'client_contacts', 'unsubscribed_at')) $ccAdd[] = "ADD COLUMN unsubscribed_at DATETIME NULL DEFAULT NULL";
+        if ($ccAdd) {
+            $pdo->exec("ALTER TABLE client_contacts " . implode(', ', $ccAdd));
+            $steps[] = "✓ Added client_contacts email preferences.";
+        } else {
+            $steps[] = "• client_contacts email preferences already exist — skipped.";
+        }
+        $ncAdd = [];
+        foreach (['email_review', 'email_replies', 'email_live'] as $col) {
+            if (!columnExists($pdo, 'notify_clients', $col)) $ncAdd[] = "ADD COLUMN {$col} TINYINT(1) NOT NULL DEFAULT 0";
+        }
+        if ($ncAdd) {
+            $pdo->exec("ALTER TABLE notify_clients " . implode(', ', $ncAdd));
+            $steps[] = "✓ Added per-client email switches.";
+        } else {
+            $steps[] = "• Per-client email switches already exist — skipped.";
+        }
+
+        // 48. thread_seen — unread markers: per viewer (an admin user or a client contact) and item, the newest
+        //     activity id they have seen. meta unread_since = the floor (nothing older shows as unread).
+        if (!tableExists($pdo, 'thread_seen')) {
+            $pdo->exec("
+                CREATE TABLE thread_seen (
+                    viewer_type VARCHAR(10) NOT NULL,
+                    viewer_id INT UNSIGNED NOT NULL,
+                    entity_type VARCHAR(20) NOT NULL,
+                    entity_id INT UNSIGNED NOT NULL,
+                    last_seen_id INT UNSIGNED NOT NULL DEFAULT 0,
+                    seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (viewer_type, viewer_id, entity_type, entity_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $steps[] = "✓ Created `thread_seen` table.";
+        } else {
+            $steps[] = "• `thread_seen` already exists — skipped.";
+        }
+        $metaIns = $pdo->prepare("INSERT IGNORE INTO meta (k, v) VALUES (?, ?)");
+        $metaIns->execute(['unread_since', (string)(int)$pdo->query("SELECT COALESCE(MAX(id), 0) FROM activity_log")->fetchColumn()]);
+        $metaIns->execute(['client_email_since', date('Y-m-d H:i:s')]);
+        if ($metaIns->rowCount() > 0) $steps[] = "✓ Seeded the unread / client email floors.";
+
+        // 49. client_email_queue — what the client emails batch: one row per event (an item sent for review, a
+        //     visible Joust reply, an item gone live / scheduled). The cron sends one email per client and kind once
+        //     the batch window has passed (review 15 min after the last change, replies 10 min, live once a day) and
+        //     stamps batch_key on the rows it covered.
+        if (!tableExists($pdo, 'client_email_queue')) {
+            $pdo->exec("
+                CREATE TABLE client_email_queue (
+                    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                    company_id INT UNSIGNED NOT NULL,
+                    kind VARCHAR(10) NOT NULL,
+                    entity_type VARCHAR(20) NOT NULL,
+                    entity_id INT UNSIGNED NOT NULL,
+                    activity_id INT UNSIGNED NULL DEFAULT NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    batch_key VARCHAR(60) NULL DEFAULT NULL,
+                    batched_at DATETIME NULL DEFAULT NULL,
+                    KEY ix_open (batch_key, company_id, kind, created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $steps[] = "✓ Created `client_email_queue` table.";
+        } else {
+            $steps[] = "• `client_email_queue` already exists — skipped.";
+        }
+    } catch (Exception $e) {
+        $errors[] = $e->getMessage();
+    }
+}
+
+// 50–51. Notification fixes: client emails start OFF, stale-review reminders, per-person notification settings.
+if (!$errors) {
+    try {
+        // 50. Client email switches default OFF. The column default becomes 0 (a new client starts off), and on an
+        //     install where step 47 already created the switches ON, every existing row is turned off — but ONLY if no
+        //     client email has ever been sent (an install already emailing clients keeps its choices). Runs once:
+        //     meta client_email_default_off records it; the probe is the column default.
+        $defOn = 0;
+        foreach (['email_review', 'email_replies', 'email_live'] as $col) {
+            $st = $pdo->prepare("SELECT COLUMN_DEFAULT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'notify_clients' AND COLUMN_NAME = ?");
+            $st->execute([$col]);
+            if (trim((string)$st->fetchColumn(), "'") === '1') {
+                $pdo->exec("ALTER TABLE notify_clients MODIFY COLUMN {$col} TINYINT(1) NOT NULL DEFAULT 0");
+                $defOn++;
+            }
+        }
+        $flag = $pdo->query("SELECT v FROM meta WHERE k = 'client_email_default_off'")->fetchColumn();
+        if ($flag === false) {
+            $sent = (int)$pdo->query("SELECT COUNT(*) FROM notify_outbox WHERE kind = 'client_email' AND status = 'sent'")->fetchColumn();
+            $off = 0;
+            if ($sent === 0) {
+                $off = $pdo->exec("UPDATE notify_clients SET email_review = 0, email_replies = 0, email_live = 0 WHERE email_review <> 0 OR email_replies <> 0 OR email_live <> 0");
+            }
+            $pdo->prepare("INSERT INTO meta (k, v) VALUES ('client_email_default_off', ?)")->execute([date('Y-m-d H:i:s') . ($sent === 0 ? ' off:' . (int)$off : ' kept (emails already sent)')]);
+            $steps[] = $sent === 0
+                ? "✓ Client emails now start off: " . (int)$off . " client(s) switched off (no client email had been sent yet) — turn them on per client in Manage → Clients."
+                : "✓ Client emails start off for new clients; existing switches kept ({$sent} client email(s) already sent).";
+        } elseif ($defOn > 0) {
+            $steps[] = "✓ Client email switches default to off.";
+        } else {
+            $steps[] = "• Client emails already start off — skipped.";
+        }
+
+        // 51. Stale-review reminders + per-person settings: notify_clients.email_remind (the "Gentle reminders" switch,
+        //     default off like the others) and remind_days (N, default 3; 0 = off); admin_users.notify_prefs (JSON
+        //     {dm, email, summary} — a missing key = on; My notifications).
+        $rmAdd = [];
+        if (!columnExists($pdo, 'notify_clients', 'email_remind')) $rmAdd[] = "ADD COLUMN email_remind TINYINT(1) NOT NULL DEFAULT 0";
+        if (!columnExists($pdo, 'notify_clients', 'remind_days'))  $rmAdd[] = "ADD COLUMN remind_days TINYINT UNSIGNED NOT NULL DEFAULT 3";
+        if ($rmAdd) {
+            $pdo->exec("ALTER TABLE notify_clients " . implode(', ', $rmAdd));
+            $steps[] = "✓ Added client reminder settings (notify_clients.email_remind, remind_days).";
+        } else {
+            $steps[] = "• Client reminder settings already exist — skipped.";
+        }
+        if (!columnExists($pdo, 'admin_users', 'notify_prefs')) {
+            $pdo->exec("ALTER TABLE admin_users ADD COLUMN notify_prefs VARCHAR(255) NULL DEFAULT NULL");
+            $steps[] = "✓ Added admin_users.notify_prefs (per-person notification settings).";
+        } else {
+            $steps[] = "• admin_users.notify_prefs already exists — skipped.";
+        }
+    } catch (Exception $e) {
+        $errors[] = $e->getMessage();
+    }
 }
 ?>
 <!DOCTYPE html>

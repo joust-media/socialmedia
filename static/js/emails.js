@@ -22,7 +22,7 @@
   var $  = function (sel, root) { return (root || document).querySelector(sel); };
   var $$ = function (sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); };
 
-  var ENDPOINT = cfg.endpoint || 'email-status.php';
+  var ENDPOINT = cfg.endpoint || (window.App && App.urls ? App.urls.abs('email-status.php') : 'email-status.php');
   var DESKTOP  = window.matchMedia ? window.matchMedia('(min-width: 1024px)') : { matches: false };
   var LABELS   = { draft: 'Draft', pending: 'To Review', approved: 'Approved', denied: 'Needs changes', live: 'Live' };
   var PILL     = { draft: 'neutral', pending: 'pending', approved: 'approved', denied: 'denied', live: 'scheduled' };
@@ -244,6 +244,8 @@
 
   /* history: ?email=ID ⇄ sheet */
   function urlWithEmail(id) {
+    // App.urls: /portal/<client>/emails/ID with clean links (the id lives in the path), ?email=ID otherwise.
+    if (App.urls) return App.urls.withParams({ email: id || null });
     var u = new URL(window.location.href);
     if (id) u.searchParams.set('email', id); else u.searchParams.delete('email');
     return u.pathname + u.search + u.hash;
@@ -516,7 +518,7 @@
   };
 
   /* ---- comments ----------------------------------------------------- */
-  function appendComment(art, text, actor) {
+  function appendComment(art, text, actor, internal) {
     var root = art.closest('.ui-sheet-root') || document;
     var thread = $('[data-thread]', root); if (!thread) return;
     var bw = App.bubbleWho ? App.bubbleWho(actor) : { side: 'mine', who: 'You' };   // drawn from the viewer's seat
@@ -524,8 +526,9 @@
     var msg = document.createElement('div');
     msg.className = 'pd-msg pd-msg--' + side + ' ui-enter';
     msg.setAttribute('data-actor', actor);
-    msg.innerHTML = '<div class="ui-bubble ui-bubble--' + side + '">' + escapeHtml(text).replace(/\n/g, '<br>') + '</div>'
-                  + '<div class="ui-bubble-meta">' + (App.actorAvatar ? App.actorAvatar(actor) : '') + who + ' · just now</div>';
+    if (internal) msg.setAttribute('data-internal', '1');
+    msg.innerHTML = '<div class="ui-bubble ui-bubble--' + side + (internal ? ' ui-bubble--internal' : '') + '">' + escapeHtml(text).replace(/\n/g, '<br>') + '</div>'
+                  + '<div class="ui-bubble-meta">' + (App.actorAvatar ? App.actorAvatar(actor) : '') + who + (internal ? ' <span class="ui-pill ui-pill--nodot ui-pill--internal" data-internal-pill>Internal</span>' : '') + ' · just now</div>';
     var empty = $('[data-thread-empty]', thread); if (empty) empty.hidden = true;
     thread.appendChild(msg);
     var n = (parseInt(thread.getAttribute('data-count') || '0', 10) || 0) + 1;
@@ -540,12 +543,14 @@
     var body = $('[data-sheet-body]', root); if (body) body.scrollTop = body.scrollHeight;
   }
 
-  E.comment = function (id, text) {
+  E.comment = function (id, text, internal) {
     text = (text || '').trim();
     if (!text) return Promise.resolve(null);
-    return App.post(ENDPOINT, { id: id, comment: text, actor: App.actor }).then(function (res) {
+    var body = { id: id, comment: text, actor: App.actor };
+    if (internal) body.internal = 1;   // admin: an internal note (Joust only)
+    return App.post(ENDPOINT, body).then(function (res) {
       if (!res.ok) { toast(res.error || 'Could not send', 'error'); return res; }
-      var art = ed(); if (art && art.getAttribute('data-id') === String(id)) appendComment(art, text, App.actor);
+      var art = ed(); if (art && art.getAttribute('data-id') === String(id)) appendComment(art, text, App.actor, !!internal);
       return res;
     });
   };
@@ -667,7 +672,8 @@
         var input = $('[data-comment-input]', form), text = input ? input.value.trim() : '';
         if (!text) return;
         var send = $('[data-comment-send]', form); if (send) send.disabled = true;
-        E.comment(art.getAttribute('data-id'), text).then(function (res) {
+        var internalBox = $('[data-comment-internal]', form);
+        E.comment(art.getAttribute('data-id'), text, internalBox && internalBox.checked).then(function (res) {
           if (res && res.ok && input) { input.value = ''; autosize(input); }
           if (send) send.disabled = !(input && input.value.trim());
         });

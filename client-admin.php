@@ -12,6 +12,11 @@
  *                         portal turns a client's Tires / Emails / Pages tab on or off)
  *   action=settings       id*, default_hashtags, product_type, industry  (each only once its migration-gated
  *                         column exists — hasClientProfileColumns() / companies.default_hashtags; blank = NULL)
+ *   action=contact_add    id*, email*, contact_name   (client-auth-lib.php clientContactAdd: valid, unique per client, ≤ 50)
+ *   action=contact_remove id*, contact_id*            (sessions revoked, magic links deleted, deep links dead)
+ *   action=session_revoke id*, session_id*            (one signed-in device)
+ *   action=sessions_revoke_all id*, contact_id (0 = everyone), links=1 (also void emailed deep links)
+ *   action=clean_links_install / clean_links_remove   (url-lib.php: back up, merge, self-check, roll back)
  *   action=delete         → 405, never implemented here
  *
  * Slug: [a-z0-9-]{2,40}, unique (409 when taken). Logo: an image by content (getimagesize
@@ -204,6 +209,7 @@ function caFields(PDO $pdo, int $exceptId): array {
     if (mb_strlen($name) > 120)       return ['error' => 'Name is too long (120 characters max).', 'code' => 422];
     if ($slug === '')                 $slug = caSlugify($name);
     if (!caValidSlug($slug))          return ['error' => 'Slug must be 2–40 characters of a–z, 0–9 and dashes.', 'code' => 422];
+    if (in_array($slug, portalReservedSegments(), true)) return ['error' => 'The slug "' . $slug . '" is reserved for a portal page — pick another.', 'code' => 422];   // clean links: /portal/<slug>/
     if (mb_strlen($label) > 60)       return ['error' => 'Feature label is too long (60 characters max).', 'code' => 422];
     if (caSlugTaken($pdo, $slug, $exceptId)) return ['error' => 'The slug "' . $slug . '" is already used by another client.', 'code' => 409];
     return ['name' => $name, 'slug' => $slug, 'feature_label' => $label];
@@ -378,6 +384,35 @@ switch ($action) {
         caReply(200, ['message' => $label . ($on ? ' enabled' : ' disabled') . ' for ' . $co['name'] . '.', 'id' => $id, 'module' => $module, 'enabled' => $on === 1], $scope, $id);
     }
 
+    // ---- client emails: which kinds this client's contacts get (client-notify-lib.php) ---------------
+    case 'email_toggle': {
+        $co = caCompany($pdo, $id);
+        if (!$co) caReply(404, ['error' => 'Unknown client.'], $scope);
+        if (!function_exists('clientEmailReady') || !clientEmailReady($pdo)) caReply(409, ['error' => 'Run migrate.php first (steps 45–49).'], $scope, $id);
+        $kind = strtolower(trim((string)($_POST['kind'] ?? '')));
+        $col = clientEmailKinds()[$kind][1] ?? null;
+        if ($col === null) caReply(400, ['error' => 'Unknown email kind.'], $scope, $id);
+        $on = (int)($_POST['to'] ?? -1);
+        if ($on !== 0 && $on !== 1) caReply(400, ['error' => 'to must be 1 or 0.'], $scope, $id);
+        $pdo->prepare("INSERT IGNORE INTO notify_clients (company_id) VALUES (?)")->execute([$id]);
+        $pdo->prepare("UPDATE notify_clients SET {$col} = ? WHERE company_id = ?")->execute([$on, $id]);
+        $label = clientEmailKinds()[$kind][0];
+        caReply(200, ['message' => '“' . $label . '” emails ' . ($on ? 'on' : 'off') . ' for ' . $co['name'] . '.', 'id' => $id, 'kind' => $kind, 'enabled' => $on === 1], $scope, $id);
+    }
+
+    // ---- stale To Review reminders: N days (0 = never) -----------------------------
+    case 'remind_days': {
+        $co = caCompany($pdo, $id);
+        if (!$co) caReply(404, ['error' => 'Unknown client.'], $scope);
+        if (!function_exists('clientEmailRemindReady') || !clientEmailRemindReady($pdo)) caReply(409, ['error' => 'Run migrate.php first (step 51).'], $scope, $id);
+        $raw = trim((string)($_POST['days'] ?? ''));
+        if (!preg_match('/^\d{1,2}$/', $raw) || (int)$raw > 30) caReply(400, ['error' => 'Days must be 0 to 30.'], $scope, $id);
+        $days = (int)$raw;
+        $pdo->prepare("INSERT IGNORE INTO notify_clients (company_id) VALUES (?)")->execute([$id]);
+        $pdo->prepare("UPDATE notify_clients SET remind_days = ? WHERE company_id = ?")->execute([$days, $id]);
+        caReply(200, ['message' => $days > 0 ? 'Reminders after ' . $days . ' day' . ($days === 1 ? '' : 's') . ' for ' . $co['name'] . '.' : 'No reminders for ' . $co['name'] . '.', 'id' => $id, 'days' => $days], $scope, $id);
+    }
+
     // ---- settings (default hashtags, AI Builder profile) -------------------------
     case 'settings': {
         $co = caCompany($pdo, $id);
@@ -394,6 +429,68 @@ switch ($action) {
         }
         if ($changed) caLog($pdo, $id, 'updated', 'Settings updated: ' . $co['name'], implode(', ', $changed));
         caReply(200, ['message' => $changed ? 'Settings saved for ' . $co['name'] . '.' : 'Nothing changed.', 'id' => $id, 'changed' => $changed], $scope, $id);
+    }
+
+    // ---- contacts (who may sign in for this client) — admin-internal, so nothing goes to the client's activity feed
+    case 'contact_add': {
+        $co = caCompany($pdo, $id);
+        if (!$co) caReply(404, ['error' => 'Unknown client.'], $scope);
+        $res = clientContactAdd($pdo, $id, (string)($_POST['email'] ?? ''), (string)($_POST['contact_name'] ?? ''));
+        if (!$res['ok']) caReply((int)$res['code'], ['error' => $res['error']], $scope, $id);
+        $c = $res['contact'];
+        caReply(200, ['message' => $c['email'] . ' can now sign in for ' . $co['name'] . '.', 'id' => $id,
+                      'contact' => ['id' => (int)$c['id'], 'email' => $c['email'], 'name' => (string)($c['name'] ?? '')]], $scope, $id);
+    }
+    case 'contact_remove': {
+        $co = caCompany($pdo, $id);
+        if (!$co) caReply(404, ['error' => 'Unknown client.'], $scope);
+        $cid = (int)($_POST['contact_id'] ?? 0);
+        $c = clientContactById($pdo, $cid);
+        if (!$c || (int)$c['company_id'] !== $id || !clientContactRemove($pdo, $id, $cid)) caReply(404, ['error' => 'Unknown contact.'], $scope, $id);
+        caReply(200, ['message' => $c['email'] . ' removed — signed out everywhere, and their links no longer work.', 'id' => $id, 'contact_id' => $cid], $scope, $id);
+    }
+
+    // ---- sessions ---------------------------------------------------------------
+    case 'session_revoke': {
+        $co = caCompany($pdo, $id);
+        if (!$co) caReply(404, ['error' => 'Unknown client.'], $scope);
+        $sid = (int)($_POST['session_id'] ?? 0);
+        if (!clientSessionRevoke($pdo, $id, $sid)) caReply(404, ['error' => 'That session is already signed out.'], $scope, $id);
+        caReply(200, ['message' => 'Signed out that device.', 'id' => $id, 'session_id' => $sid], $scope, $id);
+    }
+    case 'sessions_revoke_all': {
+        $co = caCompany($pdo, $id);
+        if (!$co) caReply(404, ['error' => 'Unknown client.'], $scope);
+        $cid = (int)($_POST['contact_id'] ?? 0);
+        if ($cid > 0) { $c = clientContactById($pdo, $cid); if (!$c || (int)$c['company_id'] !== $id) caReply(404, ['error' => 'Unknown contact.'], $scope, $id); }
+        $links = !empty($_POST['links']);
+        $n = clientSessionsRevokeAll($pdo, $id, $cid, $links);
+        caReply(200, ['message' => 'Signed out ' . $n . ' session' . ($n === 1 ? '' : 's') . ($links ? '; emailed links were voided too' : '') . '.', 'id' => $id, 'revoked' => $n], $scope, $id);
+    }
+
+    // ---- clean links (.htaccess installer, Manage → Tools) -------------------------
+    case 'clean_links_install':
+    case 'clean_links_remove': {
+        $back = portalUrl('manage', ['client' => $scope !== '' ? $scope : null, 'section' => 'tools']);
+        if ($action === 'clean_links_remove') {
+            $res = cleanLinksRemove();
+            if (!$res['ok']) caReply(500, ['error' => $res['error'], 'redirect' => $back . (strpos($back, '?') === false ? '?' : '&') . 'err=' . rawurlencode($res['error'])], $scope, $id);
+            $msg = 'Clean links are off; the portal prints its classic links again.' . ($res['backup'] !== '' ? ' Backup: ' . $res['backup'] . '.' : '');
+            $GLOBALS['__portal_clean_override'] = false;
+            $back = portalUrl('manage', ['client' => $scope !== '' ? $scope : null, 'section' => 'tools']);
+            caReply(200, ['message' => $msg, 'backup' => $res['backup'], 'redirect' => $back . (strpos($back, '?') === false ? '?' : '&') . 'msg=' . rawurlencode($msg)], $scope, $id);
+        }
+        $res = cleanLinksInstall(basePath());
+        if (!$res['ok']) {
+            $err = 'Clean links were not turned on: ' . $res['error'];
+            caReply(502, ['error' => $err, 'checks' => $res['checks'], 'action' => $res['action'],
+                          'redirect' => $back . (strpos($back, '?') === false ? '?' : '&') . 'err=' . rawurlencode($err)], $scope, $id);
+        }
+        $GLOBALS['__portal_clean_override'] = true;
+        $back = portalUrl('manage', ['client' => $scope !== '' ? $scope : null, 'section' => 'tools']);
+        $msg = 'Clean links are on (' . $res['action'] . ', checked live).' . ($res['backup'] !== '' ? ' Previous rules kept; backup: ' . $res['backup'] . '.' : '');
+        caReply(200, ['message' => $msg, 'backup' => $res['backup'], 'checks' => $res['checks'],
+                      'redirect' => $back . (strpos($back, '?') === false ? '?' : '&') . 'msg=' . rawurlencode($msg)], $scope, $id);
     }
 
     default:

@@ -663,7 +663,7 @@
     replace: function (file) {
       var item = this.current(), self = this, root = this.root;
       if (!item || item.kind !== 'tire' || !file) return;
-      var endpoint = root.getAttribute('data-replace-endpoint') || 'replace-image.php';
+      var endpoint = root.getAttribute('data-replace-endpoint') || (window.App && App.urls ? App.urls.abs('replace-image.php') : 'replace-image.php');
       var uploadEp = root.getAttribute('data-upload-endpoint') || '';
       var chunk = App.chunkUpload && App.chunkUpload.upload ? App.chunkUpload : null;
       var done = function (res) {
@@ -1134,7 +1134,7 @@
       if (driveInput) driveInput.addEventListener('input', function () { driveError(''); });
       form.addEventListener('submit', function (e) {
         e.preventDefault();
-        var btn = $('[data-series-form-submit]', form), endpoint = (self.cfg.endpoints || {}).tire || 'tire-status.php';
+        var btn = $('[data-series-form-submit]', form), endpoint = (self.cfg.endpoints || {}).tire || (window.App && App.urls ? App.urls.abs('tire-status.php') : 'tire-status.php');
         if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }
         var done = function (res) { if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); } return res; };
         if (kind === 'rename') {
