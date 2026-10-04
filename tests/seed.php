@@ -276,6 +276,9 @@ if (!empty($cfg['mail_sink_dir']) && is_dir($cfg['mail_sink_dir'])) {
     foreach (glob(rtrim($cfg['mail_sink_dir'], '/') . '/*') ?: [] as $f) @unlink($f);
 }
 
+// ---- the Redo queue (migrate.php 52): nothing queued (the tables were re-created above), no "last redo pack" watermark ----
+try { $pdo->exec("DELETE FROM meta WHERE k LIKE 'redo\\_export\\_last%'"); } catch (Throwable $e) { /* meta absent: nothing to reset */ }
+
 $n = static fn(string $t) => (int)$pdo->query("SELECT COUNT(*) FROM `$t`")->fetchColumn();
 printf("  seeded: %d companies, %d tires, %d tire images, %d library, %d posts (%d media), %d emails, %d pages\n",
     $n('companies'), $n('tires'), $n('tire_images'), $n('library_images'), $n('posts'), $n('post_images'), $n('emails'), $n('pages'));

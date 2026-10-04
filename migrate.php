@@ -1872,6 +1872,39 @@ if (!$errors) {
         $errors[] = $e->getMessage();
     }
 }
+
+// 52. The Redo queue (redo-lib.php): images Joust has to make again, apart from the client's status. A flag on the image
+//     tables, never a new status value, so the client's To Review / Approved / Needs changes and every badge stay as they
+//     are. redo_at = when it joined the queue (NULL = not queued), redo_note = Joust's "what to fix" (internal, never shown
+//     to a client), redo_by = the admin_users row that marked it (NULL = queued automatically by a client's Needs changes),
+//     redo_exported_at = when it last went out in a redo pack ("only new since last export"). The first run also queues the
+//     images that are already in Needs changes, so the queue starts with what is waiting today.
+if (!$errors) {
+    try {
+        foreach (['tire_images', 'library_images'] as $tbl) {
+            if (!tableExists($pdo, $tbl)) { $steps[] = "• Table `{$tbl}` does not exist — skipped the redo columns."; continue; }
+            $add = [];
+            if (!columnExists($pdo, $tbl, 'redo_at'))          $add[] = "ADD COLUMN redo_at DATETIME NULL DEFAULT NULL";
+            if (!columnExists($pdo, $tbl, 'redo_note'))        $add[] = "ADD COLUMN redo_note VARCHAR(500) NULL DEFAULT NULL";
+            if (!columnExists($pdo, $tbl, 'redo_by'))          $add[] = "ADD COLUMN redo_by INT UNSIGNED NULL DEFAULT NULL";
+            if (!columnExists($pdo, $tbl, 'redo_exported_at')) $add[] = "ADD COLUMN redo_exported_at DATETIME NULL DEFAULT NULL";
+            if (!$add) { $steps[] = "• {$tbl} redo columns already exist — skipped."; continue; }
+            $fresh = in_array("ADD COLUMN redo_at DATETIME NULL DEFAULT NULL", $add, true);
+            if ($fresh) $add[] = "ADD KEY ix_redo (redo_at)";
+            $pdo->exec("ALTER TABLE {$tbl} " . implode(', ', $add));
+            $queued = 0;
+            if ($fresh) {
+                // Keep updated_at as it was: the backfill is not an edit of the image.
+                $keep = columnExists($pdo, $tbl, 'updated_at') ? ', updated_at = updated_at' : '';
+                $when = columnExists($pdo, $tbl, 'updated_at') ? 'COALESCE(updated_at, created_at, NOW())' : 'COALESCE(created_at, NOW())';
+                $queued = (int)$pdo->exec("UPDATE {$tbl} SET redo_at = {$when}{$keep} WHERE status = 'denied' AND redo_at IS NULL");
+            }
+            $steps[] = "✓ Added the Redo queue to {$tbl} (redo_at, redo_note, redo_by, redo_exported_at)" . ($fresh ? " — {$queued} image(s) already in Needs changes queued." : '.');
+        }
+    } catch (Exception $e) {
+        $errors[] = $e->getMessage();
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">

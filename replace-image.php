@@ -8,8 +8,9 @@
  *   - image_id (int, required) — post_images.id or tire_images.id to replace
  *   - image (file, required)   — the new image or video (images ≤ 50 MB, videos ≤ 4 GB; one request is
  *                                bounded by php.ini, so anything bigger is sent in pieces by the client)
- *   - type (string, optional)  — 'post' (default) or 'tire'
- * Deletes the old file, saves the new one, updates the DB (a series render is replaced in place).
+ *   - type (string, optional)  — 'post' (default), 'tire' or 'library'
+ * Deletes the old file, saves the new one, updates the DB (a series render and a library image are replaced in place).
+ * A queued Redo image (redo-lib.php) leaves the queue and goes back to To Review: + {redo_cleared, status}.
  * Returns JSON { ok, image_id, image_url, src, media_type }.
  */
 
@@ -33,7 +34,7 @@ requireSameSiteFetch();   // cross-site POSTs get a JSON 403 (helpers.php)
 if (!currentAdmin()) { riFail(403, 'Admin sign-in required'); }
 
 // Determine target table
-$type    = ($_POST['type'] ?? 'post') === 'tire' ? 'tire' : 'post';
+$type    = in_array($_POST['type'] ?? 'post', ['tire', 'library'], true) ? (string)$_POST['type'] : 'post';   // library: media/library/<slug>/ in place (uploadReplaceLibrary)
 $imageId = (int)($_POST['image_id'] ?? 0);
 if ($imageId <= 0) { riFail(400, 'Invalid image_id'); }
 

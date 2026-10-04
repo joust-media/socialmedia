@@ -25,6 +25,10 @@
  * selection — export.php scope=selection) and "Export" (its manifest CSV).
  * Admin "Upload" buttons (Library controls, the series head, the Reference card)
  * open the Upload sheet with the destination preselected (upload-sheet.js).
+ * Redo queue (redo-lib.php, admin): a "Redo N" chip next to the filters (→ redo.php), "Mark for redo" in the
+ * select bar and the viewer ⋯ menu (the #asActionSheet sheet, above the viewer); queued tiles carry data-redo
+ * and a pill ("Redo" / the client's "Being reworked" — never the note). Library: "Move to tire…" (select bar +
+ * viewer ⋯) → library-move.php.
  *
  * Role is enforced here in PHP (isAdmin()): admin-only markup is never rendered
  * for a client, and client queries exclude denied rows in SQL.
@@ -319,6 +323,7 @@ if (!function_exists('assetsTileHtml')) {
               . (!empty($it['twin']) ? ' data-twin="' . esc($it['twin']) . '"' : '')     // transcoded .mp4 next to a .mov → second <source> in the viewer
               . (isset($it['series']) && $it['series'] !== '' ? ' data-series="' . esc((string)$it['series']) . '"' : '')
               . ' data-comments="' . (int)($it['comments'] ?? 0) . '"'
+              . (!empty($it['redo']) ? ' data-redo="1"' : '')   // in Joust's Redo queue (redo-lib.php): "Redo" for admin, "Being reworked" for the client
               . ' aria-label="' . esc('Open ' . $it['label'] . ', ' . $index . ' of ' . $total . (!empty($it['comments']) ? ', ' . (int)$it['comments'] . ($it['comments'] === 1 ? ' comment' : ' comments') : '')) . '">';
         $nc = (int)($it['comments'] ?? 0);
         if ($it['type'] === 'video') {
@@ -339,6 +344,9 @@ if (!function_exists('assetsTileHtml')) {
               // Comment-count bubble (top-left; hidden at 0 so assets.js can reveal it after the first comment)
               . '<span class="ui-pill ui-pill--glass ui-pill--nodot as-thumb-comments" data-thumb-comments' . ($nc > 0 ? '' : ' hidden') . ' aria-hidden="true">'
               . icon('bubble') . '<span data-thumb-comments-count>' . $nc . '</span></span>'
+              // Redo queue pill (bottom-left): never the note — the client reads "Being reworked" (hidden on a Needs changes tile: it says so already)
+              . '<span class="ui-pill ui-pill--nodot as-thumb-redo" data-thumb-redo' . (!empty($it['redo']) && !(empty($it['admin']) && $it['status'] === 'denied') ? '' : ' hidden') . '>'
+              . esc(function_exists('redoLabel') ? redoLabel(!empty($it['admin'])) : 'Redo') . '</span>'
               . '</button>';
         return $out;
     }
@@ -410,6 +418,7 @@ if (!function_exists('assetsRefStripHtml')) {
                   . ' data-type="' . esc($meta['type']) . '"' . ($meta['mime'] !== '' ? ' data-mime="' . esc($meta['mime']) . '"' : '')
                   . ' data-label="' . esc($tl) . '" data-download="' . esc(($stem !== '' ? $stem : 'reference') . '.' . $meta['ext']) . '"'
                   . ' data-endpoint="' . esc($ctx['endpoint']) . '"' . ($ctx['manage'] !== '' ? ' data-manage="' . esc($ctx['manage']) . '"' : '')
+                  . (!empty($ctx['redo'][(int)$r['id']]) ? ' data-redo="1"' : '')
                   . ' data-series="ref" aria-label="' . esc('Open reference image ' . ($i + 1) . ' of ' . $n . ': ' . $tl) . '">'
                   . ($isVid ? videoTile($src, ['badge' => false, 'probe' => false]) : pvImg($src, 'sm', ['sizes' => pvSizes('strip'), 'eager' => $i < 6]))
                   . '</button>';
@@ -739,6 +748,18 @@ if ($items && $hasLog) {
     unset($it);
 }
 
+// Redo queue flags (redo-lib.php, migrate.php 52): one query for the page of tiles + the Reference strip.
+$redoOn = function_exists('redoReady') && redoReady($pdo);
+if ($items && $redoOn) {
+    $rf = redoFlags($pdo, $items[0]['kind'], array_map(static function ($it) { return (int)$it['id']; }, $items));
+    foreach ($items as &$it) { $it['redo'] = isset($rf[(int)$it['id']]); $it['admin'] = $isAdmin; }
+    unset($it);
+}
+$refRedo = ($redoOn && $refStripRows) ? redoFlags($pdo, 'tire', array_map(static function ($r) { return (int)$r['id']; }, $refStripRows)) : [];
+$redoClientCount = ($redoOn && $isAdmin) ? redoCount($pdo, $cid) : 0;
+// "Move to tire…" (library-move.php): the admin's Library, when the client has tires and series exist
+$canMove = $isAdmin && $view === 'library' && $seriesOn && $hasTiresTab;
+
 $isGrid       = ($view === 'library') || ($view === 'collections' && $collection);
 $pendingTotal = $libCounts['pending'] + $tireCounts['pending'];   // = the Assets + Tires tab badges (split by partials/tabbar.php)
 $hasMore      = $isGrid && ($offset + count($items)) < $gridTotal;
@@ -797,6 +818,13 @@ if ($collection) {
 include __DIR__ . '/partials/layout-top.php';
 ?>
 
+<?php
+// Admin: the "Redo" chip — Joust's own queue (redo.php), next to the status filters (and alone on the Tires list).
+$redoChip = ($isAdmin && $redoOn)
+    ? '<a class="as-chip as-chip--redo" href="' . esc(portalUrl('redo', ['client' => $slug])) . '" data-redo-chip title="Images to make again for ' . esc($client['name']) . ' — export them as one pack">'
+      . 'Redo<span class="as-chip-count as-chip-count--redo" data-redo-chip-count>' . (int)$redoClientCount . '</span></a>'
+    : '';
+?>
 <?php if ($isGrid): // the status filter chips (the admin's Library Upload sits in the header — $navLinks above) ?>
 <div class="as-controls">
     <nav class="as-filters" aria-label="Filter">
@@ -805,8 +833,11 @@ include __DIR__ . '/partials/layout-top.php';
           <?= esc($filterLabels[$f]) ?><span class="as-chip-count" data-count="<?= esc($f) ?>"><?= (int)$scopeCounts[$f] ?></span>
         </a>
       <?php endforeach; ?>
+      <?= $redoChip ?>
     </nav>
 </div>
+<?php elseif ($redoChip !== '' && $view === 'collections'): // the Tires list: the Redo chip on its own ?>
+<div class="as-controls"><nav class="as-filters" aria-label="Queues"><?= $redoChip ?></nav></div>
 <?php endif; ?>
 
 <?php if ($view === 'collections' && !$collection): ?>
@@ -919,6 +950,7 @@ include __DIR__ . '/partials/layout-top.php';
           'endpoint'  => basePath() . '/tire-status.php',
           'manage'    => $isAdmin ? clientUrl('add-feature.php', ['module' => 'tires', 'edit_item' => $itemId]) : '',
           'adminHtml' => $refAdminHtml,
+          'redo'      => $refRedo,
       ]);
     else: ?>
     <section class="as-reference" aria-label="Reference image">
@@ -1055,6 +1087,12 @@ include __DIR__ . '/partials/layout-top.php';
         <button type="button" class="ui-btn ui-btn--filled" data-select-post disabled>Create post</button>
         <button type="button" class="ui-btn ui-btn--gray" data-select-download data-endpoint="<?= esc($selExport) ?>" data-zip="<?= exportZipSupported() ? '1' : '0' ?>" disabled title="A zip of the selected approved files"><?= icon('download') ?><span>Download</span></button>
         <button type="button" class="ui-btn ui-btn--gray" data-select-export data-endpoint="<?= esc($selExport) ?>" disabled title="A spreadsheet (CSV) of the selected approved files: tire, series, file name, approval date, comments, Drive link">Export</button>
+        <?php if ($redoOn): // any status: into Joust's Redo queue (redo.php action=mark), with an optional "what to fix" note ?>
+          <button type="button" class="ui-btn ui-btn--gray as-select-redo" data-select-redo disabled title="Put the selected images in the Redo queue"><?= icon('wand') ?><span>Mark for redo</span></button>
+        <?php endif; ?>
+        <?php if ($canMove): // Library → a tire series (library-move.php) ?>
+          <button type="button" class="ui-btn ui-btn--gray as-select-move" data-select-move disabled title="Move the selected images into a tire series"><?= icon('tire') ?><span>Move to tire…</span></button>
+        <?php endif; ?>
       <?php endif; ?>
     </div>
   </div>
@@ -1129,7 +1167,11 @@ $assetsConfig = [
         'replace' => basePath() . '/replace-image.php',
         'upload'  => basePath() . '/tire-upload.php',              // admin: one file per request into a series
         'comments' => clientUrl('assets.php', ['partial' => 'comments']),   // + &kind=&id= → {ok, count, html} (viewer Comments panel)
+        'redo'     => $isAdmin && $redoOn ? basePath() . '/redo.php' : '',           // admin: action=mark / unmark {items, note}
+        'move'     => $canMove ? basePath() . '/library-move.php' : '',              // admin: action=targets (GET) / move (POST)
     ],
+    'redo'      => ['on' => $redoOn, 'label' => function_exists('redoLabel') ? redoLabel($isAdmin) : 'Redo', 'url' => $isAdmin && $redoOn ? portalUrl('redo', ['client' => $slug]) : ''],
+    'move'      => ['on' => $canMove, 'label' => $collectionsLabel],
     'labels'    => ['collections' => $collectionsLabel],
     // Viewer heading context "<tire> · <series>" (the count "n of N" is appended by App.viewer)
     'context'   => $collection ? (string)$collection['name'] . ($seriesCfg ? ' · ' . $seriesCfg['name'] : '') : '',
@@ -1208,4 +1250,12 @@ if ($seenOnLoad && function_exists('trackingSeenAttr')) {
     foreach ($seenOnLoad as $k) { [$t, $i] = explode(':', $k); $footExtra = ($footExtra ?? '') . '<span hidden data-seen-on-load' . trackingSeenAttr($t, (int)$i) . '></span>'; }
 }
 $includeSheet = $isAdmin && $seriesOn && $seriesActive !== null;   // only the admin's Rename / Delete series forms use the generic sheet
+// Admin: the "Mark for redo" / "Move to tire" sheet — its own root so it opens above the full-screen viewer (assets.css).
+if ($isAdmin && ($redoOn || $canMove) && $isGrid) {
+    $sheetId = 'asActionSheet'; $sheetTitle = ''; $sheetBody = ''; $sheetClass = 'as-action-sheet';
+    ob_start();
+    include __DIR__ . '/partials/sheet.php';
+    $footExtra = (string)ob_get_clean() . ($footExtra ?? '');
+    unset($sheetId, $sheetTitle, $sheetBody, $sheetClass);
+}
 include __DIR__ . '/partials/layout-bottom.php';

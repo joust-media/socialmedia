@@ -415,6 +415,8 @@ try {
         logActivity($pdo, $companyId, 'tire_image', $id, $action, $actor,
             "{$imgLabel} " . actionLabel($action),
             null, $batchId);
+        // "Needs changes" puts the image in Joust's Redo queue (redo-lib.php; the client still sees Needs changes).
+        if ($status === 'denied' && function_exists('redoAutoQueue')) redoAutoQueue($pdo, 'tire', $id);
     }
     if ($hasCmt) {
         $prevCmt = $prev['client_comment'];

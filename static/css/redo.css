@@ -1,0 +1,63 @@
+/* =====================================================================
+   Redo queue (redo.php) — admin only. Rows: thumbnail · file + status + age + feedback / note · Replace / Remove.
+   ===================================================================== */
+.rd-scope { margin-bottom: 14px; }
+.rd-head {
+  display: grid; grid-template-columns: 1fr auto; gap: 10px 16px; align-items: center;
+  margin-bottom: 18px; padding: 14px 16px; border-radius: var(--radius-list);
+  background: var(--bg-elevated);
+}
+.rd-head-count { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.rd-badge { background: var(--redo); min-width: 28px; height: 28px; font-size: var(--text-subhead); }
+.rd-head-text { font-size: var(--text-headline); line-height: var(--lh-headline); font-weight: 600; letter-spacing: var(--ls-headline); }
+.rd-head-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.rd-head-actions .ui-btn { white-space: nowrap; }
+.rd-since { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); color: var(--label); cursor: pointer; }
+.rd-since input { width: 18px; height: 18px; accent-color: var(--redo); margin: 0; }
+.rd-help { grid-column: 1 / -1; margin: 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); }
+.rd-help code { font-size: 12px; }
+.rd-inline-btn { padding: 0 2px; min-height: 0; height: auto; vertical-align: baseline; font-size: inherit; }
+
+.rd-group .ui-list-header { text-transform: none; }
+.rd-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 12px 16px; position: relative;
+  transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out); }
+.rd-row + .rd-row::before { content: ""; position: absolute; top: 0; left: 92px; right: 0; height: 0.5px; background: var(--separator); }
+.rd-row.ui-leave { opacity: 0; transform: translateX(16px); }
+.rd-thumb { width: 64px; height: 64px; border-radius: 12px; overflow: hidden; background: var(--fill-tertiary); display: flex; align-items: center; justify-content: center;
+  color: var(--label-secondary); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--redo) 55%, transparent); }
+.rd-thumb img, .rd-thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.rd-thumb .ui-video-tile { width: 100%; height: 100%; }
+.rd-body { min-width: 0; }
+.rd-title { display: block; color: var(--label); text-decoration: none; font-weight: 600; font-size: var(--text-body); line-height: var(--lh-body);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rd-title:hover { text-decoration: underline; }
+.rd-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 4px; font-size: var(--text-footnote); line-height: var(--lh-footnote); }
+.rd-age { font-weight: 600; font-variant-numeric: tabular-nums; color: var(--redo); }
+.rd-exported { color: var(--label-secondary); background: var(--fill-tertiary); }
+.rd-feedback, .rd-note { margin: 6px 0 0; font-size: var(--text-subhead); line-height: var(--lh-subhead); overflow-wrap: anywhere; }
+.rd-feedback { color: var(--label); }
+.rd-note { color: var(--label-secondary); padding-left: 10px; border-left: 3px solid var(--redo); }
+.rd-note-label { font-weight: 600; color: var(--redo); }
+.rd-actions { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.rd-empty { padding: 36px 16px; }
+
+/* "Replace from folder" report (in #uiSheet) */
+.rd-report-sum { margin: 0 0 12px; }
+.rd-report-list { list-style: none; margin: 0; padding: 0; border-radius: var(--radius-list); background: var(--fill-tertiary); overflow: hidden; }
+.rd-report-item { display: flex; flex-direction: column; gap: 2px; padding: 10px 14px; font-size: var(--text-footnote); line-height: var(--lh-footnote); }
+.rd-report-item + .rd-report-item { box-shadow: inset 0 0.5px 0 var(--separator); }
+.rd-report-name { font-family: var(--font-mono); overflow-wrap: anywhere; }
+.rd-report-item--ok .rd-report-why { color: var(--approve); }
+.rd-report-item--err .rd-report-why { color: var(--deny); }
+
+@media (max-width: 599px) {
+  .rd-head { grid-template-columns: 1fr; }
+  .rd-head-actions { justify-content: stretch; }
+  .rd-head-actions .ui-btn { flex: 1 1 0; }
+  .rd-row { grid-template-columns: 56px minmax(0, 1fr); padding: 12px; }
+  .rd-row + .rd-row::before { left: 80px; }
+  .rd-thumb { width: 56px; height: 56px; }
+  .rd-actions { grid-column: 2; flex-direction: row; }
+  .rd-actions .ui-btn { flex: 1 1 0; }
+}

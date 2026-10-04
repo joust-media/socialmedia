@@ -292,7 +292,7 @@ function note(line) { fs.appendFileSync(CLICKS, line + '\n'); }
       expect(!(await page.isVisible('[data-select-approve]')), 'Approve hidden on the approved grid');
       const bar = await page.$eval('[data-assets-selectbar]', (b) => { const r = b.getBoundingClientRect(); return { l: r.left, r: r.right, vw: window.innerWidth, overflow: b.scrollWidth > b.clientWidth + 1, buttons: Array.from(b.querySelectorAll('.ui-btn')).filter((x) => x.offsetParent).map((x) => { const q = x.getBoundingClientRect(); return [q.left, q.right]; }) }; });
       expect(!bar.overflow, 'no horizontal overflow');
-      expect.eq(bar.buttons.length, 3, 'Create post · Download · Export');
+      expect.eq(bar.buttons.length, 5, 'Create post · Download · Export · Mark for redo · Move to tire…');
       bar.buttons.forEach((b) => expect(b[0] >= bar.l - 1 && b[1] <= Math.min(bar.r, bar.vw) + 1, 'buttons inside the bar: ' + JSON.stringify(b) + ' in ' + bar.l + '–' + bar.r));
       const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }), page.click('[data-select-download]')]);
       expect(/kenda-selected-assets-\d{4}-\d{2}-\d{2}\.zip/.test(dl.suggestedFilename()), dl.suggestedFilename());
