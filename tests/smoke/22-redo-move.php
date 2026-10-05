@@ -433,23 +433,96 @@ test('View as client: the banner says comments count as the client\'s — and th
     get('view-as.php?exit=1', 'admin', ['Cookie' => $sid]);
 });
 
+/** migrate.php from the CLI as admin (what bootstrap.sh does); the HTML page it prints. */
+function runMigrate(): string {
+    global $APP;
+    $tests = dirname(__DIR__);
+    return (string)shell_exec('cd ' . escapeshellarg($APP) . ' && PORTAL_TEST=1 PORTAL_TEST_ROLE=admin php -d auto_prepend_file=' . escapeshellarg($tests . '/test-auth.php') . ' migrate.php 2>&1');
+}
+function migrateClean(string $out, string $what): void {
+    has($out, 'Migration complete', $what . ': completes');
+    hasNot($out, 'class="err"', $what . ': no error');
+    hasNot($out, 'Unknown column', $what . ': no unknown column');
+}
+function colCount(string $t, string $c): int {
+    return (int)q1("SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?", [$t, $c]);
+}
+function dropRedo(string $t): void {
+    db()->exec("ALTER TABLE {$t} DROP INDEX ix_redo, DROP COLUMN redo_at, DROP COLUMN redo_note, DROP COLUMN redo_by, DROP COLUMN redo_exported_at");
+}
+
+test('the test schema is production\'s: tire_images has updated_at but NO created_at (what broke migrate 52 on staging)', function () {
+    is(colCount('tire_images', 'created_at'), 0, 'tire_images.created_at must not exist (production has none)');
+    is(colCount('tire_images', 'updated_at'), 1, 'tire_images.updated_at (migrate.php 12)');
+    is(colCount('tires', 'created_at'), 0, 'tires.created_at must not exist');
+    is(colCount('library_images', 'created_at'), 1, 'library_images.created_at (migrate.php 18)');
+});
+
 test('migrate.php 52: first run queues what is already in Needs changes; a re-run changes nothing', function () {
     fresh();
-    global $APP;
     db()->exec("UPDATE tire_images SET status = 'denied' WHERE id = 20");
-    db()->exec("ALTER TABLE tire_images DROP INDEX ix_redo, DROP COLUMN redo_at, DROP COLUMN redo_note, DROP COLUMN redo_by, DROP COLUMN redo_exported_at");
-    $run = static function () use ($APP): string {
-        $tests = dirname(__DIR__);
-        return (string)shell_exec('cd ' . escapeshellarg($APP) . ' && PORTAL_TEST=1 PORTAL_TEST_ROLE=admin php -d auto_prepend_file=' . escapeshellarg($tests . '/test-auth.php') . ' migrate.php 2>&1');
-    };
-    $out = $run();
-    has($out, 'Migration complete');
-    ok((bool)preg_match('/Added the Redo queue to tire_images[^<]*— (\d+) image/', $out, $m) && (int)$m[1] >= 1, 'queued on first run');
+    dropRedo('tire_images');
+    dropRedo('library_images');
+    db()->exec("DELETE FROM meta WHERE k LIKE 'redo_backfill_%'");
+    $out = runMigrate();
+    migrateClean($out, 'first run');
+    ok((bool)preg_match('/Queued (\d+) tire_images image/', $out, $m) && (int)$m[1] >= 1, 'queued on first run');
     ok(q1('SELECT redo_at FROM tire_images WHERE id = 20') !== null, 'the denied image is queued');
     is(q1('SELECT redo_at FROM tire_images WHERE id = 21'), null, 'approved ones are not');
-    $again = $run();
+    is((int)q1("SELECT COUNT(*) FROM meta WHERE k IN ('redo_backfill_tire_images', 'redo_backfill_library_images')"), 2, 'backfill remembered');
+    $again = runMigrate();
+    migrateClean($again, 're-run');
     has($again, 'tire_images redo columns already exist — skipped');
     has($again, 'library_images redo columns already exist — skipped');
+    has($again, 'tire_images Needs-changes backfill already done — skipped');
+    hasNot($again, 'Queued ', 're-run queues nothing');
+});
+
+test('migrate.php 52 re-run after the staging failure (tire_images columns added, backfill failed, library untouched) finishes', function () {
+    fresh();
+    // What staging was left with: tire_images got its redo columns + index, the backfill threw, library_images never ran.
+    db()->exec("UPDATE tire_images SET status = 'denied' WHERE id IN (20, 21)");
+    db()->exec("UPDATE tire_images SET redo_at = NULL, redo_note = NULL, redo_by = NULL, redo_exported_at = NULL");
+    $libId = (int)q1("SELECT id FROM library_images ORDER BY id LIMIT 1");
+    db()->prepare("UPDATE library_images SET status = 'denied' WHERE id = ?")->execute([$libId]);
+    dropRedo('library_images');
+    db()->exec("DELETE FROM meta WHERE k LIKE 'redo_backfill_%'");
+    // one image a client sent back after the failed run: already auto-queued, keeps its own time
+    db()->exec("UPDATE tire_images SET redo_at = '2026-01-02 03:04:05' WHERE id = 21");
+    $upd = q1('SELECT updated_at FROM tire_images WHERE id = 20');
+    $out = runMigrate();
+    migrateClean($out, 'recovery run');
+    has($out, 'tire_images redo columns already exist — skipped');
+    has($out, 'Added the Redo queue to library_images');
+    ok(q1('SELECT redo_at FROM tire_images WHERE id = 20') !== null, 'tire backfill done on the re-run');
+    is(q1('SELECT redo_at FROM tire_images WHERE id = 21'), '2026-01-02 03:04:05', 'an already-queued image keeps its time');
+    is(q1('SELECT updated_at FROM tire_images WHERE id = 20'), $upd, 'the backfill is not an edit (updated_at kept)');
+    ok(q1('SELECT redo_at FROM library_images WHERE id = ?', [$libId]) !== null, 'library backfill done');
+    is((int)q1("SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'library_images' AND INDEX_NAME = 'ix_redo'"), 1, 'library index');
+    // Joust takes it off the list; a further re-run must not put it back
+    status(post('redo.php', ['action' => 'unmark', 'items' => 'tire:20', 'client' => 'kenda'], 'admin', [], ['Accept' => 'application/json']), 200);
+    is(q1('SELECT redo_at FROM tire_images WHERE id = 20'), null, 'cleared');
+    migrateClean(runMigrate(), 'third run');
+    is(q1('SELECT redo_at FROM tire_images WHERE id = 20'), null, 'a re-run does not re-queue a cleared image');
+});
+
+test('redo + move paths on the production schema (no tire_images.created_at): mark, auto-queue, list, pack, unmark, move', function () {
+    fresh();
+    is(colCount('tire_images', 'created_at'), 0, 'running against the production shape');
+    status(mark('tire:5', 'Fix the tread', 'admin', ['client' => 'kenda']), 200);
+    status(post('tire-status.php', ['id' => 10, 'status' => 'denied', 'comment' => 'Old tread', 'client' => 'kenda'], 'client'), 200);
+    ok(redoAt('tire', 10) !== null, 'Needs changes auto-queues');
+    status(post('library-status.php', ['id' => 8, 'status' => 'denied', 'comment' => 'Too dark', 'client' => 'kenda'], 'client'), 200);
+    ok(redoAt('library', 8) !== null, 'library auto-queues');
+    has(status(get('redo.php'), 200)['body'], 'Fix the tread');
+    [$job] = buildPack(['scope' => 'client', 'client' => 'kenda', 'since' => 0]);
+    ok($job !== null, 'redo pack built');
+    ok((int)q1('SELECT COUNT(*) FROM tire_images WHERE redo_exported_at IS NOT NULL') >= 2, 'export stamped');
+    is(status(post('redo.php', ['action' => 'unmark', 'items' => 'tire:5', 'client' => 'kenda'], 'admin', [], ['Accept' => 'application/json']), 200)['json']['cleared'], 1);
+    mark('library:2', 'Warm it up');
+    $r = status(moveReq(['ids' => '2', 'tire_id' => 1, 'series_id' => 1]), 200)['json'];
+    is($r['moved'], 1);
+    ok(redoAt('tire', (int)$r['items'][0]['id']) !== null, 'the redo flag moved with it');
 });
 
 finish();

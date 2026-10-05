@@ -9,6 +9,14 @@
 -- Column lists are derived from what the app reads and writes (INSERT / UPDATE / SELECT in
 -- the PHP), with the ON DELETE CASCADE foreign keys status.php / add-post.php rely on
 -- ("CASCADE deletes post_images and post_categories").
+--
+-- Timestamps follow the REAL production tables, not what would be tidy: the original code (the first upload) only ever
+-- inserts tires (name) and tire_images (tire_id, image_url, caption, sort_order) and never reads a created_at on
+-- companies / tires / tire_images / post_images, and migrate.php 17 already hedges "older deployments may have only
+-- one of them". Production tire_images has NO created_at (updated_at comes from migrate.php 12) — a query that assumes
+-- one fails there with "Unknown column 'created_at'" (the first Redo-queue migrate.php 52 did). Keep these minimal so
+-- the suite fails the same way production would. status / client_comment on tire_images were added by hand before
+-- migrate.php existed (production's own error_log shows tires.php failing on them first), so they stay.
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
@@ -20,8 +28,7 @@ CREATE TABLE companies (
     name VARCHAR(150) NOT NULL,
     slug VARCHAR(80) NOT NULL UNIQUE,
     feature_label VARCHAR(80) NULL,
-    logo_url VARCHAR(255) NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    logo_url VARCHAR(255) NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE posts (
@@ -48,8 +55,7 @@ CREATE TABLE post_images (
 
 CREATE TABLE tires (
     id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(150) NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    name VARCHAR(150) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE tire_images (
@@ -60,7 +66,6 @@ CREATE TABLE tire_images (
     sort_order INT NOT NULL DEFAULT 0,
     status ENUM('pending','approved','denied') NOT NULL DEFAULT 'pending',
     client_comment TEXT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     KEY idx_tire_images_tire (tire_id),
     CONSTRAINT fk_tire_images_tire FOREIGN KEY (tire_id) REFERENCES tires(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

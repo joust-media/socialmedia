@@ -1879,8 +1879,15 @@ if (!$errors) {
 //     to a client), redo_by = the admin_users row that marked it (NULL = queued automatically by a client's Needs changes),
 //     redo_exported_at = when it last went out in a redo pack ("only new since last export"). The first run also queues the
 //     images that are already in Needs changes, so the queue starts with what is waiting today.
+//
+//     Every part is probed on its own so a re-run finishes a partial one: the columns, the index, and the one-time
+//     backfill (remembered in meta redo_backfill_<table>, NOT inferred from "the columns were just added" — the first
+//     staging run added tire_images' columns and then failed in the backfill, so the next run must still do it).
+//     The backfill's timestamp is built only from the columns the table really has: the production tire_images has
+//     updated_at (migrate.php 12) but NO created_at (the original table never had one), library_images has both.
 if (!$errors) {
     try {
+        $hasMeta = tableExists($pdo, 'meta');
         foreach (['tire_images', 'library_images'] as $tbl) {
             if (!tableExists($pdo, $tbl)) { $steps[] = "• Table `{$tbl}` does not exist — skipped the redo columns."; continue; }
             $add = [];
@@ -1888,18 +1895,36 @@ if (!$errors) {
             if (!columnExists($pdo, $tbl, 'redo_note'))        $add[] = "ADD COLUMN redo_note VARCHAR(500) NULL DEFAULT NULL";
             if (!columnExists($pdo, $tbl, 'redo_by'))          $add[] = "ADD COLUMN redo_by INT UNSIGNED NULL DEFAULT NULL";
             if (!columnExists($pdo, $tbl, 'redo_exported_at')) $add[] = "ADD COLUMN redo_exported_at DATETIME NULL DEFAULT NULL";
-            if (!$add) { $steps[] = "• {$tbl} redo columns already exist — skipped."; continue; }
-            $fresh = in_array("ADD COLUMN redo_at DATETIME NULL DEFAULT NULL", $add, true);
-            if ($fresh) $add[] = "ADD KEY ix_redo (redo_at)";
-            $pdo->exec("ALTER TABLE {$tbl} " . implode(', ', $add));
-            $queued = 0;
-            if ($fresh) {
-                // Keep updated_at as it was: the backfill is not an edit of the image.
-                $keep = columnExists($pdo, $tbl, 'updated_at') ? ', updated_at = updated_at' : '';
-                $when = columnExists($pdo, $tbl, 'updated_at') ? 'COALESCE(updated_at, created_at, NOW())' : 'COALESCE(created_at, NOW())';
-                $queued = (int)$pdo->exec("UPDATE {$tbl} SET redo_at = {$when}{$keep} WHERE status = 'denied' AND redo_at IS NULL");
+            $ix = $pdo->prepare("SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = 'ix_redo'");
+            $ix->execute([$tbl]);
+            if ((int)$ix->fetchColumn() === 0) $add[] = "ADD KEY ix_redo (redo_at)";
+            if ($add) {
+                $pdo->exec("ALTER TABLE {$tbl} " . implode(', ', $add));
+                $steps[] = "✓ Added the Redo queue to {$tbl} (" . count($add) . " change" . (count($add) === 1 ? '' : 's') . ").";
+            } else {
+                $steps[] = "• {$tbl} redo columns already exist — skipped.";
             }
-            $steps[] = "✓ Added the Redo queue to {$tbl} (redo_at, redo_note, redo_by, redo_exported_at)" . ($fresh ? " — {$queued} image(s) already in Needs changes queued." : '.');
+
+            // One-time backfill: the images already in Needs changes join the queue.
+            $marker = 'redo_backfill_' . $tbl;
+            $done = false;
+            if ($hasMeta) {
+                $m = $pdo->prepare("SELECT 1 FROM meta WHERE k = ?");
+                $m->execute([$marker]);
+                $done = (bool)$m->fetchColumn();
+            } else {
+                $done = !$add;   // no meta table (never on a migrated install): fall back to "only when the columns were just added"
+            }
+            if ($done) { $steps[] = "• {$tbl} Needs-changes backfill already done — skipped."; continue; }
+            $tsCols = [];
+            if (columnExists($pdo, $tbl, 'updated_at')) $tsCols[] = 'updated_at';
+            if (columnExists($pdo, $tbl, 'created_at')) $tsCols[] = 'created_at';
+            $when = 'COALESCE(' . implode(', ', array_merge($tsCols, ['NOW()'])) . ')';
+            // Keep updated_at as it was: the backfill is not an edit of the image.
+            $keep = in_array('updated_at', $tsCols, true) ? ', updated_at = updated_at' : '';
+            $queued = (int)$pdo->exec("UPDATE {$tbl} SET redo_at = {$when}{$keep} WHERE status = 'denied' AND redo_at IS NULL");
+            if ($hasMeta) $pdo->prepare("INSERT IGNORE INTO meta (k, v) VALUES (?, ?)")->execute([$marker, date('Y-m-d H:i:s')]);
+            $steps[] = "✓ Queued {$queued} {$tbl} image(s) already in Needs changes for redo.";
         }
     } catch (Exception $e) {
         $errors[] = $e->getMessage();
