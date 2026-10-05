@@ -24,6 +24,14 @@
      shows "All caught up" and closes on tap. Deny requires a note >= 3 chars,
      sent in ONE request (status=denied + comment) to the item's endpoint.
 
+   Redo queue + Move to tire (admin; redo-lib.php / library-move.php):
+     viewer ⋯ "Mark for redo…" / "Remove from redo" and the select bar's "Mark for redo" → the action sheet
+     (#asActionSheet, above the viewer) with an optional "what to fix" note → redo.php action=mark / unmark;
+     queued tiles carry data-redo + a "Redo" pill (the client's read "Being reworked", never the note).
+     Replace on a queued image (tire or library) takes it off the queue and back to To Review (reply redo_cleared).
+     Library: viewer ⋯ "Move to tire…" and the select bar → the sheet (tire, series or "New series…") →
+     library-move.php; the tiles leave and a toast links to the series.
+
    App.assets  — the Assets page: grid → viewer, optimistic tile updates with
      rollback, denied tiles leave on the spot (scale .9 + fade, FLIP reflow
      with a spring; reduced motion → crossfade), live filter/badge counts,
@@ -100,6 +108,7 @@
         download: $('[data-viewer-download]', root), downloadLink: $('[data-viewer-download-link]', root), original: $('[data-viewer-original]', root),
         replace: $('[data-viewer-replace]', root), replaceInput: $('[data-viewer-replace-input]', root), manage: $('[data-viewer-manage]', root),
         setRef: $('[data-viewer-set-reference]', root), del: $('[data-viewer-delete]', root), useInPost: $('[data-viewer-use-in-post]', root),
+        redoPill: $('[data-viewer-redo-pill]', root), redo: $('[data-viewer-redo]', root), unredo: $('[data-viewer-unredo]', root), move: $('[data-viewer-move]', root),
         comments: $('[data-viewer-comments]', root), commentsToggle: $('[data-viewer-comments-toggle]', root),
         commentsCount: $('[data-viewer-comments-count]', root), commentsPanel: $('[data-viewer-comments-panel]', root),
         thread: $('[data-viewer-thread]', root), commentForm: $('[data-viewer-comment-form]', root),
@@ -148,6 +157,10 @@
       if (r.manage) r.manage.addEventListener('click', function () { self.closeMenu(); });
       if (r.setRef) r.setRef.addEventListener('click', function () { self.closeMenu(); self.setReference(); });
       if (r.del) r.del.addEventListener('click', function () { self.closeMenu(); self.deleteImage(); });
+      // admin: the Redo queue and Library → tire (the sheet opens above the viewer)
+      if (r.redo) r.redo.addEventListener('click', function () { var it = self.current(); self.closeMenu(); if (it) assets.redoSheet([it]); });
+      if (r.unredo) r.unredo.addEventListener('click', function () { var it = self.current(); self.closeMenu(); if (it) assets.unredo([it]); });
+      if (r.move) r.move.addEventListener('click', function () { var it = self.current(); self.closeMenu(); if (it) assets.moveSheet([it]); });
       // admin: "Use in post" (approved items) → the New post pop-up (newpost.js) with this image as slide 1
       if (r.useInPost) r.useInPost.addEventListener('click', function () {
         var it = self.current(); self.closeMenu();
@@ -332,6 +345,13 @@
       if (r.prev) r.prev.disabled = !this.hasPrev();
       if (r.next) r.next.disabled = !this.hasNext();
       $$('[data-tire-only]', r.menu).forEach(function (el) { el.hidden = item.kind !== 'tire'; });
+      if (r.replace) r.replace.hidden = item.kind !== 'tire' && item.kind !== 'library';
+      // Redo queue: the pill (admin "Redo"; the client "Being reworked", not on a Needs changes image — it says so) + the admin rows
+      if (r.redoPill) r.redoPill.hidden = !item.redo || (App.role !== 'admin' && item.status === 'denied');
+      var redoOn = !!(assets.cfg.redo && assets.cfg.redo.on && assets.cfg.endpoints && assets.cfg.endpoints.redo);
+      if (r.redo) r.redo.hidden = !redoOn || !!item.redo;
+      if (r.unredo) r.unredo.hidden = !redoOn || !item.redo;
+      if (r.move) r.move.hidden = !(item.kind === 'library' && assets.cfg.move && assets.cfg.move.on && !item.strip);
       if (r.useInPost) r.useInPost.hidden = !(item.status === 'approved' && (item.kind === 'tire' || item.kind === 'library') && App.newPost);
       // Download: images go through the blob save (download()), videos through a direct <a download> link
       if (r.downloadLink) {
@@ -662,7 +682,7 @@
      *  otherwise the replace-image.php contract: image_id, image, type=tire. Same reply either way. */
     replace: function (file) {
       var item = this.current(), self = this, root = this.root;
-      if (!item || item.kind !== 'tire' || !file) return;
+      if (!item || (item.kind !== 'tire' && item.kind !== 'library') || !file) return;
       var endpoint = root.getAttribute('data-replace-endpoint') || (window.App && App.urls ? App.urls.abs('replace-image.php') : 'replace-image.php');
       var uploadEp = root.getAttribute('data-upload-endpoint') || '';
       var chunk = App.chunkUpload && App.chunkUpload.upload ? App.chunkUpload : null;
@@ -678,9 +698,14 @@
         item.src = item.type === 'image' && res.data.large ? bust(res.data.large) : url;
         item.thumb = item.type === 'image' && res.data.thumb ? bust(res.data.thumb) : url;
         item._preloaded = false;
+        if (res.data.filename) item.download = res.data.filename;   // a library image keeps its stem; the extension may change
+        // A queued Redo image: off the queue and back to To Review for the client (redo-lib.php redoAfterReplace)
+        var redone = !!res.data.redo_cleared, prev = item.status;
+        if (redone) { item.redo = false; item.status = res.data.status || 'pending'; }
         if (self.current() === item) self.goTo(self.index);
         emit(root, 'viewer:replaced', { item: item, src: item.src, thumb: item.thumb, original: url });
-        toast(item.type === 'video' ? 'Video replaced' : 'Image replaced', { kind: 'success' });
+        if (redone) emit(root, 'viewer:redo', { item: item, redo: false, status: item.status, prev: prev });
+        toast(redone ? 'Replaced — back to To Review for the client' : (item.type === 'video' ? 'Video replaced' : 'Image replaced'), { kind: 'success' });
       };
       var fail = function (err) { toast((err && (err.error || err.message)) || 'Replace failed', { kind: 'error' }); };
       toast('Replacing…');
@@ -688,7 +713,7 @@
         var lastPct = -1;
         chunk.upload({
           endpoint: uploadEp, file: file, previews: true,   // an image: the browser makes its sm / lg previews (no server decode)
-          fields: { purpose: 'replace', replace_kind: 'tire', replace_id: item.id, client: (document.body && document.body.dataset.client) || '', actor: App.actor || 'admin' },
+          fields: { purpose: 'replace', replace_kind: item.kind, replace_id: item.id, client: (document.body && document.body.dataset.client) || '', actor: App.actor || 'admin' },
           onProgress: function (p) { if (p.pct !== lastPct && (p.count > 1 || p.pct === 100)) { lastPct = p.pct; toast('Replacing… ' + p.text); } }
         }).promise.then(function (data) {
           if (data.previews && data.previews.ok) { data.thumb = data.previews.thumb || data.thumb; data.large = data.previews.large || data.large; }
@@ -697,7 +722,7 @@
         return;
       }
       var fd = new FormData();
-      fd.append('image_id', item.id); fd.append('image', file); fd.append('type', 'tire'); fd.append('actor', App.actor || 'admin');
+      fd.append('image_id', item.id); fd.append('image', file); fd.append('type', item.kind); fd.append('actor', App.actor || 'admin');
       fetch(endpoint, { method: 'POST', body: fd, credentials: 'same-origin' })
         .then(function (res) { return res.text().then(function (t) { var d = null; try { d = JSON.parse(t); } catch (e) {} return { ok: res.ok && !!d && d.ok !== false, data: d, status: res.status }; }); })
         .then(done)
@@ -935,6 +960,15 @@
       if (approveBtn) approveBtn.addEventListener('click', function () { self.approveSelected(); });
       var postBtn = $('[data-select-post]');   // admin only (assets.php)
       if (postBtn) postBtn.addEventListener('click', function () { self.postSelected(); });
+      var redoBtn = $('[data-select-redo]'), moveBtn = $('[data-select-move]');   // admin only: Redo queue / Library → tire
+      if (redoBtn) redoBtn.addEventListener('click', function () { self.redoSheet(self.selectedTiles().map(function (t) { return self.tileToItem(t); })); });
+      if (moveBtn) moveBtn.addEventListener('click', function () { self.moveSheet(self.selectedTiles().map(function (t) { return self.tileToItem(t); })); });
+      // A replacement took a queued image off the Redo queue → To Review (the tile follows, the counts move)
+      document.addEventListener('viewer:redo', function (e) {
+        var d = e.detail, tile = d.item.tile || self.findTile(d.item.kind, d.item.id);
+        if (tile) { self.applyRedo(tile, !!d.redo); if (d.status && d.prev && d.status !== d.prev) { self.applyStatus(tile, d.status); self.adjustCounts(d.prev, d.status); if (self.grid.dataset.filter !== d.status) self.leaveTile(tile); } }
+        if (!d.redo && d.prev) self.bumpRedoChip(-1);
+      });
       var dlBtn = $('[data-select-download]'), exBtn = $('[data-select-export]');   // admin only: zip / manifest CSV of the approved selection
       if (dlBtn) dlBtn.addEventListener('click', function () { self.downloadSelected(dlBtn); });
       if (exBtn) exBtn.addEventListener('click', function () { self.exportSelected(exBtn); });
@@ -971,7 +1005,7 @@
       var d = tile.dataset;
       return { id: parseInt(d.id, 10), kind: d.kind, status: d.status, src: d.src, original: d.original || d.src, thumb: d.thumb || '', type: d.type || 'image', mime: d.mime || '',
                label: d.label || '', download: d.download || '', endpoint: d.endpoint, manage: d.manage || '', twin: d.twin || '',
-               comments: parseInt(d.comments, 10) || 0, tile: tile };
+               comments: parseInt(d.comments, 10) || 0, redo: d.redo === '1', tile: tile };
     },
     openAt: function (tile) {
       var self = this, items = this.tiles().map(function (t) { return self.tileToItem(t); });
@@ -1172,6 +1206,163 @@
       });
     },
 
+    /* ---------------- Redo queue (admin): mark / remove, the action sheet above the viewer ---------------- */
+    /** A tile's Redo flag + pill (the pill reads "Redo" for Joust). */
+    applyRedo: function (tile, on) {
+      if (!tile) return;
+      if (on) tile.dataset.redo = '1'; else delete tile.dataset.redo;
+      var pill = tile.querySelector('[data-thumb-redo]'); if (pill) pill.hidden = !on;
+    },
+    /** The admin's "Redo N" chip on Assets / Tires. */
+    bumpRedoChip: function (delta, absolute) {
+      $$('[data-redo-chip-count]').forEach(function (el) {
+        var v = absolute != null ? absolute : Math.max(0, (parseInt(el.textContent, 10) || 0) + delta);
+        el.textContent = String(v);
+      });
+    },
+    /** Items → "tire:12,library:4". */
+    refsOf: function (items) { return items.map(function (it) { return it.kind + ':' + it.id; }).join(','); },
+    /** Every place an item shows (grid tile, Reference strip, the open viewer's copy) gets the flag. */
+    setRedo: function (items, on) {
+      var self = this;
+      items.forEach(function (it) {
+        it.redo = on;
+        [it.tile || self.findTile(it.kind, it.id)].concat(it.kind === 'tire' ? self.stripTiles(it.id) : []).forEach(function (t) { self.applyRedo(t, on); });
+        viewer.items.forEach(function (v) { if (v.kind === it.kind && v.id === it.id) v.redo = on; });
+      });
+      if (viewer.isOpen) viewer.updateChrome();
+    },
+    actionSheet: function (title, html) {
+      if (!App.sheet || !$('#asActionSheet')) return null;
+      return App.sheet.open('#asActionSheet', { title: title, html: html, footer: '' });
+    },
+    /** "Mark for redo…": optional note (Joust only) → redo.php action=mark. */
+    redoSheet: function (items) {
+      var self = this, ep = (this.cfg.endpoints || {}).redo;
+      items = (items || []).filter(Boolean);
+      if (!items.length || !ep) return;
+      var n = items.length, already = items.filter(function (it) { return it.redo; }).length;
+      var html = '<form class="as-series-form as-act-form" data-redo-form novalidate>'
+        + '<p>' + (n === 1 ? 'This image goes' : n + ' images go') + ' into the Redo queue, ready to export as one pack. '
+        + (already ? (already === n ? 'Already queued — this updates the note.' : already + ' already queued.') + ' ' : '')
+        + 'The review status does not change; the client sees “Being reworked”.</p>'
+        + '<label class="as-series-label" for="asRedoNote">What to fix <span class="text-tertiary">(optional)</span></label>'
+        + '<textarea class="ui-textarea as-act-note" id="asRedoNote" name="note" rows="3" maxlength="500" placeholder="e.g. Sidewall lettering is warped" data-sheet-autofocus data-redo-note></textarea>'
+        + '<p class="as-series-help text-secondary">Saved as an internal note on the image — Joust only, the client never sees it.</p>'
+        + '<div class="as-series-form-actions"><button type="button" class="ui-btn ui-btn--gray" data-sheet-close>Cancel</button>'
+        + '<button type="submit" class="ui-btn ui-btn--filled as-act-redo" data-redo-submit>' + (n === 1 ? 'Mark for redo' : 'Mark ' + n + ' for redo') + '</button></div></form>';
+      var root = this.actionSheet(n === 1 ? 'Mark for redo' : 'Mark ' + n + ' for redo', html);
+      if (!root) return;
+      var form = $('[data-redo-form]', root);
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var btn = $('[data-redo-submit]', form), note = ($('[data-redo-note]', form).value || '').trim();
+        btn.disabled = true; btn.setAttribute('aria-busy', 'true');
+        App.post(ep, { action: 'mark', items: self.refsOf(items), note: note }).then(function (res) {
+          btn.disabled = false; btn.removeAttribute('aria-busy');
+          if (!res.ok) { toast(res.error || 'Could not mark for redo', { kind: 'error' }); return; }
+          self.setRedo(items, true);
+          if (res.data && res.data.count != null) self.bumpRedoChip(0, res.data.count);
+          App.sheet.close();
+          if (self.selecting) self.setSelecting(false);
+          var url = self.cfg.redo && self.cfg.redo.url;
+          toast(n === 1 ? 'Marked for redo' : n + ' marked for redo', { kind: 'success', duration: 4000, link: url ? { href: url, label: 'Open Redo' } : null });
+        });
+      });
+    },
+    /** "Remove from redo" → redo.php action=unmark. */
+    unredo: function (items) {
+      var self = this, ep = (this.cfg.endpoints || {}).redo;
+      if (!items.length || !ep) return;
+      App.post(ep, { action: 'unmark', items: this.refsOf(items) }).then(function (res) {
+        if (!res.ok) { toast(res.error || 'Could not remove', { kind: 'error' }); return; }
+        self.setRedo(items, false);
+        if (res.data && res.data.count != null) self.bumpRedoChip(0, res.data.count);
+        toast('Removed from redo', { kind: 'success' });
+      });
+    },
+
+    /* ---------------- Library → tire (admin): the move sheet ---------------- */
+    moveSheet: function (items) {
+      var self = this, ep = (this.cfg.endpoints || {}).move;
+      items = (items || []).filter(function (it) { return it && it.kind === 'library'; });
+      if (!items.length || !ep) return;
+      var n = items.length, word = (this.cfg.move && this.cfg.move.label) || 'Tires';
+      var html = '<form class="as-series-form as-act-form" data-move-form novalidate>'
+        + '<p>Move ' + (n === 1 ? 'this image' : n + ' images') + ' from the Library into a ' + escapeHtml(word.toLowerCase().replace(/s$/, '')) + ' series. '
+        + 'Approval, comments and previews come along; the file moves to the series folder.</p>'
+        + '<label class="as-series-label" for="asMoveTire">' + escapeHtml(word.replace(/s$/, '')) + '</label>'
+        + '<select class="ui-select" id="asMoveTire" data-move-tire disabled><option>Loading…</option></select>'
+        + '<label class="as-series-label" for="asMoveSeries">Series</label>'
+        + '<select class="ui-select" id="asMoveSeries" data-move-series disabled></select>'
+        + '<div class="as-act-new" data-move-new hidden><label class="as-series-label" for="asMoveNew">New series name</label>'
+        + '<input class="ui-input" type="text" id="asMoveNew" maxlength="80" placeholder="e.g. Series 3" data-move-new-name></div>'
+        + '<div class="as-series-form-actions"><button type="button" class="ui-btn ui-btn--gray" data-sheet-close>Cancel</button>'
+        + '<button type="submit" class="ui-btn ui-btn--filled" data-move-submit disabled>' + (n === 1 ? 'Move' : 'Move ' + n) + '</button></div></form>';
+      var root = this.actionSheet(n === 1 ? 'Move to ' + word.toLowerCase().replace(/s$/, '') : 'Move ' + n + ' to ' + word.toLowerCase().replace(/s$/, ''), html);
+      if (!root) return;
+      var form = $('[data-move-form]', root), tireSel = $('[data-move-tire]', form), serSel = $('[data-move-series]', form);
+      var newWrap = $('[data-move-new]', form), newName = $('[data-move-new-name]', form), submit = $('[data-move-submit]', form);
+      var tires = [];
+      var fillSeries = function () {
+        var t = tires.filter(function (x) { return String(x.id) === tireSel.value; })[0];
+        serSel.innerHTML = '';
+        (t ? t.series : []).forEach(function (sr) { var o = document.createElement('option'); o.value = String(sr.id); o.textContent = sr.name + ' (' + sr.total + ')'; serSel.appendChild(o); });
+        var o = document.createElement('option'); o.value = 'new'; o.textContent = 'New series…'; serSel.appendChild(o);
+        serSel.disabled = !t;
+        newWrap.hidden = serSel.value !== 'new';
+        submit.disabled = !t;
+      };
+      var slug = (document.body && document.body.dataset.client) || '';
+      fetch(App.urls.abs(ep) + (ep.indexOf('?') < 0 ? '?' : '&') + 'action=targets&client=' + encodeURIComponent(slug), { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+        .then(function (res) { return res.json(); })
+        .then(function (d) {
+          if (!d || !d.ok) throw new Error((d && d.error) || 'Could not load the tires');
+          tires = d.tires || [];
+          tireSel.innerHTML = '';
+          if (!tires.length) { var o0 = document.createElement('option'); o0.textContent = 'No ' + word.toLowerCase() + ' yet'; tireSel.appendChild(o0); return; }
+          tires.forEach(function (t) { var o = document.createElement('option'); o.value = String(t.id); o.textContent = t.name; tireSel.appendChild(o); });
+          tireSel.disabled = false;
+          fillSeries();
+        })
+        .catch(function (err) { toast(err.message || 'Could not load the tires', { kind: 'error' }); });
+      tireSel.addEventListener('change', fillSeries);
+      serSel.addEventListener('change', function () { newWrap.hidden = serSel.value !== 'new'; if (!newWrap.hidden) { try { newName.focus(); } catch (e) {} } });
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        if (!tireSel.value || submit.disabled) return;
+        var params = { action: 'move', ids: items.map(function (it) { return it.id; }).join(','), tire_id: tireSel.value };
+        if (serSel.value === 'new') {
+          var nm = (newName.value || '').trim();
+          if (!nm) { try { newName.focus(); } catch (err) {} newName.setAttribute('aria-invalid', 'true'); return; }
+          params.new_series = nm;
+        } else params.series_id = serSel.value;
+        submit.disabled = true; submit.setAttribute('aria-busy', 'true');
+        App.post(ep, params).then(function (res) {
+          submit.disabled = false; submit.removeAttribute('aria-busy');
+          if (!res.ok) { toast(res.error || 'Could not move', { kind: 'error' }); return; }
+          App.sheet.close();
+          if (self.selecting) self.setSelecting(false);
+          var d = res.data, moved = {};
+          (d.items || []).forEach(function (m) { moved[m.from_id] = true; });
+          items.forEach(function (it) {
+            if (!moved[it.id]) return;
+            if (it.redo) self.bumpRedoChip(0);   // the image stays queued — as a tire image now
+            if (viewer.isOpen && viewer.current() && viewer.current().kind === 'library' && viewer.current().id === it.id) viewer.removeCurrent('moved');
+            else {
+              var tile = it.tile || self.findTile('library', it.id);
+              self.adjustCounts(it.status, null);
+              if (self.cfg.page && self.cfg.page.total > 0) self.cfg.page.total--;
+              if (tile) self.leaveTile(tile);
+              viewer.items = viewer.items.filter(function (v) { return !(v.kind === 'library' && v.id === it.id); });
+            }
+          });
+          self.syncMore();
+          toast((d.moved === 1 ? 'Moved to ' : d.moved + ' moved to ') + d.tire.name + ' · ' + d.series.name, { kind: 'success', duration: 6000, link: { href: d.url, label: 'Open series' } });
+        });
+      });
+    },
+
     /* ---------------- tile state ---------------- */
     applyStatus: function (tile, status) {
       tile.dataset.status = status;
@@ -1332,6 +1523,9 @@
       if (post) { post.disabled = m === 0 || this._busyBatch; post.innerHTML = 'Create post' + (m > 0 ? '<span class="as-sel-n"> with ' + m + '</span>' : ''); post.title = m === 0 ? 'Select approved images to build a post' : ''; }
       if (dl && !this._busyZip) { dl.disabled = m === 0 || dl.getAttribute('data-zip') === '0'; if (dl.getAttribute('data-zip') === '0') dl.title = 'This server can only export the CSV list (32-bit PHP)'; }
       if (ex) ex.disabled = m === 0;
+      var rb = $('[data-select-redo]'), mb = $('[data-select-move]');
+      if (rb) rb.disabled = n === 0 || this._busyBatch;
+      if (mb) mb.disabled = n === 0 || this._busyBatch;
       // One bar, the actions the grid can use: approved grids offer post / Download / Export, the others Approve
       // (both when the selection mixes them). The client seat only ever has Approve.
       if (post) {

@@ -368,6 +368,8 @@ if (!function_exists('exportResolvePath')) {
             return tireImagePath(['image_url' => $src]);
         }
         if ($kind === 'library') {
+            // a redo pack across clients names each file's own client (the job's $client is then a placeholder)
+            if (!empty($file['client_slug'])) $client = ['slug' => (string)$file['client_slug']] + $client;
             return exportLibraryPath($client, basename($src));
         }
         return null;
@@ -871,8 +873,17 @@ if (!function_exists('exportStep')) {
         if ($i >= $count) {                                                            // every file is in: manifests + central directory
             fseek($zip, $pos);
             $now = time();
-            $job['entries'][] = exportZipAddString($zip, $pos, $job['folder'] . '/manifest.csv', exportManifestCsv($job), $now);
-            $job['entries'][] = exportZipAddString($zip, $pos, $job['folder'] . '/manifest.json', exportManifestJson($job), $now);
+            if (!empty($job['redo'])) {
+                // Redo pack: "<file stem>.txt" next to each file (feedback, comments, the redo note) + redo-index.csv at the top
+                foreach ($job['files'] as $f) {
+                    if (!empty($f['skipped']) || empty($f['ok']) || ($f['txt_name'] ?? '') === '') continue;
+                    $job['entries'][] = exportZipAddString($zip, $pos, (string)$f['txt_name'], (string)($f['txt'] ?? ''), $now);
+                }
+                $job['entries'][] = exportZipAddString($zip, $pos, 'redo-index.csv', exportRedoIndexCsv($job), $now);
+            } else {
+                $job['entries'][] = exportZipAddString($zip, $pos, $job['folder'] . '/manifest.csv', exportManifestCsv($job), $now);
+                $job['entries'][] = exportZipAddString($zip, $pos, $job['folder'] . '/manifest.json', exportManifestJson($job), $now);
+            }
             fwrite($zip, exportZipEnd($job['entries'], $pos));
             fflush($zip);
             clearstatcache(true, $p['zip']);
@@ -903,5 +914,212 @@ if (!function_exists('exportStepReply')) {
         $s = exportJobSummary($job);
         return ['done' => $s['done'], 'added' => $s['added'], 'remaining' => max(0, $s['files'] - $s['added'] - $s['skipped']), 'skipped' => $s['skipped'],
                 'bytes_done' => $s['bytes_done'], 'bytes' => $s['bytes'], 'files' => $s['files'], 'zip_bytes' => $s['zip_bytes'], 'filename' => $s['filename'], 'job' => $s['job']];
+    }
+}
+
+// ---------------------------------------------------------------------
+// Download (export.php and redo.php): stream a finished job's zip
+// ---------------------------------------------------------------------
+
+if (!function_exists('exportStreamZip')) {
+    /**
+     * Stream uploads/.exports/<job>.zip (never web-reachable itself) in 1 MB pieces with a single byte range honoured,
+     * so a dropped multi-GB download can resume. Exits after streaming; returns ['code', 'error'] when it cannot
+     * (409 still building, 404 gone, 500 unreadable) so the caller answers in its own format. 416 is answered here.
+     */
+    function exportStreamZip(array $job, string $method = 'GET', string $fallbackName = 'export.zip'): array {
+        if (empty($job['done'])) return ['code' => 409, 'error' => 'This export is still building'];
+        $paths = exportJobPaths($job['job'] ?? null);
+        $zip = $paths ? $paths['zip'] : '';
+        if ($zip === '' || !is_file($zip) || is_link($zip)) return ['code' => 404, 'error' => 'The zip is gone — build the export again'];
+        clearstatcache(true, $zip);
+        $size = (int)filesize($zip);
+        $start = 0; $end = $size - 1; $partial = false;
+        $range = (string)($_SERVER['HTTP_RANGE'] ?? '');
+        if ($range !== '') {
+            if (!preg_match('/^bytes=(\d*)-(\d*)$/', trim($range), $m) || ($m[1] === '' && $m[2] === '')) {
+                http_response_code(416); header('Content-Range: bytes */' . $size); exit;
+            }
+            if ($m[1] === '') { $n = (int)$m[2]; $start = max(0, $size - $n); }                    // suffix range: the last n bytes
+            else { $start = (int)$m[1]; if ($m[2] !== '') $end = min($size - 1, (int)$m[2]); }
+            if ($start > $end || $start >= $size) { http_response_code(416); header('Content-Range: bytes */' . $size); exit; }
+            $partial = true;
+        }
+        $fh = @fopen($zip, 'rb');
+        if ($fh === false) return ['code' => 500, 'error' => 'Could not open the zip'];
+        if (function_exists('session_write_close')) @session_write_close();   // do not hold the admin session lock for the whole transfer
+        @set_time_limit(0);
+        ignore_user_abort(false);
+        while (ob_get_level() > 0) { @ob_end_clean(); }
+        $name = (string)($job['filename'] ?? '') ?: $fallbackName;
+        $name = preg_replace('/[^A-Za-z0-9._-]+/', '-', $name);
+        http_response_code($partial ? 206 : 200);
+        header('Content-Type: application/zip');
+        header('Content-Disposition: attachment; filename="' . $name . '"');
+        header('Content-Length: ' . ($end - $start + 1));
+        header('Accept-Ranges: bytes');
+        header('Cache-Control: no-store');
+        header('X-Content-Type-Options: nosniff');
+        if ($partial) header('Content-Range: bytes ' . $start . '-' . $end . '/' . $size);
+        if ($method === 'HEAD') { fclose($fh); exit; }
+        if ($start > 0) fseek($fh, $start);
+        $left = $end - $start + 1;
+        while ($left > 0 && !feof($fh)) {
+            $buf = fread($fh, (int)min(EXPORT_IO_CHUNK, $left));
+            if ($buf === false || $buf === '') break;
+            echo $buf;
+            $left -= strlen($buf);
+            flush();
+            if (connection_aborted()) break;
+        }
+        fclose($fh);
+        exit;
+    }
+}
+
+// ---------------------------------------------------------------------
+// Redo pack (redo.php "Export redo pack"; redo-lib.php's queue) — the same stepwise zip job, other contents:
+//
+//   <Client>/<Tire>/<Series | Reference>/<original file>   + <file stem>.txt next to it (feedback, comments, redo note)
+//   <Client>/Library/<original file>                        + <file stem>.txt
+//   redo-index.csv                                          one row per file (client, tire, series, file, status,
+//                                                           feedback, redo note, link, date marked …)
+//
+// One client (company_id = the client) or every client (company_id 0); "only new since last export" leaves out what
+// already went out in a pack since it was queued. redo.php stamps redo_exported_at on the job's files once it is built.
+// ---------------------------------------------------------------------
+
+if (!function_exists('exportRedoStatusLabel')) {
+    function exportRedoStatusLabel(string $status): string {
+        return ['pending' => 'To Review', 'approved' => 'Approved', 'denied' => 'Needs changes'][$status] ?? $status;
+    }
+}
+
+if (!function_exists('exportRedoTxt')) {
+    /** The "<file>.txt" next to a file in the redo pack: where it is, what the client said, what Joust noted. CRLF, UTF-8. */
+    function exportRedoTxt(array $it, string $zipName = ''): string {
+        $place = trim(implode(' · ', array_filter([$it['company_name'] ?? '', $it['kind'] === 'library' ? 'Library' : ($it['tire_name'] ?? ''),
+                                                    $it['kind'] === 'library' ? '' : (($it['series_id'] ?? null) ? ($it['series_name'] ?? '') : 'Reference')], 'strlen')));
+        $lines = [$place, str_repeat('=', min(60, max(10, function_exists('mb_strlen') ? mb_strlen($place, 'UTF-8') : strlen($place))))];
+        $lines[] = 'File: ' . (string)($it['filename'] ?? '');
+        if ($zipName !== '') $lines[] = 'In this pack: ' . $zipName;
+        $lines[] = 'Status: ' . exportRedoStatusLabel((string)($it['status'] ?? ''));
+        $lines[] = 'Marked for redo: ' . (string)($it['redo_at'] ?? '') . (!empty($it['redo_by_name']) ? ' by ' . $it['redo_by_name'] : ' (automatically — the client asked for changes)');
+        if (!empty($it['link'])) $lines[] = 'Link: ' . $it['link'];
+        $lines[] = '';
+        $lines[] = 'What to fix (Joust note):';
+        $lines[] = trim((string)($it['redo_note'] ?? '')) !== '' ? '  ' . str_replace("\n", "\n  ", trim((string)$it['redo_note'])) : '  —';
+        $lines[] = '';
+        $lines[] = 'Client feedback and comments:';
+        if (empty($it['thread'])) $lines[] = '  (none)';
+        foreach ((array)($it['thread'] ?? []) as $c) {
+            $lines[] = '  ' . ($c['at'] !== '' ? '[' . $c['at'] . '] ' : '') . $c['who'] . ':';
+            $lines[] = '    ' . str_replace("\n", "\n    ", trim((string)$c['text']));
+        }
+        return str_replace(["\r\n", "\n"], ["\n", "\r\n"], implode("\n", $lines)) . "\r\n";
+    }
+}
+
+if (!function_exists('exportRedoIndexColumns')) {
+    function exportRedoIndexColumns(): array {
+        return ['client', 'tire', 'series', 'file', 'path', 'status', 'feedback', 'redo_note', 'link', 'marked_at', 'marked_by', 'kind', 'id'];
+    }
+}
+
+if (!function_exists('exportRedoIndexCsv')) {
+    /** redo-index.csv: UTF-8 BOM, CRLF, one row per file of the job (files missing at build time read status "missing"). */
+    function exportRedoIndexCsv(array $job): string {
+        $csv = "\xEF\xBB\xBF" . exportCsvRow(exportRedoIndexColumns());
+        foreach ((array)($job['files'] ?? []) as $f) {
+            $csv .= exportCsvRow([
+                (string)($f['client'] ?? ''), (string)($f['tire'] ?? ''), (string)($f['series'] ?? ''), (string)($f['filename'] ?? ''), (string)($f['name'] ?? ''),
+                !empty($f['skipped']) ? 'missing' : exportRedoStatusLabel((string)($f['status'] ?? '')),
+                (string)($f['feedback'] ?? ''), (string)($f['redo_note'] ?? ''), (string)($f['link'] ?? ''), (string)($f['redo_at'] ?? ''),
+                (string)($f['redo_by_name'] ?? ''), (string)($f['kind'] ?? ''), (int)($f['id'] ?? 0),
+            ]);
+        }
+        return $csv;
+    }
+}
+
+if (!function_exists('exportRedoEnumerate')) {
+    /**
+     * The queued images ($client = one client, null = every client; $opts['since'] = only new since the last pack) as
+     * export files (exportEnumerate()'s shape + client, client_slug, feedback, redo_note, redo_at, link, txt, txt_name).
+     * Each file keeps its ORIGINAL name (a copy-suffix only when two land in one folder) so the fixed batch can be
+     * dropped back in by name (redo.php "Replace from folder").
+     */
+    function exportRedoEnumerate(PDO $pdo, ?array $client, array $opts = []): array {
+        $since = !empty($opts['since']) && !in_array((string)$opts['since'], ['0', 'false', 'off', ''], true);
+        $res = ['files' => [], 'bytes' => 0, 'video_bytes' => 0, 'counts' => ['photos' => 0, 'videos' => 0, 'reference' => 0, 'series' => 0, 'library' => 0, 'missing' => 0],
+                'folder' => $client ? exportSafeName((string)($client['name'] ?? ''), 'Client') : 'Redo pack', 'tire_name' => null, 'series_name' => null,
+                'label' => '', 'warnings' => [], 'options' => ['scope' => 'redo', 'since' => $since, 'all' => $client === null], 'clients' => 0];
+        if (!function_exists('redoItems')) return $res;
+        $items = redoItems($pdo, $client ? (int)$client['id'] : null, ['since' => $since]);
+        $used = []; $clients = [];
+        foreach ($items as $it) {
+            if ($it['path'] === null || !is_file($it['path'])) { $res['counts']['missing']++; continue; }
+            $folder = redoPackFolder($it);
+            $ext  = strtolower(pathinfo($it['filename'], PATHINFO_EXTENSION));
+            $stem = exportSafeName(pathinfo($it['filename'], PATHINFO_FILENAME), 'file', 120);
+            for ($n = 1; ; $n++) {   // the file and its .txt must both be free in the folder
+                $nm = $stem . ($n > 1 ? '-' . $n : '');
+                $k1 = $folder . '/' . strtolower($nm . ($ext !== '' ? '.' . $ext : '')); $k2 = $folder . '/' . strtolower($nm . '.txt');
+                if (!isset($used[$k1]) && !isset($used[$k2])) { $used[$k1] = $used[$k2] = true; break; }
+            }
+            $name  = $nm . ($ext !== '' ? '.' . $ext : '');
+            $bytes = (int)@filesize($it['path']);
+            $isV   = $it['type'] === 'video';
+            $clients[$it['company_id']] = true;
+            $res['files'][] = [
+                'id' => $it['id'], 'kind' => $it['kind'], 'company_id' => $it['company_id'], 'client' => $it['company_name'], 'client_slug' => $it['company_slug'],
+                'tire' => $it['tire_name'], 'series' => $it['kind'] === 'tire' ? (($it['series_id'] ?? null) ? $it['series_name'] : 'Reference') : '',
+                'folder' => $folder, 'name' => $folder . '/' . $name, 'filename' => $name, 'original' => $it['filename'],
+                'media_type' => $isV ? 'video' : 'image', 'bytes' => $bytes, 'status' => $it['status'],
+                'feedback' => $it['feedback'], 'redo_note' => $it['redo_note'], 'redo_at' => $it['redo_at'], 'redo_by_name' => $it['redo_by_name'], 'link' => $it['link'],
+                'source_path' => $it['kind'] === 'library' ? 'media/library/' . $it['company_slug'] . '/' . $it['filename'] : ltrim($it['image_url'], '/'),
+                'txt_name' => $folder . '/' . $nm . '.txt', 'txt' => exportRedoTxt($it, $folder . '/' . $name),
+                'approved_at' => '', 'comments_count' => count($it['thread']), 'drive_url' => '',
+            ];
+            $res['bytes'] += $bytes;
+            if ($isV) { $res['video_bytes'] += $bytes; $res['counts']['videos']++; } else { $res['counts']['photos']++; }
+            if ($it['kind'] === 'library') $res['counts']['library']++; elseif ($it['series_id']) $res['counts']['series']++; else $res['counts']['reference']++;
+        }
+        $res['clients'] = count($clients);
+        $n = count($res['files']);
+        $res['label'] = 'Redo pack · ' . ($client ? (string)$client['name'] : 'all clients') . ' · ' . $n . ($n === 1 ? ' file' : ' files') . ($since ? ' · new since last export' : '');
+        if ($res['counts']['missing'] > 0) $res['warnings'][] = $res['counts']['missing'] . ' queued file' . ($res['counts']['missing'] === 1 ? ' is' : 's are') . ' missing on disk and will be left out';
+        if ($res['bytes'] > EXPORT_MAX_BYTES) $res['warnings'][] = 'Over the ' . exportFormatBytes(EXPORT_MAX_BYTES) . ' limit for one export — export one client at a time, or only what is new';
+        return $res;
+    }
+}
+
+if (!function_exists('exportRedoStartJob')) {
+    /** Enumerate the queue and write the job sidecar (exportStartJob()'s contract; redo = true, company_id 0 = every client). */
+    function exportRedoStartJob(PDO $pdo, ?array $client, array $opts = []): array {
+        exportCleanup();
+        $enum = exportRedoEnumerate($pdo, $client, $opts);
+        if (!$enum['files']) throw new InvalidArgumentException(!empty($enum['options']['since']) ? 'Nothing new in the redo queue since the last export' : 'The redo queue is empty');
+        if ($enum['bytes'] > EXPORT_MAX_BYTES) throw new InvalidArgumentException('That redo pack would be ' . exportFormatBytes($enum['bytes']) . ' — the limit for one zip is ' . exportFormatBytes(EXPORT_MAX_BYTES) . '. Export one client at a time, or only what is new.');
+        $dir = exportsDir(true);
+        if ($dir === null) throw new RuntimeException('uploads/.exports is not writable on this server');
+        $slug = $client ? trim((string)preg_replace('/[^a-z0-9-]+/', '-', strtolower((string)($client['slug'] ?? 'client'))), '-') : 'all-clients';
+        for ($try = 0; $try < 5; $try++) {
+            $id = bin2hex(random_bytes(16));
+            if (is_file($dir . '/' . $id . '.json') || is_file($dir . '/' . $id . '.zip')) continue;
+            $job = [
+                'job' => $id, 'redo' => true, 'company_id' => $client ? (int)$client['id'] : 0,
+                'client' => $client ? (string)($client['slug'] ?? '') : '', 'company' => $client ? (string)($client['name'] ?? '') : 'All clients',
+                'folder' => $enum['folder'], 'options' => $enum['options'], 'label' => $enum['label'],
+                'filename' => ($slug !== '' ? $slug : 'client') . '-redo-pack-' . date('Y-m-d') . '.zip',
+                'created_at' => time(), 'files' => $enum['files'], 'bytes' => $enum['bytes'], 'video_bytes' => $enum['video_bytes'],
+                'counts' => $enum['counts'], 'warnings' => $enum['warnings'],
+                'progress' => ['index' => 0, 'offset' => 0, 'crc' => 0, 'pos' => 0, 'done_files' => 0, 'bytes_done' => 0, 'skipped' => 0],
+                'entries' => [], 'done' => false, 'zip_bytes' => 0, 'error' => '', 'stamped' => false,
+            ];
+            if (!exportSaveJob($job)) throw new RuntimeException('Could not write the export job');
+            return $job;
+        }
+        throw new RuntimeException('Could not allocate an export job id');
     }
 }

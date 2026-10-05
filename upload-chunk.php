@@ -29,7 +29,7 @@
  *                     final img_ / vid_ / batch_ file and the row; unclaimed files are removed after 24 h).
  *   purpose=feature   feature_id = tires.id     → images only; stored as uploads/feat_*, the reference row is
  *                     inserted (6 per item — 409 when full); reply {ok, image:{id, image_url, src, thumb, …}, count, max}
- *   purpose=replace   replace_kind = post|tire, replace_id = the image row → the file is swapped in right away;
+ *   purpose=replace   replace_kind = post|tire|library, replace_id = the image row → the file is swapped in right away;
  *                     reply = replace-image.php's {ok, image_id, image_url, src, media_type}
  *   purpose=library   the Upload sheet's Library destination (static/js/upload-sheet.js) → images + videos, stored as
  *                     media/library/<slug>/<name> with a 'pending' library_images row (uploadLibraryStore — the
@@ -105,7 +105,7 @@ function ucTarget(PDO $pdo, array $in): array {
         $t['feature_id'] = (int)$tire['id'];
     } elseif ($purpose === 'replace') {
         $kind = (string)($in['replace_kind'] ?? 'post');
-        if (!in_array($kind, ['post', 'tire'], true)) { ucFail(400, 'replace_kind must be post or tire'); }
+        if (!in_array($kind, ['post', 'tire', 'library'], true)) { ucFail(400, 'replace_kind must be post, tire or library'); }
         $id = (int)($in['replace_id'] ?? 0);
         if ($id <= 0) { ucFail(400, 'Invalid replace_id'); }
         if (!uploadReplaceRow($pdo, $kind, $id)) { ucFail(404, 'Image not found'); }

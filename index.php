@@ -116,6 +116,16 @@ if (!$client) {
             'subtitle' => 'Add a client, logos, settings, which tabs each one sees',
             'attrs'    => ['data-home-link' => 'clients'],
         ]) ?>
+        <?php if (function_exists('redoReady') && redoReady($pdo)): $redoN = redoCount($pdo, null); // the Redo queue across clients (redo.php) ?>
+        <?= insetRow([
+            'href'     => portalUrl('redo'),
+            'icon'     => 'wand',
+            'title'    => 'Redo queue',
+            'subtitle' => $redoN > 0 ? $redoN . ' image' . ($redoN === 1 ? '' : 's') . ' to make again · export them as one pack' : 'Nothing to redo right now',
+            'trailing' => $redoN > 0 ? '<span class="ui-badge ui-badge--redo" data-home-redo-count>' . ($redoN > 99 ? '99+' : $redoN) . '</span>' : '',
+            'attrs'    => ['data-home-link' => 'redo'],
+        ]) ?>
+        <?php endif; ?>
         <?= insetRow([
             'href'     => pagePath('drive'),
             'icon'     => 'drive',
@@ -594,6 +604,12 @@ if (!$isAdmin && function_exists('trackingRepliedHomeHtml')) echo trackingReplie
   <h2 class="ui-list-header" id="home-manage">Joust</h2>
   <?= insetListOpen('', ['class' => 'home-manage', 'attrs' => ['data-home-manage' => '1']]) ?>
     <?= insetRow(['href' => manageUrl('clients'), 'icon' => 'sliders', 'title' => 'Client settings', 'subtitle' => 'Logo, default hashtags, which tabs ' . $client['name'] . ' sees', 'attrs' => ['data-home-link' => 'clients']]) ?>
+    <?php if (function_exists('redoReady') && redoReady($pdo)): $redoN = redoCount($pdo, $cid); // this client's Redo queue (redo.php) ?>
+    <?= insetRow(['href' => portalUrl('redo', ['client' => $client['slug']]), 'icon' => 'wand', 'title' => 'Redo queue',
+                  'subtitle' => $redoN > 0 ? $redoN . ' image' . ($redoN === 1 ? '' : 's') . ' to make again for ' . $client['name'] : 'Nothing to redo for ' . $client['name'],
+                  'trailing' => $redoN > 0 ? '<span class="ui-badge ui-badge--redo" data-home-redo-count>' . ($redoN > 99 ? '99+' : $redoN) . '</span>' : '',
+                  'attrs' => ['data-home-link' => 'redo']]) ?>
+    <?php endif; ?>
     <?= insetRow(['href' => manageUrl('export'), 'icon' => 'download', 'title' => 'Export approved assets', 'subtitle' => 'One zip, a folder per tire', 'attrs' => ['data-home-link' => 'export']]) ?>
     <?= insetRow(['href' => clientUrl('projects.php'), 'icon' => 'checklist', 'title' => 'Projects', 'subtitle' => 'Tasks shared with ' . $client['name'], 'attrs' => ['data-home-link' => 'projects']]) ?>
     <?= insetRow(['href' => manageUrl('tools'), 'icon' => 'wand', 'title' => 'Tools', 'subtitle' => 'AI Builder, prompts, vehicles, email import', 'attrs' => ['data-home-link' => 'tools']]) ?>

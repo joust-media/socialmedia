@@ -44,7 +44,9 @@ Clients sign in; a bare `?client=<slug>` link no longer opens anything by itself
   with *Sign out* per device, *Sign out everywhere* per contact (also voids that contact's emailed deep
   links) and *Sign everyone out*.
 - **View as client** (same card): the admin sees that client's portal exactly as the client does, without
-  a magic link (an orange banner with *Exit*; `view-as.php`). The admin keeps admin rights on endpoints.
+  a magic link (an orange banner with *Exit*; `view-as.php`). The admin keeps admin rights on endpoints, but the pages
+  post as the client: comments and decisions left while viewing as a client are logged as the client's and notify Slack
+  (the banner says so).
 - **Access** (`client-auth-lib.php` `portalAccessGate()`, run by `helpers.php`): every client-facing page
   and endpoint (`portalClientScripts()`) needs the admin session or a client session **for that client**.
   Pages redirect to sign-in with a return path and a friendly line; JSON endpoints answer 401 (no session,
@@ -545,6 +547,58 @@ has approved, categorised by tire, and hands it over as a single download:
   **20 GB** — split by tire above that. **Manifest CSV only** (`action=manifest`) downloads the
   file list without building a zip; on a 32-bit PHP build the tab offers only that.
 - Staging shares `media/` with production, so an export built there contains the real files.
+
+## Redo queue (admin)
+
+"Mark it to be done again, then export everything that needs work at once" — `redo.php`, `redo-lib.php`,
+`migrate.php` step 52.
+
+- **What it is**: a flag on tire images (series renders and reference images) and library images —
+  `redo_at` (in the queue since), `redo_note` (Joust's "what to fix"), `redo_by` (who marked it; empty = the client
+  asked for changes), `redo_exported_at`. It is **not** a new status: the client's To Review / Approved / Needs
+  changes, every badge and every count stay as they are. The client sees a queued image as **"Being reworked"**
+  (tile + viewer) and never sees the note.
+- **In**: the client's **Needs changes** queues the image automatically (any seat's deny does; no note, nothing extra
+  logged). Joust marks anything else from the viewer's ⋯ **Mark for redo…** or the Assets select bar
+  (**Mark for redo**, any status) with an optional note — stored in `redo_note` *and* as an internal comment on the
+  image (Joust only, like every internal note). The first run of step 52 queues what is already in Needs changes.
+- **Out**: a replacement file — the viewer's ⋯ **Replace image…** (tire *and* library images now; a library image is
+  replaced in place, same name, new extension if it changed), a row's **Replace…** on the Redo page, or **Replace from
+  folder** — takes it off the queue and sends it back to **To Review** (a `reset_pending` row by Joust → the client's
+  "Ready for your review" email / Slack, as for any resend). **Remove from redo** (viewer ⋯ or the Redo page) just
+  takes it off. Replacing an image that is *not* queued keeps its status, as before.
+- **The Redo page** (`/portal/redo?client=<slug>`, the **Redo N** chip on Assets / Tires, the **Redo queue** row on
+  Home): every queued image for the client or **All clients**, grouped by client → tire → series (Reference, Library),
+  with the thumbnail, status, age, who marked it, the client's latest feedback and the note.
+- **Export redo pack**: one zip, the same stepwise job as Manage → Export (`export-lib.php`, 64 MB / 15 s steps,
+  20 GB cap, resumable download):
+  ```
+  <Client>/<Tire>/<Series | Reference>/<original file>   + <file stem>.txt  (place, status, when / by whom it was
+  <Client>/Library/<original file>                        + <file stem>.txt   marked, the link, the note, every comment)
+  redo-index.csv                                         client, tire, series, file, path, status, feedback, redo_note,
+                                                         link, marked_at, marked_by, kind, id
+  ```
+  The files keep their **original** names. Options: this client or every client, and **Only new since last export**
+  (what has not been in a pack since it was queued). A finished pack stamps `redo_exported_at` on its files and
+  `meta.redo_export_last[_<client id>]`.
+- **Replace from folder**: pick the fixed folder (or files); each image / video replaces the queued image with the
+  same file name. When two queued images share a name (`render_06.jpg` in Series 1 and Series 2) the folder path
+  decides — drop the redo pack's own `Client/Tire/Series/` folders back and it just works. A report sheet lists what
+  matched. One request per file (bounded by `upload_max_filesize`; use the row's Replace… for a very large video).
+
+## Move Library images to a tire (admin)
+
+Assets → Library: the viewer's ⋯ **Move to tire…** or the select bar's **Move to tire…** opens a sheet — the tire,
+then a series or **New series…** — and `library-move.php` moves the files from `media/library/<slug>/` into
+`media/tires/<tire>/<series>/`: copy to a hidden temp name, verify (size + SHA-1), then one transaction (a
+`tire_images` row with the same status and redo flag, every comment / decision / Slack thread / seen marker of the
+image re-pointed to it, the library row removed, a "moved to <Tire> · <Series>" activity row), the final names, and
+only then the originals are deleted and their previews copied over. A name already in the series gets `-2`, `-3` …;
+a `.mov`'s transcoded `.mp4` twin moves with it. Admin only (403 for anyone else, and for an image or tire of another
+client). The toast links to the series.
+
+**Staging shares `media/` with production**: Replace, Replace from folder and Move to tire on staging change the real
+files production uses. Try them on throwaway images.
 
 ## New post pop-up (admin)
 

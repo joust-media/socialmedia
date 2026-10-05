@@ -324,8 +324,15 @@ if (!function_exists('uploadClaimCleanup')) {
 if (!function_exists('uploadReplaceRow')) {
     /** The row to replace, or null. */
     function uploadReplaceRow(PDO $pdo, string $type, int $imageId): ?array {
-        $table = $type === 'tire' ? 'tire_images' : 'post_images';
         if ($imageId <= 0) return null;
+        if ($type === 'library') {   // library_images (+ the client's slug: the file lives in media/library/<slug>/)
+            if (!function_exists('hasLibraryImagesTable') || !hasLibraryImagesTable($pdo)) return null;
+            $sel = $pdo->prepare("SELECT li.id, li.filename, li.company_id, c.slug FROM library_images li INNER JOIN companies c ON c.id = li.company_id WHERE li.id = ?");
+            $sel->execute([$imageId]);
+            $row = $sel->fetch();
+            return $row ?: null;
+        }
+        $table = $type === 'tire' ? 'tire_images' : 'post_images';
         $sel = $pdo->prepare("SELECT id, image_url FROM {$table} WHERE id = ?");
         $sel->execute([$imageId]);
         $row = $sel->fetch();
@@ -339,6 +346,8 @@ if (!function_exists('uploadReplaceOwner')) {
         try {
             if ($type === 'tire') {
                 $st = $pdo->prepare("SELECT t.company_id FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id WHERE ti.id = ?");
+            } elseif ($type === 'library') {
+                $st = $pdo->prepare("SELECT company_id FROM library_images WHERE id = ?");
             } else {
                 $st = $pdo->prepare("SELECT p.company_id FROM post_images pi INNER JOIN posts p ON p.id = pi.post_id WHERE pi.id = ?");
             }
@@ -360,6 +369,7 @@ if (!function_exists('uploadReplaceApply')) {
      * uploads/ file is deleted. Returns ['code' => 200|404|500, 'body' => the JSON reply array].
      */
     function uploadReplaceApply(PDO $pdo, string $type, int $imageId, string $src, string $ext, bool $isVideo, bool $uploaded): array {
+        if ($type === 'library') return uploadReplaceLibrary($pdo, $imageId, $src, $ext, $isVideo, $uploaded);
         $type  = $type === 'tire' ? 'tire' : 'post';
         $table = $type === 'tire' ? 'tire_images' : 'post_images';
         $row   = uploadReplaceRow($pdo, $type, $imageId);
@@ -426,16 +436,75 @@ if (!function_exists('uploadReplaceApply')) {
             if ($type === 'post') {
                 $pdo->prepare("UPDATE posts SET updated_at = NOW() WHERE id = (SELECT post_id FROM post_images WHERE id = ?)")->execute([$imageId]);
             }
+            // A queued Redo image: off the queue and back to To Review (the client hears of it) — redo-lib.php.
+            $redo = ($type === 'tire' && function_exists('redoAfterReplace')) ? redoAfterReplace($pdo, 'tire', $imageId) : null;
             return ['code' => 200, 'body' => [
                 'ok'         => true,
                 'image_id'   => $imageId,
                 'image_url'  => $newUrl,
                 'src'        => $type === 'tire' ? tireImageSrc($newUrl) : (basePath() . '/' . ltrim($newUrl, '/')),   // ready-to-use URL (media/tires rows are root-relative)
                 'media_type' => $isVideo ? 'video' : 'image',
-            ]];
+            ] + ($redo ? ['redo_cleared' => true, 'status' => $redo['status']] : [])];
         } catch (Throwable $e) {
             if (is_file($dest)) @unlink($dest);
             error_log('upload replace: ' . $e->getMessage());
+            return ['code' => 500, 'body' => ['ok' => false, 'error' => 'Database error']];
+        }
+    }
+}
+
+if (!function_exists('uploadReplaceLibrary')) {
+    /**
+     * Replace the file behind a library_images row IN PLACE (uploadReplaceApply() type 'library'): media/library/<slug>/
+     * <same stem>.<new ext> — "-2", "-3" … only when the extension changes and that name is taken on disk or by another
+     * row — the row's filename follows, the old file and its previews go, fresh previews are made. A queued Redo image
+     * leaves the queue and goes back to To Review (redoAfterReplace()). Reply shape = uploadReplaceApply()'s (image_url /
+     * src = the file's root-relative URL, + filename).
+     */
+    function uploadReplaceLibrary(PDO $pdo, int $imageId, string $src, string $ext, bool $isVideo, bool $uploaded): array {
+        $row = uploadReplaceRow($pdo, 'library', $imageId);
+        $old = $row ? (string)$row['filename'] : '';
+        $slug = $row ? preg_replace('/[^a-z0-9\-]/', '', strtolower((string)$row['slug'])) : '';
+        if (!$row || $slug === '' || $old === '' || $old !== basename($old) || $old[0] === '.') return ['code' => 404, 'body' => ['ok' => false, 'error' => 'Image not found']];
+        $dir = libraryDir($slug);
+        if (!is_dir($dir) || !is_writable($dir)) return ['code' => 500, 'body' => ['ok' => false, 'error' => 'media/library/' . $slug . '/ is not writable on the server']];
+        $real = realpath($dir); $rootReal = realpath(dirname($dir));
+        if ($real !== false && $rootReal !== false && $real !== rtrim($rootReal, '/') . '/' . $slug) {
+            return ['code' => 500, 'body' => ['ok' => false, 'error' => 'The Library folder resolves outside media/library/']];
+        }
+        $stem = pathinfo($old, PATHINFO_FILENAME);
+        $name = $stem . '.' . $ext;
+        if (strcasecmp($name, $old) !== 0) {
+            $taken = $pdo->prepare("SELECT 1 FROM library_images WHERE company_id = ? AND filename = ? AND id <> ? LIMIT 1");
+            for ($n = 2; $n < 1000; $n++) {
+                $taken->execute([(int)$row['company_id'], $name, $imageId]);
+                if (!file_exists($dir . '/' . $name) && !$taken->fetchColumn()) break;
+                $name = $stem . '-' . $n . '.' . $ext;
+            }
+        }
+        $oldPath = $dir . '/' . $old;
+        $dest    = $dir . '/' . $name;
+        if (!uploadMoveInto($src, $dest, $uploaded)) return ['code' => 500, 'body' => ['ok' => false, 'error' => 'Failed to save file (check media/library/ permissions)']];
+        if (function_exists('mediaChmodPath')) mediaChmodPath($dest);
+        try {
+            if ($name !== $old) {
+                $pdo->prepare("UPDATE library_images SET filename = ? WHERE id = ?")->execute([$name, $imageId]);
+                if (is_file($oldPath) && !is_link($oldPath)) @unlink($oldPath);
+            }
+            if (function_exists('previewDelete')) { previewDelete($oldPath); previewDelete($dest); }
+            if (!$isVideo && function_exists('previewAfterStore')) { previewReleaseSession(); previewAfterStore($dest); }
+            $redo = function_exists('redoAfterReplace') ? redoAfterReplace($pdo, 'library', $imageId) : null;
+            $url = libraryFileUrl($slug, $name);
+            return ['code' => 200, 'body' => [
+                'ok'         => true,
+                'image_id'   => $imageId,
+                'image_url'  => $url,
+                'src'        => $url,
+                'filename'   => $name,
+                'media_type' => $isVideo ? 'video' : 'image',
+            ] + ($redo ? ['redo_cleared' => true, 'status' => $redo['status']] : [])];
+        } catch (Throwable $e) {
+            error_log('upload replace library: ' . $e->getMessage());
             return ['code' => 500, 'body' => ['ok' => false, 'error' => 'Database error']];
         }
     }

@@ -1484,6 +1484,10 @@ function actionLabel($action) {
         'set_reference'        => 'made the reference image',
         'drive_linked'         => 'linked a Google Drive folder to',
         'drive_unlinked'       => 'removed the Google Drive link from',
+        // the Redo queue (redo-lib.php; internal rows — the admin seat only) + Library → tire moves (library-move.php)
+        'redo_marked'          => 'marked for redo',
+        'redo_cleared'         => 'took off the redo list',
+        'moved_to_tire'        => 'moved',
         // Drive storage view (entity_type = 'drive_snapshot', nightly collector)
         'snapshot'             => 'took a storage snapshot of',
     ];
@@ -2020,6 +2024,19 @@ if (!function_exists('activityFinalizeRows')) {
                     $verb = 'moved'; $icon = 'grid'; $tone = 'accent';
                     $dest = trim((string)($r['company_name'] ?? ''));
                     $t = "$who moved $objT" . ($dest !== '' ? " to $dest" : ''); $hh = "$whoH moved $objH" . ($dest !== '' ? ' to <em>' . $h($dest) . '</em>' : ''); break;
+                // the Redo queue (internal rows: Joust only) and Library → tire moves
+                case 'redo_marked':
+                    $verb = 'marked for redo'; $icon = 'wand'; $tone = 'accent';
+                    $t = "$who marked $objT for redo"; $hh = "$whoH marked $objH for redo"; break;
+                case 'redo_cleared':
+                    $verb = 'took off the redo list'; $icon = 'checkmark'; $tone = 'neutral';
+                    $t = "$who took $objT off the redo list"; $hh = "$whoH took $objH off the redo list"; break;
+                case 'moved_to_tire':
+                    $verb = 'moved'; $icon = 'grid'; $tone = 'accent';
+                    $dest = '';
+                    foreach ((array)($r['_entry']['summaries'] ?? []) as $sm) { if (preg_match('/^Moved to (.+)$/u', (string)$sm, $mm)) { $dest = trim($mm[1]); break; } }
+                    $what = $many ? $n . ' Library images' : 'a Library image';   // the image is in the series now: say where it came from
+                    $t = $dest !== '' ? "$who moved $what to $dest" : "$who moved $objT"; $hh = $dest !== '' ? "$whoH moved $what to <em>" . $h($dest) . '</em>' : "$whoH moved $objH"; break;
                 case 'drafted':
                     $verb = 'started a draft'; $icon = 'plus'; $tone = 'neutral';
                     $t = "$who started a draft: $objT"; $hh = "$whoH started a draft: $objH"; break;
@@ -2467,3 +2484,4 @@ require_once __DIR__ . '/notify-lib.php';
 require_once __DIR__ . '/gmail-lib.php';
 require_once __DIR__ . '/client-notify-lib.php';
 require_once __DIR__ . '/tracking-lib.php';
+require_once __DIR__ . '/redo-lib.php';         // the Redo queue (migrate.php 52): redoMark / redoAfterReplace / redoItems …

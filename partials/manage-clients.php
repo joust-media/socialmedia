@@ -327,7 +327,7 @@ $scGoogleNeeded = $scMailReady && !(function_exists('googleConnected') && google
             <button type="submit" class="ui-btn ui-btn--gray ui-btn--sm" data-view-as-start>View as client</button>
           </form>
         </div>
-        <p class="studio-help">“View as client” shows you <?= esc($scEdit['name']) ?>’s portal exactly as they see it — no sign-in email needed. A banner on top takes you back.</p>
+        <p class="studio-help">“View as client” shows you <?= esc($scEdit['name']) ?>’s portal exactly as they see it — no sign-in email needed. A banner on top takes you back. Comments you leave there count as the client’s and will notify Slack.</p>
       </div>
       <?php endif; ?>
     </div>

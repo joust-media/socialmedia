@@ -124,6 +124,7 @@
 }
 .ui-badge--neutral { background: var(--fill-tertiary); color: var(--label-secondary); box-shadow: none; }
 .ui-badge--accent  { background: var(--accent); }
+.ui-badge--redo    { background: var(--redo); }
 
 /* ---------------------------------------------------------------------
    Grouped inset list
@@ -682,3 +683,4 @@ html:not(:has(.ui-tabbar)) .ui-toast { bottom: calc(24px + env(safe-area-inset-b
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .ui-tabbar-footer--links + .ui-tabbar-footer { margin-top: 0; padding-top: 2px; }
+.ui-viewas-note { color: var(--label-secondary); }

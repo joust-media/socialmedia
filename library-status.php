@@ -120,6 +120,8 @@ try {
                  : (($action === 'denied')  ? 'Requested changes on an image in Library'
                  : 'Moved an image in Library back to To Review');
         logActivity($pdo, $companyId, 'library_image', $id, $action, $actor, $summary, null, $batchId);
+        // "Needs changes" puts the image in Joust's Redo queue (redo-lib.php; the client still sees Needs changes).
+        if ($status === 'denied' && function_exists('redoAutoQueue')) redoAutoQueue($pdo, 'library', $id);
     }
 
     if ($comment !== '') {

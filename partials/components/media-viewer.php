@@ -16,7 +16,8 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
  *
  * Toolbar = exactly three controls: Needs changes (red, secondary) · Approve (green,
  * primary, ~60% width) · More (Download for everyone — a blob save for images,
- * a direct `download` link for videos; Replace, "Set as
+ * a direct `download` link for videos; Replace (tire + library images), "Mark for redo…" / "Remove from redo"
+ * (redo-lib.php), "Move to tire…" (library images), "Set as
  * reference", "Manage in Studio" and "Delete image…" for admin — rendered here
  * only when the server says so; the two tire-only actions post set_reference /
  * delete_image to tire-status.php, which gates them again).
@@ -58,7 +59,10 @@ $viewerCommentsEndpoint = isset($viewerCommentsEndpoint) ? (string)$viewerCommen
       <div class="ui-viewer-title" data-viewer-title></div>
       <div class="ui-viewer-count" data-viewer-count aria-live="polite"></div>
     </div>
-    <span class="ui-pill ui-pill--pending ui-viewer-status" data-viewer-status data-status-pill data-status="pending">To Review</span>
+    <span class="ui-viewer-pills">
+      <span class="ui-pill ui-pill--nodot ui-viewer-redo" data-viewer-redo-pill hidden><?= esc(function_exists('redoLabel') ? redoLabel($viewerAdmin) : 'Redo') ?></span>
+      <span class="ui-pill ui-pill--pending ui-viewer-status" data-viewer-status data-status-pill data-status="pending">To Review</span>
+    </span>
   </header>
 
   <div class="ui-viewer-stage" data-viewer-stage>
@@ -128,7 +132,13 @@ $viewerCommentsEndpoint = isset($viewerCommentsEndpoint) ? (string)$viewerCommen
     <?php if ($viewerAdmin): // admin-only: never rendered for clients ?>
       <?php // approved items only (assets.js shows / hides it): opens the New post pop-up with this image as slide 1 ?>
       <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-use-in-post hidden><?= icon('plus') ?>Use in post</button>
-      <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-replace data-tire-only><?= icon('photo') ?>Replace image…</button>
+      <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-replace><?= icon('photo') ?>Replace image…</button>
+      <?php if (function_exists('redoReady') && redoReady($GLOBALS['pdo'] ?? null)): // the Redo queue (redo.php): assets.js shows one of the two ?>
+        <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-redo hidden><?= icon('wand') ?>Mark for redo…</button>
+        <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-unredo hidden><?= icon('checkmark') ?>Remove from redo</button>
+      <?php endif; ?>
+      <?php // Library images only (assets.js, when AssetsPage.move.on): into a tire series (library-move.php) ?>
+      <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-move hidden><?= icon('tire') ?>Move to tire…</button>
       <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-set-reference data-tire-only><?= icon('checkmark') ?>Set as reference</button>
       <a class="ui-viewer-menu-item" role="menuitem" data-viewer-manage data-tire-only href="#"><?= icon('wand') ?>Edit tire…</a>
       <button type="button" class="ui-viewer-menu-item is-destructive" role="menuitem" data-viewer-delete data-tire-only><?= icon('xmark') ?>Delete image…</button>

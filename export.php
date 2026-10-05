@@ -121,52 +121,8 @@ if ($action === 'manifest') {
 
 // ---------------------------------------------------------------------
 // download — streams uploads/.exports/<job>.zip (never web-reachable itself) in 1 MB pieces
-// with a single byte range honoured, so a dropped multi-GB download can resume.
+// with a single byte range honoured, so a dropped multi-GB download can resume (exportStreamZip()).
 // ---------------------------------------------------------------------
 $job = exportLoadJob($cid);
-if (empty($job['done'])) exportFail(409, 'This export is still building');
-$paths = exportJobPaths($job['job']);
-$zip = $paths ? $paths['zip'] : '';
-if ($zip === '' || !is_file($zip) || is_link($zip)) exportFail(404, 'The zip is gone — build the export again');
-clearstatcache(true, $zip);
-$size = (int)filesize($zip);
-$start = 0; $end = $size - 1; $partial = false;
-$range = (string)($_SERVER['HTTP_RANGE'] ?? '');
-if ($range !== '') {
-    if (!preg_match('/^bytes=(\d*)-(\d*)$/', trim($range), $m) || ($m[1] === '' && $m[2] === '')) {
-        http_response_code(416); header('Content-Range: bytes */' . $size); exit;
-    }
-    if ($m[1] === '') { $n = (int)$m[2]; $start = max(0, $size - $n); }                    // suffix range: the last n bytes
-    else { $start = (int)$m[1]; if ($m[2] !== '') $end = min($size - 1, (int)$m[2]); }
-    if ($start > $end || $start >= $size) { http_response_code(416); header('Content-Range: bytes */' . $size); exit; }
-    $partial = true;
-}
-$fh = @fopen($zip, 'rb');
-if ($fh === false) exportFail(500, 'Could not open the zip');
-if (function_exists('session_write_close')) @session_write_close();   // do not hold the admin session lock for the whole transfer
-@set_time_limit(0);
-ignore_user_abort(false);
-while (ob_get_level() > 0) { @ob_end_clean(); }
-$name = (string)($job['filename'] ?? '') ?: exportZipFilename($client);
-$name = preg_replace('/[^A-Za-z0-9._-]+/', '-', $name);
-http_response_code($partial ? 206 : 200);
-header('Content-Type: application/zip');
-header('Content-Disposition: attachment; filename="' . $name . '"');
-header('Content-Length: ' . ($end - $start + 1));
-header('Accept-Ranges: bytes');
-header('Cache-Control: no-store');
-header('X-Content-Type-Options: nosniff');
-if ($partial) header('Content-Range: bytes ' . $start . '-' . $end . '/' . $size);
-if ($method === 'HEAD') { fclose($fh); exit; }
-if ($start > 0) fseek($fh, $start);
-$left = $end - $start + 1;
-while ($left > 0 && !feof($fh)) {
-    $buf = fread($fh, (int)min(EXPORT_IO_CHUNK, $left));
-    if ($buf === false || $buf === '') break;
-    echo $buf;
-    $left -= strlen($buf);
-    flush();
-    if (connection_aborted()) break;
-}
-fclose($fh);
-exit;
+$r = exportStreamZip($job, $method, exportZipFilename($client));
+exportFail((int)$r['code'], (string)$r['error']);

@@ -3,9 +3,11 @@
  * Admin "View as client" — the portal exactly as that client sees it (no magic link, no client session):
  *   POST client=<slug>          start (admin only, same-site) → that client's Home
  *   POST/GET exit=1[&return=]   stop → back to Manage → Clients for that client (or the return path)
- * The admin session keeps its rights: endpoints still see the admin (actions are logged as Joust). Pages render the
- * client seat because isAdmin() (helpers.php) is false while $_SESSION['view_as'] names the client in scope; the
- * banner (partials/layout-top.php) says so and carries the Exit link.
+ * The admin session keeps its rights on endpoints, but the pages render the client seat (isAdmin() in helpers.php is
+ * false while $_SESSION['view_as'] names the client in scope), so what you do there is done AS THE CLIENT: the page
+ * posts actor=client (body data-actor), and comments / approvals are logged as the client's — they count as the
+ * client's and notify Slack like any client message. The banner (partials/layout-top.php) says so and carries the
+ * Exit link.
  */
 require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';

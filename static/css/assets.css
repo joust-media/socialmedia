@@ -626,3 +626,32 @@ video.ui-viewer-media { width: 100%; background: #000; touch-action: auto; }
 .as-chip.is-active .as-chip-allok { color: inherit; }
 .as-reference-label .ui-pill--allok, .as-series-meta .ui-pill--allok { text-transform: none; letter-spacing: var(--ls-footnote); vertical-align: 1px; }
 .as-collection-list .ui-pill--allok, .as-collection-list .ui-pill--denied { margin-right: 4px; }
+
+/* ---------------------------------------------------------------------
+   Redo queue (redo-lib.php) + Move to tire (library-move.php) — admin, plus the client's "Being reworked" pill
+   --------------------------------------------------------------------- */
+.as-chip--redo { margin-left: auto; color: var(--redo); background: color-mix(in srgb, var(--redo) 12%, transparent); font-weight: 600; }
+.as-chip-count--redo { background: var(--redo); color: #fff; }
+.as-thumb-redo {
+  position: absolute; right: 6px; bottom: 6px;
+  padding: 2px 7px; min-height: 20px; line-height: 14px; font-size: 11px; font-weight: 600; letter-spacing: 0;
+  background: var(--redo); color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25);
+}
+.as-thumb-redo[hidden] { display: none; }
+.as-thumb[data-redo="1"] { box-shadow: inset 0 0 0 2px var(--redo); }
+.as-refstrip-tile[data-redo="1"] { box-shadow: 0 0 0 2px var(--redo); }
+.ui-viewer-pills { justify-self: end; display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.ui-viewer-redo { background: var(--redo); color: #fff; }
+.ui-viewer-redo[hidden] { display: none; }
+#asActionSheet { z-index: 1100; }   /* above the full-screen viewer (1050): "Mark for redo…" / "Move to tire…" open from its ⋯ menu */
+.as-act-form .ui-select, .as-act-form .ui-textarea { width: 100%; }
+.as-act-form .ui-input[aria-invalid="true"] { box-shadow: inset 0 0 0 1.5px var(--deny); }
+.as-act-new { display: flex; flex-direction: column; gap: 8px; }
+.as-act-new[hidden] { display: none; }
+.as-select-redo .ui-icon, .as-select-move .ui-icon { width: 16px; height: 16px; }
+@media (max-width: 599.98px) {
+  .as-chip--redo { margin-left: 0; }
+  body[data-role="admin"] .ui-viewer-pills .ui-viewer-redo { display: none; }   /* Joust's phone header keeps one pill; the tile and the ⋯ menu say Redo */
+  .as-selectbar-actions { flex-wrap: wrap; }
+  .as-selectbar-actions .ui-btn { flex: 1 1 30%; }
+}

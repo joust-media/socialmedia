@@ -32,6 +32,7 @@
   --deny:      #FF3B30;
   --pending:   #FF9500;
   --scheduled: #5856D6;
+  --redo:      #AF52DE;   /* system purple — the Redo queue (Joust's "make it again" flag, redo.php) */
   --joust:     #FF6A3D;   /* ONLY the Joust avatar/bubble and the Studio tab */
   --warning:   var(--deny); /* stale / running-out states (Drive storage); an alias so the hue can move later in one place */
 
