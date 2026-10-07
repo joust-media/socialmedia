@@ -100,7 +100,7 @@ $back = $contact && $via === 'session' ? portalUrl('index', ['client' => (string
   <div class="signin-card ep-card">
     <div class="signin-brand">
       <span class="signin-pair">
-        <?php if ($joust !== ''): ?><img class="signin-mark" src="<?= esc($joust) ?>" alt="" width="40" height="40"><?php else: ?><span class="signin-mark signin-mark--initial">J</span><?php endif; ?>
+        <?php if ($joust !== ''): ?><img class="signin-mark signin-mark--joust" src="<?= esc($joust) ?>" alt="" width="40" height="40"><?php else: ?><span class="signin-mark signin-mark--initial">J</span><?php endif; ?>
         <?php if ($contact): ?>
           <span class="signin-x" aria-hidden="true">×</span>
           <?php if ($clientLogo !== ''): ?><img class="signin-mark signin-mark--client" src="<?= esc($clientLogo) ?>" alt="" width="40" height="40"><?php else: ?><span class="signin-mark signin-mark--initial"><?= esc(mb_strtoupper(mb_substr((string)$contact['company_name'], 0, 1))) ?></span><?php endif; ?>

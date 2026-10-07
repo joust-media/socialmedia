@@ -28,10 +28,16 @@ immediately; uploading a logo there writes `uploads/logo_<slug>.png` and takes p
 ## Replacing a mark
 
 Drop a square PNG over the file with the same name (512×512 recommended; the UI renders it
-at 18–56 px with rounded corners, so keep the mark centred with a little padding). The
-files in this folder were generated from the brand descriptions as clean placeholder marks
-— replace them with the real exports when you have them. `joust-180.png` / `joust-32.png`
-are plain downscales of `joust.png`.
+at 18–56 px with rounded corners, so keep the mark centred with a little padding).
+
+The three `joust*.png` files are the **official Joust Media mark, supplied by Lance**
+(October 2026). His PNG (342×372, transparent background, the circle ~295 px across) was
+cropped to the circle and re-masked with a 4× supersampled anti-aliased circular mask (the
+interior colour bled over the old white-matted edge, so no light halo on dark backgrounds),
+then resampled with Lanczos to 512 / 180 / 32 px. The 512 px file is a ~1.7× upscale of
+that source — swap in a larger PNG or an SVG export when one is available.
+`privacybee.png`, `cometic.png` and `hmf.png` are still placeholder marks generated from
+the brand descriptions — replace them with the real exports when you have them.
 
 Adding a mark for a new client is the same: `static/brand/<slug>.png`, where `<slug>` is the
 client's slug (`[a-z0-9-]`, as in `?client=<slug>`).
