@@ -5,7 +5,7 @@ app, so a client's logo can show even when nothing has been uploaded for it yet.
 
 | File | Used for |
 |---|---|
-| `joust.png` | The Joust Media mark: favicon (`<link rel="icon">`), the admin chooser header, the sign-in card, and the avatar of the Joust (admin) actor in comment threads and the activity feed |
+| `joust.png` | The Joust Media mark: favicon (`<link rel="icon">`), the sign-in card, the avatar of the Joust (admin) actor in comment threads (incl. "Joust replied") and the activity feed, and the **admin seat's brand** — the sidebar brand ("Joust Media" + the scoped client or "All clients", `partials/tabbar.php`), the nav bar's trailing avatar on unscoped admin pages and the mark leading the nav eyebrow below 1024px (`partials/navbar.php`). Drawn round with `object-fit: contain` and a hairline ring (light in dark mode), so a replacement keeps its aspect ratio |
 | `joust-180.png` | `apple-touch-icon` (Add to Home Screen) |
 | `joust-32.png` | 32×32 favicon |
 | `privacybee.png`, `cometic.png`, `hmf.png` | Slug-based fallback logos for those clients (see below) |

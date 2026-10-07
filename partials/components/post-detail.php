@@ -461,7 +461,7 @@ if (!function_exists('renderPostHiddenNotice')) {
             $at   = (string)($c['created_at'] ?? '');
             $when = $at !== '' && function_exists('relativeTime') ? relativeTime($at) : '';
             $out .= '<figure class="pd-hidden-note pd-hidden-note--joust" data-hidden-reply>'
-                  . '<figcaption class="pd-hidden-note-head">Joust replied' . ($when !== '' ? ' · ' . pdEsc($when) : '') . '</figcaption>'
+                  . '<figcaption class="pd-hidden-note-head">' . (function_exists('joustAvatar') ? joustAvatar('ui-avatar--xs pd-msg-avatar', '') : '') . 'Joust replied' . ($when !== '' ? ' · ' . pdEsc($when) : '') . '</figcaption>'
                   . '<blockquote>' . ((int)$slide > 0 ? '<span class="pd-note-slide">On slide ' . (int)$slide . ':</span> ' : '') . nl2br(pdEsc(trim((string)$text))) . '</blockquote>'
                   . '</figure>';
         }

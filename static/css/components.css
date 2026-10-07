@@ -87,6 +87,14 @@
     text-decoration: none;
   }
   .ui-tabbar-brand span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Admin: the Joust mark + "Joust Media", the scoped client (or "All clients") as a second line */
+  .ui-tabbar-brand-text { display: flex; flex-direction: column; min-width: 0; }
+  .ui-tabbar-brand-sub {
+    display: flex; align-items: center; gap: 5px; margin-top: 1px;
+    color: var(--label-secondary);
+    font-size: var(--text-footnote); line-height: var(--lh-footnote); font-weight: 500; letter-spacing: var(--ls-footnote);
+  }
+  .ui-tabbar-brand-sub .ui-avatar--xs { width: 14px; height: 14px; border-radius: 4px; font-size: 8px; }
   .ui-tabbar-list { flex-direction: column; justify-content: flex-start; gap: 2px; max-width: none; margin: 0; }
   .ui-tabbar-list > li { flex: 0 0 auto; }
   .ui-tab {

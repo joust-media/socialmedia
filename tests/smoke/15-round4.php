@@ -114,7 +114,7 @@ test('#5 the client\'s Needs-changes notice lists Joust\'s replies after their n
     status(post('status.php', ['id' => 4, 'comment' => 'Darker render coming Friday', 'client' => 'kenda']), 200);
     $b = status(get('posts.php?client=kenda&post=4&partial=1', 'client'), 200)['body'];
     has($b, 'data-hidden-note', 'the client\'s note');
-    ok(preg_match('#<figure class="pd-hidden-note pd-hidden-note--joust" data-hidden-reply><figcaption class="pd-hidden-note-head">Joust replied[^<]*</figcaption><blockquote>Darker render coming Friday</blockquote>#u', $b) === 1, 'Joust\'s reply, read-only');
+    ok(preg_match('#<figure class="pd-hidden-note pd-hidden-note--joust" data-hidden-reply><figcaption class="pd-hidden-note-head"><img class="ui-avatar ui-avatar--joust[^"]*"[^>]*data-joust-logo>Joust replied[^<]*</figcaption><blockquote>Darker render coming Friday</blockquote>#u', $b) === 1, 'Joust\'s reply, read-only');
     ok(strpos($b, 'data-hidden-note') < strpos($b, 'data-hidden-reply'), 'note first, then the reply');
 });
 

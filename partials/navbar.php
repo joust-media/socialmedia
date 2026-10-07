@@ -20,7 +20,8 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
  *   $navWidth     string      exact content column to align with, e.g. '900px' (sets --content-w)
  *   $client       array|null  from helpers.php
  *
- * Client branding is limited to the avatar + display name; everything else is system gray/blue.
+ * Client branding is limited to the avatar + display name; everything else is system gray/blue. The admin seat's
+ * brand is the Joust mark (joustAvatar()): trailing on unscoped pages, and leading the eyebrow below 1024px.
  */
 $pageTitle   = isset($pageTitle) ? (string)$pageTitle : (($client['name'] ?? null) ?: 'Joust');
 $navSubtitle = isset($navSubtitle) ? (string)$navSubtitle : '';
@@ -32,9 +33,16 @@ $navWidth    = isset($navWidth) && preg_match('/^\d{2,4}px$/', (string)$navWidth
 if (!isset($navTrailing)) {
     $navTrailing = null;
 }
+$navIsAdmin = function_exists('isAdmin') && isAdmin();
 if ($navTrailing === null) {
-    $navTrailing = !empty($client) && function_exists('clientAvatar') ? clientAvatar($client) : '';
+    // Scoped: the client's avatar (which client this is). Unscoped admin pages: the Joust mark.
+    $navTrailing = !empty($client) && function_exists('clientAvatar') ? clientAvatar($client)
+                 : ($navIsAdmin && function_exists('joustAvatar') ? joustAvatar() : '');
 }
+// Admin seat below 1024px (no sidebar brand there, and phones hide the trailing avatar): a small Joust mark leads the
+// eyebrow line; with no eyebrow of its own the page gets the context as one — the client's name, or "Joust Media"
+// unscoped — shown below 1024px only (.ui-nav-eyebrow-row--auto, base.css).
+$navBrandMark = $navIsAdmin && function_exists('joustAvatar') ? joustAvatar('ui-avatar--xs ui-nav-brandmark', '') : '';
 // Appearance toggle (Light → Dark → Auto) on every page, left of the avatar / page buttons.
 if (function_exists('themeToggleButton')) {
     $navTrailing = themeToggleButton() . $navTrailing;
@@ -59,7 +67,9 @@ $navLinksExtra = isset($navLinksExtra) ? (string)$navLinksExtra : '';
         <div class="ui-nav-leading"><?= $navLeading ?></div>
       <?php endif; ?>
       <div class="ui-nav-heading">
-        <?php if ($navSubtitle !== ''): ?>
+        <?php if ($navBrandMark !== ''): ?>
+          <div class="ui-nav-eyebrow-row<?= $navSubtitle === '' ? ' ui-nav-eyebrow-row--auto' : '' ?>" data-nav-brand><?= $navBrandMark ?><p class="ui-nav-eyebrow"><?= esc($navSubtitle !== '' ? $navSubtitle : (!empty($client['name']) ? (string)$client['name'] : 'Joust Media')) ?></p></div>
+        <?php elseif ($navSubtitle !== ''): ?>
           <p class="ui-nav-eyebrow"><?= esc($navSubtitle) ?></p>
         <?php endif; ?>
         <h1 class="ui-nav-title"><?= esc($pageTitle) ?></h1>

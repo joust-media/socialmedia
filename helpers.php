@@ -2242,15 +2242,19 @@ function joustLogoUrl(string $variant = ''): string {
 /**
  * The Joust avatar (same 36px rounded square as clientAvatar()): the bundled
  * static/brand/joust.png, or an orange "J" when the file is missing. Used for the
- * admin actor in comment threads / the activity feed and on the admin chooser.
+ * admin actor in comment threads / the activity feed, and as the admin seat's brand mark: the
+ * sidebar brand (partials/tabbar.php), the nav bar's trailing slot on unscoped admin pages and
+ * the phone nav eyebrow (partials/navbar.php). $alt '' when a visible "Joust Media" sits beside it.
+ * The mark is round (transparent corners), so .ui-avatar--joust draws it as a circle with a
+ * light backing ring in dark mode (static/css/base.css).
  */
-function joustAvatar(string $class = ''): string {
+function joustAvatar(string $class = '', string $alt = 'Joust Media'): string {
     $cls = trim('ui-avatar ui-avatar--joust ' . $class);
     $src = joustLogoUrl();
     if ($src !== '') {
-        return '<img class="' . esc($cls) . '" src="' . esc($src) . '" alt="Joust Media" width="36" height="36" loading="lazy">';
+        return '<img class="' . esc($cls) . '" src="' . esc($src) . '" alt="' . esc($alt) . '" width="36" height="36" decoding="async" data-joust-logo>';
     }
-    return '<span class="' . esc($cls . ' ui-avatar--initial') . '" aria-label="Joust Media">J</span>';
+    return '<span class="' . esc($cls . ' ui-avatar--initial') . '"' . ($alt !== '' ? ' aria-label="' . esc($alt) . '"' : ' aria-hidden="true"') . ' data-joust-logo>J</span>';
 }
 
 /**

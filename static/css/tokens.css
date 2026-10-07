@@ -34,6 +34,7 @@
   --scheduled: #5856D6;
   --redo:      #AF52DE;   /* system purple — the Redo queue (Joust's "make it again" flag, redo.php) */
   --joust:     #FF6A3D;   /* ONLY the Joust avatar/bubble and the Studio tab */
+  --joust-ring: rgba(60,60,67,.18);   /* the Joust mark's hairline ring (dark: a light backing so the navy rim reads on black) */
   --warning:   var(--deny); /* stale / running-out states (Drive storage); an alias so the hue can move later in one place */
 
   /* Radii */
@@ -89,6 +90,7 @@
     --label-secondary: rgba(235,235,245,.60);
     --label-tertiary:  rgba(235,235,245,.30);
     --separator:       rgba(84,84,88,.6);
+    --joust-ring:      rgba(255,255,255,.30);
     --warning:         var(--deny);
     --glass-bg:        rgba(29,29,31,.72);
     --glass-highlight: rgba(255,255,255,.08);
@@ -112,6 +114,7 @@
   --label-secondary: rgba(235,235,245,.60);
   --label-tertiary:  rgba(235,235,245,.30);
   --separator:       rgba(84,84,88,.6);
+  --joust-ring:      rgba(255,255,255,.30);
   --warning:         var(--deny);
   --glass-bg:        rgba(29,29,31,.72);
   --glass-highlight: rgba(255,255,255,.08);

@@ -152,6 +152,24 @@ hr { border: 0; height: 0.5px; background: var(--separator); margin: 16px 0; }
 .ui-avatar--xs { width: 18px; height: 18px; border-radius: 5px; font-size: 10px; box-shadow: none; }
 /* The Joust mark (static/brand/joust.png, or the orange "J" when the file is missing) */
 .ui-avatar--joust.ui-avatar--initial { background: var(--joust); color: #fff; }
+/* The bundled mark is a circle on transparent corners: draw it round, never cropped (object-fit: contain also keeps a
+   non-square replacement's aspect ratio), with a hairline ring — light in dark mode so the navy rim reads on black. */
+img.ui-avatar--joust {
+  border-radius: 50%; object-fit: contain; background: transparent;
+  box-shadow: 0 0 0 1px var(--joust-ring);
+}
+.ui-avatar--brand { width: 32px; height: 32px; }
+.ui-avatar--brand.ui-avatar--initial { border-radius: 50%; font-size: 14px; }
+/* Admin seat, below 1024px: "[J] Kenda Tires" eyebrow (partials/navbar.php). The auto row (a page without an eyebrow
+   of its own) only shows where the sidebar brand is hidden; the mark itself never shows next to the sidebar. */
+.ui-nav-eyebrow-row { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0 0 1px; }
+.ui-nav-eyebrow-row .ui-nav-eyebrow { margin: 0; min-width: 0; }
+.ui-nav-eyebrow-row .ui-nav-brandmark { width: 20px; height: 20px; flex: 0 0 auto; }
+@media (min-width: 1024px) {
+  .ui-nav-eyebrow-row--auto { display: none; }
+  .ui-nav-eyebrow-row .ui-nav-brandmark { display: none; }
+  .ui-nav-eyebrow-row:not(.ui-nav-eyebrow-row--auto) { display: block; margin: 0 0 -2px 1px; }
+}
 /* Actor avatar inside a bubble's meta line ("[J] Joust · 2h ago") */
 .ui-bubble-meta .pd-msg-avatar { display: inline-flex; vertical-align: -5px; margin-right: 5px; }
 
