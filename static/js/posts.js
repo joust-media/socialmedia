@@ -32,7 +32,9 @@
 
   var ENDPOINT = cfg.endpoint || (window.App && App.urls ? App.urls.abs('status.php') : 'status.php');
   var DESKTOP  = window.matchMedia ? window.matchMedia('(min-width: 1024px)') : { matches: false };
-  var LABELS   = { draft: 'Draft', pending: 'To Review', approved: 'Approved', denied: 'Needs changes', scheduled: 'Scheduled' };
+  var CLIENT   = !(document.body && document.body.dataset.role === 'admin');
+  // the client's Needs-changes posts are its "Sent back" (sentback-lib.php); Joust keeps "Needs changes"
+  var LABELS   = { draft: 'Draft', pending: 'To Review', approved: 'Approved', denied: CLIENT ? 'Sent back' : 'Needs changes', scheduled: 'Scheduled' };
 
   function toast(msg, kind) { if (App.toast) App.toast(msg, { kind: kind }); }
   function segmentOf(status, posted) { return posted ? 'scheduled' : status; }
@@ -191,7 +193,7 @@
       empty.className = 'ui-empty posts-empty ui-enter';
       empty.setAttribute('data-posts-empty', '');
       empty.textContent = P.segment === 'pending' ? 'All caught up — nothing left to review.'
-                        : (P.segment === 'denied' ? 'Nothing needs changes — the queue is clear.'
+                        : (P.segment === 'denied' ? (CLIENT ? 'Nothing sent back right now.' : 'Nothing needs changes — the queue is clear.')
                         : (P.segment === 'draft' ? 'No drafts left.' : 'Nothing here.'));
       group.parentNode.insertBefore(empty, group);
     }
@@ -335,6 +337,7 @@
       'scheduled':       posted,
       'denied':          status === 'denied' && !posted,
       'note':            status === 'denied' && !posted,
+      'sentback':        status === 'denied' && !posted,   // client: the Sent back panel + Add a comment · Approve instead
       'admin-waiting':   status === 'pending' && !posted,
       'admin-pending':   status === 'pending' && !posted,
       'admin-approved':  status === 'approved' && !posted,
@@ -452,7 +455,7 @@
         }
         if (opts.toast) toast(opts.toast, 'success');
         else if (status === 'approved') toast('Approved', 'success');
-        else if (status === 'denied') toast(App.role === 'admin' ? 'Marked as needs changes' : 'Sent to Joust', 'success');
+        else if (status === 'denied') toast(App.role === 'admin' ? 'Marked as needs changes' : 'Sent back to Joust', 'success');
         else toast('Sent for review — back in To Review', 'success');
         if (status === 'denied' && App.role !== 'admin' && P.current && P.current.id === id) setTimeout(P.close, 700);
       }

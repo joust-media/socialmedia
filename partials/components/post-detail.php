@@ -14,11 +14,15 @@
  *     $opts: 'admin'     bool  — default isAdmin(). Admin-only markup (⋯ menu: Edit post… is the one editor, date editor,
  *                        the admin footer rows, the Needs changes note banner) is NEVER emitted otherwise.
  *                        The caption / hashtags editor is shared by both seats (hidden once Scheduled).
- *     Footer, one primary per state — client: To Review → Needs changes · Approve. Admin (Joust's own next step):
+ *     Footer, one primary per state — client: To Review → Needs changes · Approve; Sent back (denied) → Add a comment ·
+ *       Approve instead (asks first, app.js App.sentBack). Admin (Joust's own next step):
  *       Draft → Edit post… · Send for review   To Review → Edit post…   Needs changes → Edit & resubmit
  *       Approved → Edit post… · Mark scheduled   Scheduled → Unmark scheduled
  *     The client's decisions reach the admin only through ⋯ (Approve for client… asks first, Needs changes…,
  *     Send for review on Needs changes). Needs changes pins the client's latest note above the media.
+ *     Client seat, a post it sent back (denied, not Scheduled): the "Sent back" panel on top (sentBackPanelHtml(),
+ *     sentback-lib.php — status line, their note editable in place, Joust's latest reply; $post['sentback'] when the
+ *     page attached it, else read here), then the full post: media, caption, the thread and the composer.
  *            'hasPosted' bool  — posts.posted exists (default true) → Mark Scheduled is offered
  *            'endpoint'  string — status endpoint (default 'status.php', resolved against basePath())
  *     Output: <article class="pd" data-post-detail="ID" data-status data-posted>
@@ -245,14 +249,17 @@ if (!function_exists('renderPostDetail')) {
         $menuDecide = $canApprove || $canDeny || $isDenied;
         $clientName = trim((string)($post['company_name'] ?? '')) !== '' ? (string)$post['company_name'] : 'the client';
 
+        // The client's own Sent back post (sentback-lib.php): the panel on top + Add a comment · Approve instead
+        $sentBack = !$admin && $status === 'denied' && !$posted && function_exists('sentBackPanelHtml');
         $out  = '<article class="pd" data-post-detail="' . $id . '" data-id="' . $id . '" data-status="' . pdEsc($status) . '" data-posted="' . ($posted ? '1' : '0') . '" data-past="' . ($datePast ? '1' : '0') . '" data-endpoint="' . pdEsc($endpoint) . '"'
+              . ($sentBack ? ' data-sentback data-title="' . pdEsc(function_exists('postDisplayLabel') ? postDisplayLabel($post) : ('Post #' . $id)) . '"' : '')
               . (function_exists('trackingSeenAttr') ? trackingSeenAttr('post', $id) : '') . '>';
         $out .= '<div class="pd-body" data-pd-body>';
 
         // ---- Top meta row: type · status pill · (admin) ⋯ menu -------------
         $out .= '<div class="pd-meta">';
         $out .= '<span class="pd-type">' . pdEsc($typeLbl) . '</span>';
-        $out .= function_exists('statusPill') ? statusPill($status, $posted, ['class' => 'pd-pill']) : '';
+        $out .= function_exists('statusPill') ? statusPill($status, $posted, ['class' => 'pd-pill'] + ($sentBack ? ['label' => sentBackLabel()] : [])) : '';
         if (!empty($post['updated_at']) && function_exists('relativeTime')) {
             $out .= '<span class="pd-edited text-tertiary" title="' . pdEsc(absoluteTime($post['updated_at'])) . '">edited ' . pdEsc(relativeTime($post['updated_at'])) . '</span>';
         }
@@ -283,6 +290,10 @@ if (!function_exists('renderPostDetail')) {
         // ---- 0. Needs changes (admin): the client's note first, above the media ----------------
         if ($admin) {
             $out .= reviewNoteBanner(reviewLatestNote($comments, (string)$brand['name']), $isDenied);
+        } elseif ($sentBack) {
+            // ---- 0. Sent back (client): what Joust is doing, their note, Joust's latest reply ------
+            $sbPdo = $GLOBALS['pdo'] ?? null;
+            $out .= sentBackPanelHtml(is_array($post['sentback'] ?? null) ? $post['sentback'] : ($sbPdo instanceof PDO ? sentBackInfo($sbPdo, 'post', $id) : []), 'post');
         }
 
         // ---- 1. Media carousel -------------------------------------------
@@ -388,6 +399,7 @@ if (!function_exists('renderPostDetail')) {
                   . '<button type="button" class="ui-btn ui-btn--large ui-btn--deny ui-btn--tinted" data-decide="denied">Needs changes</button>'
                   . '<button type="button" class="ui-btn ui-btn--large ui-btn--approve ui-btn--primary" data-decide="approved">Approve</button>'
                   . '</div>';
+            if (function_exists('sentBackFooterHtml')) $out .= sentBackFooterHtml($sentBack);   // Sent back: Add a comment · Approve instead
         } else {
             $editBtn = static function (string $cls, string $label = 'Edit post…', string $extra = '') use ($id) {
                 return '<button type="button" class="ui-btn ui-btn--large ' . $cls . '" data-newpost-edit="' . $id . '"' . $extra . '>' . $label . '</button>';
@@ -416,63 +428,5 @@ if (!function_exists('renderPostDetail')) {
         $out .= '</div>'; // /.pd-footer
         $out .= '</article>';
         return $out;
-    }
-}
-
-if (!function_exists('renderPostHiddenNotice')) {
-    /**
-     * Client seat, a post they marked Needs changes (it left their view: Joust's queue). Their own activity row
-     * ("You requested changes on …") still links here, so the sheet says what is going on and shows THEIR note —
-     * never the work in progress, never a silent 404. Read-only: no composer, no decisions.
-     *   $note: reviewLatestNote() of the post's comments (the client's latest note) or null.
-     */
-    function renderPostHiddenNotice(array $post, ?array $note): string
-    {
-        $id    = (int)($post['id'] ?? 0);
-        $name  = function_exists('postDisplayLabel') ? postDisplayLabel($post) : ('post #' . $id);
-        $out   = '<article class="pd pd--hidden" data-post-detail="' . $id . '" data-id="' . $id . '" data-status="denied" data-posted="0" data-hidden-post data-title="' . pdEsc($name) . '"'
-               . (function_exists('trackingSeenAttr') ? trackingSeenAttr('post', $id) : '') . '>';   // opening it reads Joust's replies shown below
-        $out  .= '<div class="pd-body" data-pd-body>';
-        $out  .= '<section class="pd-hidden">'
-               . '<p class="pd-hidden-lead">' . (function_exists('statusPill') ? statusPill('denied', false, ['class' => 'pd-pill']) : '') . '</p>'
-               . '<h3 class="pd-hidden-title">Joust is updating this post</h3>'
-               . '<p class="pd-hidden-text">You asked for changes on <strong>' . pdEsc($name) . '</strong>. It comes back to To Review when it is ready — nothing to do until then.</p>';
-        if ($note && trim((string)$note['text']) !== '') {
-            $when = $note['at'] !== '' && function_exists('relativeTime') ? relativeTime($note['at']) : '';
-            // Their own note stays editable (comment-edit-lib.php): ⋯ → Edit / Delete, in place (static/js/app.js App.comments).
-            $editable = (int)($note['id'] ?? 0) > 0 && ($note['actor'] ?? '') === 'client' && function_exists('commentEditReady') && commentEditReady($GLOBALS['pdo'] ?? null);
-            $out .= '<figure class="pd-hidden-note" data-hidden-note'
-                  . ($editable ? ' data-comment-id="' . (int)$note['id'] . '" data-comment-host="note" data-comment-can="edit" data-comment-raw="' . pdEsc((string)$note['text']) . '"'
-                     . ((int)$note['slide'] > 0 ? ' data-comment-on-slide="' . (int)$note['slide'] . '"' : '') : '') . '>'
-                  . '<figcaption class="pd-hidden-note-head">Your note' . ($when !== '' ? ' · ' . pdEsc($when) : '')
-                  . (!empty($note['edited']) ? ' · <span class="pd-msg-edited-tag" data-comment-edited-tag>edited</span>' : '')
-                  . (($editable && function_exists('commentMoreButton')) ? commentMoreButton() : '') . '</figcaption>'
-                  . '<blockquote data-comment-body>' . ((int)$note['slide'] > 0 ? '<span class="pd-note-slide">On slide ' . (int)$note['slide'] . ':</span> ' : '') . nl2br(pdEsc($note['text'])) . '</blockquote>'
-                  . '</figure>';
-        }
-        // Joust's replies since the client's latest comment (read-only): the Home "Joust commented on …" link lands
-        // here, so the reply it announces is on screen. The newest three, oldest first.
-        $comments = is_array($post['comments'] ?? null) ? array_values($post['comments']) : [];
-        $from = 0;
-        foreach ($comments as $k => $c) {
-            if (strtolower(trim((string)($c['actor'] ?? ''))) === 'client') $from = $k + 1;
-        }
-        $replies = [];
-        foreach (array_slice($comments, $from) as $c) {
-            if (strtolower(trim((string)($c['actor'] ?? ''))) !== 'admin' || trim((string)($c['detail'] ?? '')) === '') continue;
-            $replies[] = $c;
-        }
-        foreach (array_slice($replies, -3) as $c) {
-            [$slide, $text] = function_exists('commentSlideSplit') ? commentSlideSplit(trim((string)$c['detail'])) : [0, trim((string)$c['detail'])];
-            $at   = (string)($c['created_at'] ?? '');
-            $when = $at !== '' && function_exists('relativeTime') ? relativeTime($at) : '';
-            $out .= '<figure class="pd-hidden-note pd-hidden-note--joust" data-hidden-reply>'
-                  . '<figcaption class="pd-hidden-note-head">' . (function_exists('joustAvatar') ? joustAvatar('ui-avatar--xs pd-msg-avatar', '') : '') . 'Joust replied' . ($when !== '' ? ' · ' . pdEsc($when) : '') . '</figcaption>'
-                  . '<blockquote>' . ((int)$slide > 0 ? '<span class="pd-note-slide">On slide ' . (int)$slide . ':</span> ' : '') . nl2br(pdEsc(trim((string)$text))) . '</blockquote>'
-                  . '</figure>';
-        }
-        $out  .= '</section></div>';
-        $out  .= '<div class="pd-footer" data-pd-footer><div class="pd-actions"><button type="button" class="ui-btn ui-btn--large ui-btn--gray" data-sheet-close>Back to posts</button></div></div>';
-        return $out . '</article>';
     }
 }

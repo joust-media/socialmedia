@@ -13,8 +13,14 @@
  *                     tab (companyHasTires()) is sent to the Library (302) — old links never dead-end.
  *   (no client)       admin: a client chooser in place (view=collections: the clients with Tires);
  *                     client seat: the "missing client" page (400)
- *   filter            pending (default) | approved | denied (admin only — the
- *                     client's SQL always adds AND status <> 'denied')
+ *   filter            pending (default) | approved | denied. denied = the admin's Needs changes grid / the client's
+ *                     "Sent back" LIST (sentback-lib.php): every image it marked Needs changes that Joust has not
+ *                     replaced yet — Library (view=library), every tire (view=collections, the Tires list's "Sent back"
+ *                     chip) or one tire (item=…, all its series + reference images) — each row with the client's note,
+ *                     when, "Joust is reworking this" / "Being reworked" (Redo queue) and Joust's latest reply. A row
+ *                     is the grid's [data-asset] element, so the viewer opens over the list (Approve instead asks first;
+ *                     Add a comment opens the Comments panel). Grids, the Reference strip and tire thumbnails keep
+ *                     excluding denied images for the client (AND status <> 'denied').
  *   asset + kind      deep link: open the full-screen viewer on that item
  *
  * Tapping a thumbnail opens the media viewer (partials/components/media-viewer.php
@@ -31,7 +37,7 @@
  * viewer ⋯) → library-move.php.
  *
  * Role is enforced here in PHP (isAdmin()): admin-only markup is never rendered
- * for a client, and client queries exclude denied rows in SQL.
+ * for a client, and client grids exclude denied rows in SQL (its denied ones are the Sent back list).
  *
  * ASSUMPTION (no schema change allowed): tires has no reference-image column, so
  * the lowest sort_order image of a collection is treated as the reference (the
@@ -146,7 +152,7 @@ $slug = (string)$client['slug'];
 // ---------------------------------------------------------------------
 $view    = (($_GET['view'] ?? 'library') === 'collections') ? 'collections' : 'library';
 $itemId  = max(0, (int)($_GET['item'] ?? 0));
-$filters = $isAdmin ? ['pending', 'approved', 'denied'] : ['pending', 'approved'];
+$filters = ['pending', 'approved', 'denied'];   // denied: the admin's Needs changes grid / the client's Sent back list
 $filter  = in_array($_GET['filter'] ?? '', $filters, true) ? (string)$_GET['filter'] : 'pending';
 
 $deepId   = max(0, (int)($_GET['asset'] ?? 0));
@@ -176,8 +182,8 @@ $hasLog    = hasActivityLog($pdo);
 
 // ---------------------------------------------------------------------
 // &partial=comments — the viewer's Comments panel: one image's thread as JSON.
-// Same tenant rules as the grid (the company of the page's client, and a client
-// seat never sees a denied image), so the answer is 404 for anything else.
+// Tenant rule: the company of the page's client (a client opens its own sent-back — denied — images from its
+// Sent back list), so the answer is 404 for anything else.
 // ---------------------------------------------------------------------
 if (($_GET['partial'] ?? '') === 'comments') {
     header('Content-Type: application/json');
@@ -186,11 +192,11 @@ if (($_GET['partial'] ?? '') === 'comments') {
     $cId   = max(0, (int)($_GET['id'] ?? 0));
     $hit   = null;
     if ($cKind === 'library' && $cId > 0 && $libReady) {
-        $s = $pdo->prepare("SELECT id FROM library_images WHERE id = ? AND company_id = ?{$clientOnly}");
+        $s = $pdo->prepare("SELECT id FROM library_images WHERE id = ? AND company_id = ?");
         $s->execute([$cId, $cid]);
         $hit = $s->fetch();
     } elseif ($cKind === 'tire' && $cId > 0) {
-        $s = $pdo->prepare("SELECT ti.id FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id WHERE ti.id = ? AND t.company_id = ?{$clientOnlyTi}");
+        $s = $pdo->prepare("SELECT ti.id FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id WHERE ti.id = ? AND t.company_id = ?");
         $s->execute([$cId, $cid]);
         $hit = $s->fetch();
     }
@@ -216,12 +222,12 @@ if (($_GET['partial'] ?? '') === 'comments') {
 
 // ---------------------------------------------------------------------
 // Deep link → resolve the item's view / collection / filter first so the
-// rendered grid actually contains it. A client is never pointed at a denied item.
+// rendered grid actually contains it. A client's denied image opens in its Sent back list (filter=denied).
 // ---------------------------------------------------------------------
 if ($deepId > 0 && $deepKind !== '') {
     $hit = null;
     if ($deepKind === 'library' && $libReady) {
-        $s = $pdo->prepare("SELECT id, status FROM library_images WHERE id = ? AND company_id = ?{$clientOnly}");
+        $s = $pdo->prepare("SELECT id, status FROM library_images WHERE id = ? AND company_id = ?");
         $s->execute([$deepId, $cid]);
         $hit = $s->fetch();
         if ($hit) { $view = 'library'; $itemId = 0; }
@@ -230,7 +236,7 @@ if ($deepId > 0 && $deepKind !== '') {
             SELECT ti.id, ti.status, ti.tire_id, ti.image_url{$seriesSel}
               FROM tire_images ti
               INNER JOIN tires t ON t.id = ti.tire_id
-             WHERE ti.id = ? AND t.company_id = ?{$clientOnlyTi}
+             WHERE ti.id = ? AND t.company_id = ?
         ");
         $s->execute([$deepId, $cid]);
         $hit = $s->fetch();
@@ -270,7 +276,9 @@ if ($view === 'collections' && !$hasTiresTab && !$partial) {
 // term in the schema), else "Tires" — the same word as the tab (tiresLabel(), helpers.php).
 $collectionsLabel = tiresLabel($client);
 
-$filterLabels = ['pending' => 'To Review', 'approved' => 'Approved', 'denied' => 'Needs changes'];
+$filterLabels = ['pending' => 'To Review', 'approved' => 'Approved', 'denied' => $isAdmin ? 'Needs changes' : sentBackLabel()];
+// The client's Sent back (filter=denied): a list, never the grid (sentback-lib.php) — Library, every tire, or one tire.
+$sentBackMode = !$isAdmin && $filter === 'denied';
 
 /** URL for this page with the current scope merged with $extra (null drops a key). */
 if (!function_exists('assetsUrl')) {
@@ -531,7 +539,7 @@ if ($view === 'collections' && $seriesOn) {
 }
 
 if ($view === 'library') {
-    if ($libReady) {
+    if ($libReady && !$sentBackMode) {
         $sql = "SELECT id, filename, status, created_at, updated_at
                   FROM library_images
                  WHERE company_id = ?{$clientOnly} AND status = ?
@@ -575,7 +583,16 @@ if ($view === 'library') {
         }
     }
 
-    if ($collection) {
+    if ($sentBackMode) {
+        // the client's Sent back list (below) — no grid, no Reference card, no series switcher; the To Review /
+        // Approved chips count the whole tire (the list spans its series and reference images)
+        if ($collection) {
+            $scopeCounts = ['pending' => 0, 'approved' => 0, 'denied' => 0];
+            $s = $pdo->prepare("SELECT status, COUNT(*) AS n FROM tire_images WHERE tire_id = ? GROUP BY status");
+            $s->execute([$itemId]);
+            foreach ($s->fetchAll() as $r) { if (isset($scopeCounts[$r['status']])) $scopeCounts[$r['status']] = (int)$r['n']; }
+        }
+    } elseif ($collection) {
         $scopeCounts = ['pending' => 0, 'approved' => 0, 'denied' => 0];
         $s = $pdo->prepare("SELECT status, COUNT(*) AS n FROM tire_images WHERE tire_id = ? GROUP BY status");
         $s->execute([$itemId]);
@@ -741,6 +758,25 @@ if ($view === 'library') {
     }
 }
 
+// The client's Sent back (sentback-lib.php): its list (filter=denied) and the chip counts — Library = the Library's,
+// the Tires list = every tire's, an open tire = that tire's (all series + reference images).
+$sbItems = [];
+$sbChip  = 0;
+if (!$isAdmin) {
+    if ($sentBackMode) {
+        $sbItems = sentBackItems($pdo, $client, ['kinds' => [$view === 'library' ? 'library_image' : 'tire_image']] + ($view === 'collections' && $collection ? ['tire_id' => $itemId] : []));
+        $sbChip  = count($sbItems);
+    } elseif ($view === 'collections' && $collection) {
+        $s = $pdo->prepare("SELECT COUNT(*) FROM tire_images WHERE tire_id = ? AND status = 'denied'");
+        $s->execute([$itemId]);
+        $sbChip = (int)$s->fetchColumn();
+    } else {
+        $sbAll  = sentBackCounts($pdo, $client);
+        $sbChip = $view === 'library' ? $sbAll['library_image'] : $sbAll['tire_image'];
+    }
+    $scopeCounts['denied'] = $sbChip;
+}
+
 // Comment-count bubbles: ONE grouped query for the page of tiles (a grid holds a single kind).
 if ($items && $hasLog) {
     $ids = array_map(static function ($it) { return (int)$it['id']; }, $items);
@@ -768,7 +804,7 @@ $hasMore      = $isGrid && ($offset + count($items)) < $gridTotal;
 // ---------------------------------------------------------------------
 // &partial=1 — the "Load more" fetch: tile markup only, nothing else.
 // ---------------------------------------------------------------------
-if ($partial) {
+if ($partial) {   // (the Sent back list has no pages: $items is empty there)
     header('Content-Type: text/html; charset=utf-8');
     header('X-Assets-Total: ' . (int)$gridTotal);
     header('X-Assets-Next: ' . ($hasMore ? (string)($offset + count($items)) : ''));
@@ -839,9 +875,38 @@ $redoChip = ($isAdmin && $redoOn)
 </div>
 <?php elseif ($redoChip !== '' && $view === 'collections'): // the Tires list: the Redo chip on its own ?>
 <div class="as-controls"><nav class="as-filters" aria-label="Queues"><?= $redoChip ?></nav></div>
+<?php elseif (!$isAdmin && $view === 'collections'): // the client's Tires list: every tire · its Sent back (all tires) ?>
+<div class="as-controls">
+  <nav class="as-filters" aria-label="<?= esc($collectionsLabel) ?>" data-sentback-chips>
+    <a class="as-chip<?= !$sentBackMode ? ' is-active' : '' ?>" href="<?= esc(clientUrl('assets.php', ['view' => 'collections'])) ?>"<?= !$sentBackMode ? ' aria-current="page"' : '' ?>><?= esc('All ' . strtolower($collectionsLabel)) ?></a>
+    <a class="as-chip<?= $sentBackMode ? ' is-active' : '' ?>" href="<?= esc(clientUrl('assets.php', ['view' => 'collections', 'filter' => 'denied'])) ?>"<?= $sentBackMode ? ' aria-current="page"' : '' ?> data-sentback-chip>
+      <?= esc(sentBackLabel()) ?><span class="as-chip-count" data-count="denied"><?= (int)$sbChip ?></span>
+    </a>
+  </nav>
+</div>
 <?php endif; ?>
 
-<?php if ($view === 'collections' && !$collection): ?>
+<?php if ($sentBackMode): // ---- the client's Sent back list (sentback-lib.php): rows the viewer opens ---- ?>
+  <?php if (!$sbItems): ?>
+    <div class="ui-empty as-empty" data-assets-empty>
+      <p class="as-empty-title">Nothing sent back</p>
+      <p>Images you mark Needs changes wait here while Joust reworks them.</p>
+    </div>
+  <?php else: ?>
+    <section class="ui-list-group sb-group" aria-label="<?= esc(sentBackLabel()) ?>">
+      <h2 class="ui-list-header"><span data-count="denied"><?= count($sbItems) ?></span> <?= esc(strtolower(sentBackLabel())) ?><?= $collection ? ' · ' . esc($collection['name']) : '' ?></h2>
+      <div class="ui-list sb-list" id="assetsGrid" role="list" data-filter="denied" data-scope="<?= $view === 'library' ? 'library' : 'tire' ?>" data-sentback-list
+           data-offset="0" data-total="<?= count($sbItems) ?>">
+        <?php if (function_exists('trackingUnreadPreload')) trackingUnreadPreload($pdo, $view === 'library' ? 'library_image' : 'tire_image', array_column($sbItems, 'id')); ?>
+        <?php foreach ($sbItems as $i => $it): ?>
+          <?= sentBackImageRowHtml($it, $i + 1, count($sbItems)) ?>
+        <?php endforeach; ?>
+      </div>
+      <p class="ui-list-footer">Newest first. Joust is reworking these — they come back to To Review when ready. Open one to approve it instead or add a comment.</p>
+    </section>
+  <?php endif; ?>
+
+<?php elseif ($view === 'collections' && !$collection): ?>
 
   <?php if (!$collections): ?>
     <div class="ui-empty as-empty" data-tires-empty>
@@ -856,7 +921,8 @@ $redoChip = ($isAdmin && $redoOn)
         $tid = (int)$c['id'];
         $p = (int)$c['pending_count']; $a = (int)$c['approved_count']; $d = (int)$c['denied_count'];
         $parts = [$p . ' to review', $a . ' approved'];
-        if ($isAdmin && $d > 0) $parts[] = $d . ' needs changes';       // client counts exclude denied
+        if ($isAdmin && $d > 0) $parts[] = $d . ' needs changes';       // client counts exclude denied…
+        if (!$isAdmin && $d > 0) $parts[] = $d . ' ' . strtolower(sentBackLabel());   // …and name them as its Sent back
         if ((int)$c['total_count'] === 0) $parts = ['No images yet'];
         if ($seriesOn && (int)$c['total_count'] > 0) {                   // "2 reference" — the tire's own images, apart from the renders
             array_unshift($parts, (int)($refCountOf[$tid] ?? 0) . ' reference');
@@ -1055,7 +1121,7 @@ $redoChip = ($isAdmin && $redoOn)
       <?php elseif ($filter === 'approved'): ?>
         <p>No approved <?= esc($emptyNoun) ?> yet.</p>
       <?php else: ?>
-        <p>Nothing needs changes.</p>
+        <p><?= $isAdmin ? 'Nothing needs changes.' : 'Nothing sent back.' ?></p>
       <?php endif; ?>
     </div>
   <?php else: ?>
@@ -1158,7 +1224,7 @@ $assetsConfig = [
     'view'      => $view,
     'filter'    => $filter,
     'item'      => $itemId,
-    'mode'      => $filter === 'pending' ? 'review' : 'browse',   // review: auto-advance targets pending items only
+    'mode'      => $sentBackMode ? 'sentback' : ($filter === 'pending' ? 'review' : 'browse'),   // review: auto-advance targets pending items only; sentback: the next sent-back one
     'isAdmin'   => $isAdmin,
     'open'      => $deepOpen,
     'notice'    => $notice,
@@ -1181,8 +1247,8 @@ $assetsConfig = [
         'size'    => ASSETS_PAGE,
         'offset'  => $offset,
         'loaded'  => count($items),
-        'total'   => $isGrid ? max($gridTotal, $offset + count($items)) : 0,
-        'partial' => $isGrid ? assetsUrl(['partial' => 1, 'offset' => '__OFFSET__']) : '',
+        'total'   => $sentBackMode ? count($sbItems) : ($isGrid ? max($gridTotal, $offset + count($items)) : 0),
+        'partial' => $isGrid && !$sentBackMode ? assetsUrl(['partial' => 1, 'offset' => '__OFFSET__']) : '',
     ],
 ];
 $footExtra = '<script>window.AssetsPage = ' . json_encode($assetsConfig, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_UNESCAPED_SLASHES) . ';</script>' . "\n"

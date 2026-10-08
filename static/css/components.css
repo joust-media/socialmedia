@@ -771,3 +771,76 @@ button.pd-msg-edited:focus-visible { outline: 2px solid var(--accent); outline-o
 .pd-msg-history-meta { display: block; color: var(--label-secondary); }
 .pd-msg-history-text { display: block; color: var(--label); white-space: pre-wrap; overflow-wrap: anywhere; }
 .pd-msg-history-text.is-deleted { color: var(--label-tertiary); text-decoration: line-through; }
+
+/* ---------------------------------------------------------------------
+   Sent back (client seat; sentback-lib.php) — what the client marked Needs changes and Joust is reworking.
+   Waiting on Joust, not on the client: neutral grey everywhere (pill, counts, the note's rule) — red stays for
+   what needs the client's action.
+   --------------------------------------------------------------------- */
+body[data-role="client"] .ui-pill--denied,
+body[data-role="client"] .el-code-tile--denied,
+body[data-role="client"] .pgl-tile--denied { color: var(--label-secondary); background: var(--fill-tertiary); }
+.sb-count { margin-left: 6px; vertical-align: 1px; }
+/* list rows (posts / emails / pages rows add these lines under the caption; the Assets list is all sb-row) */
+.sb-note {
+  display: block; margin: 6px 0 2px; padding: 7px 10px;
+  border-left: 2px solid var(--label-tertiary); border-radius: 0 10px 10px 0;
+  background: var(--fill-tertiary); color: var(--label);
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); letter-spacing: var(--ls-subhead);
+  white-space: normal; text-align: left;
+}
+.sb-note q { quotes: "\201C" "\201D"; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.sb-note .pl-note-meta { display: block; margin-top: 2px; color: var(--label-secondary); font-size: var(--text-caption); line-height: var(--lh-caption); }
+.pl-item--sentback .pl-note.sb-note { border-left-color: var(--label-tertiary); }
+.sb-status, .sb-reply {
+  display: flex; align-items: flex-start; gap: 6px; margin-top: 4px;
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); letter-spacing: var(--ls-footnote);
+  color: var(--label-secondary); white-space: normal; text-align: left;
+}
+.sb-status { font-weight: 600; }
+.sb-status-icon { width: 15px; height: 15px; flex: 0 0 auto; margin-top: 1px; }
+.sb-reply q { quotes: "\201C" "\201D"; overflow-wrap: anywhere; color: var(--label); }
+.sb-reply-who { font-weight: 600; }
+.sb-reply-avatar { flex: 0 0 auto; margin-top: -1px; }
+/* the Assets / Tires "Sent back" list: rows (the viewer's [data-asset] elements) */
+.sb-list { display: block; }
+.sb-row { align-items: flex-start; text-decoration: none; color: inherit; }
+.sb-row .ui-row-body { display: block; min-width: 0; }
+.sb-row .pl-top { display: flex; align-items: baseline; gap: 8px; }
+.sb-row .pl-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb-row .pl-caption { display: block; color: var(--label-secondary); font-size: var(--text-footnote); line-height: var(--lh-footnote); }
+.sb-row .ui-row-chevron { align-self: center; }
+.sb-thumb { width: 64px; height: 64px; border-radius: 10px; overflow: hidden; background: var(--fill-tertiary); flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; }
+.sb-thumb img, .sb-thumb .sb-thumb-video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.sb-row.ui-leave { pointer-events: none; }
+/* the sheet: the panel on top of a sent-back post / email / page */
+.sb-panel { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 14px; padding: 12px 14px; border-radius: 14px; background: var(--bg-elevated); box-shadow: inset 0 0 0 0.5px var(--separator); }
+.sb-panel[hidden] { display: none; }
+.sb-panel-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sb-panel-when { font-size: var(--text-footnote); }
+.sb-panel-status { display: flex; align-items: center; gap: 6px; margin: 0; font-weight: 600; font-size: var(--text-headline); line-height: var(--lh-headline); letter-spacing: var(--ls-headline); }
+.sb-panel-status .sb-status-icon { width: 18px; height: 18px; color: var(--label-secondary); margin: 0; }
+.sb-panel-text { margin: 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); }
+.sb-panel .pd-hidden-note { margin-top: 4px; }
+.pd-sentback[hidden] { display: none; }
+.pd-sentback > .ui-btn { min-width: 0; }
+@media (max-width: 379.98px) {   /* 320–375: both labels stay whole (two lines when they must) */
+  .pd-sentback > .ui-btn { white-space: normal; line-height: 1.15; padding-inline: 10px; font-size: var(--text-subhead); }
+}
+/* Home: "Sent back N" — neutral */
+.home-sentback .ui-row-subtitle { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.sb-home-reply { display: inline-flex; color: var(--label-tertiary); }
+.sb-home-reply .ui-icon { width: 18px; height: 18px; }
+.sb-home-foot { display: block; margin-top: 2px; }
+.sb-home-foot a { font-weight: 600; white-space: nowrap; }
+.sb-link-count { color: var(--label-secondary); font-weight: 500; }
+/* the media viewer (dark glass bar): the Sent back line + Approve instead's confirm */
+.ui-viewer-sentback { max-width: 640px; margin: 0 auto 8px; color: var(--label-secondary); font-size: var(--text-footnote); line-height: var(--lh-footnote); font-weight: 600; text-align: center; }
+.ui-viewer-sentback[hidden], .ui-viewer-confirm[hidden] { display: none; }
+.ui-viewer-confirm-title { margin: 0 0 4px; font-weight: 600; font-size: var(--text-headline); line-height: var(--lh-headline); }
+.ui-viewer-confirm-row { justify-content: flex-end; }
+.ui-viewer-deny.is-comment { background: rgba(118,118,128,.28); color: #fff; }
+.ui-viewer-deny.is-comment .ui-icon { display: none; }
+@media (max-width: 479.98px) {   /* phones: "Approve instead" wraps like "Needs changes" does (assets.css) */
+  .ui-viewer-approve > span { white-space: normal; line-height: 1.1; text-align: center; }
+}

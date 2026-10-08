@@ -412,11 +412,14 @@ try {
         $action = ($status === 'approved') ? 'approved'
                 : (($status === 'denied')  ? 'denied'
                 : 'reset_pending');
+        $instead = $action === 'approved' && $actor === 'client' && $prev['status'] === 'denied';   // "Sent back" → Approve instead
         logActivity($pdo, $companyId, 'tire_image', $id, $action, $actor,
-            "{$imgLabel} " . actionLabel($action),
+            "{$imgLabel} " . actionLabel($action) . ($instead ? ' instead (it was sent back)' : ''),
             null, $batchId);
         // "Needs changes" puts the image in Joust's Redo queue (redo-lib.php; the client still sees Needs changes).
         if ($status === 'denied' && function_exists('redoAutoQueue')) redoAutoQueue($pdo, 'tire', $id);
+        // …and the client changing its mind takes it off again — only when that Needs changes queued it (sentback-lib.php)
+        if ($instead && function_exists('sentBackApproveRedo')) $redoCleared = sentBackApproveRedo($pdo, 'tire', $id, $companyId, $batchId);
     }
     if ($hasCmt) {
         $prevCmt = $prev['client_comment'];
@@ -439,6 +442,7 @@ try {
         'status'  => $hasStat ? $status  : null,
         'comment' => $hasCmt  ? $comment : null,
         'comment_id' => $GLOBALS['__lastCommentId'] ?? null,   // the new comment (comment-edit.php can change it)
+        'redo_cleared' => !empty($redoCleared),               // Approve instead took it off Joust's Redo queue
     ]);
 } catch (Exception $e) {
     if ($pdo->inTransaction()) { $pdo->rollBack(); }

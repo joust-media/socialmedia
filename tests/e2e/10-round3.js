@@ -198,19 +198,19 @@ function jpeg(name) {
       expect.eq(await page.inputValue('#uiSheet [data-comment-slide]'), '', 'All slides is one pick away');
     });
 
-    await test('#11 Home → "requested changes on Winter promo" opens a read-only notice with my note (no 404)', async (page) => {
+    await test('#11 Home → "requested changes on Winter promo" opens the full Sent back view with my note (no 404)', async (page) => {
       const bad = [];
       page.on('response', (r) => { if (r.status() >= 400) bad.push(r.status() + ' ' + r.url()); });
       await page.goto(url('index.php?client=kenda'));
       await page.click('a[href*="post=4"]');
-      await page.waitForSelector('#uiSheet.is-open [data-hidden-post]');
+      await page.waitForSelector('#uiSheet.is-open [data-sentback]');
       expect.eq((await page.textContent('#uiSheet [data-sheet-title]')).trim(), 'Winter promo', 'titled');
       const t = await page.textContent('#uiSheet');
-      expect(/Joust is updating this post/.test(t) && /Please use the darker render/.test(t), 'notice + my note');
-      expect.eq(await page.$$eval('#uiSheet [data-comment-form], #uiSheet [data-decide], #uiSheet [data-carousel]', (e) => e.length), 0, 'read-only');
+      expect(/Joust is reworking this/.test(t) && /Please use the darker render/.test(t), 'Sent back panel + my note');
+      expect.eq(await page.$$eval('#uiSheet [data-comment-form], #uiSheet [data-carousel], #uiSheet [data-approve-instead]', (e) => e.length), 3, 'the full post: composer, media, Approve instead');
       expect.eq(bad.length, 0, 'no 4xx/5xx: ' + bad.join(', '));
       await page.screenshot({ path: path.join(SHOTS, `r3-client-hidden-${viewport}.png`) });
-      await page.click('#uiSheet [data-sheet-close]:not(.ui-sheet-close)');
+      await page.click('#uiSheet .ui-sheet-close');
       await page.waitForSelector('#uiSheet:not(.is-open)', { state: 'attached' });
     });
 

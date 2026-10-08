@@ -508,11 +508,8 @@ li + li > .pl-card::before { left: 100px; }
 }
 .pd-viewer-original:hover { background: rgba(255,255,255,.22); }
 
-/* Client seat: a post they marked Needs changes (renderPostHiddenNotice) — what is happening + their note, read-only */
-.pd-hidden { display: flex; flex-direction: column; gap: 8px; padding: 8px 0 4px; }
-.pd-hidden-lead { margin: 0; }
-.pd-hidden-title { margin: 0; font-size: var(--text-headline); line-height: var(--lh-headline); letter-spacing: var(--ls-headline); font-weight: 600; }
-.pd-hidden-text { margin: 0; color: var(--label-secondary); }
+/* Client seat: the note + Joust's reply in the Sent back panel of a post / email / page it marked Needs changes
+   (sentback-lib.php sentBackPanelHtml(); the panel itself: components.css .sb-panel) */
 .pd-hidden-note { margin: 8px 0 0; padding: 10px 12px; border-radius: 12px; background: var(--fill-tertiary); }
 .pd-hidden-note-head { font-size: var(--text-caption); line-height: var(--lh-caption); font-weight: 600; color: var(--label-secondary); text-transform: uppercase; letter-spacing: .02em; }
 .pd-hidden-note-head .pd-msg-avatar { display: inline-flex; vertical-align: -5px; margin-right: 5px; }   /* the Joust mark on "Joust replied" */

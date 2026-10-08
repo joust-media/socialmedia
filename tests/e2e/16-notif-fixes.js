@@ -255,12 +255,12 @@ async function seenStored(page, viewerType, type, id) {
   await run('nfix: replies read from the Needs-changes notice and asset deep links (client)', async ({ test, expect, viewport, ctx }) => {
     const w = viewport === 'desktop' ? '1440' : '390';
     await theme(ctx, 'light');
-    await test('post 4 (Needs changes): Joust replies, the client opens the "Joust is updating this post" sheet → read, the Home card empties', async (page) => {
+    await test('post 4 (Needs changes): Joust replies, the client opens its Sent back sheet → read, the Home card empties', async (page) => {
       joustSays('post', 4, 1, 'Darker render is coming tomorrow.');
       await page.goto(url('index.php?client=kenda'));
       await page.waitForSelector('[data-replied-row="post:4"]');
       await page.goto(url('posts.php?client=kenda&post=4'));
-      await page.waitForSelector('.ui-sheet-root[aria-hidden="false"] [data-hidden-post][data-seen-entity="post:4"]');
+      await page.waitForSelector('.ui-sheet-root[aria-hidden="false"] [data-sentback][data-seen-entity="post:4"]');
       expect(await seenStored(page, 'contact', 'post', 4), 'thread_seen stored for the contact');
       await page.screenshot({ path: shot(`client-needs-changes-read-${w}.png`), fullPage: false });
       await page.goto(url('index.php?client=kenda'));

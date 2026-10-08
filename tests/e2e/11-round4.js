@@ -190,8 +190,8 @@ async function pickDest(page, files, kind) {
         '--data-urlencode', 'id=4', '--data-urlencode', 'comment=Darker render coming Friday', '--data-urlencode', 'client=kenda', url('status.php')]).toString();
       expect.eq(code, '200', 'admin comment');
       await page.goto(url('posts.php?client=kenda&post=4'));
-      await page.waitForSelector('#uiSheet.is-open [data-hidden-post]');
-      const t = await page.textContent('#uiSheet [data-hidden-post]');
+      await page.waitForSelector('#uiSheet.is-open [data-sentback-panel]');
+      const t = await page.textContent('#uiSheet [data-sentback-panel]');
       expect(/Your note/.test(t) && /Please use the darker render/.test(t), 'my note');
       expect(/Joust replied/.test(t) && /Darker render coming Friday/.test(t), 'Joust\'s reply');
       // the badge also counts unread Joust replies (notif round 3): opening the notice reads the reply, so it settles at To Review

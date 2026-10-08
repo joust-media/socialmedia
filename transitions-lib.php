@@ -8,6 +8,12 @@
  *   transitionMailLive($pdo, 'email'|'page', $row, $to, $actor)  live flag ("Mark live")           — email-status.php / page-status.php action=toggle_live
  *   transitionMailSubmit($pdo, 'email'|'page', $row, $actor)     → pending ("Send for review")      — email-status.php / page-status.php action=submit (no comment)
  *
+ * The client seat's own decisions (status.php / email-status.php / page-status.php, before they write):
+ *   transitionClientDecisionError($noun, $from, $to, $locked)   null = allowed, else ['code', 'error']. A client decides
+ *     an item waiting on it (To Review → Approved / Needs changes) and may approve instead one it sent back (Needs
+ *     changes → Approved: its "Sent back" list, sentback-lib.php). Scheduled / live = locked (409 for emails / pages,
+ *     403 for posts, as before); anything else — re-deciding an approved item, re-sending a sent-back one — is a comment.
+ *
  * Each returns ['ok' => bool, 'code' => HTTP status, 'error' => message (on failure), …result fields]. Role checks
  * (admin session / mapped Slack user) are the caller's; every rule about the ROW lives here. Loaded by helpers.php
  * (function_exists-guarded, no output, no work at load).
@@ -167,5 +173,21 @@ if (!function_exists('transitionMailSubmit')) {
         }
         $row['status'] = 'pending';
         return ['ok' => true, 'code' => 200, 'row' => $row];
+    }
+}
+
+if (!function_exists('transitionClientDecisionError')) {
+    /** The client seat's decision on a post / email / page: null when allowed, else ['code' => HTTP, 'error' => message]. */
+    function transitionClientDecisionError(string $noun, string $from, string $to, bool $locked): ?array {
+        $noun = in_array($noun, ['post', 'email', 'page'], true) ? $noun : 'post';
+        if ($locked) {
+            return $noun === 'post'
+                ? ['code' => 403, 'error' => 'This post can no longer be changed here — add a comment instead']
+                : ['code' => 409, 'error' => 'This ' . $noun . ' is already live — add a comment instead'];
+        }
+        if ($from === 'pending' && in_array($to, ['approved', 'denied'], true)) return null;   // its review
+        if ($from === 'denied' && $to === 'approved') return null;                             // Sent back → Approve instead
+        if ($noun === 'post' && $from !== 'denied') return null;   // posts: an approved one may still be re-decided (as before)
+        return ['code' => 403, 'error' => 'This ' . $noun . ' can no longer be changed here — add a comment instead'];
     }
 }

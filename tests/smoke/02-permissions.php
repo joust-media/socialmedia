@@ -73,17 +73,15 @@ test('admin post sheet has the admin menu', function () {
     has($r['body'], 'data-menu-toggle');
     has($r['body'], 'data-delete-post');
 });
-test('client never sees denied posts', function () {
+test('client sees its denied posts only as its own Sent back (never another client\'s, never a draft)', function () {
+    // Its Needs-changes post is its "Sent back" (tests/smoke/25-sent-back.php): the full post, read + comment + Approve instead
     $r = status(get('posts.php?client=kenda&status=denied&month=all', 'client'), 200);
-    hasNot($r['body'], 'data-post-item="4"');
-    // Their own "requested changes" link: a read-only notice + their note — never the work in progress (round 3 #11)
+    has($r['body'], 'data-post-item="4"');
     $p = status(get('posts.php?client=kenda&post=4&partial=1', 'client'), 200)['body'];
-    has($p, 'data-hidden-post');
-    hasNot($p, 'Winter is coming', 'no caption');
-    hasNot($p, 'data-carousel', 'no media');
-    hasNot($p, 'data-comment-form', 'no composer');
-    hasNot($p, 'data-decide', 'no decisions');
+    has($p, 'data-sentback'); has($p, 'data-carousel'); has($p, 'data-comment-form'); has($p, 'data-approve-instead');
+    has($p, '<div class="ui-btn-group pd-decide" data-state="decide" hidden>', 'no second Needs changes (the To Review pair stays hidden)');
     is(get('posts.php?client=kenda&post=6&partial=1', 'client')['code'], 404, 'a draft stays not found');
+    is(get('posts.php?client=privacybee&post=4&partial=1', 'client:privacybee')['code'], 404, 'another client\'s post stays not found');
 });
 test('client never sees draft emails / pages', function () {
     $r = status(get('emails.php?client=privacybee&status=all', 'client'), 200);

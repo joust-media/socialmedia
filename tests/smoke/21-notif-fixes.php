@@ -908,9 +908,9 @@ ftest('staging detection: any portal_url or folder containing "staging", or the 
 });
 
 ftest('Joust replies are marked read from every view the client reaches: the Needs-changes notice, a deep-linked asset, an opened series', function () {
-    // post 4 is Needs changes (the client's own view = the "Joust is updating this post" notice)
+    // post 4 is Needs changes (the client's own view = its Sent back sheet)
     $b = get('posts.php?client=kenda&post=4&partial=1', 'client')['body'];
-    has($b, 'data-hidden-post');
+    has($b, 'data-sentback');
     has($b, 'data-seen-entity="post:4"');
     is(get('posts.php?client=kenda&post=4&partial=1', 'admin')['code'], 200, 'the admin still gets the full sheet');
     // assets: the deep-linked image (library / tire) and an explicitly opened series carry an on-load marker

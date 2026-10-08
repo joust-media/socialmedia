@@ -4,8 +4,8 @@
  * The email twin of posts.php: same chrome, segments, sheet and swipe.
  *
  *   ?client=privacybee                     scope (helpers.php)
- *   &status=pending|approved|live          segment — default pending
- *          |draft|denied                   admin only (client → falls back to pending)
+ *   &status=pending|approved|live|denied   segment — default pending (denied: the admin's Needs changes / the client's Sent back)
+ *          |draft                          admin only (client → falls back to pending)
  *          |all                            every row the viewer may see (Studio's "Open emails")
  *   &audience=free,pro (or audience[]=free) Audience filter chips (ANY of); persists across segments.
  *                                          (email_groups in the DB; &group= is the old name and still works)
@@ -15,8 +15,9 @@
  *
  * Segments (display keys from emails-lib.php — live=1 always wins):
  *   Draft (admin) · To Review · Approved · Live · Needs changes (admin work queue)
- * Clients never receive draft or denied rows — filtered in SQL
- * (emailsForCompany(..., ['visibleTo' => 'client'])), exactly like posts hide denied.
+ * Clients never receive draft rows — filtered in SQL (emailsForCompany(..., ['visibleTo' => 'client'])). Their
+ * denied rows are their "Sent back" (last segment; sentback-lib.php): note, when, "Joust is reworking this", Joust's
+ * latest reply; the sheet adds the same panel on top and Add a comment · Approve instead (email-status.php).
  *
  * Needs changes = Joust's work queue: each row carries the client's latest note
  * (deny note or newest comment — both 'commented' activity rows), a client-comment
@@ -137,7 +138,7 @@ $q = isset($_GET['q']) && is_string($_GET['q']) ? trim(mb_substr($_GET['q'], 0, 
 // ---------------------------------------------------------------------
 $segments = $admin   // admin: Joust's own work first (Draft · Needs changes) so the queue is on screen at 390 px
     ? ['draft' => 'Draft', 'denied' => 'Needs changes', 'pending' => 'To Review', 'approved' => 'Approved', 'live' => 'Live']
-    : ['pending' => 'To Review', 'approved' => 'Approved', 'live' => 'Live'];
+    : ['pending' => 'To Review', 'approved' => 'Approved', 'live' => 'Live', 'denied' => sentBackLabel()];   // client: its Sent back last
 $segment = strtolower(trim((string)($_GET['status'] ?? 'pending')));
 if ($segment !== 'all' && !isset($segments[$segment])) { $segment = 'pending'; }
 
@@ -187,7 +188,18 @@ function emailsAttachComments(PDO $pdo, array &$rows): void {
 /** May this viewer open the row? (SQL already hides them from lists; this guards deep links.) */
 function emailVisibleTo(array $email, bool $admin): bool {
     if ($admin) return true;
-    return !empty($email['live']) || in_array((string)$email['status'], ['pending', 'approved'], true);
+    return !empty($email['live']) || in_array((string)$email['status'], ['pending', 'approved', 'denied'], true);   // denied = its Sent back
+}
+
+/** Client seat: the "Sent back" facts (sentback-lib.php) on its denied, not-live rows. One query. */
+function emailsAttachSentBack(PDO $pdo, array &$rows, bool $admin): void {
+    if ($admin || !$rows) return;
+    $ids = [];
+    foreach ($rows as $r) { if (emailStatusKey($r) === 'denied') $ids[] = (int)$r['id']; }
+    if (!$ids) return;
+    $info = sentBackThreads($pdo, 'email', $ids);
+    foreach ($rows as &$r) { if (isset($info[(int)$r['id']])) $r['sentback'] = $info[(int)$r['id']] + ['redo' => false]; }
+    unset($r);
 }
 
 // ---------------------------------------------------------------------
@@ -211,6 +223,7 @@ if ($isPartial) {
     }
     $one = [$directEmail];
     emailsAttachComments($pdo, $one);
+    emailsAttachSentBack($pdo, $one, $admin);
     echo renderEmailDetail($one[0], ['admin' => $admin]);
     exit;
 }
@@ -223,7 +236,7 @@ if ($directEmail) {
 // ---------------------------------------------------------------------
 // Rows: one query under the chip/search filter, then counts + the segment in PHP
 // ---------------------------------------------------------------------
-$filtered = $hasTable ? emailsForCompany($pdo, $cid, ['group' => $groupSlugs, 'q' => $q, 'visibleTo' => $visibleTo]) : [];
+$filtered = $hasTable ? emailsForCompany($pdo, $cid, ['group' => $groupSlugs, 'q' => $q, 'visibleTo' => $visibleTo, 'sentBack' => true]) : [];
 $counts   = ['draft' => 0, 'pending' => 0, 'approved' => 0, 'live' => 0, 'denied' => 0, 'all' => 0];
 foreach ($filtered as $r) { $counts[emailStatusKey($r)]++; $counts['all']++; }
 // Admin with no explicit segment: open on Joust's own queue (Needs changes) when it has items — the tab badge counts it too.
@@ -235,6 +248,13 @@ $emails = $segment === 'all' ? $filtered : array_values(array_filter($filtered, 
     return emailStatusKey($r) === $segment;
 }));
 emailsAttachComments($pdo, $emails);
+emailsAttachSentBack($pdo, $emails, $admin);
+$isSentBack = !$admin && $segment === 'denied';   // the client's Sent back: newest sent back first
+if ($isSentBack) {
+    usort($emails, static function ($a, $b) {
+        return ((int)strtotime((string)($b['sentback']['sent_at'] ?? '')) <=> (int)strtotime((string)($a['sentback']['sent_at'] ?? ''))) ?: ((int)$b['id'] <=> (int)$a['id']);
+    });
+}
 
 // ---------------------------------------------------------------------
 // Needs changes = the admin work queue (latest client note, counts, sort)
@@ -299,6 +319,7 @@ if ($directEmail && !$inList) {
     // The deep-linked row is outside the current chip/search filter: still open it.
     $one = [$directEmail];
     emailsAttachComments($pdo, $one);
+    emailsAttachSentBack($pdo, $one, $admin);
     $directEmail = $one[0];
 } else {
     $directEmail = null;
@@ -341,7 +362,7 @@ $emptyCopy = [
     'pending'  => 'Nothing to review' . $filterNote . '.',
     'approved' => 'No approved emails waiting to go live' . $filterNote . '.',
     'live'     => 'Nothing is live yet' . $filterNote . '.',
-    'denied'   => 'Nothing needs changes' . $filterNote . '.',
+    'denied'   => $admin ? 'Nothing needs changes' . $filterNote . '.' : 'Nothing sent back' . $filterNote . '. Emails you mark Needs changes wait here while Joust reworks them.',
     'draft'    => 'No drafts' . $filterNote . '.',
     'all'      => 'No emails' . $filterNote . '.',
 ];
@@ -467,11 +488,12 @@ include __DIR__ . '/partials/layout-top.php';
         $qAbs     = $queue && $queue['note_at'] !== '' ? absoluteTime($queue['note_at']) : '';
         $qCount   = $queue ? (int)$queue['client_count'] : 0;
         $rowTitle = $title !== '' ? $title : ($code !== '' ? $code : 'Email #' . $eid);
+        $sb       = !$admin && $key === 'denied' ? ($email['sentback'] ?? ['note' => null, 'sent_at' => '', 'reply' => null]) : null;   // the client's Sent back row
     ?>
-      <li class="pl-item el-item<?= $queue ? ' pl-item--queue' : '' ?><?= $isPast ? ' pl-item--past' : '' ?>" id="email-<?= $eid ?>" data-email-item="<?= $eid ?>" data-id="<?= $eid ?>"
+      <li class="pl-item el-item<?= $queue ? ' pl-item--queue' : '' ?><?= $sb ? ' pl-item--sentback' : '' ?><?= $isPast ? ' pl-item--past' : '' ?>" id="email-<?= $eid ?>" data-email-item="<?= $eid ?>" data-id="<?= $eid ?>"
           data-status="<?= h($email['status']) ?>" data-live="<?= $live ? '1' : '0' ?>" data-key="<?= h($key) ?>"<?= $isPast ? ' data-past="1"' : '' ?>
-          data-title="<?= h($rowTitle) ?>"<?= $queue ? ' data-queue' : ($admin ? '' : ' data-swipe') ?>>
-        <?php if (!$queue && !$admin): /* swipe = the client's decision; Joust decides for the client only via ⋯ → Approve for client… */ ?>
+          data-title="<?= h($rowTitle) ?>"<?= $queue ? ' data-queue' : ($sb ? ' data-sentback' : ($admin ? '' : ' data-swipe')) ?>>
+        <?php if (!$queue && !$admin && !$sb): /* swipe = the client's decision; Joust decides for the client only via ⋯ → Approve for client… */ ?>
         <div class="pl-swipe pl-swipe--approve" aria-hidden="true"><?= icon('checkmark') ?><span>Approve</span></div>
         <div class="pl-swipe pl-swipe--deny" aria-hidden="true"><?= icon('xmark') ?><span>Needs changes</span></div>
         <?php endif; ?>
@@ -501,8 +523,9 @@ include __DIR__ . '/partials/layout-top.php';
                 <?php endif; ?>
               </div>
             <?php endif; ?>
+            <?php if ($sb): ?><?= sentBackRowInfoHtml($sb) ?><?php endif; ?>
             <div class="pl-meta">
-              <?= emailStatusPill($email) ?>
+              <?= emailStatusPill($email, $sb ? ['label' => sentBackLabel()] : []) ?>
               <?php if ($prioLbl !== ''): ?>
                 <span class="pl-meta-item el-prio el-prio--<?= h($prio) ?>"><span class="pl-meta-sep">·</span><span class="ui-dot ed-dot ed-dot--<?= h($prio) ?>"></span><span><?= h($prioLbl) ?></span></span>
               <?php endif; ?>
@@ -534,9 +557,11 @@ include __DIR__ . '/partials/layout-top.php';
     <?php endforeach; ?>
   </ul>
   <?php if ($segment === 'pending' && !$admin): ?>
-    <p class="ui-list-footer posts-hint">Swipe right to approve, left for needs changes. Tap an email for the full preview.</p>
+    <p class="ui-list-footer posts-hint">Swipe right to approve, left for needs changes (it waits under Sent back while Joust reworks it). Tap an email for the full preview.</p>
   <?php elseif ($isQueue): ?>
     <p class="ui-list-footer">Newest client activity first. Open an email for the full thread; Send for review puts it back on the client's To Review list.</p>
+  <?php elseif ($isSentBack): ?>
+    <p class="ui-list-footer posts-hint">Emails you marked Needs changes, newest first. Joust is reworking them — they come back to To Review when ready. Open one to approve it instead or add a comment.</p>
   <?php endif; ?>
 </section>
 

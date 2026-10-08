@@ -26,6 +26,10 @@ if (!function_exists('esc')) { http_response_code(404); exit; }
  * note is sent in the SAME request as status=denied to tire-status.php /
  * library-status.php, which enforce the minimum server-side too.
  *
+ * The client's own sent-back image (status denied — its "Sent back" list, sentback-lib.php): the bar reads
+ * "Sent back · Joust is reworking this" (or "Being reworked"), the two buttons become Add a comment (opens the
+ * Comments panel) · Approve instead, which asks first ([data-viewer-confirm], client seat only).
+ *
  * Video slides are built by App.video.build() (the JS twin of
  * renderVideoElement(), spec §6): autoplay muted, tap-to-unmute pill, and the
  * "Open video / Download" card when the browser can't decode the file
@@ -80,6 +84,9 @@ $viewerCommentsEndpoint = isset($viewerCommentsEndpoint) ? (string)$viewerCommen
   </div>
 
   <div class="ui-viewer-bar" data-viewer-bar>
+    <?php if (!$viewerAdmin): // the client's Sent back: what Joust is doing with this image (assets.js fills it) ?>
+      <p class="ui-viewer-sentback" data-viewer-sentback hidden></p>
+    <?php endif; ?>
     <div class="ui-viewer-actions" data-viewer-actions>
       <button type="button" class="ui-btn ui-btn--large ui-btn--deny ui-btn--tinted ui-viewer-deny" data-viewer-deny>
         <?= icon('xmark') ?><span data-viewer-deny-label>Needs changes</span>
@@ -102,6 +109,17 @@ $viewerCommentsEndpoint = isset($viewerCommentsEndpoint) ? (string)$viewerCommen
         <button type="submit" class="ui-btn ui-btn--deny" data-viewer-note-send disabled>Send</button>
       </div>
     </form>
+
+    <?php if (!$viewerAdmin): // Sent back → Approve instead asks first (the client's change of mind; assets.js) ?>
+      <div class="ui-viewer-note ui-viewer-confirm" data-viewer-confirm role="alertdialog" aria-labelledby="<?= esc($viewerId) ?>ConfirmTitle" aria-describedby="<?= esc($viewerId) ?>ConfirmText" hidden>
+        <p class="ui-viewer-confirm-title" id="<?= esc($viewerId) ?>ConfirmTitle">Approve this image instead?</p>
+        <p class="ui-viewer-note-hint" id="<?= esc($viewerId) ?>ConfirmText">You sent it back for changes. Approving tells Joust to go ahead with it as it is — your note stays in the thread.</p>
+        <div class="ui-viewer-note-row ui-viewer-confirm-row">
+          <button type="button" class="ui-btn ui-btn--gray" data-viewer-confirm-cancel>Cancel</button>
+          <button type="button" class="ui-btn ui-btn--approve ui-btn--primary" data-viewer-confirm-ok>Approve</button>
+        </div>
+      </div>
+    <?php endif; ?>
 
     <section class="ui-viewer-comments" data-viewer-comments aria-label="Comments">
       <button type="button" class="ui-viewer-comments-toggle" data-viewer-comments-toggle aria-expanded="false" aria-controls="<?= esc($viewerId) ?>Comments">

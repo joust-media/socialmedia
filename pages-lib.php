@@ -729,6 +729,7 @@ if (!function_exists('pagesForCompany')) {
      *   $opts['q']         substring over title / slug / description.
      *   $opts['visibleTo'] 'admin' (default, everything) or 'client' (live = 1 OR status IN
      *                      pending, approved — drafts and Needs-changes rows are hidden in SQL).
+     *   $opts['sentBack']  with visibleTo client: also the Needs-changes rows (the client's own "Sent back" list).
      * Ordered by sort_order, then natural title order.
      */
     function pagesForCompany(PDO $pdo, int $companyId, array $opts = []): array {
@@ -745,7 +746,8 @@ if (!function_exists('pagesForCompany')) {
             $where[]  = 'p.live = 0';
         }
         if (($opts['visibleTo'] ?? 'admin') === 'client') {
-            $where[] = "(p.live = 1 OR p.status IN ('pending','approved'))";
+            // + the ones the client sent back (Needs changes) when the caller lists them (its "Sent back" — sentback-lib.php)
+            $where[] = "(p.live = 1 OR p.status IN ('pending','approved'" . (!empty($opts['sentBack']) ? ",'denied'" : '') . "))";
         }
         $q = trim((string)($opts['q'] ?? ''));
         if ($q !== '') {
