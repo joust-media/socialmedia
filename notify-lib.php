@@ -1444,11 +1444,13 @@ if (!function_exists('notifySlackEventText')) {
         $who = $whoOf($acts[0] ?? []);
         $mention = ($owner && trim((string)$owner['slack_user_id']) !== '') ? '<@' . trim((string)$owner['slack_user_id']) . '> ' : '';
         $actions = array_column($acts, 'action');
-        $comments = array_values(array_filter($acts, static function ($a) { return $a['action'] === 'commented' && trim((string)$a['detail']) !== ''; }));
+        // an edited comment (comment-edit-lib.php — a chat.update re-render) reads " _(edited)_", a deleted one "_comment deleted_"
+        $comments = array_values(array_filter($acts, static function ($a) { return $a['action'] === 'commented' && (trim((string)$a['detail']) !== '' || !empty($a['deleted_at'])); }));
         $lines = [];
         $quote = static function (array $c): array {
+            if (!empty($c['deleted_at'])) return [0, '> _comment deleted_'];
             [$slide, $body] = commentSlideSplit(trim((string)$c['detail']));
-            return [$slide, notifyQuote($body)];
+            return [$slide, notifyQuote($body) . (!empty($c['edited_at']) ? ' _(edited)_' : '')];
         };
         if (in_array('denied', $actions, true) || in_array('approved', $actions, true)) {
             $denied = in_array('denied', $actions, true);
@@ -1516,8 +1518,17 @@ if (!function_exists('notifyDeliver')) {
         $p = json_decode((string)$row['payload'], true);
         if (!is_array($p)) return ['ok' => false, 'permanent' => true, 'error' => 'bad payload'];
         switch ((string)$row['kind']) {
-            case 'item_event':
-                return notifyDeliverItemEvent($pdo, $p);
+            case 'item_event': {
+                $res = notifyDeliverItemEvent($pdo, $p);
+                // remember the message per comment (comment-edit-lib.php): an edit can chat.update it later
+                if (!empty($res['ok']) && ($res['provider_id'] ?? '') !== '' && function_exists('commentSlackRemember')) {
+                    $t = notifyThreadRow($pdo, (string)($p['entity_type'] ?? ''), (int)($p['entity_id'] ?? 0));
+                    if ($t) commentSlackRemember($pdo, (array)($p['activity_ids'] ?? []), 'item_event', (string)$t['slack_channel'], (string)$res['provider_id'], (int)$row['id']);
+                }
+                return $res;
+            }
+            case 'comment_edit':   // comment-edit-lib.php: an edited / deleted comment's Slack message
+                return function_exists('commentSlackDeliver') ? commentSlackDeliver($pdo, $p) : ['ok' => false, 'permanent' => true, 'error' => 'comment editing is not available'];
             case 'parent_update':
                 return notifySlackUpdateParent($pdo, (string)$p['entity_type'], (int)$p['entity_id']);
             case 'escalate_thread': {
@@ -1592,6 +1603,9 @@ if (!function_exists('notifyDeliver')) {
                 $u = adminUserById($pdo, (int)($note['author_user_id'] ?? 0));
                 $text = ':lock: *Internal note* (Joust only — the client never sees it) from *' . notifySlackEscape($u ? adminUserFirstName($u) : 'Joust') . "*:\n" . notifyQuote((string)$note['detail']);
                 $r = slackApi('chat.postMessage', ['channel' => $thread['channel'], 'thread_ts' => $thread['ts'], 'text' => $text, 'unfurl_links' => false, 'unfurl_media' => false]);
+                if (!empty($r['ok']) && function_exists('commentSlackRemember')) {
+                    commentSlackRemember($pdo, [(int)($p['activity_id'] ?? 0)], 'internal_note', (string)($r['data']['channel'] ?? $thread['channel']), (string)($r['data']['ts'] ?? ''), (int)$row['id']);
+                }
                 return notifySlackResult($r, 'internal note');
             }
             case 'nochannel_email':

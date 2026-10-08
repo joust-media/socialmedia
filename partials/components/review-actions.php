@@ -5,7 +5,8 @@
  *   reviewLatestNote(array $comments, string $clientName): ?array
  *       The note behind a Needs changes item: the client's newest comment (a Needs changes note is a
  *       'commented' row in the same batch), else the newest comment of anyone. null for an empty thread.
- *       → ['who' => 'Kenda Tires'|'Joust'|'Note', 'text', 'slide' (0|N, from "[Slide N] "), 'at']
+ *       → ['who' => 'Kenda Tires'|'Joust'|'Note', 'text', 'slide' (0|N, from "[Slide N] "), 'at', 'id' (the activity row),
+ *          'raw' (the stored text), 'actor', 'edited']. Deleted comments are skipped.
  *
  *   reviewNoteBanner(?array $note, bool $show): string
  *       "Kenda Tires asked for changes · 2h ago" + the note, pinned at the TOP of the sheet (above the media /
@@ -33,6 +34,8 @@ if (!function_exists('reviewLatestNote')) {
     function reviewLatestNote(array $comments, string $clientName): ?array
     {
         $pick = null;
+        // a deleted comment ("Comment deleted" in the thread) is no note
+        $comments = array_values(array_filter($comments, static function ($c) { return empty($c['deleted_at']); }));
         foreach ($comments as $c) {
             if (strtolower(trim((string)($c['actor'] ?? ''))) === 'client') $pick = $c;
         }
@@ -46,6 +49,11 @@ if (!function_exists('reviewLatestNote')) {
             'text'  => trim((string)$text),
             'slide' => (int)$slide,
             'at'    => (string)($pick['created_at'] ?? ''),
+            // comment editing (comment-edit-lib.php): the row behind the note, its stored text, edited or not
+            'id'     => (int)($pick['comment_id'] ?? ($pick['id'] ?? 0)),
+            'raw'    => $raw,
+            'actor'  => $actor,
+            'edited' => !empty($pick['edited_at']),
         ];
     }
 }

@@ -946,6 +946,8 @@ function logActivity(PDO $pdo, $companyId, $entityType, $entityId,
             ]);
         }
         $id = (int)$pdo->lastInsertId();
+        // The endpoints hand the new comment's id back (…'comment_id'): a just-sent bubble can be edited in place.
+        if ($action === 'commented' && $id > 0) $GLOBALS['__lastCommentId'] = $id;
     } catch (Throwable $e) {
         error_log('logActivity failed: ' . $e->getMessage());
         return 0;
@@ -1026,12 +1028,12 @@ require_once __DIR__ . '/media-lib.php';
 function commentThread(PDO $pdo, $entityType, $entityId) {
     // author_user_id / internal (notify-lib.php): named Joust authors; internal notes only for the admin seat
     $stmt = $pdo->prepare("
-        SELECT actor, detail, created_at" . activityAuthorCols($pdo) . "
+        SELECT actor, detail, created_at" . activityAuthorCols($pdo) . commentSelectCols($pdo) . "
           FROM activity_log
          WHERE entity_type = ?
            AND entity_id = ?
            AND action = 'commented'
-           AND detail IS NOT NULL AND detail <> ''" . activityVisibleSql($pdo) . "
+           AND " . commentThreadWhere($pdo) . activityVisibleSql($pdo) . "
          ORDER BY created_at ASC, id ASC
     ");
     $stmt->execute([$entityType, (int)$entityId]);
@@ -1047,6 +1049,7 @@ function renderCommentThread(PDO $pdo, $entityType, $entityId) {
     };
     $out = '<div class="comment-thread">';
     foreach ($msgs as $m) {
+        if (trim((string)$m['detail']) === '') continue;   // a deleted comment (comment-edit-lib.php)
         $actor = $m['actor'] ?: 'unknown';
         $rel   = relativeTime($m['created_at']);
         $abs   = absoluteTime($m['created_at']);
@@ -1136,6 +1139,8 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
     $grouped = [];
     $byBatch = [];
     foreach ($rows as $r) {
+        // a deleted comment (comment-edit-lib.php: detail emptied) is gone from every feed
+        if ($r['action'] === 'commented' && trim((string)($r['detail'] ?? '')) === '') continue;
         if ($r['batch_id']) {
             $key = $r['batch_id'];
             if (!isset($byBatch[$key])) {
@@ -1435,6 +1440,8 @@ function actionLabel($action) {
         'unposted'             => 'unmarked scheduled',
         'commented'            => 'commented',
         'uncommented'          => 'cleared comment',
+        'comment_edited'       => 'edited a comment on',     // comment-edit-lib.php (internal rows: the admin seat's history)
+        'comment_deleted'      => 'deleted a comment on',
         'resolved'             => 'marked the note answered',   // Slack "Resolve" (an internal row: admin seat only)
         'edited_caption'       => 'edited caption',
         'edited_hashtags'      => 'edited hashtags',
@@ -1942,6 +1949,13 @@ if (!function_exists('activityFinalizeRows')) {
                 case 'uncommented':
                     $verb = 'cleared a comment'; $icon = 'ellipsis'; $tone = 'neutral';
                     $t = "$who cleared a comment on $objT"; $hh = "$whoH cleared a comment on $objH"; break;
+                // comment editing (comment-edit-lib.php): internal rows — Joust's feed only, one line per comment
+                case 'comment_edited':
+                    $verb = 'edited a comment'; $icon = 'ellipsis'; $tone = 'neutral';
+                    $t = "$who edited a comment on $objT"; $hh = "$whoH edited a comment on $objH"; break;
+                case 'comment_deleted':
+                    $verb = 'deleted a comment'; $icon = 'xmark'; $tone = 'neutral';
+                    $t = "$who deleted a comment on $objT"; $hh = "$whoH deleted a comment on $objH"; break;
                 case 'edited_schedule':
                     $verb = 'rescheduled'; $icon = 'calendar'; $tone = 'scheduled';
                     $t = "$who rescheduled $objT"; $hh = "$whoH rescheduled $objH"; break;
@@ -2242,15 +2256,19 @@ function joustLogoUrl(string $variant = ''): string {
 /**
  * The Joust avatar (same 36px rounded square as clientAvatar()): the bundled
  * static/brand/joust.png, or an orange "J" when the file is missing. Used for the
- * admin actor in comment threads / the activity feed and on the admin chooser.
+ * admin actor in comment threads / the activity feed, and as the admin seat's brand mark: the
+ * sidebar brand (partials/tabbar.php), the nav bar's trailing slot on unscoped admin pages and
+ * the phone nav eyebrow (partials/navbar.php). $alt '' when a visible "Joust Media" sits beside it.
+ * The mark is round (transparent corners), so .ui-avatar--joust draws it as a circle with a
+ * light backing ring in dark mode (static/css/base.css).
  */
-function joustAvatar(string $class = ''): string {
+function joustAvatar(string $class = '', string $alt = 'Joust Media'): string {
     $cls = trim('ui-avatar ui-avatar--joust ' . $class);
     $src = joustLogoUrl();
     if ($src !== '') {
-        return '<img class="' . esc($cls) . '" src="' . esc($src) . '" alt="Joust Media" width="36" height="36" loading="lazy">';
+        return '<img class="' . esc($cls) . '" src="' . esc($src) . '" alt="' . esc($alt) . '" width="36" height="36" decoding="async" data-joust-logo>';
     }
-    return '<span class="' . esc($cls . ' ui-avatar--initial') . '" aria-label="Joust Media">J</span>';
+    return '<span class="' . esc($cls . ' ui-avatar--initial') . '"' . ($alt !== '' ? ' aria-label="' . esc($alt) . '"' : ' aria-hidden="true"') . ' data-joust-logo>J</span>';
 }
 
 /**
@@ -2485,3 +2503,4 @@ require_once __DIR__ . '/gmail-lib.php';
 require_once __DIR__ . '/client-notify-lib.php';
 require_once __DIR__ . '/tracking-lib.php';
 require_once __DIR__ . '/redo-lib.php';         // the Redo queue (migrate.php 52): redoMark / redoAfterReplace / redoItems …
+require_once __DIR__ . '/comment-edit-lib.php'; // comment editing (migrate.php 53): commentEditApply / commentRevisionMeta / the Slack update …

@@ -170,6 +170,13 @@
         setTimeout(function () { App.newPost.open({ preselect: [ref] }); }, 60);
       });
       document.addEventListener('click', function (e) { if (self.isOpen && !r.menu.hidden && !e.target.closest('[data-viewer-menu]')) self.closeMenu(); });
+      // A comment edited / deleted in the open thread (App.comments): the cached thread is stale; a delete drops the count.
+      document.addEventListener('comment:changed', function (e) {
+        var d = e.detail || {}, item = self.current();
+        if (!item || !d.el || !root.contains(d.el)) return;
+        delete self._threads[self._commentKey(item)];
+        if (d.deleted) { self._setCommentCount(item, (item.comments || 0) - 1); emit(root, 'viewer:comments', { item: item, count: item.comments, ok: true }); }
+      });
 
       this._bindGestures();
       this._onKey = this._onKey.bind(this);
@@ -506,6 +513,7 @@
           if (self.current() === item && !r.commentInput.value.trim()) { r.commentInput.value = text; self._autosize(); r.commentSend.disabled = false; }
           toast(res.error || 'Could not send', { kind: 'error' });
         } else {
+          if (App.comments && res.data && res.data.comment_id) App.comments.adopt(msg, res.data.comment_id, text);   // editable in place
           emit(root, 'viewer:comments', { item: item, count: prevCount + 1, ok: true, text: text });
         }
         return res;

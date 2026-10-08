@@ -28,6 +28,9 @@
   background: var(--joust, #ff7a00); color: #fff; font-weight: 800; font-size: 19px;
 }
 .signin-mark--client { background: #fff; }
+/* The Joust mark is a circle on transparent corners: round, uncropped, with the same hairline ring as
+   .ui-avatar--joust (light in dark mode so the navy rim reads on black). */
+.signin-mark--joust { border-radius: 50%; object-fit: contain; background: transparent; box-shadow: 0 0 0 1px var(--joust-ring); }
 .signin-pair { display: inline-flex; align-items: center; gap: 8px; }
 .signin-x { color: var(--label-tertiary); font-size: var(--text-footnote); font-weight: 600; }
 .signin-card h1 {

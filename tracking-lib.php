@@ -458,8 +458,10 @@ if (!function_exists('trackingViewer')) {
 if (!function_exists('trackingUnreadSql')) {
     /** Which rows count as "new" for a viewer type: client messages for Joust; visible Joust messages for a client. */
     function trackingUnreadSql(string $viewerType): string {
+        // A client's edit of a comment (comment-edit-lib.php 'comment_edited', an internal row) is news for Joust too —
+        // the unread dot only: it is no 'commented' row, so no escalation / waiting age moves.
         return $viewerType === 'admin'
-            ? "a.actor = 'client' AND a.action = 'commented' AND a.detail IS NOT NULL AND a.detail <> ''"
+            ? "a.actor = 'client' AND ((a.action = 'commented' AND a.detail IS NOT NULL AND a.detail <> '') OR a.action = 'comment_edited')"
             : "a.actor = 'admin' AND a.action = 'commented' AND a.internal = 0 AND a.detail IS NOT NULL AND a.detail <> ''";
     }
 }

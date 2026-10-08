@@ -202,12 +202,13 @@ if (($_GET['partial'] ?? '') === 'comments') {
     $rows = $hasLog ? commentThread($pdo, $cKind === 'tire' ? 'tire_image' : 'library_image', $cId) : [];
     // the Comments panel is open = the thread was read (tracking-lib.php unread markers)
     if (function_exists('trackingViewer') && ($tv = trackingViewer($pdo))) trackingMarkSeen($pdo, $tv, $cKind === 'tire' ? 'tire_image' : 'library_image', $cId);
-    $rows = array_values(array_filter($rows, static function ($r) { return trim((string)($r['detail'] ?? '')) !== ''; }));
+    // a deleted comment keeps its place ("Comment deleted"); the count is the live ones
+    $rows = array_values(array_filter($rows, static function ($r) { return trim((string)($r['detail'] ?? '')) !== '' || !empty($r['deleted_at']); }));
     echo json_encode([
         'ok'    => true,
         'kind'  => $cKind,
         'id'    => $cId,
-        'count' => count($rows),
+        'count' => count(commentsLive($rows)),
         'html'  => commentThreadHtml($rows, ['empty' => 'No comments yet.', 'class' => 'ui-viewer-thread-list']),
     ], JSON_UNESCAPED_SLASHES);
     exit;

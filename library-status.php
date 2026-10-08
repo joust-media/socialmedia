@@ -137,6 +137,7 @@ try {
         'id'      => $id,
         'status'  => $commentOnly ? (string)$row['status'] : $status,
         'comment' => $comment !== '' ? $comment : null,
+        'comment_id' => $GLOBALS['__lastCommentId'] ?? null,   // the new comment (comment-edit.php can change it)
     ]);
 } catch (Exception $e) {
     if ($pdo->inTransaction()) { $pdo->rollBack(); }

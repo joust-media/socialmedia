@@ -642,13 +642,13 @@ if (!function_exists('portalClientScripts')) {
     function portalClientScripts(): array {
         return ['index', 'assets', 'posts', 'emails', 'pages', 'flows', 'projects',
                 'feed', 'library', 'tires', 'features', 'add-project', 'add-tire',
-                'status', 'email-status', 'page-status', 'flow-status', 'library-status', 'tire-status', 'task'];
+                'status', 'email-status', 'page-status', 'flow-status', 'library-status', 'tire-status', 'task', 'comment-edit'];
     }
 }
 
 if (!function_exists('portalJsonScripts')) {
     function portalJsonScripts(): array {
-        return ['status', 'email-status', 'page-status', 'flow-status', 'library-status', 'tire-status', 'task'];
+        return ['status', 'email-status', 'page-status', 'flow-status', 'library-status', 'tire-status', 'task', 'comment-edit'];
     }
 }
 

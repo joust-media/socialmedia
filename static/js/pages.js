@@ -445,7 +445,7 @@
             var line = $('[data-approved-line]', art.closest('.ui-sheet-root') || document);
             if (line) line.textContent = 'Approved ' + fmtDay(new Date()) + ' · Joust will make it live';
           }
-          if (note) appendComment(art, note, App.actor);
+          if (note) appendComment(art, note, App.actor, false, res.data && res.data.comment_id);
           if (note && status === 'denied') fillNote(art, note, App.actor);
           var form = $('[data-deny-form]', sheetRoot()); if (form) { form.hidden = true; var ta = $('[data-deny-note]', form); if (ta) ta.value = ''; }
         }
@@ -519,7 +519,8 @@
   };
 
   /* ---- comments ----------------------------------------------------- */
-  function appendComment(art, text, actor, internal) {
+  function appendComment(art, text, actor, internal, commentId) {
+    var rawText = text;
     var root = art.closest('.ui-sheet-root') || document;
     var thread = $('[data-thread]', root); if (!thread) return;
     var bw = App.bubbleWho ? App.bubbleWho(actor) : { side: 'mine', who: 'You' };   // drawn from the viewer's seat
@@ -542,6 +543,8 @@
       if (qc) { var k = (parseInt((qc.textContent.match(/\d+/) || ['0'])[0], 10) || 0) + 1; qc.textContent = k + ' client ' + (k === 1 ? 'comment' : 'comments'); }
     }
     var body = $('[data-sheet-body]', root); if (body) body.scrollTop = body.scrollHeight;
+    if (commentId && App.comments) App.comments.adopt(msg, commentId, rawText);   // editable in place (comment-edit.php)
+    return msg;
   }
 
   P.comment = function (id, text, internal) {
@@ -551,7 +554,7 @@
     if (internal) body.internal = 1;   // admin: an internal note (Joust only)
     return App.post(ENDPOINT, body).then(function (res) {
       if (!res.ok) { toast(res.error || 'Could not send', 'error'); return res; }
-      var art = pg(); if (art && art.getAttribute('data-id') === String(id)) appendComment(art, text, App.actor, !!internal);
+      var art = pg(); if (art && art.getAttribute('data-id') === String(id)) appendComment(art, text, App.actor, !!internal, res.data && res.data.comment_id);
       return res;
     });
   };

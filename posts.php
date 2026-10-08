@@ -164,9 +164,9 @@ function postsAttachRelations(PDO $pdo, array &$posts, bool $hasMedia, bool $has
 
     if ($hasLog) {
         $st = $pdo->prepare("
-            SELECT entity_id, actor, detail, created_at" . activityAuthorCols($pdo) . " FROM activity_log
+            SELECT entity_id, actor, detail, created_at" . activityAuthorCols($pdo) . commentSelectCols($pdo) . " FROM activity_log
             WHERE entity_type = 'post' AND action = 'commented' AND entity_id IN ($ph)
-              AND detail IS NOT NULL AND detail <> ''" . activityVisibleSql($pdo) . "
+              AND " . commentThreadWhere($pdo) . activityVisibleSql($pdo) . "
             ORDER BY created_at ASC, id ASC
         ");
         $st->execute($ids);
@@ -370,7 +370,7 @@ $listNext = ($listOffset + count($posts)) < $listTotal ? $listOffset + count($po
  * any actor), client-comment count and the last-activity timestamp used for sorting.
  */
 function postsQueueInfo(array $post, ?string $deniedAt, ?array $client): array {
-    $comments   = is_array($post['comments'] ?? null) ? $post['comments'] : [];
+    $comments   = commentsLive(is_array($post['comments'] ?? null) ? $post['comments'] : []);   // a deleted comment is no note
     $clientRows = array_values(array_filter($comments, static function ($c) {
         return strtolower(trim((string)($c['actor'] ?? ''))) === 'client';
     }));
@@ -502,7 +502,7 @@ $renderRow = function (array $post, int $rowIndex = 0) use ($client, $segment, $
         $first    = $post['images'][0] ?? null;
         $isVid    = $first ? pdIsVideo($first) : false;
         $nImg     = count($post['images']);
-        $nCmt     = count($post['comments']);
+        $nCmt     = count(commentsLive($post['comments']));
         $caption  = trim((string)$post['caption']);
         $firstLn  = trim(preg_split('/\r\n|\r|\n/', $caption)[0] ?? '');
         $name     = trim((string)($post['name'] ?? ''));

@@ -102,7 +102,8 @@ $joustLogo = $brandUrl('joust.png');
     display: flex; align-items: center; justify-content: center;
     font-weight: 800; font-size: 18px; letter-spacing: 0;
   }
-  .brand-mark--img { object-fit: cover; background: transparent; box-shadow: inset 0 0 0 0.5px var(--separator); }
+  /* The Joust mark is a circle on transparent corners: round, uncropped, hairline ring (light in dark mode) */
+  .brand-mark--img { border-radius: 50%; object-fit: contain; background: transparent; box-shadow: 0 0 0 1px var(--joust-ring); }
   h1 {
     margin: 0 0 4px;
     font-size: var(--text-title2); line-height: var(--lh-title2);

@@ -1930,6 +1930,119 @@ if (!$errors) {
         $errors[] = $e->getMessage();
     }
 }
+
+// 53. Comment editing (comment-edit-lib.php): clients edit / delete their own comments (no time limit), Joust edits /
+//     deletes any. The original text is never lost:
+//       activity_log.edited_at / deleted_at   when the comment was last edited / deleted (a deleted comment keeps its row
+//                                             — the thread shows "Comment deleted" in place — and its detail is emptied,
+//                                             so every reader that skips empty comments hides it).
+//       comment_revisions                     one row per edit / delete: the text before and after, who did it
+//                                             (actor + admin_users id / client_contacts id) and when.
+//       comment_slack                         per comment, the Slack message that carries it (channel + ts, from the
+//                                             delivery), so an edit can chat.update that message. Backfilled once from
+//                                             the delivered notify_outbox rows (meta comment_slack_backfill).
+//     Only columns the production activity_log really has are read (id, entity_type, entity_id, action, actor, detail,
+//     internal); the new tables carry their own created_at. Each part is probed on its own: a re-run finishes a partial run.
+if (!$errors) {
+    try {
+        if (!tableExists($pdo, 'activity_log')) {
+            $steps[] = "• `activity_log` does not exist — skipped comment editing.";
+        } else {
+            $add = [];
+            if (!columnExists($pdo, 'activity_log', 'edited_at'))  $add[] = "ADD COLUMN edited_at DATETIME NULL DEFAULT NULL";
+            if (!columnExists($pdo, 'activity_log', 'deleted_at')) $add[] = "ADD COLUMN deleted_at DATETIME NULL DEFAULT NULL";
+            if ($add) {
+                $pdo->exec("ALTER TABLE activity_log " . implode(', ', $add));
+                $steps[] = "✓ Added activity_log.edited_at / deleted_at (comment editing).";
+            } else {
+                $steps[] = "• activity_log.edited_at / deleted_at already exist — skipped.";
+            }
+            if (!tableExists($pdo, 'comment_revisions')) {
+                $pdo->exec("
+                    CREATE TABLE comment_revisions (
+                        id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                        activity_id INT UNSIGNED NOT NULL,
+                        company_id INT UNSIGNED NOT NULL,
+                        kind VARCHAR(10) NOT NULL,
+                        old_detail TEXT NULL,
+                        new_detail TEXT NULL,
+                        actor VARCHAR(10) NOT NULL,
+                        author_user_id INT UNSIGNED NULL DEFAULT NULL,
+                        client_contact_id INT UNSIGNED NULL DEFAULT NULL,
+                        created_at DATETIME NOT NULL,
+                        KEY ix_activity (activity_id, id),
+                        KEY ix_company (company_id, created_at)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                ");
+                $steps[] = "✓ Created `comment_revisions` (every edit / delete keeps the text before it).";
+            } else {
+                $steps[] = "• `comment_revisions` already exists — skipped.";
+            }
+            if (!tableExists($pdo, 'comment_slack')) {
+                $pdo->exec("
+                    CREATE TABLE comment_slack (
+                        activity_id INT UNSIGNED NOT NULL PRIMARY KEY,
+                        kind VARCHAR(20) NOT NULL,
+                        slack_channel VARCHAR(40) NOT NULL,
+                        slack_ts VARCHAR(40) NOT NULL,
+                        outbox_id INT UNSIGNED NULL DEFAULT NULL,
+                        created_at DATETIME NOT NULL,
+                        KEY ix_msg (slack_channel, slack_ts)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                ");
+                $steps[] = "✓ Created `comment_slack` (the Slack message of each comment, for edits).";
+            } else {
+                $steps[] = "• `comment_slack` already exists — skipped.";
+            }
+            // One-time backfill: comments already delivered to Slack (item_event / internal_note rows that were sent) map
+            // to their message — notify_outbox.provider_id is the reply's ts, notify_threads.slack_channel its channel.
+            $hasMeta = tableExists($pdo, 'meta');
+            $done = false;
+            if ($hasMeta) {
+                $m = $pdo->prepare("SELECT 1 FROM meta WHERE k = 'comment_slack_backfill'");
+                $m->execute();
+                $done = (bool)$m->fetchColumn();
+            }
+            if ($done) {
+                $steps[] = "• Slack message backfill for comments already done — skipped.";
+            } elseif (!tableExists($pdo, 'notify_outbox') || !tableExists($pdo, 'notify_threads')) {
+                $steps[] = "• notify_outbox / notify_threads missing — no Slack messages to backfill.";
+            } else {
+                $ins = $pdo->prepare("INSERT IGNORE INTO comment_slack (activity_id, kind, slack_channel, slack_ts, outbox_id, created_at) VALUES (?, ?, ?, ?, ?, NOW())");
+                $chan = $pdo->prepare("SELECT slack_channel FROM notify_threads WHERE entity_type = ? AND entity_id = ?");
+                $isComment = $pdo->prepare("SELECT 1 FROM activity_log WHERE id = ? AND action = 'commented'");
+                $mapped = 0; $last = 0;
+                do {
+                    $s = $pdo->prepare("SELECT id, kind, entity_type, entity_id, payload, provider_id FROM notify_outbox
+                                         WHERE id > ? AND status = 'sent' AND channel = 'slack' AND kind IN ('item_event', 'internal_note')
+                                           AND provider_id IS NOT NULL AND provider_id <> '' ORDER BY id ASC LIMIT 500");
+                    $s->execute([$last]);
+                    $batch = $s->fetchAll(PDO::FETCH_ASSOC);
+                    foreach ($batch as $o) {
+                        $last = (int)$o['id'];
+                        $p = json_decode((string)$o['payload'], true);
+                        if (!is_array($p)) continue;
+                        $ids = $o['kind'] === 'internal_note' ? [(int)($p['activity_id'] ?? 0)] : array_map('intval', (array)($p['activity_ids'] ?? []));
+                        $chan->execute([(string)$o['entity_type'], (int)$o['entity_id']]);
+                        $ch = (string)($chan->fetchColumn() ?: '');
+                        if ($ch === '') continue;
+                        foreach ($ids as $aid) {
+                            if ($aid <= 0) continue;
+                            $isComment->execute([$aid]);
+                            if (!$isComment->fetchColumn()) continue;
+                            $ins->execute([$aid, (string)$o['kind'], $ch, (string)$o['provider_id'], (int)$o['id']]);
+                            $mapped += $ins->rowCount();
+                        }
+                    }
+                } while (count($batch) === 500);
+                if ($hasMeta) $pdo->prepare("INSERT IGNORE INTO meta (k, v) VALUES ('comment_slack_backfill', ?)")->execute([date('Y-m-d H:i:s')]);
+                $steps[] = "✓ Mapped {$mapped} comment(s) already in Slack to their message.";
+            }
+        }
+    } catch (Exception $e) {
+        $errors[] = $e->getMessage();
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">

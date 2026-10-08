@@ -181,10 +181,24 @@ $uiBrandName = !empty($client['name']) ? $client['name'] : 'Joust Media';
 $uiBrandHref = clientUrl('index.php');
 ?>
 <nav class="ui-tabbar ui-glass ui-glass--top" aria-label="Main navigation">
+  <?php if ($uiIsAdmin && function_exists('joustAvatar')): // the admin's brand is Joust; inside a client's scope that client is the context line ?>
+  <a class="ui-tabbar-brand ui-tabbar-brand--joust" href="<?= esc($uiBrandHref) ?>" data-brand="joust">
+    <?= joustAvatar('ui-avatar--brand', '') ?>
+    <span class="ui-tabbar-brand-text">
+      <span class="ui-tabbar-brand-name">Joust Media</span>
+      <?php if (!empty($client['name'])): ?>
+        <span class="ui-tabbar-brand-sub" data-brand-client="<?= esc((string)($client['slug'] ?? '')) ?>"><?= clientAvatar($client, 'ui-avatar--xs') ?><span><?= esc($client['name']) ?></span></span>
+      <?php else: ?>
+        <span class="ui-tabbar-brand-sub">All clients</span>
+      <?php endif; ?>
+    </span>
+  </a>
+  <?php else: ?>
   <a class="ui-tabbar-brand" href="<?= esc($uiBrandHref) ?>">
     <?= function_exists('clientAvatar') ? clientAvatar($client, 'ui-avatar--sm') : '' ?>
     <span><?= esc($uiBrandName) ?></span>
   </a>
+  <?php endif; ?>
   <ul class="ui-tabbar-list">
     <?php foreach ($uiTabs as $uiKey => $uiTab):
       if (!empty($uiTab['admin']) && !$uiIsAdmin) continue;   // admin-only tab: not rendered for clients

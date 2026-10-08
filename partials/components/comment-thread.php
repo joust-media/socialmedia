@@ -70,8 +70,24 @@ if (!function_exists('commentSlideChip')) {
     }
 }
 
+if (!function_exists('commentMoreButton')) {
+    /** The unobtrusive ⋯ on an editable comment (static/js/app.js App.comments opens Edit / Delete / History). */
+    function commentMoreButton(): string
+    {
+        return '<button type="button" class="pd-msg-more" data-comment-more aria-haspopup="menu" aria-expanded="false" aria-label="Comment options" title="Comment options">'
+             . '<svg class="ui-icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">'
+             . '<circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg></button>';
+    }
+}
+
 if (!function_exists('commentBubble')) {
-    /** $opts['slides']: sm thumbs per slide (renderPostDetail) → "[Slide N] …" comments get a slide chip. */
+    /**
+     * $opts['slides']: sm thumbs per slide (renderPostDetail) → "[Slide N] …" comments get a slide chip.
+     * $opts['edit']: commentRevisionMeta() of this row (commentThreadHtml() fetches it for the whole thread) — the
+     * "edited" label (when + who, in its title and a tap-to-show line) and, for a deleted comment on the admin seat,
+     * the original text behind "Show original".
+     * Editable rows (commentCanEdit()) carry data-comment-id / -raw / -can and the ⋯ button (App.comments).
+     */
     function commentBubble(array $row, array $opts = []): string
     {
         $esc   = static function ($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); };
@@ -83,8 +99,11 @@ if (!function_exists('commentBubble')) {
         $named  = ($actor === 'admin' && function_exists('activityAuthorLabel')) ? activityAuthorLabel($row, $viewer) : '';
         if ($named !== '' && $named !== 'You' && $viewer === 'admin') $side = 'theirs';
         $internal = !empty($row['internal']);
-        $text  = (string)($row['detail'] ?? '');
+        $raw   = (string)($row['detail'] ?? '');
+        $text  = $raw;
         $chip  = '';
+        $slideNo = 0;
+        if (function_exists('commentSlideSplit')) [$slideNo] = commentSlideSplit($raw);
         if (isset($opts['slides']) && is_array($opts['slides'])) {
             [$slideNo, $rest] = commentSlideSplit($text);
             if ($slideNo > 0) { $chip = commentSlideChip($slideNo, (string)($opts['slides'][$slideNo - 1] ?? '')); $text = $rest; }
@@ -92,6 +111,14 @@ if (!function_exists('commentBubble')) {
         $when  = (string)($row['created_at'] ?? '');
         $rel   = function_exists('relativeTime') ? relativeTime($when) : '';
         $abs   = function_exists('absoluteTime') ? absoluteTime($when) : $when;
+
+        // Comment editing (comment-edit-lib.php): who may change it, edited / deleted state.
+        $cid     = function_exists('commentRowId') ? commentRowId($row) : 0;
+        $deleted = !empty($row['deleted_at']);
+        $edited  = !$deleted && !empty($row['edited_at']);
+        $canEdit = function_exists('commentCanEdit') && commentCanEdit($row, $viewer);
+        $meta    = is_array($opts['edit'] ?? null) ? $opts['edit'] : null;
+        $history = $viewer === 'admin' && $cid > 0 && ($edited || $deleted);
 
         // Actor avatar in the meta line: the Joust mark for admin bubbles, the client's logo /
         // initials for client bubbles (actorAvatar(), helpers.php; '' for 'unknown' notes).
@@ -101,11 +128,41 @@ if (!function_exists('commentBubble')) {
         if ($named === '' && $actor === 'client' && $viewer === 'admin' && function_exists('activityClientLabel')) $named = activityClientLabel($row);
         $label = $named !== '' ? $named : commentActorLabel($actor, $viewer);
         // Internal notes (Joust only — never rendered for the client seat; the readers filter them out) get a lock pill.
-        $out  = '<div class="pd-msg pd-msg--' . $side . '" data-actor="' . $esc($actor) . '"' . ($internal ? ' data-internal="1"' : '') . '>';
-        $out .= '<div class="ui-bubble ui-bubble--' . $side . ($internal ? ' ui-bubble--internal' : '') . '">' . $chip . nl2br($esc($text)) . '</div>';
+        $out  = '<div class="pd-msg pd-msg--' . $side . ($deleted ? ' pd-msg--deleted' : '') . '" data-actor="' . $esc($actor) . '"' . ($internal ? ' data-internal="1"' : '');
+        if ($cid > 0) $out .= ' data-comment-id="' . $cid . '"';
+        // the message without its "[Slide N] " tag (the editor's text) + the tag apart (the editor's slide picker)
+        if ($canEdit) $out .= ' data-comment-can="edit" data-comment-raw="' . $esc($slideNo > 0 ? commentSlideSplit($raw)[1] : $raw) . '"' . ($slideNo > 0 ? ' data-comment-on-slide="' . $slideNo . '"' : '');
+        if ($history) $out .= ' data-comment-history="1"';
+        if ($deleted) $out .= ' data-comment-deleted="1"';
+        $out .= '>';
+        if ($deleted) {
+            $out .= '<div class="ui-bubble ui-bubble--' . $side . ' ui-bubble--deleted' . ($internal ? ' ui-bubble--internal' : '') . '" data-comment-body>'
+                  . '<span class="pd-msg-deleted-text">Comment deleted</span>';
+            // Joust can look at what it said (the text before the deletion lives in comment_revisions)
+            if ($viewer === 'admin' && $meta && ($meta['original'] ?? null) !== null && trim((string)$meta['original']) !== '') {
+                $out .= '<details class="pd-msg-original" data-comment-original><summary>Show original</summary><div class="pd-msg-original-text">'
+                      . nl2br($esc((string)$meta['original'])) . '</div></details>';
+            }
+            $out .= '</div>';
+        } else {
+            $out .= '<div class="ui-bubble ui-bubble--' . $side . ($internal ? ' ui-bubble--internal' : '') . '" data-comment-body>' . $chip . nl2br($esc($text)) . '</div>';
+        }
         $out .= '<div class="ui-bubble-meta">' . $avatar . $esc($label)
               . ($internal ? ' <span class="ui-pill ui-pill--nodot ui-pill--internal" data-internal-pill>' . (function_exists('icon') ? icon('lock') : '') . 'Internal</span>' : '');
         if ($rel !== '') { $out .= ' · <time title="' . $esc($abs) . '">' . $esc($rel) . '</time>'; }
+        if (($edited || $deleted) && $meta && function_exists('commentEditedTitle')) {
+            $title = commentEditedTitle($meta, $viewer, $deleted);
+            if ($edited) {
+                // hover → the title; tap / Enter → the same line under the bubble (phones have no hover)
+                $out .= ' · <button type="button" class="pd-msg-edited" data-comment-edited aria-expanded="false" title="' . $esc($title) . '">edited</button>'
+                      . '<span class="pd-msg-edited-detail" data-comment-edited-detail hidden>' . $esc($title) . '</span>';
+            } elseif ($viewer === 'admin') {
+                $out .= ' · <span class="pd-msg-edited-detail">' . $esc($title) . '</span>';
+            }
+        } elseif ($edited) {
+            $out .= ' · <span class="pd-msg-edited" data-comment-edited>edited</span>';
+        }
+        if ($canEdit || $history) $out .= commentMoreButton();   // in the meta line: next to who / when, never over the text
         $out .= '</div></div>';
         return $out;
     }
@@ -115,16 +172,30 @@ if (!function_exists('commentThreadHtml')) {
     function commentThreadHtml(array $rows, array $opts = []): string
     {
         $esc   = static function ($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); };
+        // a deleted comment keeps its place ("Comment deleted"); an empty legacy row is still skipped
+        $rows  = array_values(array_filter($rows, static function ($r) {
+            return trim((string)($r['detail'] ?? '')) !== '' || !empty($r['deleted_at']);
+        }));
+        $live  = count(array_filter($rows, static function ($r) { return empty($r['deleted_at']); }));
         $cls   = 'ui-thread pd-thread' . (!empty($opts['class']) ? ' ' . $opts['class'] : '');
-        $attrs = ' data-thread data-count="' . count($rows) . '"';
+        $attrs = ' data-thread data-count="' . $live . '"';
         foreach (($opts['attrs'] ?? []) as $k => $v) {
             $k = preg_replace('/[^a-zA-Z0-9\-]/', '', (string)$k);
             if ($k !== '') $attrs .= ' ' . $k . '="' . $esc($v) . '"';
         }
+        if (isset($opts['slides']) && is_array($opts['slides']) && count($opts['slides']) >= 2) $attrs .= ' data-slides="' . count($opts['slides']) . '"';
+        // edit history of the edited / deleted rows: one query for the whole thread
+        $metaIds = [];
+        foreach ($rows as $r) {
+            if ((!empty($r['edited_at']) || !empty($r['deleted_at'])) && function_exists('commentRowId')) $metaIds[] = commentRowId($r);
+        }
+        $meta = $metaIds && function_exists('commentRevisionMeta') ? commentRevisionMeta($GLOBALS['pdo'] ?? null, $metaIds) : [];
         $out = '<div class="' . $esc($cls) . '"' . $attrs . '>';
         foreach ($rows as $row) {
-            if (trim((string)($row['detail'] ?? '')) === '') continue;
-            $out .= commentBubble($row, (isset($opts['slides']) ? ['slides' => (array)$opts['slides']] : []) + (isset($opts['viewer']) ? ['viewer' => (string)$opts['viewer']] : []));
+            $o = (isset($opts['slides']) ? ['slides' => (array)$opts['slides']] : []) + (isset($opts['viewer']) ? ['viewer' => (string)$opts['viewer']] : []);
+            $id = function_exists('commentRowId') ? commentRowId($row) : 0;
+            if ($id > 0 && isset($meta[$id])) $o['edit'] = $meta[$id];
+            $out .= commentBubble($row, $o);
         }
         $empty = array_key_exists('empty', $opts) ? (string)$opts['empty'] : 'No messages yet.';
         if ($empty !== '') {

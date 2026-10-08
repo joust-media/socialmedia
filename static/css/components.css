@@ -87,6 +87,14 @@
     text-decoration: none;
   }
   .ui-tabbar-brand span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Admin: the Joust mark + "Joust Media", the scoped client (or "All clients") as a second line */
+  .ui-tabbar-brand-text { display: flex; flex-direction: column; min-width: 0; }
+  .ui-tabbar-brand-sub {
+    display: flex; align-items: center; gap: 5px; margin-top: 1px;
+    color: var(--label-secondary);
+    font-size: var(--text-footnote); line-height: var(--lh-footnote); font-weight: 500; letter-spacing: var(--ls-footnote);
+  }
+  .ui-tabbar-brand-sub .ui-avatar--xs { width: 14px; height: 14px; border-radius: 4px; font-size: 8px; }
   .ui-tabbar-list { flex-direction: column; justify-content: flex-start; gap: 2px; max-width: none; margin: 0; }
   .ui-tabbar-list > li { flex: 0 0 auto; }
   .ui-tab {
@@ -684,3 +692,82 @@ html:not(:has(.ui-tabbar)) .ui-toast { bottom: calc(24px + env(safe-area-inset-b
 }
 .ui-tabbar-footer--links + .ui-tabbar-footer { margin-top: 0; padding-top: 2px; }
 .ui-viewas-note { color: var(--label-secondary); }
+
+/* ---- Comment editing (comment-edit-lib.php · static/js/app.js App.comments) -----------------------------------------
+   The ⋯ sits in a bubble's meta line (who · when · edited ⋯): faint until the message is hovered / focused on a mouse,
+   always faintly there on touch (long-press opens the same menu). Edit is inline; a deleted comment keeps its place. */
+.pd-msg { position: relative; }
+.pd-msg-more {
+  display: inline-flex; align-items: center; justify-content: center; vertical-align: middle;
+  width: 30px; height: 22px; margin: -2px 0 -2px 4px; padding: 0;
+  border: 0; border-radius: 11px; background: transparent; color: var(--label-secondary);
+  cursor: pointer; opacity: 0; transition: opacity var(--dur-fast) linear, background-color var(--dur-fast) linear;
+}
+.pd-msg-more .ui-icon { width: 18px; height: 18px; }
+.pd-msg:hover .pd-msg-more, .pd-msg:focus-within .pd-msg-more, .pd-msg.is-menu-open .pd-msg-more,
+[data-comment-host="note"] .pd-msg-more, .pd-msg-more:focus-visible { opacity: 1; }
+.pd-msg-more:hover, .pd-msg-more[aria-expanded="true"] { background: var(--fill-tertiary); color: var(--label); }
+.pd-msg-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (hover: none) {
+  .pd-msg-more { opacity: .7; width: 34px; height: 26px; }
+  .pd-msg[data-comment-can="edit"] .ui-bubble { -webkit-touch-callout: none; }
+}
+.pd-comment-menu {
+  position: absolute; top: 100%; z-index: 8; min-width: 168px; margin-top: 2px; padding: 6px;
+  background: var(--bg-elevated); border-radius: 12px; box-shadow: var(--shadow-card), 0 0 0 0.5px var(--separator);
+  animation: ui-fade-in var(--dur-fast) linear;
+}
+.pd-msg--mine .pd-comment-menu { right: 0; }
+.pd-msg--theirs .pd-comment-menu, [data-comment-host="note"] .pd-comment-menu { left: 0; }
+[data-comment-host="note"] { position: relative; }
+.pd-comment-menu button {
+  display: block; width: 100%; padding: 10px 12px; border: 0; border-radius: 8px; background: transparent; text-align: left;
+  color: var(--label); font: inherit; font-size: var(--text-subhead); line-height: var(--lh-subhead); cursor: pointer;
+}
+.pd-comment-menu button:hover, .pd-comment-menu button:focus-visible { background: var(--fill-tertiary); outline: none; }
+.pd-comment-menu button.is-destructive { color: var(--deny); }
+
+/* "edited": hover shows when + who (title); a tap / Enter shows the same line under the bubble */
+.pd-msg-edited {
+  display: inline; padding: 0; margin: 0; border: 0; background: none; font: inherit; color: inherit;
+  text-decoration: underline dotted; text-underline-offset: 2px; cursor: pointer;
+}
+button.pd-msg-edited:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 3px; }
+.pd-msg-edited-detail { display: block; margin-top: 2px; color: var(--label-secondary); }
+.pd-msg-edited-detail[hidden] { display: none; }
+.pd-msg-edited-tag { color: var(--label-tertiary); }
+
+/* A deleted comment: its place in the thread, no text (Joust can open the original) */
+.ui-bubble--deleted, .ui-bubble--mine.ui-bubble--deleted {
+  background: transparent; color: var(--label-tertiary); border: 1px dashed var(--separator); font-style: italic;
+}
+.pd-msg-original { margin-top: 4px; font-style: normal; }
+.pd-msg-original summary { cursor: pointer; color: var(--accent); font-size: var(--text-footnote); }
+.pd-msg-original-text { margin-top: 4px; padding: 6px 8px; border-radius: 8px; background: var(--fill-tertiary); color: var(--label); }
+.pd-hidden-note-gone { margin: 8px 0 0; font-size: var(--text-footnote); }
+
+/* Inline editor */
+.pd-msg.is-editing { align-items: stretch; }
+.pd-msg-editor { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 560px; margin-bottom: 2px; }
+.pd-msg--mine .pd-msg-editor { align-self: flex-end; }
+.pd-msg-editor-input { width: 100%; min-height: 44px; resize: vertical; }
+.pd-msg-editor-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.pd-msg-editor-slide { margin-right: auto; }
+.pd-msg-editor-hint { margin-right: auto; font-size: var(--text-caption); color: var(--label-tertiary); }
+.pd-msg-editor-slide + .pd-msg-editor-hint { margin-right: 0; }
+@media (hover: none) { .pd-msg-editor-hint { display: none; } }
+.pd-msg-editor-error { margin: 0; font-size: var(--text-footnote); color: var(--deny); }
+.pd-msg-editor-error[hidden] { display: none; }
+.pd-msg.is-busy { opacity: .6; pointer-events: none; }
+
+/* History (admin) */
+.pd-msg-history {
+  width: 100%; max-width: 560px; margin-top: 6px; padding: 10px 12px; border-radius: 12px;
+  background: var(--bg-elevated); box-shadow: 0 0 0 0.5px var(--separator); font-size: var(--text-footnote); line-height: var(--lh-footnote);
+}
+.pd-msg--mine .pd-msg-history { align-self: flex-end; }
+.pd-msg-history-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.pd-msg-history ol { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.pd-msg-history-meta { display: block; color: var(--label-secondary); }
+.pd-msg-history-text { display: block; color: var(--label); white-space: pre-wrap; overflow-wrap: anywhere; }
+.pd-msg-history-text.is-deleted { color: var(--label-tertiary); text-decoration: line-through; }

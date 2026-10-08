@@ -133,7 +133,7 @@ header('Referrer-Policy: no-referrer');   // the ?t= token never leaks to anothe
   <div class="signin-card" data-signin>
     <div class="signin-brand">
       <span class="signin-pair">
-        <?php if ($joust !== ''): ?><img class="signin-mark" src="<?= esc($joust) ?>" alt="" width="40" height="40"><?php else: ?><span class="signin-mark signin-mark--initial">J</span><?php endif; ?>
+        <?php if ($joust !== ''): ?><img class="signin-mark signin-mark--joust" src="<?= esc($joust) ?>" alt="" width="40" height="40"><?php else: ?><span class="signin-mark signin-mark--initial">J</span><?php endif; ?>
         <?php if ($hintName !== ''): ?>
           <span class="signin-x" aria-hidden="true">×</span>
           <?php if ($hintLogo !== ''): ?><img class="signin-mark signin-mark--client" src="<?= esc($hintLogo) ?>" alt="" width="40" height="40" data-signin-client-logo><?php else: ?><span class="signin-mark signin-mark--initial" data-signin-client-logo><?= esc(mb_strtoupper(mb_substr($hintName, 0, 1))) ?></span><?php endif; ?>
