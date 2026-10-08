@@ -39,6 +39,7 @@ function emailReply(array $email, array $extra = []): void {
         'status' => (string)$email['status'],
         'live'   => !empty($email['live']) ? 1 : 0,
         'key'    => $key,
+        'comment_id' => $GLOBALS['__lastCommentId'] ?? null,   // the new comment (comment-edit.php can change it)
         'label'  => emailStatusLabelForKey($key),
     ], $extra));
     exit;
@@ -106,7 +107,7 @@ if (array_key_exists('internal', $_POST) && (string)$_POST['internal'] !== '' &&
     activityWithContext(['internal' => 1], static function () use ($pdo, $row, $id, $noteLabel, $note) {
         logActivity($pdo, (int)$row['company_id'], 'email', $id, 'commented', 'admin', "Internal note on {$noteLabel}", $note, newBatchId());
     });
-    echo json_encode(['ok' => true, 'id' => $id, 'comment' => $note, 'internal' => true]);
+    echo json_encode(['ok' => true, 'id' => $id, 'comment' => $note, 'internal' => true, 'comment_id' => $GLOBALS['__lastCommentId'] ?? null]);
     exit;
 }
 

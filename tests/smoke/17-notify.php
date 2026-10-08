@@ -232,7 +232,7 @@ ntest('named authors: Joust\'s rows carry author_user_id; the client reads "Lanc
     ok(q1("SELECT author_user_id FROM activity_log WHERE detail = 'Thanks'") === null, 'client rows have no admin author');
     has(get('posts.php?client=kenda&post=1&partial=1', 'client')['body'], 'Lance at Joust');
     $a = get('posts.php?client=kenda&post=1&partial=1', 'admin')['body'];
-    ok(preg_match('#data-actor="admin">.*?<div class="ui-bubble-meta">.*?You#s', $a) === 1, 'admin sees You');
+    ok(preg_match('#data-actor="admin"[^>]*>.*?<div class="ui-bubble-meta">.*?You#s', $a) === 1, 'admin sees You');
 });
 
 // ---- Slack in: events ------------------------------------------------------------------------------------------------

@@ -40,6 +40,7 @@ function pageReply(array $page, array $extra = []): void {
         'status' => (string)$page['status'],
         'live'   => !empty($page['live']) ? 1 : 0,
         'key'    => $key,
+        'comment_id' => $GLOBALS['__lastCommentId'] ?? null,   // the new comment (comment-edit.php can change it)
         'label'  => pageStatusLabelForKey($key),
     ], $extra));
     exit;
@@ -107,7 +108,7 @@ if (array_key_exists('internal', $_POST) && (string)$_POST['internal'] !== '' &&
     activityWithContext(['internal' => 1], static function () use ($pdo, $row, $id, $noteLabel, $note) {
         logActivity($pdo, (int)$row['company_id'], 'page', $id, 'commented', 'admin', "Internal note on {$noteLabel}", $note, newBatchId());
     });
-    echo json_encode(['ok' => true, 'id' => $id, 'comment' => $note, 'internal' => true]);
+    echo json_encode(['ok' => true, 'id' => $id, 'comment' => $note, 'internal' => true, 'comment_id' => $GLOBALS['__lastCommentId'] ?? null]);
     exit;
 }
 

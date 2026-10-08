@@ -106,8 +106,8 @@ test('comment threads: Joust messages carry the Joust mark for the client and th
     status(post('status.php', ['id' => 1, 'comment' => 'On it — new grade tomorrow', 'client' => 'kenda'], 'admin', [], JB), 200, 'admin comment');
     foreach (['client', 'admin'] as $seat) {
         $b = status(get('posts.php?client=kenda&post=1&partial=1', $seat), 200)['body'];
-        ok((bool)preg_match('#<div class="pd-msg pd-msg--\w+" data-actor="admin">(?:(?!data-actor=).)*?<div class="ui-bubble-meta"><img class="ui-avatar ui-avatar--joust ui-avatar--xs pd-msg-avatar" src="[^"]*/static/brand/joust\.png#s', $b), "{$seat}: Joust mark on the Joust bubble");
-        ok((bool)preg_match('#<div class="pd-msg pd-msg--\w+" data-actor="client">(?:(?!data-actor=).)*?<div class="ui-bubble-meta"><span class="ui-avatar ui-avatar--xs pd-msg-avatar ui-avatar--initial" aria-label="Kenda Tires">K</span>#s', $b), "{$seat}: Kenda initials on the client bubble");
+        ok((bool)preg_match('#<div class="pd-msg pd-msg--\w+" data-actor="admin"[^>]*>(?:(?!data-actor=).)*?<div class="ui-bubble-meta"><img class="ui-avatar ui-avatar--joust ui-avatar--xs pd-msg-avatar" src="[^"]*/static/brand/joust\.png#s', $b), "{$seat}: Joust mark on the Joust bubble");
+        ok((bool)preg_match('#<div class="pd-msg pd-msg--\w+" data-actor="client"[^>]*>(?:(?!data-actor=).)*?<div class="ui-bubble-meta"><span class="ui-avatar ui-avatar--xs pd-msg-avatar ui-avatar--initial" aria-label="Kenda Tires">K</span>#s', $b), "{$seat}: Kenda initials on the client bubble");
     }
     // a post the client sent back (Needs changes, hidden from the client): "Joust replied" carries the mark too
     status(post('status.php', ['id' => 4, 'comment' => 'Darker render coming up', 'client' => 'kenda'], 'admin', [], JB), 200, 'admin reply on post 4');

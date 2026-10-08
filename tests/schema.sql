@@ -17,6 +17,14 @@
 -- one fails there with "Unknown column 'created_at'" (the first Redo-queue migrate.php 52 did). Keep these minimal so
 -- the suite fails the same way production would. status / client_comment on tire_images were added by hand before
 -- migrate.php existed (production's own error_log shows tires.php failing on them first), so they stay.
+--
+-- activity_log is NOT here on purpose: production got it from migrate.php 13 exactly like this harness does, so the
+-- harness has production's columns — id, company_id, entity_type, entity_id, action, actor, batch_id, summary, detail,
+-- digest_id, created_at (13) + author_user_id, internal (37) + client_contact_id (44) + edited_at, deleted_at (53,
+-- comment editing). The live code on main writes company_id / entity_type / entity_id / action / actor /
+-- author_user_id / internal / batch_id / summary / detail / client_contact_id and reads id + created_at (the feed, the
+-- Morning summary, escalation) — nothing else. Comment editing keeps to those; its own tables (comment_revisions,
+-- comment_slack) carry their own created_at.
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;

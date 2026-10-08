@@ -15,6 +15,8 @@ if (!function_exists('render_summary')) {
         global $pdo;
         $companies = [];
         foreach ($rows as $r) {
+            // a deleted comment (comment-edit-lib.php: detail emptied) is not news
+            if (($r['action'] ?? '') === 'commented' && trim((string)($r['detail'] ?? '')) === '') continue;
             $cid = (int)$r['company_id'];
             if (!isset($companies[$cid])) {
                 $companies[$cid] = ['name' => $r['company_name'] ?? ('Company #' . $cid), 'slug' => (string)($r['company_slug'] ?? ''), 'entries' => [], 'batched' => []];

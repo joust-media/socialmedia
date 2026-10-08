@@ -233,7 +233,7 @@ if (!function_exists('renderPageDetail')) {
         }
 
         // ---- 4. Comments thread -------------------------------------------------------------
-        $out .= '<section class="pd-comments"><h3 class="pd-section-title">Comments <span class="pd-comment-count text-tertiary" data-comment-count>' . count($comments) . '</span></h3>';
+        $out .= '<section class="pd-comments"><h3 class="pd-section-title">Comments <span class="pd-comment-count text-tertiary" data-comment-count>' . count(function_exists('commentsLive') ? commentsLive($comments) : $comments) . '</span></h3>';
         $out .= commentThreadHtml($comments, ['empty' => 'No messages yet — questions and change requests go here.']);
         $out .= '</section>';
 

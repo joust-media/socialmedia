@@ -344,7 +344,7 @@ if (!function_exists('renderPostDetail')) {
         $out .= '</div>';
 
         // ---- 4. Comments thread ------------------------------------------------
-        $out .= '<section class="pd-comments"><h3 class="pd-section-title">Comments <span class="pd-comment-count text-tertiary" data-comment-count>' . count($comments) . '</span></h3>';
+        $out .= '<section class="pd-comments"><h3 class="pd-section-title">Comments <span class="pd-comment-count text-tertiary" data-comment-count>' . count(function_exists('commentsLive') ? commentsLive($comments) : $comments) . '</span></h3>';
         // "[Slide 3] …" comments render a slide chip (thumb + "Slide 3"; tap → the carousel goes there)
         $out .= commentThreadHtml($comments, ['empty' => 'No messages yet — questions and change requests go here.', 'slides' => pdSlideThumbs($images)]);
         $out .= '</section>';
@@ -439,9 +439,15 @@ if (!function_exists('renderPostHiddenNotice')) {
                . '<p class="pd-hidden-text">You asked for changes on <strong>' . pdEsc($name) . '</strong>. It comes back to To Review when it is ready — nothing to do until then.</p>';
         if ($note && trim((string)$note['text']) !== '') {
             $when = $note['at'] !== '' && function_exists('relativeTime') ? relativeTime($note['at']) : '';
-            $out .= '<figure class="pd-hidden-note" data-hidden-note>'
-                  . '<figcaption class="pd-hidden-note-head">Your note' . ($when !== '' ? ' · ' . pdEsc($when) : '') . '</figcaption>'
-                  . '<blockquote>' . ((int)$note['slide'] > 0 ? '<span class="pd-note-slide">On slide ' . (int)$note['slide'] . ':</span> ' : '') . nl2br(pdEsc($note['text'])) . '</blockquote>'
+            // Their own note stays editable (comment-edit-lib.php): ⋯ → Edit / Delete, in place (static/js/app.js App.comments).
+            $editable = (int)($note['id'] ?? 0) > 0 && ($note['actor'] ?? '') === 'client' && function_exists('commentEditReady') && commentEditReady($GLOBALS['pdo'] ?? null);
+            $out .= '<figure class="pd-hidden-note" data-hidden-note'
+                  . ($editable ? ' data-comment-id="' . (int)$note['id'] . '" data-comment-host="note" data-comment-can="edit" data-comment-raw="' . pdEsc((string)$note['text']) . '"'
+                     . ((int)$note['slide'] > 0 ? ' data-comment-on-slide="' . (int)$note['slide'] . '"' : '') : '') . '>'
+                  . '<figcaption class="pd-hidden-note-head">Your note' . ($when !== '' ? ' · ' . pdEsc($when) : '')
+                  . (!empty($note['edited']) ? ' · <span class="pd-msg-edited-tag" data-comment-edited-tag>edited</span>' : '')
+                  . (($editable && function_exists('commentMoreButton')) ? commentMoreButton() : '') . '</figcaption>'
+                  . '<blockquote data-comment-body>' . ((int)$note['slide'] > 0 ? '<span class="pd-note-slide">On slide ' . (int)$note['slide'] . ':</span> ' : '') . nl2br(pdEsc($note['text'])) . '</blockquote>'
                   . '</figure>';
         }
         // Joust's replies since the client's latest comment (read-only): the Home "Joust commented on …" link lands

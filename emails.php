@@ -152,9 +152,9 @@ function emailsAttachComments(PDO $pdo, array &$rows): void {
     $ph  = implode(',', array_fill(0, count($ids), '?'));
     try {
         $st = $pdo->prepare("
-            SELECT entity_id, actor, detail, created_at" . activityAuthorCols($pdo) . " FROM activity_log
+            SELECT entity_id, actor, detail, created_at" . activityAuthorCols($pdo) . commentSelectCols($pdo) . " FROM activity_log
             WHERE entity_type = 'email' AND action = 'commented' AND entity_id IN ($ph)
-              AND detail IS NOT NULL AND detail <> ''" . activityVisibleSql($pdo) . "
+              AND " . commentThreadWhere($pdo) . activityVisibleSql($pdo) . "
             ORDER BY created_at ASC, id ASC
         ");
         $st->execute($ids);
@@ -166,7 +166,8 @@ function emailsAttachComments(PDO $pdo, array &$rows): void {
             $eid = (int)$row['entity_id'];
             if (isset($byId[$eid])) $byId[$eid]['comments'][] = ['actor' => $row['actor'], 'detail' => $row['detail'], 'created_at' => $row['created_at'],
                                                           'author_user_id' => $row['author_user_id'] ?? null, 'internal' => (int)($row['internal'] ?? 0),
-                                                          'client_contact_id' => $row['client_contact_id'] ?? null];
+                                                          'client_contact_id' => $row['client_contact_id'] ?? null,
+                                                          'comment_id' => $row['comment_id'] ?? null, 'edited_at' => $row['edited_at'] ?? null, 'deleted_at' => $row['deleted_at'] ?? null];
         }
         $st = $pdo->prepare("
             SELECT entity_id, MAX(created_at) AS at FROM activity_log
@@ -267,7 +268,7 @@ if ($isQueue && $emails) {
 
 /** Queue facts for one denied email (same shape as posts.php's postsQueueInfo). */
 function emailsQueueInfo(array $email, ?string $deniedAt, ?array $client): array {
-    $comments   = is_array($email['comments'] ?? null) ? $email['comments'] : [];
+    $comments   = commentsLive(is_array($email['comments'] ?? null) ? $email['comments'] : []);   // a deleted comment is no note
     $clientRows = array_values(array_filter($comments, static function ($c) {
         return strtolower(trim((string)($c['actor'] ?? ''))) === 'client';
     }));
@@ -453,7 +454,7 @@ include __DIR__ . '/partials/layout-top.php';
         if (mb_strlen($trigLn) > 90) { $trigLn = rtrim(mb_substr($trigLn, 0, 89)) . '…'; }
         $prio     = strtolower(trim((string)($email['priority'] ?? '')));
         $prioLbl  = emailPriorityLabel($prio);
-        $nCmt     = count($email['comments']);
+        $nCmt     = count(commentsLive($email['comments']));
         $sendRaw  = trim((string)($email['send_at'] ?? ''));
         $ts       = ($sendRaw !== '' && $sendRaw !== '0000-00-00') ? strtotime($sendRaw) : false;
         $dateLbl  = $ts ? date('M j', $ts) : '';

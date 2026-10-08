@@ -942,6 +942,327 @@
   })();
 
   /* ---------------------------------------------------------------- */
+  /* Comment editing (comment-edit-lib.php → comment-edit.php)          */
+  /*   Every thread renders editable comments with data-comment-id,     */
+  /*   data-comment-can="edit", data-comment-raw (the stored text) and  */
+  /*   a ⋯ button ([data-comment-more]); long-press opens the same menu */
+  /*   on touch. Edit is inline (Save / Cancel, Enter saves, Shift+Enter */
+  /*   = new line, Esc cancels); Delete asks first and leaves "Comment  */
+  /*   deleted" in place; History (admin) lists every revision inline.  */
+  /*   App.comments.adopt(msgEl, id, rawText) makes a just-sent bubble  */
+  /*   editable. Fires 'comment:changed' {id, deleted, el} on document. */
+  /* ---------------------------------------------------------------- */
+  App.comments = (function () {
+    var ENDPOINT = 'comment-edit.php';
+    var MORE_SVG = '<svg class="ui-icon" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>';
+    var menu = null, menuHost = null, seq = 0, press = null, swallowClick = false;
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function hostOf(el) { return el && el.closest ? el.closest('[data-comment-id]') : null; }
+    function canEdit(h) { return !!h && h.getAttribute('data-comment-can') === 'edit' && !h.hasAttribute('data-comment-deleted'); }
+    function hasHistory(h) { return !!h && App.role === 'admin' && h.hasAttribute('data-comment-history'); }
+    function isNote(h) { return h.getAttribute('data-comment-host') === 'note'; }
+    function bodyOf(h) { return $('[data-comment-body]', h); }
+    function splitSlide(raw) { var m = /^\[Slide (\d{1,2})\]\s*/.exec(raw || ''); return m ? [parseInt(m[1], 10), raw.slice(m[0].length)] : [0, raw || '']; }
+    function sheetScope(h) { return h.closest('.ui-sheet-root') || h.closest('.ui-viewer') || document; }
+    function emit(h, id, deleted) { document.dispatchEvent(new CustomEvent('comment:changed', { detail: { id: id, deleted: !!deleted, el: h } })); }
+
+    /* ---- the ⋯ menu ---- */
+    function closeMenu(refocus) {
+      if (!menu) return;
+      var h = menuHost; menu.remove(); menu = null; menuHost = null;
+      var btn = h && $('[data-comment-more]', h);
+      if (btn) { btn.setAttribute('aria-expanded', 'false'); if (refocus) try { btn.focus({ preventScroll: true }); } catch (e) {} }
+      if (h) h.classList.remove('is-menu-open');
+    }
+    function openMenu(h, viaKeyboard) {
+      closeMenu(false);
+      var items = [];
+      if (canEdit(h)) { items.push(['edit', 'Edit']); items.push(['delete', 'Delete']); }
+      if (hasHistory(h)) items.push(['history', 'History']);
+      if (!items.length) return;
+      menu = document.createElement('div');
+      menu.className = 'pd-menu pd-comment-menu';
+      menu.setAttribute('role', 'menu');
+      menu.setAttribute('data-comment-menu', '');
+      menu.innerHTML = items.map(function (it) {
+        return '<button type="button" role="menuitem" data-comment-menu-item="' + it[0] + '"' + (it[0] === 'delete' ? ' class="is-destructive"' : '') + '>' + it[1] + '</button>';
+      }).join('');
+      menuHost = h;
+      h.classList.add('is-menu-open');
+      h.appendChild(menu);
+      var btn = $('[data-comment-more]', h); if (btn) btn.setAttribute('aria-expanded', 'true');
+      try { menu.scrollIntoView({ block: 'nearest', behavior: App.reducedMotion() ? 'auto' : 'smooth' }); } catch (e) {}
+      var first = $('[role="menuitem"]', menu);
+      if (first && viaKeyboard !== false) try { first.focus({ preventScroll: true }); } catch (e) { first.focus(); }
+    }
+
+    /* ---- inline edit ---- */
+    function slideCount(h) {
+      var t = h.closest('[data-thread]'); var n = t ? parseInt(t.getAttribute('data-slides'), 10) || 0 : 0;
+      if (!n) { var scope = sheetScope(h); n = scope && scope.querySelectorAll ? scope.querySelectorAll('[data-carousel] [data-slide]').length : 0; }
+      return n;
+    }
+    function startEdit(h) {
+      if (!canEdit(h) || $('[data-comment-editor]', h)) return;
+      // data-comment-raw = the message without its "[Slide N] " tag; data-comment-on-slide = the tag's N
+      var parts = splitSlide(h.getAttribute('data-comment-raw') || '');
+      var slide = parseInt(h.getAttribute('data-comment-on-slide'), 10) || parts[0], text = parts[1];
+      var n = Math.max(slideCount(h), slide);
+      var id = 'commentEdit' + (++seq);
+      var form = document.createElement('form');
+      form.className = 'pd-msg-editor';
+      form.setAttribute('data-comment-editor', '');
+      form.setAttribute('autocomplete', 'off');
+      var pick = '';
+      if (n >= 2 || slide > 0) {
+        pick = '<label class="ui-visually-hidden" for="' + id + 's">About slide</label><select class="pd-composer-slide pd-msg-editor-slide" id="' + id + 's" data-comment-edit-slide><option value="0">All slides</option>';
+        for (var i = 1; i <= Math.max(n, slide); i++) pick += '<option value="' + i + '"' + (i === slide ? ' selected' : '') + '>Slide ' + i + '</option>';
+        pick += '</select>';
+      }
+      form.innerHTML = '<label class="ui-visually-hidden" for="' + id + '">Edit comment</label>'
+        + '<textarea class="ui-textarea pd-msg-editor-input" id="' + id + '" data-comment-edit-input maxlength="2000" rows="2">' + esc(text) + '</textarea>'
+        + '<div class="pd-msg-editor-bar">' + pick
+        + '<span class="pd-msg-editor-hint">Esc to cancel · Enter to save</span>'
+        + '<button type="button" class="ui-btn ui-btn--gray ui-btn--sm" data-comment-edit-cancel>Cancel</button>'
+        + '<button type="submit" class="ui-btn ui-btn--filled ui-btn--sm" data-comment-edit-save>Save</button></div>'
+        + '<p class="pd-msg-editor-error" data-comment-edit-error role="alert" hidden></p>';
+      var body = bodyOf(h);
+      if (body) body.hidden = true;
+      h.classList.add('is-editing');
+      if (body && body.nextSibling) h.insertBefore(form, body.nextSibling); else h.appendChild(form);
+      var ta = $('[data-comment-edit-input]', form);
+      var fit = function () { ta.style.height = 'auto'; ta.style.height = Math.min(220, Math.max(44, ta.scrollHeight)) + 'px'; };
+      fit();
+      ta.addEventListener('input', function () {
+        fit();
+        var save = $('[data-comment-edit-save]', form); if (save) save.disabled = !ta.value.trim();
+      });
+      form.addEventListener('submit', function (e) { e.preventDefault(); e.stopPropagation(); save(h, form); });
+      form.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelEdit(h, true); return; }
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.target === ta) { e.preventDefault(); e.stopPropagation(); save(h, form); }
+      });
+      $('[data-comment-edit-cancel]', form).addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); cancelEdit(h, true); });
+      try { ta.focus({ preventScroll: true }); } catch (e) { ta.focus(); }
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+      try { form.scrollIntoView({ block: 'nearest', behavior: App.reducedMotion() ? 'auto' : 'smooth' }); } catch (e) {}
+    }
+    function cancelEdit(h, refocus) {
+      var form = $('[data-comment-editor]', h); if (form) form.remove();
+      var body = bodyOf(h); if (body) body.hidden = false;
+      h.classList.remove('is-editing');
+      var btn = $('[data-comment-more]', h);
+      if (refocus && btn) try { btn.focus({ preventScroll: true }); } catch (e) {}
+    }
+    function fillChipThumbs(el) {
+      $$('.pd-slide-chip', el).forEach(function (chip) {
+        if ($('img', chip)) return;
+        var n = parseInt(chip.getAttribute('data-goto-slide'), 10);
+        var fig = $('[data-carousel] [data-slide="' + n + '"]', sheetScope(el));
+        var thumb = fig ? (fig.getAttribute('data-thumb') || '') : '';
+        if (!thumb) return;
+        var blank = $('.pd-slide-chip-blank', chip);
+        var img = document.createElement('img'); img.src = thumb; img.alt = ''; img.decoding = 'async';
+        if (blank) chip.replaceChild(img, blank); else chip.insertBefore(img, chip.firstChild);
+      });
+    }
+    function swap(h, html) {
+      var tpl = document.createElement('div'); tpl.innerHTML = String(html || '').trim();
+      var next = tpl.firstElementChild;
+      if (!next) return h;
+      h.parentNode.replaceChild(next, h);
+      fillChipThumbs(next);
+      return next;
+    }
+    function save(h, form) {
+      var ta = $('[data-comment-edit-input]', form), err = $('[data-comment-edit-error]', form);
+      var text = ta ? ta.value.trim() : '';
+      if (!text) { if (err) { err.textContent = 'A comment can’t be empty — delete it instead.'; err.hidden = false; } return; }
+      var btn = $('[data-comment-edit-save]', form); if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }
+      var params = { action: 'edit', id: h.getAttribute('data-comment-id'), text: text };
+      var pick = $('[data-comment-edit-slide]', form); if (pick) params.slide = pick.value;
+      App.post(ENDPOINT, params).then(function (res) {
+        if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); }
+        if (!res.ok) {
+          if (err) { err.textContent = res.error || 'Could not save'; err.hidden = false; }
+          App.toast(res.error || 'Could not save', { kind: 'error' });
+          return;
+        }
+        var d = res.data || {}, id = h.getAttribute('data-comment-id'), el;
+        if (isNote(h)) {
+          cancelEdit(h, false);
+          var body = bodyOf(h); if (body) body.innerHTML = d.body_html || esc(d.text || '');
+          h.setAttribute('data-comment-raw', d.text || '');
+          if (d.slide) h.setAttribute('data-comment-on-slide', String(d.slide)); else h.removeAttribute('data-comment-on-slide');
+          if (d.edited && !$('[data-comment-edited-tag]', h)) {
+            var cap = $('figcaption', h), more = cap && $('[data-comment-more]', cap);
+            if (cap) { var tag = document.createElement('span'); tag.className = 'pd-msg-edited-tag'; tag.setAttribute('data-comment-edited-tag', ''); tag.textContent = 'edited'; cap.insertBefore(document.createTextNode(' · '), more); cap.insertBefore(tag, more); }
+          }
+          el = h;
+          var mb = $('[data-comment-more]', h); if (mb) try { mb.focus({ preventScroll: true }); } catch (e) {}
+        } else {
+          el = swap(h, d.html);
+          var nb = $('[data-comment-more]', el); if (nb) try { nb.focus({ preventScroll: true }); } catch (e) {}
+        }
+        if (d.changed) App.toast('Comment updated', { kind: 'success' });
+        emit(el, id, false);
+      });
+    }
+
+    /* ---- delete ---- */
+    function bumpCounts(h, delta) {
+      var scope = sheetScope(h);
+      var t = h.closest('[data-thread]');
+      if (t) t.setAttribute('data-count', String(Math.max(0, (parseInt(t.getAttribute('data-count'), 10) || 0) + delta)));
+      $$('[data-comment-count]', scope === document ? document : scope).forEach(function (c) {
+        var n = parseInt(c.textContent, 10); if (!isNaN(n)) c.textContent = String(Math.max(0, n + delta));
+      });
+    }
+    function remove(h) {
+      var id = h.getAttribute('data-comment-id');
+      App.confirmInline(h, { title: 'Delete this comment?', text: isNote(h) ? 'Joust keeps a record of what it said.' : 'It shows as “Comment deleted” in the thread.', ok: 'Delete', kind: 'deny', name: 'comment-delete' })
+        .then(function (yes) {
+          if (!yes) { var b = $('[data-comment-more]', h); if (b) try { b.focus({ preventScroll: true }); } catch (e) {} return; }
+          h.classList.add('is-busy');
+          App.post(ENDPOINT, { action: 'delete', id: id }).then(function (res) {
+            h.classList.remove('is-busy');
+            if (!res.ok) { App.toast(res.error || 'Could not delete', { kind: 'error' }); return; }
+            var d = res.data || {}, el;
+            if (isNote(h)) {
+              el = document.createElement('p'); el.className = 'pd-hidden-note-gone text-tertiary'; el.setAttribute('data-comment-deleted', '1'); el.textContent = 'Note deleted.';
+              h.parentNode.replaceChild(el, h);
+            } else {
+              el = swap(h, d.html);
+              if (d.changed) bumpCounts(el, -1);
+            }
+            App.toast('Comment deleted', { kind: 'success' });
+            emit(el, id, true);
+          });
+        });
+    }
+
+    /* ---- history (admin) ---- */
+    function history(h) {
+      var open = $('[data-comment-history-list]', h);
+      if (open) { open.remove(); return; }
+      App.post(ENDPOINT, { action: 'history', id: h.getAttribute('data-comment-id') }).then(function (res) {
+        if (!res.ok) { App.toast(res.error || 'Could not load the history', { kind: 'error' }); return; }
+        var items = (res.data && res.data.items) || [];
+        var label = { posted: 'Posted', edit: 'Edited', 'delete': 'Deleted' };
+        var box = document.createElement('div');
+        box.className = 'pd-msg-history';
+        box.setAttribute('data-comment-history-list', '');
+        box.setAttribute('role', 'region');
+        box.setAttribute('aria-label', 'Comment history');
+        box.innerHTML = '<div class="pd-msg-history-head"><strong>History</strong><button type="button" class="ui-btn ui-btn--plain ui-btn--sm" data-comment-history-close>Close</button></div>'
+          + '<ol>' + items.map(function (it) {
+            return '<li data-history-kind="' + esc(it.kind) + '"><span class="pd-msg-history-meta">' + esc(label[it.kind] || it.kind) + ' by ' + esc(it.who) + ' · ' + esc(it.at_label || it.at) + '</span>'
+              + (it.kind === 'delete' ? '<span class="pd-msg-history-text is-deleted">' + esc(it.old || '') + '</span>' : '<span class="pd-msg-history-text">' + esc(it.text || '').replace(/\n/g, '<br>') + '</span>')
+              + '</li>';
+          }).join('') + '</ol>';
+        h.appendChild(box);
+        $('[data-comment-history-close]', box).addEventListener('click', function (e) { e.stopPropagation(); box.remove(); var b = $('[data-comment-more]', h); if (b) b.focus(); });
+        try { box.scrollIntoView({ block: 'nearest', behavior: App.reducedMotion() ? 'auto' : 'smooth' }); } catch (e) {}
+      });
+    }
+
+    /* ---- events (capture: the viewer / sheets never see these taps) ---- */
+    document.addEventListener('click', function (e) {
+      if (swallowClick) { swallowClick = false; if (hostOf(e.target)) { e.preventDefault(); e.stopPropagation(); return; } }
+      var more = e.target.closest && e.target.closest('[data-comment-more]');
+      if (more) {
+        e.preventDefault(); e.stopPropagation();
+        var h = hostOf(more);
+        if (menu && menuHost === h) closeMenu(true); else openMenu(h, true);
+        return;
+      }
+      var item = e.target.closest && e.target.closest('[data-comment-menu-item]');
+      if (item) {
+        e.preventDefault(); e.stopPropagation();
+        var host = menuHost, what = item.getAttribute('data-comment-menu-item');
+        closeMenu(false);
+        if (!host) return;
+        if (what === 'edit') startEdit(host);
+        else if (what === 'delete') remove(host);
+        else if (what === 'history') history(host);
+        return;
+      }
+      var ed = e.target.closest && e.target.closest('[data-comment-edited]');
+      if (ed && ed.tagName === 'BUTTON') {
+        e.preventDefault(); e.stopPropagation();
+        var detail = ed.parentNode && $('[data-comment-edited-detail]', ed.parentNode);
+        if (detail) { detail.hidden = !detail.hidden; ed.setAttribute('aria-expanded', detail.hidden ? 'false' : 'true'); }
+        return;
+      }
+      if (menu && !(e.target.closest && e.target.closest('[data-comment-menu]'))) closeMenu(false);
+    }, true);
+    document.addEventListener('keydown', function (e) {
+      if (!menu) return;
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu(true); return; }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        var list = $$('[role="menuitem"]', menu), i = list.indexOf(document.activeElement);
+        e.preventDefault();
+        i = e.key === 'ArrowDown' ? (i + 1) % list.length : (i <= 0 ? list.length - 1 : i - 1);
+        list[i].focus();
+        e.stopPropagation();
+        return;
+      }
+      if (e.key === 'Tab') closeMenu(false);
+    }, true);
+    // Long-press (touch): the same menu, without the ⋯ hunt.
+    document.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 1) return;
+      var t = e.target;
+      if (t.closest('a, button, textarea, input, select, [data-comment-editor], summary')) return;
+      var h = hostOf(t);
+      if (!h || isNote(h) && !t.closest('[data-comment-body]') || !(canEdit(h) || hasHistory(h))) return;
+      var x = e.touches[0].clientX, y = e.touches[0].clientY;
+      press = { h: h, x: x, y: y, timer: setTimeout(function () {
+        if (!press) return;
+        swallowClick = true;
+        if (navigator.vibrate) try { navigator.vibrate(10); } catch (err) {}
+        openMenu(press.h, false);
+        press = null;
+      }, 480) };
+    }, { passive: true });
+    function cancelPress() { if (press) { clearTimeout(press.timer); press = null; } }
+    document.addEventListener('touchmove', function (e) {
+      if (!press) return;
+      var t = e.touches[0];
+      if (Math.abs(t.clientX - press.x) > 8 || Math.abs(t.clientY - press.y) > 8) cancelPress();
+    }, { passive: true });
+    document.addEventListener('touchend', function () { cancelPress(); setTimeout(function () { swallowClick = false; }, 450); }, { passive: true });
+    document.addEventListener('touchcancel', cancelPress, { passive: true });
+    document.addEventListener('contextmenu', function (e) { if (menu && hostOf(e.target) === menuHost) e.preventDefault(); });
+
+    return {
+      endpoint: ENDPOINT,
+      /** A bubble the page just appended (posts.js / emails.js / pages.js / assets.js): editable in place now. */
+      adopt: function (msg, id, raw) {
+        id = parseInt(id, 10);
+        if (!msg || !id) return msg;
+        msg.setAttribute('data-comment-id', String(id));
+        msg.setAttribute('data-comment-can', 'edit');
+        var parts = splitSlide(String(raw || ''));
+        msg.setAttribute('data-comment-raw', parts[1]);
+        if (parts[0]) msg.setAttribute('data-comment-on-slide', String(parts[0]));
+        var bubble = $('.ui-bubble', msg); if (bubble) bubble.setAttribute('data-comment-body', '');
+        if (!$('[data-comment-more]', msg)) {
+          var b = document.createElement('button');
+          b.type = 'button'; b.className = 'pd-msg-more'; b.setAttribute('data-comment-more', '');
+          b.setAttribute('aria-haspopup', 'menu'); b.setAttribute('aria-expanded', 'false');
+          b.setAttribute('aria-label', 'Comment options'); b.title = 'Comment options';
+          b.innerHTML = MORE_SVG;
+          var meta = $('.ui-bubble-meta', msg);
+          (meta || msg).appendChild(b);
+        }
+        return msg;
+      },
+      edit: startEdit, remove: remove, history: history, open: openMenu, close: closeMenu
+    };
+  })();
+
+  /* ---------------------------------------------------------------- */
   /* Init                                                              */
   /* ---------------------------------------------------------------- */
   App.init = function () {

@@ -40,7 +40,7 @@ function r3Segments(string $html): array {
 }
 /** [actor, side, label] of every bubble in a thread. */
 function r3Bubbles(string $html): array {
-    preg_match_all('#<div class="pd-msg pd-msg--(mine|theirs)" data-actor="([a-z]+)">.*?<div class="ui-bubble-meta">(.*?)</div>#s', $html, $m, PREG_SET_ORDER);
+    preg_match_all('#<div class="pd-msg pd-msg--(mine|theirs)" data-actor="([a-z]+)"[^>]*>.*?<div class="ui-bubble-meta">(.*?)</div>#s', $html, $m, PREG_SET_ORDER);
     return array_map(static function ($x) {
         $meta = preg_replace('#<span class="ui-avatar[^>]*>.*?</span>#s', '', $x[3]);   // the avatar's initials are not the label
         return [$x[2], $x[1], trim(preg_replace('/\s*·.*$/s', '', strip_tags($meta)))];
