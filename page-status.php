@@ -13,7 +13,8 @@
  *   actor                   admin may act as client|admin; a client seat is always 'client' (actorFromPost)
  *   client                  tenant slug (App.post appends it) — must own the page's company (403)
  *
- * Client seat: approve / request changes (note ≥ 3 chars) on a pending, non-live page, and comment.
+ * Client seat: approve / request changes (note ≥ 3 chars) on a pending, non-live page, Approve instead on one it
+ * sent back (Needs changes — its "Sent back" list, sentback-lib.php), and comment (also on a sent-back one).
  * Everything else — draft/pending, live toggles, delete, re-deciding approved/denied/live rows —
  * needs the admin session (403; live rows answer 409 for a client decision).
  *
@@ -120,8 +121,9 @@ if (!$page) {
 if (!clientOwnsCompany($pdo, (int)$page['company_id'])) {
     pageFail(403, 'This page belongs to another client');
 }
-// Clients only ever see live / pending / approved rows — a hidden row is "not found" for them.
-if (!$isAdminSession && empty($page['live']) && !in_array((string)$page['status'], ['pending', 'approved'], true)) {
+// Clients see live / pending / approved rows and the ones they sent back (Needs changes — sentback-lib.php); a draft
+// is "not found" for them.
+if (!$isAdminSession && empty($page['live']) && !in_array((string)$page['status'], ['pending', 'approved', 'denied'], true)) {
     pageFail(404, 'Page not found');
 }
 
@@ -167,12 +169,12 @@ try {
 
     // ---- status / comment ----
     if ($hasStat && !$isAdminSession) {
-        // A client cannot re-decide a live page (409, like a scheduled post) or one that is not waiting on them.
-        if ($prevLive) {
-            pageFail(409, 'This page is already live — add a comment instead');
-        }
-        if ($prevStat !== 'pending') {
-            pageFail(403, 'This page can no longer be changed here — add a comment instead');
+        // A client cannot re-decide a live page (409, like a scheduled post) or one that is not waiting on them —
+        // except Approve instead on one it sent back ("Sent back" sheet); anything else there is a comment.
+        // (transitions-lib.php transitionClientDecisionError())
+        $why = transitionClientDecisionError('page', $prevStat, (string)$status, (bool)$prevLive);
+        if ($why) {
+            pageFail((int)$why['code'], (string)$why['error']);
         }
     }
     // A draft goes to the client before anyone decides on it (posts' rule, status.php): Send for review first.
@@ -190,7 +192,7 @@ try {
     if ($hasStat && $status !== $prevStat) {
         $pdo->prepare("UPDATE pages SET status = ? WHERE id = ?")->execute([$status, $id]);
         if ($status === 'approved') {
-            $logAction = 'approved';  $summary = "Page {$label} approved";  $detail = null;
+            $logAction = 'approved';  $summary = "Page {$label} approved" . ($prevStat === 'denied' && $actor === 'client' ? ' instead (it was sent back)' : '');  $detail = null;
         } elseif ($status === 'denied') {
             $logAction = 'denied';    $summary = "Changes requested on page {$label}";    $detail = null;
         } elseif ($status === 'pending') {

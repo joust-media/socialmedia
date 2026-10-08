@@ -555,7 +555,9 @@ if (!function_exists('clientEmailCompose')) {
         foreach ($items as $it) {
             $info = $it['info'];
             $rendered[] = [
-                'title' => (string)$info['title'], 'type' => (string)$info['type_label'], 'status' => (string)$info['status_label'],
+                // the client's words: its Needs-changes items are "Sent back" (sentback-lib.php), as in the portal
+                'title' => (string)$info['title'], 'type' => (string)$info['type_label'],
+                'status' => $info['status_key'] === 'denied' && function_exists('sentBackLabel') ? sentBackLabel() : (string)$info['status_label'],
                 'status_key' => (string)$info['status_key'],
                 'waiting' => (string)($info['waiting_since'] ?? ''),
                 'link'  => notifyItemLinkFor($pdo, $info, (string)$contact['email']),   // clientLink() — signs THIS contact in

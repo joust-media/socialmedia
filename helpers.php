@@ -571,12 +571,13 @@ if (!function_exists('postsHaveDraft')) {
     }
 }
 
-/** SQL condition (alias p) for the posts the CLIENT seat may see: never drafts (Joust is still
- *  building them) and never denied work (Joust's queue). Callers add it only for non-admins. */
+/** SQL condition (alias p) for the posts the CLIENT seat may see: never drafts (Joust is still building them).
+ *  Denied posts are the client's own "Sent back" list (sentback-lib.php: what it marked Needs changes, read-only
+ *  until it approves instead or comments). Callers add it only for non-admins. */
 if (!function_exists('postsClientVisibleSql')) {
     function postsClientVisibleSql(string $alias = 'p'): string {
         $a = $alias !== '' ? $alias . '.' : '';
-        return "{$a}status IN ('pending','approved')";
+        return "{$a}status IN ('pending','approved','denied')";
     }
 }
 
@@ -2504,3 +2505,4 @@ require_once __DIR__ . '/client-notify-lib.php';
 require_once __DIR__ . '/tracking-lib.php';
 require_once __DIR__ . '/redo-lib.php';         // the Redo queue (migrate.php 52): redoMark / redoAfterReplace / redoItems …
 require_once __DIR__ . '/comment-edit-lib.php'; // comment editing (migrate.php 53): commentEditApply / commentRevisionMeta / the Slack update …
+require_once __DIR__ . '/sentback-lib.php';     // the client's "Sent back" (its Needs changes items): counts, lists, the sheet panel, Home

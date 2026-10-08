@@ -98,7 +98,9 @@ if (!function_exists('renderPageDetail')) {
         $approvedAt   = !empty($page['approved_at']) ? strtotime((string)$page['approved_at']) : false;
         $approvedLine = 'Approved' . ($approvedAt ? ' ' . date('M j', $approvedAt) : '') . ' · Joust will make it live';
 
+        $sentBack = !$admin && $key === 'denied' && function_exists('sentBackPanelHtml');   // the client's own Sent back page (sentback-lib.php)
         $out  = '<article class="pd pg" data-page-detail="' . $id . '" data-id="' . $id . '" data-status="' . pgEsc($status) . '" data-live="' . ($live ? '1' : '0') . '"'
+              . ($sentBack ? ' data-sentback' : '')
               . ' data-key="' . pgEsc($key) . '" data-slug="' . pgEsc($slug) . '" data-source="' . pgEsc($source) . '" data-endpoint="' . pgEsc($endpoint) . '"'
               . (function_exists('trackingSeenAttr') ? trackingSeenAttr('page', $id) : '') . '>';
         $out .= '<div class="pd-body" data-pd-body>';
@@ -106,7 +108,7 @@ if (!function_exists('renderPageDetail')) {
         // ---- Top meta row: "PAGE · slug" · status pill · source badge · edited ------------
         $out .= '<div class="pd-meta pg-head">';
         $out .= '<span class="pd-type">Page' . ($slug !== '' ? ' · ' . pgEsc($slug) : '') . '</span>';
-        $out .= function_exists('pageStatusPill') ? pageStatusPill($page, ['class' => 'pd-pill']) : '';
+        $out .= function_exists('pageStatusPill') ? pageStatusPill($page, ['class' => 'pd-pill'] + ($sentBack ? ['label' => sentBackLabel()] : [])) : '';
         $out .= '<span class="pg-source pg-source--' . $source . '">' . ($source === 'url' ? 'URL' : 'Upload') . '</span>';
         if (!empty($page['updated_at']) && function_exists('relativeTime') && relativeTime($page['updated_at']) !== '') {
             $out .= '<span class="pd-edited text-tertiary" title="' . pgEsc(absoluteTime($page['updated_at'])) . '">edited ' . pgEsc(relativeTime($page['updated_at'])) . '</span>';
@@ -120,6 +122,10 @@ if (!function_exists('renderPageDetail')) {
         // ---- 0. Needs changes (admin): the client's note first, above the preview ---------------
         if ($admin) {
             $out .= reviewNoteBanner(reviewLatestNote($comments, $clientName), $key === 'denied');
+        } elseif ($sentBack) {
+            // ---- 0. Sent back (client): what Joust is doing, their note (editable), Joust's latest reply ----
+            $sbPdo = $GLOBALS['pdo'] ?? null;
+            $out .= sentBackPanelHtml(is_array($page['sentback'] ?? null) ? $page['sentback'] : ($sbPdo instanceof PDO ? sentBackInfo($sbPdo, 'page', $id) : []), 'page');
         }
 
         // ---- 1. Preview frame -----------------------------------------------------------
@@ -272,6 +278,7 @@ if (!function_exists('renderPageDetail')) {
                   . '<button type="button" class="ui-btn ui-btn--large ui-btn--deny ui-btn--tinted" data-decide="denied">Needs changes</button>'
                   . '<button type="button" class="ui-btn ui-btn--large ui-btn--approve ui-btn--primary" data-decide="approved">Approve</button>'
                   . '</div>';
+            if (function_exists('sentBackFooterHtml')) $out .= sentBackFooterHtml($sentBack);   // Sent back: Add a comment · Approve instead
         } else {
             $out .= reviewAdminFooterHtml('page', $key, $editUrl);
         }

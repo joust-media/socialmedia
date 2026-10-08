@@ -116,12 +116,15 @@ try {
                 : (($status === 'denied')  ? 'denied'
                 : 'reset_pending');
         // Human summary — never the raw on-disk filename (it used to leak into the activity feed).
-        $summary = ($action === 'approved') ? 'Approved an image in Library'
+        $instead = $action === 'approved' && $actor === 'client' && $row['status'] === 'denied';   // "Sent back" → Approve instead
+        $summary = ($action === 'approved') ? 'Approved an image in Library' . ($instead ? ' instead (it was sent back)' : '')
                  : (($action === 'denied')  ? 'Requested changes on an image in Library'
                  : 'Moved an image in Library back to To Review');
         logActivity($pdo, $companyId, 'library_image', $id, $action, $actor, $summary, null, $batchId);
         // "Needs changes" puts the image in Joust's Redo queue (redo-lib.php; the client still sees Needs changes).
         if ($status === 'denied' && function_exists('redoAutoQueue')) redoAutoQueue($pdo, 'library', $id);
+        // …and the client changing its mind takes it off again — only when that Needs changes queued it (sentback-lib.php)
+        if ($instead && function_exists('sentBackApproveRedo')) $redoCleared = sentBackApproveRedo($pdo, 'library', $id, $companyId, $batchId);
     }
 
     if ($comment !== '') {
@@ -138,6 +141,7 @@ try {
         'status'  => $commentOnly ? (string)$row['status'] : $status,
         'comment' => $comment !== '' ? $comment : null,
         'comment_id' => $GLOBALS['__lastCommentId'] ?? null,   // the new comment (comment-edit.php can change it)
+        'redo_cleared' => !empty($redoCleared),               // Approve instead took it off Joust's Redo queue
     ]);
 } catch (Exception $e) {
     if ($pdo->inTransaction()) { $pdo->rollBack(); }

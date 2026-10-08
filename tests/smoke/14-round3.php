@@ -151,11 +151,11 @@ test('#3 the admin post ⋯ menu: Edit post… only (no Edit caption / Edit date
 });
 
 // ---- #4 admin segments + no "0 comments" -------------------------------------------------------------------------
-test('#4 admin segments lead with Draft · Needs changes (Posts, Emails, Pages); the client never gets Needs changes', function () {
+test('#4 admin segments lead with Draft · Needs changes (Posts, Emails, Pages); the client gets its own Sent back last', function () {
     is(r3Segments(status(get('posts.php?client=kenda'), 200)['body']), ['draft', 'denied', 'pending', 'approved', 'scheduled'], 'posts');
     is(r3Segments(status(get('emails.php?client=privacybee'), 200)['body']), ['draft', 'denied', 'pending', 'approved', 'live'], 'emails');
     is(r3Segments(status(get('pages.php?client=privacybee'), 200)['body']), ['draft', 'denied', 'pending', 'approved', 'live'], 'pages');
-    is(r3Segments(status(get('posts.php?client=kenda', 'client'), 200)['body']), ['pending', 'approved', 'scheduled'], 'client posts');
+    is(r3Segments(status(get('posts.php?client=kenda', 'client'), 200)['body']), ['pending', 'approved', 'scheduled', 'denied'], 'client posts (denied = Sent back)');
 });
 test('#4 rows never say "0 comments"', function () {
     $b = status(get('posts.php?client=kenda&status=pending&month=all'), 200)['body'];
@@ -210,14 +210,14 @@ test('#10 "Post date" in the sheet (both seats, any state) and the composer; nev
 });
 
 // ---- #11 the client's own Needs-changes link --------------------------------------------------------------------------
-test('#11 client: their Needs-changes post opens a read-only notice with their note; the activity link points there', function () {
+test('#11 client: their Needs-changes post opens the full Sent back view with their note; the activity link points there', function () {
     $b = status(get('posts.php?client=kenda&post=4&partial=1', 'client'), 200)['body'];
-    has($b, 'data-hidden-post'); has($b, 'data-title="Winter promo"');
+    has($b, 'data-sentback'); has($b, 'data-title="Winter promo"');
     $t = r3Text($b);
-    has($t, 'Joust is updating this post');
+    has($t, 'Joust is reworking this');
     has($t, 'Please use the darker render', 'their note');
-    hasNot($b, 'data-comment-form'); hasNot($b, 'data-decide'); hasNot($b, 'data-carousel');
-    has($b, 'data-sheet-close>Back to posts</button>');
+    has($b, 'data-comment-form'); has($b, 'data-carousel'); has($b, 'data-approve-instead');
+    has($b, '<div class="ui-btn-group pd-decide" data-state="decide" hidden>', 'not the To Review pair');
     status(get('posts.php?client=kenda&post=4', 'client'), 200);
     is(get('posts.php?client=kenda&post=6&partial=1', 'client')['code'], 404, 'drafts stay hidden');
     is(get('posts.php?client=privacybee&post=4&partial=1', 'client')['code'], 404, 'another client\'s post');

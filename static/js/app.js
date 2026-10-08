@@ -260,6 +260,68 @@
   };
 
   /* ---------------------------------------------------------------- */
+  /* Sent back (client seat; sentback-lib.php): the sheet of a post /  */
+  /* email / page it marked Needs changes — Add a comment (the         */
+  /* composer) · Approve instead (asks first, then the page module's   */
+  /* own decide(): optimistic, the row leaves the Sent back list).     */
+  /* ---------------------------------------------------------------- */
+  App.sentBack = {
+    /** The open sheet's item + its page module (App.posts / App.emails / App.pages). */
+    target: function (el) {
+      var root = (el && el.closest && el.closest('.ui-sheet-root')) || document;
+      var art = root.querySelector('.pd[data-id]');
+      if (!art) return null;
+      var mod = art.hasAttribute('data-post-detail') ? { m: App.posts, noun: 'post' }
+              : art.hasAttribute('data-email-detail') ? { m: App.emails, noun: 'email' }
+              : art.hasAttribute('data-page-detail') ? { m: App.pages, noun: 'page' } : null;
+      if (!mod || !mod.m || !mod.m.decide) return null;
+      return { root: root, art: art, id: art.getAttribute('data-id'), mod: mod.m, noun: mod.noun };
+    },
+    approve: function (btn) {
+      var t = this.target(btn);
+      if (!t) return Promise.resolve(null);
+      return App.confirmInline(t.root.querySelector('[data-deny-form]'), {
+        name: 'approve-instead', kind: 'approve', title: 'Approve this ' + t.noun + ' instead?',
+        text: 'You sent it back for changes. Approving tells Joust to go ahead with it as it is — your note stays in the thread.',
+        ok: 'Approve'
+      }).then(function (ok) {
+        return ok ? t.mod.decide(t.id, 'approved', null, { toast: 'Approved — Joust will take it from here' }) : null;
+      });
+    },
+    comment: function (btn) {
+      var t = this.target(btn), input = t && t.root.querySelector('[data-comment-input]');
+      if (!input) return;
+      try { input.scrollIntoView({ block: 'nearest', behavior: App.reducedMotion() ? 'auto' : 'smooth' }); } catch (e) {}
+      try { input.focus({ preventScroll: true }); } catch (e) { input.focus(); }
+    }
+  };
+  // The note shows twice in a Sent back sheet (the panel + its bubble in the thread): an edit in one updates the other.
+  document.addEventListener('comment:changed', function (e) {
+    var d = e.detail || {}, el = d.el;
+    if (!el || d.deleted || !el.closest) return;
+    var root = el.closest('.ui-sheet-root');
+    if (!root || !root.querySelector('[data-sentback-panel]')) return;
+    var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }).replace(/\n/g, '<br>'); };
+    var hosts = Array.prototype.slice.call(root.querySelectorAll('[data-comment-id="' + d.id + '"]')).filter(function (h) { return h !== el; });
+    var raw = el.getAttribute('data-comment-raw');
+    if (raw == null) { var b0 = el.querySelector('[data-comment-body]'); raw = b0 ? b0.textContent : null; }
+    if (raw == null) return;
+    hosts.forEach(function (h) {
+      var body = h.querySelector('[data-comment-body]');
+      if (!body) return;
+      var lead = body.firstElementChild && body.firstElementChild.tagName !== 'BR' ? body.firstElementChild.outerHTML + ' ' : '';   // slide chip / "On slide N:"
+      body.innerHTML = lead + esc(raw);
+      if (h.hasAttribute('data-comment-raw')) h.setAttribute('data-comment-raw', raw);
+    });
+  });
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest && e.target.closest('[data-approve-instead]');
+    if (a) { e.preventDefault(); App.sentBack.approve(a); return; }
+    var c = e.target.closest && e.target.closest('[data-sentback-comment]');
+    if (c) { e.preventDefault(); App.sentBack.comment(c); }
+  });
+
+  /* ---------------------------------------------------------------- */
   /* Toast                                                             */
   /* ---------------------------------------------------------------- */
   var toastTimer = null;
@@ -422,8 +484,11 @@
   /* ---------------------------------------------------------------- */
   App.status = {
     labels: { draft: 'Draft', pending: 'To Review', approved: 'Approved', denied: 'Needs changes', posted: 'Scheduled', scheduled: 'Scheduled' },
+    /** The client reads its Needs-changes items as "Sent back" (sentback-lib.php sentBackLabel()); Joust keeps "Needs changes". */
+    sentBack: 'Sent back',
     label: function (status, posted) {
       if (posted) return this.labels.posted;
+      if (status === 'denied' && App.role !== 'admin') return this.sentBack;
       return this.labels[status] || (status ? status.charAt(0).toUpperCase() + status.slice(1) : '');
     },
     /** Swap a .ui-pill element to a new status (or posted=true → Scheduled). */

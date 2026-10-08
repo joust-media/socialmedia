@@ -293,11 +293,13 @@ try {
         echo json_encode(['ok' => false, 'error' => 'This post belongs to another client']);
         exit;
     }
-    // A client cannot re-decide a post that is already scheduled or that they denied (spec §2).
-    if ($hasStat && !$isAdminSession && (!empty($prev['posted']) || $prev['status'] === 'denied')) {
+    // A client cannot re-decide a post that is already scheduled (spec §2). One it sent back (Needs changes) it may
+    // only approve instead — the "Sent back" sheet's Approve instead (sentback-lib.php); anything else is a comment.
+    // The rule lives in transitions-lib.php (transitionClientDecisionError()).
+    if ($hasStat && !$isAdminSession && ($why = transitionClientDecisionError('post', (string)$prev['status'], (string)$status, !empty($prev['posted'])))) {
         $pdo->rollBack();
-        http_response_code(403);
-        echo json_encode(['ok' => false, 'error' => 'This post can no longer be changed here — add a comment instead']);
+        http_response_code((int)$why['code']);
+        echo json_encode(['ok' => false, 'error' => $why['error']]);
         exit;
     }
     // Caption / hashtags are frozen once the post is Scheduled (posted = 1) — for both seats.
@@ -340,7 +342,7 @@ try {
                 : (($status === 'draft')   ? 'moved_to_draft'
                 : ($prev['status'] === 'draft' ? 'submitted' : 'reset_pending')));
         logActivity($pdo, $companyId, 'post', $id, $action, $actor,
-            "{$postLabel} " . actionLabel($action),
+            "{$postLabel} " . actionLabel($action) . ($action === 'approved' && $actor === 'client' && $prev['status'] === 'denied' ? ' instead (it was sent back)' : ''),
             null, $batchId);
     }
     if ($hasCmt) {

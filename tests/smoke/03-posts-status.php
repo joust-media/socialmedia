@@ -59,8 +59,11 @@ test('client: approve own pending post', function () {
     is(st(2), 'approved');
     is(q1("SELECT actor FROM activity_log WHERE entity_id = 2 AND action = 'approved' ORDER BY id DESC LIMIT 1"), 'client');
 });
-test('client: cannot re-decide a denied post', function () {
-    is(post('status.php', ['id' => 4, 'status' => 'approved', 'client' => 'kenda'], 'client')['code'], 403);
+test('client: a denied post can only be approved instead (Sent back), never re-denied', function () {
+    is(post('status.php', ['id' => 4, 'status' => 'denied', 'comment' => 'Still wrong', 'client' => 'kenda'], 'client')['code'], 403);
+    is(post('status.php', ['id' => 4, 'status' => 'pending', 'client' => 'kenda'], 'client')['code'], 403);
+    status(post('status.php', ['id' => 4, 'status' => 'approved', 'client' => 'kenda'], 'client'), 200);
+    is(q1("SELECT status FROM posts WHERE id = 4"), 'approved');
 });
 test('client: edits a caption, empty caption refused', function () {
     status(post('status.php', ['id' => 2, 'caption' => 'Client wording', 'client' => 'kenda'], 'client'), 200);

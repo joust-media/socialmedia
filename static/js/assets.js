@@ -109,6 +109,8 @@
         replace: $('[data-viewer-replace]', root), replaceInput: $('[data-viewer-replace-input]', root), manage: $('[data-viewer-manage]', root),
         setRef: $('[data-viewer-set-reference]', root), del: $('[data-viewer-delete]', root), useInPost: $('[data-viewer-use-in-post]', root),
         redoPill: $('[data-viewer-redo-pill]', root), redo: $('[data-viewer-redo]', root), unredo: $('[data-viewer-unredo]', root), move: $('[data-viewer-move]', root),
+        sentback: $('[data-viewer-sentback]', root), confirm: $('[data-viewer-confirm]', root),   // client seat only (media-viewer.php)
+        confirmOk: $('[data-viewer-confirm-ok]', root), confirmCancel: $('[data-viewer-confirm-cancel]', root),
         comments: $('[data-viewer-comments]', root), commentsToggle: $('[data-viewer-comments-toggle]', root),
         commentsCount: $('[data-viewer-comments-count]', root), commentsPanel: $('[data-viewer-comments-panel]', root),
         thread: $('[data-viewer-thread]', root), commentForm: $('[data-viewer-comment-form]', root),
@@ -131,8 +133,13 @@
       $('[data-viewer-close]', root).addEventListener('click', function () { self.close(); });
       if (r.prev) r.prev.addEventListener('click', function () { self.prev(); });
       if (r.next) r.next.addEventListener('click', function () { self.next(); });
-      r.approve.addEventListener('click', function () { self.approve(); });
-      r.deny.addEventListener('click', function () { self.showNote(); });
+      // The client's own sent-back image: Approve instead asks first; the other button adds a comment (sentback-lib.php)
+      r.approve.addEventListener('click', function () { if (self.isSentBack()) self.showConfirm(); else self.approve(); });
+      r.deny.addEventListener('click', function () { if (self.isSentBack()) self.commentInstead(); else self.showNote(); });
+      if (r.confirm) {
+        r.confirmOk.addEventListener('click', function () { self.hideConfirm(); self.approve(); });
+        r.confirmCancel.addEventListener('click', function () { self.hideConfirm(); try { r.approve.focus({ preventScroll: true }); } catch (e) {} });
+      }
       r.more.addEventListener('click', function (e) { e.stopPropagation(); self.toggleMenu(); });
       r.done.addEventListener('click', function () { self.close(); });
 
@@ -195,7 +202,7 @@
       var root = this.root;
       root.hidden = false;
       root.setAttribute('aria-hidden', 'false');
-      this.hideDone(); this.hideNote(); this.closeMenu(); this.hideFallback();
+      this.hideDone(); this.hideNote(); this.hideConfirm(); this.closeMenu(); this.hideFallback();
       this.closeComments(); this._threads = {};   // panel starts folded; threads are fetched fresh per open
       this.refs.bar.hidden = false;
       this.goTo(clamp(index || 0, 0, this.items.length - 1));
@@ -236,7 +243,7 @@
     goTo: function (i, dir) {
       if (i < 0 || i >= this.items.length) return;
       var item = this.items[i], r = this.refs, self = this;
-      this.hideNote(); this.closeMenu(); this.hideFallback(); this.hideDone();
+      this.hideNote(); this.hideConfirm(); this.closeMenu(); this.hideFallback(); this.hideDone();
       r.bar.hidden = false;
       var old = this._slide;
       this._pauseVideo();
@@ -343,12 +350,19 @@
       r.count.textContent = ctx + (this.index + 1) + ' of ' + (this.opts.total > this.items.length ? this.opts.total : this.items.length);
       if (App.status) App.status.applyPill(r.status, item.status, false);
       var approved = item.status === 'approved', denied = item.status === 'denied';
+      var sb = denied && App.role !== 'admin';   // the client's Sent back: Add a comment · Approve instead
       r.approve.classList.toggle('is-done', approved);
-      r.approveLabel.textContent = approved ? 'Approved' : 'Approve';
+      r.approveLabel.textContent = approved ? 'Approved' : (sb ? 'Approve instead' : 'Approve');
       r.approve.setAttribute('aria-pressed', approved ? 'true' : 'false');
-      r.deny.classList.toggle('is-done', denied);
-      r.denyLabel.textContent = 'Needs changes';   // the button and the state read the same (is-done fills it)
-      r.deny.setAttribute('aria-pressed', denied ? 'true' : 'false');
+      r.deny.classList.toggle('is-done', denied && !sb);
+      r.deny.classList.toggle('is-comment', sb);   // a gray "Add a comment" (components.css), not the red Needs changes
+      r.denyLabel.textContent = sb ? 'Add a comment' : 'Needs changes';   // the button and the state read the same (is-done fills it)
+      r.deny.setAttribute('aria-pressed', denied && !sb ? 'true' : 'false');
+      if (r.sentback) {
+        r.sentback.hidden = !sb;
+        if (sb) r.sentback.textContent = (App.status && App.status.sentBack ? App.status.sentBack : 'Sent back') + ' · '
+          + (item.redo ? (assets.cfg.redo && assets.cfg.redo.label ? assets.cfg.redo.label : 'Being reworked') : 'Joust is reworking this');
+      }
       if (r.prev) r.prev.disabled = !this.hasPrev();
       if (r.next) r.next.disabled = !this.hasNext();
       $$('[data-tire-only]', r.menu).forEach(function (el) { el.hidden = item.kind !== 'tire'; });
@@ -570,6 +584,28 @@
     /* ---------------- decisions ---------------- */
     approve: function () { return this.decide('approved'); },
 
+    /* ---------------- the client's Sent back: Approve instead (asks first) · Add a comment ---------------- */
+    isSentBack: function () { var it = this.current(); return !!it && it.status === 'denied' && App.role !== 'admin'; },
+    showConfirm: function () {
+      var r = this.refs;
+      if (!r.confirm) { this.approve(); return; }
+      this.closeMenu(); this.hideNote();
+      r.actions.hidden = true;
+      r.confirm.hidden = false;
+      setTimeout(function () { try { r.confirmOk.focus({ preventScroll: true }); } catch (e) {} }, 30);
+    },
+    hideConfirm: function () {
+      var r = this.refs;
+      if (!r.confirm || r.confirm.hidden) return;
+      r.confirm.hidden = true;
+      r.actions.hidden = false;
+    },
+    commentInstead: function () {
+      var r = this.refs;
+      this.openComments();
+      if (r.commentInput) setTimeout(function () { try { r.commentInput.focus({ preventScroll: true }); } catch (e) {} }, 40);
+    },
+
     deny: function (note) {
       note = (note || '').trim();
       if (note.length < 3) { this.showNote(); this._validateNote(true); return Promise.resolve(null); }
@@ -597,6 +633,8 @@
           toast(res.error || 'Something went wrong', { kind: 'error' });
           emit(root, 'viewer:decision', { item: item, status: prev, prev: status, rolledBack: true, error: res.error });
         } else {
+          // Approve instead on a sent-back image: off Joust's Redo queue when the client's Needs changes had put it there
+          if (res.data && res.data.redo_cleared) { item.redo = false; if (item.tile) item.tile.removeAttribute('data-redo'); }
           emit(root, 'viewer:decision', { item: item, status: status, prev: prev, ok: true, data: res.data });
         }
         return res;
@@ -612,9 +650,12 @@
       var items = this.items, idx = this.index, mode = this.opts.mode || 'review', n = -1, i;
       var isTarget = mode === 'review'
         ? function (it) { return it.status === 'pending'; }
-        : function (it) { return it.status !== 'denied'; };
+        : (mode === 'sentback'   // the client's Sent back list: the next one still sent back; none left → back to the list
+          ? function (it) { return it.status === 'denied'; }
+          : function (it) { return it.status !== 'denied'; });
       for (i = idx + 1; i < items.length; i++) if (isTarget(items[i])) { n = i; break; }
-      if (n < 0 && mode === 'review') for (i = 0; i < idx; i++) if (isTarget(items[i])) { n = i; break; }
+      if (n < 0 && (mode === 'review' || mode === 'sentback')) for (i = 0; i < idx; i++) if (isTarget(items[i])) { n = i; break; }
+      if (n < 0 && mode === 'sentback') { this.close(); return; }
       if (n < 0) { this.showDone(); return; }
       this.goTo(n, n > idx ? 1 : -1);
     },
@@ -752,6 +793,7 @@
         e.preventDefault();
         if (!this.refs.menu.hidden) this.closeMenu();
         else if (!this.refs.note.hidden) this.hideNote();
+        else if (this.refs.confirm && !this.refs.confirm.hidden) this.hideConfirm();
         else if (this._commentsOpen) this.closeComments();
         else this.close();
         return;
@@ -1020,6 +1062,7 @@
       var idx = items.findIndex(function (it) { return it.tile === tile; });
       var page = this.cfg.page || {};
       viewer.open(items, idx < 0 ? 0 : idx, { mode: this.cfg.mode || 'review', context: this.cfg.context || '', total: page.total || items.length, source: 'grid' });
+      if (this.cfg.mode === 'sentback') viewer.openComments();   // the client's Sent back: its note + Joust's replies on screen
     },
 
     /* ---------------- Reference strip (open tire): tap → the viewer over the strip's own tiles ---------------- */
@@ -1458,7 +1501,8 @@
       el.className = 'ui-empty as-empty ui-enter'; el.setAttribute('data-assets-empty', '');
       el.innerHTML = filter === 'pending'
         ? '<p class="as-empty-title">All caught up</p><p>Nothing to review here right now.</p>'
-        : (filter === 'approved' ? '<p>No approved images yet.</p>' : '<p>Nothing needs changes.</p>');
+        : (filter === 'approved' ? '<p>No approved images yet.</p>'
+        : (App.role !== 'admin' ? '<p class="as-empty-title">Nothing sent back</p><p>Images you mark Needs changes wait here while Joust reworks them.</p>' : '<p>Nothing needs changes.</p>'));
       this.grid.parentNode.insertBefore(el, this.grid.nextSibling);
     },
 

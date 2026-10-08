@@ -12,7 +12,8 @@
  *   actor                   admin may act as client|admin; a client seat is always 'client' (actorFromPost)
  *   client                  tenant slug (App.post appends it) — must own the email's company (403)
  *
- * Client seat: approve / request changes (note ≥ 3 chars) on a pending, non-live email, and comment.
+ * Client seat: approve / request changes (note ≥ 3 chars) on a pending, non-live email, Approve instead on one it
+ * sent back (Needs changes — its "Sent back" list, sentback-lib.php), and comment (also on a sent-back one).
  * Everything else — draft/pending, live toggles, delete, re-deciding approved/denied/live rows —
  * needs the admin session (403; live rows answer 409 for a client decision).
  *
@@ -119,8 +120,9 @@ if (!$email) {
 if (!clientOwnsCompany($pdo, (int)$email['company_id'])) {
     emailFail(403, 'This email belongs to another client');
 }
-// Clients only ever see live / pending / approved rows — a hidden row is "not found" for them.
-if (!$isAdminSession && empty($email['live']) && !in_array((string)$email['status'], ['pending', 'approved'], true)) {
+// Clients see live / pending / approved rows and the ones they sent back (Needs changes — sentback-lib.php); a draft
+// is "not found" for them.
+if (!$isAdminSession && empty($email['live']) && !in_array((string)$email['status'], ['pending', 'approved', 'denied'], true)) {
     emailFail(404, 'Email not found');
 }
 
@@ -167,12 +169,12 @@ try {
 
     // ---- status / comment ----
     if ($hasStat && !$isAdminSession) {
-        // A client cannot re-decide a live email (409, like a scheduled post) or one that is not waiting on them.
-        if ($prevLive) {
-            emailFail(409, 'This email is already live — add a comment instead');
-        }
-        if ($prevStat !== 'pending') {
-            emailFail(403, 'This email can no longer be changed here — add a comment instead');
+        // A client cannot re-decide a live email (409, like a scheduled post) or one that is not waiting on them —
+        // except Approve instead on one it sent back ("Sent back" sheet); anything else there is a comment.
+        // (transitions-lib.php transitionClientDecisionError())
+        $why = transitionClientDecisionError('email', $prevStat, (string)$status, (bool)$prevLive);
+        if ($why) {
+            emailFail((int)$why['code'], (string)$why['error']);
         }
     }
     // A draft goes to the client before anyone decides on it (posts' rule, status.php): Send for review first.
@@ -190,7 +192,7 @@ try {
     if ($hasStat && $status !== $prevStat) {
         $pdo->prepare("UPDATE emails SET status = ? WHERE id = ?")->execute([$status, $id]);
         if ($status === 'approved') {
-            $logAction = 'approved';  $summary = "Email {$label} approved";  $detail = null;
+            $logAction = 'approved';  $summary = "Email {$label} approved" . ($prevStat === 'denied' && $actor === 'client' ? ' instead (it was sent back)' : '');  $detail = null;
         } elseif ($status === 'denied') {
             $logAction = 'denied';    $summary = "Changes requested on email {$label}";    $detail = null;
         } elseif ($status === 'pending') {

@@ -151,7 +151,8 @@ foreach ($termPages as $p) {
 }
 test('the client reads Tires too (Home card, tab, tire page)', function () {
     foreach (['?client=kenda', 'assets.php?client=kenda&view=collections', 'assets.php?client=kenda&view=collections&item=1&series=1'] as $p) {
-        $t = visibleText(status(get($p, 'client'), 200)['body']);
+        // (the Home "Sent back" card quotes the client's own notes — "the darker render" is its word, not the portal's)
+        $t = visibleText(preg_replace('#<section class="home-section" aria-labelledby="home-sentback".*?</section></section>#s', '', status(get($p, 'client'), 200)['body']));
         ok(!preg_match('/\b(collections?|renders?)\b/i', $t, $m), "$p: found “" . ($m[0] ?? '') . "”");
     }
     has(get('?client=kenda', 'client')['body'], '<span class="ui-tab-label">Tires</span>');

@@ -3,7 +3,8 @@
  * Posts — Stage 3 review (spec §4.3). Replaces feed.php.
  *
  *   ?client=kenda                 scope (helpers.php)
- *   &status=pending|approved|scheduled   segment (admin also: draft, denied) — default pending
+ *   &status=pending|approved|scheduled|denied   segment (admin also: draft) — default pending. denied = the admin's
+ *                                 Needs changes queue / the client's "Sent back" (always every month for the client)
  *   &month=YYYY-MM|all            default: current month if it has posts, else all (feed.php semantics)
  *   &post=<id>                    open that post's detail on load (segment/month follow the post)
  *   &newpost=1|upload|edit        (admin) open the New post pop-up on load (newpost.js); edit needs &post=<id>
@@ -20,10 +21,15 @@
  *   To Review = status pending  AND posted = 0
  *   Approved  = status approved AND posted = 0
  *   Scheduled = posted = 1                      (label only; DB value stays `posted`)
- *   Needs changes (admin only) = status denied AND posted = 0
+ *   Needs changes (admin) / Sent back (client) = status denied AND posted = 0
  *   Drafts (admin only, first) = status draft (migrate.php step 35; postsHaveDraft())
- * Clients never receive denied or draft rows — filtered in SQL (postsClientVisibleSql(): status
- * IN pending / approved), so a deep link to a draft is a 404 partial / a plain list for them.
+ * Clients never receive draft rows — filtered in SQL (postsClientVisibleSql(): status IN pending / approved /
+ * denied), so a deep link to a draft is a 404 partial / a plain list for them.
+ *
+ * Sent back (client, last segment; sentback-lib.php): what the client marked Needs changes and Joust has not
+ * resubmitted — every month, newest sent back first; each row carries the client's note, when, "Joust is reworking
+ * this" and Joust's latest reply. The sheet opens the full post with the same panel on top, the thread + composer,
+ * and Add a comment · Approve instead (asks first; status.php allows the client denied → approved only).
  *
  * The Needs changes segment is Joust's work queue: each row also carries the
  * client's latest note (deny note or newest comment — both are activity_log
@@ -213,25 +219,26 @@ if ($postParam > 0) {
     $directPost = $st->fetch() ?: null;
 }
 
-// A client following their own "You requested changes on …" link: the post left their view (it is Joust's
-// queue now). The sheet says so and shows their note (renderPostHiddenNotice) — never a silent 404 and never
-// the work in progress. Drafts and other clients' posts stay "not found".
-$hiddenPost = null;
-if (!$directPost && !$admin && $postParam > 0 && $client) {
-    $st = $pdo->prepare($selectSql . " WHERE p.id = ? AND p.company_id = ? AND p.status = 'denied' LIMIT 1");
-    $st->execute([$postParam, (int)$client['id']]);
-    $hiddenPost = $st->fetch() ?: null;
+/** Client seat: the "Sent back" facts (note, when, Joust's reply — sentback-lib.php) on its denied posts. One query. */
+function postsAttachSentBack(PDO $pdo, array &$posts, bool $admin): void {
+    if ($admin || !$posts) return;
+    $ids = [];
+    foreach ($posts as $p) { if ((string)$p['status'] === 'denied' && empty($p['posted'])) $ids[] = (int)$p['id']; }
+    if (!$ids) return;
+    $info = sentBackThreads($pdo, 'post', $ids);
+    foreach ($posts as &$p) { if (isset($info[(int)$p['id']])) $p['sentback'] = $info[(int)$p['id']] + ['redo' => false]; }
+    unset($p);
 }
+
+// The client's own Needs-changes post (its "You requested changes on …" link, Home, the Sent back list) is in its
+// view: the "Sent back" segment, every month.
+$clientSentBack = !$admin && ($directPost
+    ? ((string)$directPost['status'] === 'denied' && empty($directPost['posted']))
+    : ($postParam <= 0 && strtolower(trim((string)($_GET['status'] ?? ''))) === 'denied'));
 
 if ($isPartial) {
     header('Content-Type: text/html; charset=UTF-8');
     header('Cache-Control: no-store');
-    if (!$directPost && $hiddenPost) {
-        $one = [$hiddenPost];
-        postsAttachRelations($pdo, $one, $hasMedia, $hasLog);
-        echo renderPostHiddenNotice($one[0], reviewLatestNote($one[0]['comments'], (string)($client['name'] ?? '')));
-        exit;
-    }
     if (!$directPost) {
         http_response_code(404);
         echo '<div class="ui-empty">This post is no longer available.</div>';
@@ -239,6 +246,7 @@ if ($isPartial) {
     }
     $one = [$directPost];
     postsAttachRelations($pdo, $one, $hasMedia, $hasLog);
+    postsAttachSentBack($pdo, $one, $admin);
     echo renderPostDetail($one[0], ['admin' => $admin, 'hasPosted' => $hasPosted]);
     exit;
 }
@@ -257,6 +265,7 @@ if ($directPost && !empty($directPost['scheduled_date'])) {
     $dts = strtotime((string)$directPost['scheduled_date']);
     $monthParam = $dts ? date('Y-m', $dts) : 'all';
 }
+if ($clientSentBack) { $monthParam = 'all'; }   // Sent back lists every month (a month filter would hide some)
 if ($monthParam === 'all') {
     $selectedMonth = '';
 } elseif ($monthParam === null) {
@@ -272,9 +281,11 @@ if ($monthParam === 'all') {
 // ---------------------------------------------------------------------
 // Admin: Joust's own work first — Draft · Needs changes — so the queue is on screen at 390 px (the
 // segmented control scrolls sideways on phones); then the client's To Review, Approved, Scheduled.
+// Client: the review flow first, then its own Sent back (what it marked Needs changes — waiting on Joust).
 $segments = ($hasDraft ? ['draft' => 'Draft'] : [])
           + ($admin ? ['denied' => 'Needs changes'] : [])
-          + ['pending' => 'To Review', 'approved' => 'Approved', 'scheduled' => 'Scheduled'];
+          + ['pending' => 'To Review', 'approved' => 'Approved', 'scheduled' => 'Scheduled']
+          + ($admin ? [] : ['denied' => sentBackLabel()]);
 
 $segment = strtolower(trim((string)($_GET['status'] ?? 'pending')));
 if ($directPost) {
@@ -308,6 +319,12 @@ foreach ($st->fetchAll() as $row) {
     if (!empty($row['posted'])) { $counts['scheduled'] += $n; }
     elseif (isset($counts[$row['status']])) { $counts[$row['status']] += $n; }
 }
+// Client: the Sent back count is every month (its list is), whatever month the other segments show.
+if (!$admin && $selectedMonth !== '') {
+    $st = $pdo->prepare("SELECT COUNT(*) FROM posts p WHERE " . implode(' AND ', array_merge($scopeWhere, ["p.status = 'denied'", "$postedExpr = 0"])));
+    $st->execute($scopeParams);
+    $counts['denied'] = (int)$st->fetchColumn();
+}
 // Admin with no explicit segment: open on Joust's own queue (Needs changes) when it has items — the tab badge counts it too.
 if ($admin && !$directPost && trim((string)($_GET['status'] ?? '')) === '' && $counts['denied'] > 0) {
     $segment = 'denied';
@@ -319,14 +336,23 @@ if ($admin && !$directPost && trim((string)($_GET['status'] ?? '')) === '' && $c
 $listWhere  = $viewWhere;
 $listWhere[] = $segmentWhere[$segment];
 $isQueue = $admin && $segment === 'denied';
-// Paging: POSTS_PAGE rows from $listOffset. The Needs changes queue is sorted in PHP (latest client activity),
-// so it loads the (short, admin-only) segment whole and slices after sorting; every other segment pages in SQL.
+$isSentBack = !$admin && $segment === 'denied';   // the client's Sent back (sentback-lib.php)
+// Paging: POSTS_PAGE rows from $listOffset. The Needs changes queue / Sent back are sorted in PHP (latest client
+// activity / newest sent back), so they load the (short) segment whole and slice after sorting; every other segment pages in SQL.
 $listTotal = (int)$counts[$segment];
 $st = $pdo->prepare($selectSql . ' WHERE ' . implode(' AND ', $listWhere) . ' ORDER BY p.scheduled_date ASC, p.id ASC'
-    . ($isQueue ? '' : ' LIMIT ' . (int)POSTS_PAGE . ' OFFSET ' . (int)$listOffset));
+    . ($isQueue || $isSentBack ? '' : ' LIMIT ' . (int)POSTS_PAGE . ' OFFSET ' . (int)$listOffset));
 $st->execute($viewParams);
 $posts = $st->fetchAll();
 postsAttachRelations($pdo, $posts, $hasMedia, $hasLog);
+postsAttachSentBack($pdo, $posts, $admin);
+if ($isSentBack) {
+    usort($posts, static function ($a, $b) {
+        return ((int)strtotime((string)($b['sentback']['sent_at'] ?? '')) <=> (int)strtotime((string)($a['sentback']['sent_at'] ?? ''))) ?: ((int)$b['id'] <=> (int)$a['id']);
+    });
+    $listTotal = count($posts);
+    $posts = array_slice($posts, $listOffset, POSTS_PAGE);
+}
 
 // ---------------------------------------------------------------------
 // Needs changes = the admin work queue. Attach the latest client note
@@ -405,6 +431,7 @@ if ($directPost && !$inList) {
     // Should not happen (segment/month follow the post) but keep the deep link working.
     $one = [$directPost];
     postsAttachRelations($pdo, $one, $hasMedia, $hasLog);
+    postsAttachSentBack($pdo, $one, $admin);
     $directPost = $one[0];
 } else {
     $directPost = null;
@@ -421,8 +448,8 @@ $monthUrlParam = $monthParam === null ? null : ($selectedMonth !== '' ? $selecte
 function postsUrl(array $extra = []) {
     return clientUrl('posts.php', $extra);
 }
-$segmentUrl = function (string $seg) use ($monthUrlParam) {
-    return postsUrl(['status' => $seg, 'month' => $monthUrlParam]);
+$segmentUrl = function (string $seg) use ($monthUrlParam, $admin) {
+    return postsUrl(['status' => $seg, 'month' => !$admin && $seg === 'denied' ? 'all' : $monthUrlParam]);   // Sent back: every month
 };
 $monthUrl = function (string $ym) use ($segment) {
     return postsUrl(['status' => $segment, 'month' => $ym]);
@@ -452,7 +479,7 @@ $emptyCopy = [
     'pending'   => 'Nothing to review' . ($selectedMonth !== '' ? ' in ' . date('F', strtotime($selectedMonth . '-01')) : '') . '.',
     'approved'  => 'No approved posts waiting to be scheduled.',
     'scheduled' => $hasPosted ? 'Nothing scheduled yet.' : 'Scheduling is not enabled yet.',
-    'denied'    => 'Nothing needs changes.',
+    'denied'    => $admin ? 'Nothing needs changes.' : 'Nothing sent back. Posts you mark Needs changes wait here while Joust reworks them.',
 ];
 
 // ---------------------------------------------------------------------
@@ -495,7 +522,7 @@ $footExtra = '<script>window.PostsConfig = ' . json_encode($postsConfig, JSON_UN
            . '<script src="' . h(staticUrl('js/posts.js')) . '" defer></script>';
 
 /** One list row (the page and the "Load more" partial render the same markup). $rowIndex: position in the list (first rows load their thumb eagerly). */
-$renderRow = function (array $post, int $rowIndex = 0) use ($client, $segment, $monthUrlParam, $isQueue, $inlineDetails, $admin, $hasPosted): string {
+$renderRow = function (array $post, int $rowIndex = 0) use ($client, $segment, $monthUrlParam, $isQueue, $isSentBack, $inlineDetails, $admin, $hasPosted): string {
     ob_start();
         $pid      = (int)$post['id'];
         $posted   = !empty($post['posted']);
@@ -521,11 +548,12 @@ $renderRow = function (array $post, int $rowIndex = 0) use ($client, $segment, $
         $qCount   = $queue ? (int)$queue['client_count'] : 0;
         $isDraft  = $admin && $post['status'] === 'draft';   // admin-only rows: no swipe, Send for review
         $noCaption = $isDraft && $caption === '';
+        $sb       = !$admin && $post['status'] === 'denied' && !$posted ? ($post['sentback'] ?? ['note' => null, 'sent_at' => '', 'reply' => null]) : null;   // the client's Sent back row
     ?>
-      <li class="pl-item<?= $queue ? ' pl-item--queue' : '' ?><?= $isPast ? ' pl-item--past' : '' ?>" id="post-<?= $pid ?>" data-post-item="<?= $pid ?>" data-id="<?= $pid ?>"
+      <li class="pl-item<?= $queue ? ' pl-item--queue' : '' ?><?= $sb ? ' pl-item--sentback' : '' ?><?= $isPast ? ' pl-item--past' : '' ?>" id="post-<?= $pid ?>" data-post-item="<?= $pid ?>" data-id="<?= $pid ?>"
           data-status="<?= h($post['status']) ?>" data-posted="<?= $posted ? '1' : '0' ?>"<?= $isPast ? ' data-past="1"' : '' ?>
-          data-title="<?= h($title) ?>"<?= $queue ? ' data-queue' : ($isDraft ? ' data-draft' : ($admin ? '' : ' data-swipe')) ?>>
-        <?php if (!$queue && !$isDraft && !$admin): /* swipe = the client's decision; Joust decides for the client only via ⋯ → Approve for client… */ ?>
+          data-title="<?= h($title) ?>"<?= $queue ? ' data-queue' : ($isDraft ? ' data-draft' : ($sb ? ' data-sentback' : ($admin ? '' : ' data-swipe'))) ?>>
+        <?php if (!$queue && !$isDraft && !$admin && !$sb): /* swipe = the client's decision; Joust decides for the client only via ⋯ → Approve for client… */ ?>
         <div class="pl-swipe pl-swipe--approve" aria-hidden="true"><?= icon('checkmark') ?><span>Approve</span></div>
         <div class="pl-swipe pl-swipe--deny" aria-hidden="true"><?= icon('xmark') ?><span>Needs changes</span></div>
         <?php endif; ?>
@@ -560,8 +588,9 @@ $renderRow = function (array $post, int $rowIndex = 0) use ($client, $segment, $
                 <?php endif; ?>
               </div>
             <?php endif; ?>
+            <?php if ($sb): ?><?= sentBackRowInfoHtml($sb) ?><?php endif; ?>
             <div class="pl-meta">
-              <?= statusPill($post['status'], $posted) ?>
+              <?= statusPill($post['status'], $posted, $sb ? ['label' => sentBackLabel()] : []) ?>
               <span class="pl-meta-item"><span class="pl-meta-sep">·</span><span><?= $nImg ?> <?= $nImg === 1 ? ($isVid ? 'video' : 'image') : 'media' ?></span></span>
               <?php if ($queue): ?>
                 <span class="pl-meta-item"><span class="pl-meta-sep">·</span><span data-queue-count="<?= $pid ?>"><?= $qCount > 0 ? $qCount . ' client ' . ($qCount === 1 ? 'comment' : 'comments') : 'no client comments' ?></span></span>
@@ -657,9 +686,11 @@ include __DIR__ . '/partials/layout-top.php';
     </div>
   <?php endif; ?>
   <?php if ($segment === 'pending' && !$admin): ?>
-    <p class="ui-list-footer posts-hint">Swipe right to approve, left for needs changes. Tap a post for the full preview.</p>
+    <p class="ui-list-footer posts-hint">Swipe right to approve, left for needs changes (it waits under Sent back while Joust reworks it). Tap a post for the full preview.</p>
   <?php elseif ($isQueue): ?>
     <p class="ui-list-footer">Newest client activity first. Open a post for the full thread; Edit &amp; resubmit fixes it and sends it back to the client's To Review list.</p>
+  <?php elseif ($isSentBack): ?>
+    <p class="ui-list-footer posts-hint">Posts you marked Needs changes, newest first. Joust is reworking them — they come back to To Review when ready. Open one to approve it instead or add a comment.</p>
   <?php endif; ?>
 </section>
 

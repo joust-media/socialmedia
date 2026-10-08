@@ -456,6 +456,9 @@ $reviewSectionHtml = (string)ob_get_clean();
 if (!$isAdmin) echo $reviewSectionHtml;   // the client's Home opens with it; the admin's comes after "Needs your changes"
 // Client seat: "Joust replied" — items with Joust replies this contact has not read yet (tracking-lib.php).
 if (!$isAdmin && function_exists('trackingRepliedHomeHtml')) echo trackingRepliedHomeHtml($pdo, $client);
+// Client seat: "Sent back N" — what it marked Needs changes and Joust is reworking (sentback-lib.php): a neutral count,
+// never part of the red attention badges (those are the client's own to-dos).
+if (!$isAdmin && function_exists('sentBackHomeHtml')) echo sentBackHomeHtml($pdo, $client);
 ?>
 
 <?php // --- 1b. Admin: Needs your changes (Joust's own queue — first on the admin's Home) ---------- ?>

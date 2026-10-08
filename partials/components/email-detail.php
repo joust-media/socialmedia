@@ -97,7 +97,9 @@ if (!function_exists('renderEmailDetail')) {
         $approvedAt   = !empty($email['approved_at']) ? strtotime((string)$email['approved_at']) : false;
         $approvedLine = 'Approved' . ($approvedAt ? ' ' . date('M j', $approvedAt) : '') . ' · Joust will make it live';
 
+        $sentBack = !$admin && $key === 'denied' && function_exists('sentBackPanelHtml');   // the client's own Sent back email (sentback-lib.php)
         $out  = '<article class="pd ed" data-email-detail="' . $id . '" data-id="' . $id . '" data-status="' . edEsc($status) . '" data-live="' . ($live ? '1' : '0') . '"'
+              . ($sentBack ? ' data-sentback' : '')
               . ' data-key="' . edEsc($key) . '" data-past="' . ($datePast ? '1' : '0') . '" data-code="' . edEsc($code) . '" data-endpoint="' . edEsc($endpoint) . '"'
               . (function_exists('trackingSeenAttr') ? trackingSeenAttr('email', $id) : '') . '>';
         $out .= '<div class="pd-body" data-pd-body>';
@@ -105,7 +107,7 @@ if (!function_exists('renderEmailDetail')) {
         // ---- Top meta row: "EMAIL · C1" · status pill · edited ---------------------
         $out .= '<div class="pd-meta ed-head">';
         $out .= '<span class="pd-type">Email' . ($code !== '' ? ' · ' . edEsc($code) : '') . '</span>';
-        $out .= function_exists('emailStatusPill') ? emailStatusPill($email, ['class' => 'pd-pill']) : '';
+        $out .= function_exists('emailStatusPill') ? emailStatusPill($email, ['class' => 'pd-pill'] + ($sentBack ? ['label' => sentBackLabel()] : [])) : '';
         if (!empty($email['updated_at']) && function_exists('relativeTime') && relativeTime($email['updated_at']) !== '') {
             $out .= '<span class="pd-edited text-tertiary" title="' . edEsc(absoluteTime($email['updated_at'])) . '">edited ' . edEsc(relativeTime($email['updated_at'])) . '</span>';
         }
@@ -119,6 +121,10 @@ if (!function_exists('renderEmailDetail')) {
         // ---- 0. Needs changes (admin): the client's note first, above the preview ---------------
         if ($admin) {
             $out .= reviewNoteBanner(reviewLatestNote($comments, $clientName), $key === 'denied');
+        } elseif ($sentBack) {
+            // ---- 0. Sent back (client): what Joust is doing, their note (editable), Joust's latest reply ----
+            $sbPdo = $GLOBALS['pdo'] ?? null;
+            $out .= sentBackPanelHtml(is_array($email['sentback'] ?? null) ? $email['sentback'] : ($sbPdo instanceof PDO ? sentBackInfo($sbPdo, 'email', $id) : []), 'email');
         }
 
         // ---- 1. Preview frame -----------------------------------------------------------
@@ -229,6 +235,7 @@ if (!function_exists('renderEmailDetail')) {
                   . '<button type="button" class="ui-btn ui-btn--large ui-btn--deny ui-btn--tinted" data-decide="denied">Needs changes</button>'
                   . '<button type="button" class="ui-btn ui-btn--large ui-btn--approve ui-btn--primary" data-decide="approved">Approve</button>'
                   . '</div>';
+            if (function_exists('sentBackFooterHtml')) $out .= sentBackFooterHtml($sentBack);   // Sent back: Add a comment · Approve instead
         } else {
             $out .= reviewAdminFooterHtml('email', $key, $editUrl);
         }
