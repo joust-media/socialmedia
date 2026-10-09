@@ -281,6 +281,7 @@ if (!function_exists('renderPostDetail')) {
                   . '<button type="button" role="menuitem" data-decide="pending" data-state="menu-resubmit"' . ($isDenied ? '' : ' hidden') . '>Send for review</button>'
                   . '</div>'
                   . (function_exists('trackingResolveMenuItem') ? trackingResolveMenuItem('post', $id) : '')   // the thread is answered (Inbox)
+                  . (function_exists('trashMenuItemHtml') ? trashMenuItemHtml('post', $id) : '')   // Joust's Trash (trash-lib.php): kept, out of every list
                   . '<div class="pd-menu-sep" role="separator"></div>'
                   . '<button type="button" role="menuitem" class="is-destructive" data-delete-post>Delete</button>'
                   . '</div></div>';

@@ -443,7 +443,9 @@ if (!function_exists('exportEnumerate')) {
         $res['label'] = exportOptionsLabel($opts, ['tire_name' => $res['tire_name'], 'series_name' => $res['series_name']]);
 
         // Approved tire rows, scoped through the tires JOIN. Order = the zip order.
-        $sql = "SELECT ti.*, t.name AS tire_name FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id WHERE t.company_id = ? AND ti.status = 'approved'";
+        // never an image in Joust's Trash (trash-lib.php) — not even when it is in a selection
+        $sql = "SELECT ti.*, t.name AS tire_name FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id WHERE t.company_id = ? AND ti.status = 'approved'"
+             . (function_exists('trashAnd') ? trashAnd($pdo, 'tire_image', 'ti') : '');
         $params = [$cid];
         if ($opts['scope'] === 'tire' || $opts['scope'] === 'series') { $sql .= " AND ti.tire_id = ?"; $params[] = $opts['tire_id']; }
         if ($opts['scope'] === 'series') { $sql .= " AND ti.series_id = ?"; $params[] = $opts['series_id']; }
@@ -459,7 +461,8 @@ if (!function_exists('exportEnumerate')) {
         // Library rows (scope all, or the selected ones).
         $libRows = [];
         if ($opts['library'] && function_exists('hasLibraryImagesTable') && hasLibraryImagesTable($pdo)) {
-            $libSql = "SELECT id, filename, status, created_at, updated_at FROM library_images WHERE company_id = ? AND status = 'approved'";
+            $libSql = "SELECT id, filename, status, created_at, updated_at FROM library_images WHERE company_id = ? AND status = 'approved'"
+                    . (function_exists('trashAnd') ? trashAnd($pdo, 'library_image') : '');
             $libParams = [$cid];
             if ($sel) { $libSql .= " AND id IN (" . implode(',', array_fill(0, count($opts['items']['library']), '?')) . ")"; $libParams = array_merge($libParams, $opts['items']['library']); }
             $st = $pdo->prepare($libSql . " ORDER BY filename ASC");
@@ -560,7 +563,7 @@ if (!function_exists('exportEnumerate')) {
         if ($sel) {
             $want = count($opts['items']['tire']) + count($opts['items']['library']);
             $left = $want - count($res['files']) - $res['counts']['missing'];
-            if ($left > 0) $res['warnings'][] = $left . ' selected file' . ($left === 1 ? ' is' : 's are') . ' not approved (or not this client\'s) and will be left out';
+            if ($left > 0) $res['warnings'][] = $left . ' selected file' . ($left === 1 ? ' is' : 's are') . ' not approved (or in the Trash, or not this client\'s) and will be left out';
         }
         if ($res['counts']['missing'] > 0) $res['warnings'][] = $res['counts']['missing'] . ' approved file' . ($res['counts']['missing'] === 1 ? ' is' : 's are') . ' missing on disk and will be left out';
         if ($res['bytes'] > EXPORT_MAX_BYTES) $res['warnings'][] = 'Over the ' . exportFormatBytes(EXPORT_MAX_BYTES) . ' limit for one export — export one tire (or one series) at a time';

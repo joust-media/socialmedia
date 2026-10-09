@@ -600,6 +600,37 @@ client). The toast links to the series.
 **Staging shares `media/` with production**: Replace, Replace from folder and Move to tire on staging change the real
 files production uses. Try them on throwaway images.
 
+## Trash (admin)
+
+"Some of these I'm not going to do — it goes in the Trash, but it still lives somewhere" — `trash.php`,
+`trash-lib.php`, `migrate.php` step 54.
+
+- **What it is**: three columns on posts, emails, pages, tire_images and library_images — `trashed_at`, `trashed_by`
+  (the admin user), `trash_note` (the optional reason, Joust only) + `ix_trashed`. It is **not** a status: the
+  item keeps its status, files, previews, comments and Slack thread. Until step 54 runs the portal works as before
+  (the columns are probed) and the Move to Trash actions answer 409.
+- **In** (admin only, any status): **Move to Trash…** in the post / email / page sheet's ⋯ menu, the media viewer's ⋯,
+  the Assets select bar (several at once) and a Redo page row's **Trash…**. An internal "moved to Trash" activity row;
+  pending Slack / email outbox rows and open client-email batch rows for it are skipped ("item trashed"); the Slack
+  parent message flips to a "Trashed" pill (`chat.update`, no new ping).
+- **Disregarded everywhere**: every client view (lists, Sent back, Home cards and feed, badges, counts; a deep link
+  shows a neutral "This item is no longer available"; the client's endpoints answer 404), Joust's lists and counts
+  (segments, tab badges, Home, the Inbox, the Redo queue, Needs changes), escalation, client email batches (Ready for
+  review, Joust replied, Live, reminders), the Morning summary and the weekly report, exports (approved assets, the
+  selection, the redo pack) and the post pickers. Joust's own deep link says "This … is in the Trash" with a link.
+  Replies to it (Slack thread, inbound email) are ignored / go to Unmatched.
+- **The Trash page** (`/portal/trash?client=<slug>`, Manage → Tools, the **Trash (N)** link on Home / Assets / Posts):
+  this client or **All clients**, grouped by type, with the thumbnail, title, previous status, the client's last
+  note, who trashed it and when, and the reason. **Restore** (one, or Select all → Restore selected) puts it back
+  exactly where it was — no client email, no escalation restart, an internal "restored from Trash" row.
+  **Delete forever** (row ⋯, type `DELETE`) removes the row and its files (a post's uploads not shared with another
+  post, a render and its `.mp4` twin, a library file) — the activity log keeps its history. Nothing is ever purged
+  automatically.
+- **Staging shares `media/` with production**, so on staging (`portalEnvironment()`) Delete forever removes the row
+  but never unlinks a file under `media/` (tire renders, the Library) — the toast says the file stays; a Library file
+  left that way shows up again as a new Library image on staging's next folder sync. Move to Trash / Restore never
+  touch files anywhere.
+
 ## New post pop-up (admin)
 
 One sheet builds and edits every post: `static/js/newpost.js` (`App.newPost`) + `static/css/newpost.css`,

@@ -506,6 +506,25 @@
     });
   };
 
+  /* "Move to Trash…" (admin ⋯; trash.php): kept, left out of every list — the email leaves this one, the counts drop. */
+  E.trash = function (id) {
+    id = String(id);
+    var root = sheetRoot();
+    var before = (root && ($('[data-deny-form]', root) || $('[data-pd-body] > *', root))) || null;
+    return App.trash.inline(before, { noun: 'email' }).then(function (note) {
+      if (note === null) return null;
+      return App.trash.move(['email:' + id], note).then(function (res) {
+        if (!res.ok) { toast(res.error || 'Could not move it to the Trash', 'error'); return res; }
+        var snap = snapshot(id);
+        if (snap) bumpCount(keyOf(snap.status, snap.live), -1);
+        if (E.current && E.current.id === id) E.close();
+        leaveList(id);
+        App.trash.toastDone(res, 1);
+        return res;
+      });
+    });
+  };
+
   E.remove = function (id) {
     id = String(id);
     if (!window.confirm('Delete this email? Its comments and history stay in the activity log. This cannot be undone.')) return Promise.resolve(null);
@@ -662,6 +681,7 @@
       var tl = t.closest('[data-toggle-live]');
       if (tl) { E.toggleLive(id, tl.getAttribute('data-toggle-live')); return; }
       if (t.closest('[data-delete-email]')) { E.remove(id); return; }
+      if (t.closest('[data-trash-item]')) { var tm = t.closest('[data-asg-menu]'); if (tm) tm.hidden = true; E.trash(id); return; }
     });
 
     document.addEventListener('submit', function (e) {

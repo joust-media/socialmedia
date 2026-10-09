@@ -1147,6 +1147,10 @@ if (!function_exists('inboundProcess')) {
             $set($base + ['status' => 'unmatched', 'company_id' => $cid, 'reason' => 'the item it answers no longer exists']);
             return 'unmatched';
         }
+        if (!empty($info['trashed'])) {   // Joust's Trash (trash-lib.php): kept for Joust in the unmatched list, never posted
+            $set($base + ['status' => 'unmatched', 'company_id' => $cid, 'entity_type' => $type, 'entity_id' => $id, 'reason' => 'the item it answers is in the Trash']);
+            return 'unmatched';
+        }
         $who = inboundSender($pdo, $info, $from);
         if (!$who) {
             $set($base + ['status' => 'unmatched', 'company_id' => $cid, 'entity_type' => $type, 'entity_id' => $id,
@@ -1253,6 +1257,7 @@ if (!function_exists('inboundAssign')) {
         if (!in_array($type, notifyThreadTypes(), true)) return ['ok' => false, 'error' => 'Pick an item.'];
         $info = notifyItemInfo($pdo, $type, $id);
         if (!$info['exists']) return ['ok' => false, 'error' => 'That item no longer exists.'];
+        if (!empty($info['trashed'])) return ['ok' => false, 'error' => 'That item is in the Trash — restore it first.'];
         $text = trim((string)$row['body_text']);
         if ($text === '') return ['ok' => false, 'error' => 'The reply is empty.'];
         $who = inboundSender($pdo, $info, (string)$row['from_email']) ?? ['actor' => 'client', 'contact_id' => null];

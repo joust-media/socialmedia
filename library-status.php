@@ -49,6 +49,8 @@ if ($id <= 0) {
     echo json_encode(['ok' => false, 'error' => 'Invalid id']);
     exit;
 }
+// Joust's Trash (trash-lib.php): gone for the client (404), frozen for Joust (409) until restored
+trashGuardJson($pdo, 'library_image', $id, (bool)currentAdmin());
 if ($commentOnly) {
     $status = '';
     if (mb_strlen($comment, 'UTF-8') < 1) {

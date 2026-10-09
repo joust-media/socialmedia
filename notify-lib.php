@@ -604,6 +604,7 @@ if (!function_exists('notifyStatusPill')) {
             'live'      => ['Live', ':large_green_circle:'],
             'mixed'     => ['In review', ':large_yellow_circle:'],
             'gone'      => ['Removed', ':wastebasket:'],
+            'trashed'   => ['Trashed', ':wastebasket:'],   // Joust's Trash (trash-lib.php)
         ];
         return $map[$key] ?? ['Updated', ':white_circle:'];
     }
@@ -620,7 +621,7 @@ if (!function_exists('notifyItemInfo')) {
         $info = ['exists' => false, 'entity_type' => $type, 'entity_id' => $id, 'company_id' => 0, 'company_name' => '',
                  'company_slug' => '', 'title' => ucfirst(str_replace('_', ' ', $type)) . ' #' . $id, 'type_label' => '',
                  'status_key' => 'gone', 'thumb' => '', 'url' => '', 'can' => ['submit' => false, 'scheduled' => false, 'live' => false],
-                 'meta' => []];
+                 'meta' => [], 'trashed' => false];
         try {
             switch ($type) {
                 case 'post': {
@@ -698,7 +699,7 @@ if (!function_exists('notifyItemInfo')) {
                                         : ((int)$c['denied'] > 0 ? 'denied' : ((int)$c['total'] > 0 ? 'approved' : 'pending'));
                     $info['meta'] = ['tire_id' => (int)$t['id']];
                     // the thumbnail: the series' first render waiting for review (else its first render)
-                    $s = $pdo->prepare("SELECT * FROM tire_images WHERE series_id = ? ORDER BY (status = 'pending') DESC, sort_order ASC, id ASC LIMIT 1");
+                    $s = $pdo->prepare("SELECT * FROM tire_images WHERE series_id = ?" . (function_exists('trashAnd') ? trashAnd($pdo, 'tire_image') : '') . " ORDER BY (status = 'pending') DESC, sort_order ASC, id ASC LIMIT 1");
                     $s->execute([$id]);
                     $img = $s->fetch();
                     if ($img) $info['thumb'] = function_exists('tireImageSrc') ? tireImageSrc($img) : (string)$img['image_url'];
@@ -726,6 +727,12 @@ if (!function_exists('notifyItemInfo')) {
             }
         } catch (Throwable $e) {
             error_log('notifyItemInfo ' . $type . '#' . $id . ': ' . $e->getMessage());
+        }
+        // In Joust's Trash (trash-lib.php): it still exists (the Slack parent says "Trashed"), but nothing is about it any more
+        if ($info['exists'] && function_exists('trashIsTrashed') && trashIsTrashed($pdo, $type, $id)) {
+            $info['trashed'] = true;
+            $info['status_key'] = 'trashed';
+            $info['can'] = ['submit' => false, 'scheduled' => false, 'live' => false];
         }
         [$info['status_label'], $info['status_emoji']] = notifyStatusPill($info['status_key']);
         if ($info['company_slug'] !== '') {
@@ -765,7 +772,7 @@ if (!function_exists('notifyUnanswered')) {
               FROM activity_log c
              WHERE c.actor = 'client' AND c.action = 'commented' AND c.detail IS NOT NULL AND c.detail <> ''
                AND c.created_at >= ? " . ($companyId ? ' AND c.company_id = ? ' : '') . ($entity ? ' AND c.entity_type = ? AND c.entity_id = ? ' : '') . "
-               AND c.entity_type IN ('" . implode("','", notifyThreadTypes()) . "')
+               AND c.entity_type IN ('" . implode("','", notifyThreadTypes()) . "')" . (function_exists('trashActivitySql') ? trashActivitySql($pdo, 'c.entity_type', 'c.entity_id') : '') . "
                AND NOT EXISTS (
                    SELECT 1 FROM activity_log a
                     WHERE a.entity_type = c.entity_type AND a.entity_id = c.entity_id AND a.id > c.id
@@ -1065,7 +1072,8 @@ if (!function_exists('notifyParentActions')) {
     /** Actions (any actor) after which an existing Slack parent message is re-rendered (status pill / waiting line). */
     function notifyParentActions(): array {
         return ['approved', 'denied', 'reset_pending', 'submitted', 'moved_to_draft', 'posted', 'unposted', 'marked_live',
-                'unmarked_live', 'commented', 'resolved', 'deleted', 'renamed_post', 'renamed', 'renamed_image'];
+                'unmarked_live', 'commented', 'resolved', 'deleted', 'renamed_post', 'renamed', 'renamed_image',
+                'trashed', 'restored'];   // the Trash (trash-lib.php): the pill flips to "Trashed" and back — chat.update, never a new message
     }
 }
 
@@ -1155,6 +1163,7 @@ if (!function_exists('notifyDeliverNoChannel')) {
         $type = (string)($p['entity_type'] ?? ''); $id = (int)($p['entity_id'] ?? 0); $cid = (int)($p['company_id'] ?? 0);
         $info = notifyItemInfo($pdo, $type, $id);
         if (!$info['exists'] || (int)$info['company_id'] !== $cid) return ['ok' => false, 'skip' => true, 'error' => 'the item no longer exists'];
+        if (!empty($info['trashed'])) return ['ok' => false, 'skip' => true, 'error' => 'item trashed'];
         $ids = array_values(array_filter(array_map('intval', (array)($p['activity_ids'] ?? []))));
         if (!$ids || $to === '') return ['ok' => false, 'skip' => true, 'error' => 'nothing to send'];
         $ph = implode(',', array_fill(0, count($ids), '?'));
@@ -1356,7 +1365,7 @@ if (!function_exists('notifyThreadBySlack')) {
 if (!function_exists('notifySlackParent')) {
     /** The parent message for an item: ['text' => fallback, 'blocks' => Block Kit]. */
     function notifySlackParent(PDO $pdo, array $info): array {
-        $waiting = $info['exists'] ? notifyItemWaiting($pdo, $info['entity_type'], (int)$info['entity_id'], (int)$info['company_id']) : null;
+        $waiting = $info['exists'] && empty($info['trashed']) ? notifyItemWaiting($pdo, $info['entity_type'], (int)$info['entity_id'], (int)$info['company_id']) : null;
         $title = notifySlackEscape((string)$info['title']);
         $head = $info['url'] !== '' ? '*<' . $info['url'] . '|' . $title . '>*' : '*' . $title . '*';
         $section = ['type' => 'section', 'text' => ['type' => 'mrkdwn',
@@ -1368,6 +1377,8 @@ if (!function_exists('notifySlackParent')) {
             $ctx[] = ['type' => 'mrkdwn', 'text' => ':hourglass_flowing_sand: Waiting on Joust since <!date^' . (int)strtotime((string)$waiting['first_at'])
                 . '^{date_short_pretty} {time}|' . date('M j g:ia', (int)strtotime((string)$waiting['first_at'])) . '>'
                 . ($waiting['n'] > 1 ? ' · ' . $waiting['n'] . ' messages' : '')];
+        } elseif (!empty($info['trashed'])) {
+            $ctx[] = ['type' => 'mrkdwn', 'text' => 'Moved to the Trash in the portal — no reminders while it is there'];
         } elseif ($info['exists']) {
             $ctx[] = ['type' => 'mrkdwn', 'text' => ':speech_balloon: No open questions'];
         }
@@ -1375,7 +1386,7 @@ if (!function_exists('notifySlackParent')) {
         $value = $info['entity_type'] . ':' . (int)$info['entity_id'];
         $buttons = [];
         if ($info['url'] !== '') $buttons[] = ['type' => 'button', 'action_id' => 'open', 'text' => ['type' => 'plain_text', 'text' => 'Open in portal'], 'url' => $info['url'], 'value' => $value];
-        if ($info['exists']) {
+        if ($info['exists'] && empty($info['trashed'])) {
             if ($waiting) $buttons[] = ['type' => 'button', 'action_id' => 'resolve', 'style' => 'primary', 'text' => ['type' => 'plain_text', 'text' => 'Resolve'], 'value' => $value];
             if (!empty($info['can']['submit']))    $buttons[] = ['type' => 'button', 'action_id' => 'submit', 'text' => ['type' => 'plain_text', 'text' => 'Send for review'], 'value' => $value];
             if (!empty($info['can']['scheduled'])) $buttons[] = ['type' => 'button', 'action_id' => 'scheduled', 'text' => ['type' => 'plain_text', 'text' => 'Mark Scheduled'], 'value' => $value];
@@ -1483,6 +1494,7 @@ if (!function_exists('notifyDeliverItemEvent')) {
         $type = (string)($p['entity_type'] ?? ''); $id = (int)($p['entity_id'] ?? 0); $cid = (int)($p['company_id'] ?? 0);
         $info = notifyItemInfo($pdo, $type, $id);
         if (!$info['exists'] || (int)$info['company_id'] !== $cid) return ['ok' => false, 'skip' => true, 'error' => 'the item no longer exists'];
+        if (!empty($info['trashed'])) return ['ok' => false, 'skip' => true, 'error' => 'item trashed'];
         $channel = notifyClientChannel($pdo, $cid);
         if ($channel === '') return ['ok' => false, 'skip' => true, 'error' => 'no Slack channel set for ' . $info['company_name']];
         $ids = array_values(array_filter(array_map('intval', (array)($p['activity_ids'] ?? []))));
@@ -1534,6 +1546,7 @@ if (!function_exists('notifyDeliver')) {
             case 'escalate_thread': {
                 $info = notifyItemInfo($pdo, (string)$p['entity_type'], (int)$p['entity_id']);
                 if (!$info['exists']) return ['ok' => false, 'skip' => true, 'error' => 'the item no longer exists'];
+                if (!empty($info['trashed'])) return ['ok' => false, 'skip' => true, 'error' => 'item trashed'];
                 if (!notifyEscalationStillOpen($pdo, $p)) return ['ok' => false, 'skip' => true, 'error' => 'answered before the reminder went out'];
                 $channel = notifyClientChannel($pdo, (int)$info['company_id']);
                 if ($channel === '') return ['ok' => false, 'skip' => true, 'error' => 'no Slack channel set for ' . $info['company_name']];
@@ -1550,6 +1563,7 @@ if (!function_exists('notifyDeliver')) {
             case 'escalate_dm': {
                 $info = notifyItemInfo($pdo, (string)$p['entity_type'], (int)$p['entity_id']);
                 if (!$info['exists']) return ['ok' => false, 'skip' => true, 'error' => 'the item no longer exists'];
+                if (!empty($info['trashed'])) return ['ok' => false, 'skip' => true, 'error' => 'item trashed'];
                 if (!notifyEscalationStillOpen($pdo, $p)) return ['ok' => false, 'skip' => true, 'error' => 'answered before the reminder went out'];
                 $owner = adminUserById($pdo, (int)($p['owner_user_id'] ?? 0));
                 if (!$owner || trim((string)$owner['slack_user_id']) === '') return ['ok' => false, 'skip' => true, 'error' => 'the owner has no Slack user id'];
@@ -1565,6 +1579,7 @@ if (!function_exists('notifyDeliver')) {
             case 'escalate_email': {
                 $info = notifyItemInfo($pdo, (string)$p['entity_type'], (int)$p['entity_id']);
                 if (!$info['exists']) return ['ok' => false, 'skip' => true, 'error' => 'the item no longer exists'];
+                if (!empty($info['trashed'])) return ['ok' => false, 'skip' => true, 'error' => 'item trashed'];
                 if (!notifyEscalationStillOpen($pdo, $p)) return ['ok' => false, 'skip' => true, 'error' => 'answered before the reminder went out'];
                 $owner = adminUserById($pdo, (int)($p['owner_user_id'] ?? 0));
                 $to = $owner ? (string)$owner['email'] : notifyCfg('notify_to');
@@ -1592,6 +1607,7 @@ if (!function_exists('notifyDeliver')) {
             case 'internal_note': {
                 $info = notifyItemInfo($pdo, (string)$p['entity_type'], (int)$p['entity_id']);
                 if (!$info['exists'] || (int)$info['company_id'] !== (int)($p['company_id'] ?? 0)) return ['ok' => false, 'skip' => true, 'error' => 'the item no longer exists'];
+                if (!empty($info['trashed'])) return ['ok' => false, 'skip' => true, 'error' => 'item trashed'];
                 $s = $pdo->prepare("SELECT detail, author_user_id FROM activity_log WHERE id = ? AND internal = 1 AND actor = 'admin' AND entity_type = ? AND entity_id = ?");
                 $s->execute([(int)($p['activity_id'] ?? 0), (string)$p['entity_type'], (int)$p['entity_id']]);
                 $note = $s->fetch();
@@ -1906,6 +1922,7 @@ if (!function_exists('slackHandleMessageEvent')) {
         if (mb_strlen($text, 'UTF-8') > 2000) $text = rtrim(mb_substr($text, 0, 1999, 'UTF-8')) . '…';
         $info = notifyItemInfo($pdo, (string)$t['entity_type'], (int)$t['entity_id']);
         if (!$info['exists'] || (int)$info['company_id'] !== (int)$t['company_id']) return ['ignored', 'the item no longer exists', null];
+        if (!empty($info['trashed'])) return ['ignored', 'item trashed', null];   // trash-lib.php
         $aid = activityWithContext(['author_user_id' => (int)$user['id'], 'internal' => $internal ? 1 : 0, 'source' => 'slack'],
             static function () use ($pdo, $info, $text, $internal) { return notifyLogComment($pdo, $info, $text, $internal); });
         return ['done', ($internal ? 'internal note' : 'comment') . ' by ' . $user['name'], $aid ?: null];
@@ -1936,6 +1953,7 @@ if (!function_exists('slackHandleAction')) {
         if (!$t || $t['entity_type'] !== $type || (int)$t['entity_id'] !== $id) return ['ok' => false, 'message' => 'That button does not belong to this message.'];
         $info = notifyItemInfo($pdo, $type, $id);
         if (!$info['exists'] || (int)$info['company_id'] !== (int)$t['company_id']) return ['ok' => false, 'message' => 'That item is no longer in the portal.'];
+        if (!empty($info['trashed'])) return ['ok' => false, 'message' => 'That item is in the Trash — restore it in the portal first.'];
         $ctx = ['author_user_id' => (int)$user['id'], 'source' => 'slack'];
         $res = activityWithContext($ctx, static function () use ($pdo, $aid, $type, $id, $info) {
             switch ($aid) {
@@ -2164,8 +2182,11 @@ if (!function_exists('notifyMorningSummary')) {
                  ORDER BY a.company_id, a.created_at, a.id
                  LIMIT 500
             ")->fetchAll();
-            $client = array_values(array_filter($rows, static function ($r) { return $r['actor'] !== 'admin' && empty($r['internal']); }));
-            $joustIds = array_map('intval', array_column(array_filter($rows, static function ($r) { return $r['actor'] === 'admin' || !empty($r['internal']); }), 'id'));
+            // rows about an item in Joust's Trash (trash-lib.php) are never in a summary: marked processed like Joust's own
+            $live = function_exists('trashFilterRows') ? trashFilterRows($pdo, $rows) : $rows;
+            $liveIds = array_flip(array_map('intval', array_column($live, 'id')));
+            $client = array_values(array_filter($rows, static function ($r) use ($liveIds) { return $r['actor'] !== 'admin' && empty($r['internal']) && isset($liveIds[(int)$r['id']]); }));
+            $joustIds = array_map('intval', array_column(array_filter($rows, static function ($r) use ($liveIds) { return $r['actor'] === 'admin' || !empty($r['internal']) || !isset($liveIds[(int)$r['id']]); }), 'id'));
             if (!$client) {
                 if ($joustIds) notifyMarkDigest($pdo, $joustIds, 0);   // Joust's own rows never go in a summary
                 return ['status' => 'empty', 'message' => 'Nothing new from clients since the last summary.'];
@@ -2280,6 +2301,7 @@ if (!function_exists('notifyMemberSummaries')) {
                                  WHERE {$where} ORDER BY a.company_id, a.created_at, a.id LIMIT 500");
             $q->execute($args);
             $rows = $q->fetchAll();
+            if ($rows && function_exists('trashFilterRows')) $rows = trashFilterRows($pdo, $rows);   // never an item in Joust's Trash
             if (!$rows) { $out['empty']++; continue; }
             if ($waitingAll === null) $waitingAll = notifyUnanswered($pdo, null, date('Y-m-d H:i:s', time() - 30 * 86400), 50);
             $waiting = $scope === null ? $waitingAll : array_values(array_filter($waitingAll, static function ($w) use ($scope) { return isset($scope[(int)$w['company_id']]); }));

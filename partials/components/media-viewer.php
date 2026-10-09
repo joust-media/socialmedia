@@ -159,6 +159,9 @@ $viewerCommentsEndpoint = isset($viewerCommentsEndpoint) ? (string)$viewerCommen
       <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-move hidden><?= icon('tire') ?>Move to tire…</button>
       <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-set-reference data-tire-only><?= icon('checkmark') ?>Set as reference</button>
       <a class="ui-viewer-menu-item" role="menuitem" data-viewer-manage data-tire-only href="#"><?= icon('wand') ?>Edit tire…</a>
+      <?php if (function_exists('trashReady') && trashReady($GLOBALS['pdo'] ?? null, 'tire_image')): // Joust's Trash (trash.php): kept, out of every list ?>
+        <button type="button" class="ui-viewer-menu-item" role="menuitem" data-viewer-trash><?= icon('trash') ?>Move to Trash…</button>
+      <?php endif; ?>
       <button type="button" class="ui-viewer-menu-item is-destructive" role="menuitem" data-viewer-delete data-tire-only><?= icon('xmark') ?>Delete image…</button>
     <?php endif; ?>
   </div>

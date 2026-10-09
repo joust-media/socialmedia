@@ -95,7 +95,7 @@ if (!function_exists('reviewAdminFooterHtml')) {
 }
 
 if (!function_exists('reviewMenuItemsHtml')) {
-    function reviewMenuItemsHtml(string $kind, string $key, string $editUrl, string $deleteAttr): string
+    function reviewMenuItemsHtml(string $kind, string $key, string $editUrl, string $deleteAttr, string $trashHtml = ''): string
     {
         $noun = $kind === 'page' ? 'page' : 'email';
         $live = $key === 'live';
@@ -110,6 +110,7 @@ if (!function_exists('reviewMenuItemsHtml')) {
               . '<button type="button" role="menuitem" data-decide="denied" data-state="menu-deny"' . $vis(in_array($key, ['pending', 'approved'], true)) . '>Needs changes…</button>'
               . '<button type="button" role="menuitem" data-set-draft data-state="menu-draft"' . $vis(!$live && $key !== 'draft') . '>Move to Draft</button>'
               . '</div>';
+        $out .= $trashHtml;   // "Move to Trash…" (trash-lib.php trashMenuItemHtml()) — just above Delete, never mistaken for it
         $out .= '<div class="pd-menu-sep" role="separator"></div>'
               . '<button type="button" role="menuitem" class="is-destructive" ' . $deleteAttr . '>Delete</button>';
         return $out;

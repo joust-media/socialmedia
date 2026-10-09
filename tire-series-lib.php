@@ -473,7 +473,7 @@ if (!function_exists('tireSeriesCounts')) {
         $sel = $withSeries ? 'series_id' : 'NULL AS series_id';
         $grp = $withSeries ? 'series_id, status' : 'status';
         try {
-            $s = $pdo->prepare("SELECT {$sel}, status, COUNT(*) AS n FROM tire_images WHERE tire_id = ? GROUP BY {$grp}");
+            $s = $pdo->prepare("SELECT {$sel}, status, COUNT(*) AS n FROM tire_images WHERE tire_id = ?" . (function_exists('trashAnd') ? trashAnd($pdo, 'tire_image') : '') . " GROUP BY {$grp}");   // never a trashed image (trash-lib.php)
             $s->execute([$tireId]);
             $rows = $s->fetchAll();
         } catch (Throwable $e) {
@@ -545,7 +545,8 @@ if (!function_exists('tireSeriesTypeCounts')) {
         if ($tireId <= 0) return $out;
         $withSeries = hasTireSeries($pdo);
         if (!$withSeries && $seriesId !== null && $seriesId > 0) return $out;
-        $sql = "SELECT ti.status, SUM(CASE WHEN " . tireVideoSqlPredicate('ti.image_url') . " THEN 1 ELSE 0 END) AS videos, COUNT(*) AS n FROM tire_images ti WHERE ti.tire_id = ?";
+        $sql = "SELECT ti.status, SUM(CASE WHEN " . tireVideoSqlPredicate('ti.image_url') . " THEN 1 ELSE 0 END) AS videos, COUNT(*) AS n FROM tire_images ti WHERE ti.tire_id = ?"
+            . (function_exists('trashAnd') ? trashAnd($pdo, 'tire_image', 'ti') : '');
         $params = [$tireId];
         if ($withSeries) {
             if ($seriesId === null || $seriesId <= 0) { $sql .= " AND ti.series_id IS NULL"; }
@@ -582,7 +583,8 @@ if (!function_exists('tireSeriesVideoCounts')) {
         $sel = $withSeries ? 'ti.series_id' : 'NULL AS series_id';
         $grp = $withSeries ? 'ti.series_id, ti.status' : 'ti.status';
         try {
-            $s = $pdo->prepare("SELECT {$sel}, ti.status, COUNT(*) AS n FROM tire_images ti WHERE ti.tire_id = ? AND " . tireVideoSqlPredicate('ti.image_url') . " GROUP BY {$grp}");
+            $s = $pdo->prepare("SELECT {$sel}, ti.status, COUNT(*) AS n FROM tire_images ti WHERE ti.tire_id = ? AND " . tireVideoSqlPredicate('ti.image_url')
+                . (function_exists('trashAnd') ? trashAnd($pdo, 'tire_image', 'ti') : '') . " GROUP BY {$grp}");
             $s->execute([$tireId]);
             $rows = $s->fetchAll();
         } catch (Throwable $e) {
@@ -872,6 +874,7 @@ if (!function_exists('tireImagesForSeries')) {
         $sql .= " ti.tire_id = ?"; $params[] = $tireId;
         if (!$withSeries && $seriesId !== null && $seriesId > 0) return [];
         if (!empty($opts['client'])) { $sql .= " AND ti.status <> 'denied'"; }
+        if (empty($opts['trashed']) && function_exists('trashAnd')) { $sql .= trashAnd($pdo, 'tire_image', 'ti'); }   // Joust's Trash stays out (trash-lib.php)
         if (isset($opts['status']) && in_array($opts['status'], ['pending', 'approved', 'denied'], true)) { $sql .= " AND ti.status = ?"; $params[] = $opts['status']; }
         if ($withSeries) {
             if ($seriesId === null || $seriesId <= 0) { $sql .= " AND ti.series_id IS NULL"; }

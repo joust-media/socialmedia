@@ -102,16 +102,16 @@ $nfItemOptions = static function (int $companyId) use ($pdo): array {
     $out = [];
     try {
         $nameSel = function_exists('hasPostsNameColumn') && hasPostsNameColumn($pdo) ? 'name' : "'' AS name";
-        $s = $pdo->prepare("SELECT id, caption, {$nameSel} FROM posts WHERE company_id = ? AND status <> 'draft' ORDER BY id DESC LIMIT 40");
+        $s = $pdo->prepare("SELECT id, caption, {$nameSel} FROM posts WHERE company_id = ? AND status <> 'draft'" . trashAnd($pdo, 'post') . " ORDER BY id DESC LIMIT 40");   // never Joust's Trash
         $s->execute([$companyId]);
         foreach ($s->fetchAll() as $r) $out['post:' . (int)$r['id']] = 'Post · ' . postDisplayLabel($r);
         if (function_exists('hasEmailsTable') && hasEmailsTable($pdo)) {
-            $s = $pdo->prepare("SELECT * FROM emails WHERE company_id = ? ORDER BY id DESC LIMIT 40");
+            $s = $pdo->prepare("SELECT * FROM emails WHERE company_id = ?" . trashAnd($pdo, 'email') . " ORDER BY id DESC LIMIT 40");
             $s->execute([$companyId]);
             foreach ($s->fetchAll() as $r) $out['email:' . (int)$r['id']] = 'Email · ' . emailDisplayLabel($r);
         }
         if (function_exists('hasPagesTable') && hasPagesTable($pdo) && function_exists('pageDisplayLabel')) {
-            $s = $pdo->prepare("SELECT * FROM pages WHERE company_id = ? ORDER BY id DESC LIMIT 40");
+            $s = $pdo->prepare("SELECT * FROM pages WHERE company_id = ?" . trashAnd($pdo, 'page') . " ORDER BY id DESC LIMIT 40");
             $s->execute([$companyId]);
             foreach ($s->fetchAll() as $r) $out['page:' . (int)$r['id']] = 'Page · ' . pageDisplayLabel($r);
         }

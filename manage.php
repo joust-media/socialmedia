@@ -268,6 +268,12 @@ include __DIR__ . '/partials/layout-top.php';
     <?php if ($client): ?>
       <?= insetRow(['href' => clientUrl('projects.php'), 'icon' => 'checklist', 'title' => 'Projects', 'subtitle' => 'Tasks shared with ' . $client['name'], 'attrs' => ['data-tool' => 'projects']]) ?>
     <?php endif; ?>
+    <?php if (trashReady($pdo)): $trashN = trashCount($pdo, $client ? (int)$client['id'] : null); // the Trash (trash.php) ?>
+      <?= insetRow(['href' => portalUrl('trash', $client ? ['client' => $client['slug']] : []), 'icon' => 'trash', 'title' => 'Trash',
+                    'subtitle' => ($trashN > 0 ? $trashN . ' item' . ($trashN === 1 ? '' : 's') . ' kept out of every list and notification' : 'Nothing in the Trash') . ' — restore or delete',
+                    'trailing' => $trashN > 0 ? '<span class="ui-badge ui-badge--neutral" data-trash-link-count>' . ($trashN > 99 ? '99+' : $trashN) . '</span>' : '',
+                    'attrs' => ['data-tool' => 'trash', 'data-trash-link' => '']]) ?>
+    <?php endif; ?>
   <?= insetListClose() ?>
 
   <?php if ($client && $toolHasEmails):

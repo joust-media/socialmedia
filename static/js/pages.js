@@ -505,6 +505,25 @@
     });
   };
 
+  /* "Move to Trash…" (admin ⋯; trash.php): kept, left out of every list — the page leaves this one, the counts drop. */
+  P.trash = function (id) {
+    id = String(id);
+    var root = sheetRoot();
+    var before = (root && ($('[data-deny-form]', root) || $('[data-pd-body] > *', root))) || null;
+    return App.trash.inline(before, { noun: 'page' }).then(function (note) {
+      if (note === null) return null;
+      return App.trash.move(['page:' + id], note).then(function (res) {
+        if (!res.ok) { toast(res.error || 'Could not move it to the Trash', 'error'); return res; }
+        var snap = snapshot(id);
+        if (snap) bumpCount(keyOf(snap.status, snap.live), -1);
+        if (P.current && P.current.id === id) P.close();
+        leaveList(id);
+        App.trash.toastDone(res, 1);
+        return res;
+      });
+    });
+  };
+
   P.remove = function (id) {
     id = String(id);
     var art = pg();
@@ -723,6 +742,7 @@
       var tl = t.closest('[data-toggle-live]');
       if (tl) { P.toggleLive(id, tl.getAttribute('data-toggle-live')); return; }
       if (t.closest('[data-delete-page]')) { P.remove(id); return; }
+      if (t.closest('[data-trash-item]')) { var tm = t.closest('[data-asg-menu]'); if (tm) tm.hidden = true; P.trash(id); return; }
       var rep = t.closest('[data-page-repair]');
       if (rep && !rep.disabled) { repairMedia(art, rep); return; }
       var ext = t.closest('[data-page-extract]');

@@ -208,6 +208,13 @@ if (!function_exists('redoAfterReplace')) {
     }
 }
 
+if (!function_exists('trashRedoSql')) {
+    /** (internal) " AND <alias>.trashed_at IS NULL" for a redo kind's table (trash-lib.php) — '' before migrate.php 54. */
+    function trashRedoSql(PDO $pdo, string $kind, string $alias): string {
+        return function_exists('trashAnd') ? trashAnd($pdo, $kind === 'library' ? 'library_image' : 'tire_image', $alias) : '';
+    }
+}
+
 if (!function_exists('redoFlags')) {
     /** [id => ['at' => redo_at, 'note' => redo_note]] for the queued ones among $ids (one query; [] before migrate.php 52). */
     function redoFlags(PDO $pdo, string $kind, array $ids): array {
@@ -230,11 +237,12 @@ if (!function_exists('redoCount')) {
         if (!redoReady($pdo)) return 0;
         $n = 0;
         try {
-            $s = $pdo->prepare("SELECT COUNT(*) FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id WHERE ti.redo_at IS NOT NULL" . ($companyId ? ' AND t.company_id = ?' : ''));
+            // never an image in Joust's Trash (trash-lib.php): trashing takes it off the queue (its flag is kept for Restore)
+            $s = $pdo->prepare("SELECT COUNT(*) FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id WHERE ti.redo_at IS NOT NULL" . trashRedoSql($pdo, 'tire', 'ti') . ($companyId ? ' AND t.company_id = ?' : ''));
             $s->execute($companyId ? [$companyId] : []);
             $n += (int)$s->fetchColumn();
             if (redoKindReady($pdo, 'library')) {
-                $s = $pdo->prepare("SELECT COUNT(*) FROM library_images WHERE redo_at IS NOT NULL" . ($companyId ? ' AND company_id = ?' : ''));
+                $s = $pdo->prepare("SELECT COUNT(*) FROM library_images WHERE redo_at IS NOT NULL" . trashRedoSql($pdo, 'library', '') . ($companyId ? ' AND company_id = ?' : ''));
                 $s->execute($companyId ? [$companyId] : []);
                 $n += (int)$s->fetchColumn();
             }
@@ -282,7 +290,7 @@ if (!function_exists('redoItems')) {
                           INNER JOIN tires t ON t.id = ti.tire_id
                           INNER JOIN companies c ON c.id = t.company_id"
                      . ($seriesOn ? " LEFT JOIN tire_series s ON s.id = ti.series_id" : '') . "
-                         WHERE ti.redo_at IS NOT NULL" . ($companyId ? ' AND t.company_id = ?' : '') . ($since !== '' ? sprintf($since, 'ti', 'ti', 'ti') : '');
+                         WHERE ti.redo_at IS NOT NULL" . trashRedoSql($pdo, 'tire', 'ti') . ($companyId ? ' AND t.company_id = ?' : '') . ($since !== '' ? sprintf($since, 'ti', 'ti', 'ti') : '');
                 $p = $companyId ? [$companyId] : [];
                 if ($refs !== null) { $ids = array_values(array_map('intval', $refs['tire'])); $sql .= ' AND ti.id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')'; $p = array_merge($p, $ids); }
                 $s = $pdo->prepare($sql);
@@ -308,7 +316,7 @@ if (!function_exists('redoItems')) {
             if (redoKindReady($pdo, 'library') && ($refs === null || !empty($refs['library']))) {
                 $sql = "SELECT li.id, li.filename, li.status, li.redo_at, li.redo_note, li.redo_by, li.redo_exported_at, li.company_id, c.name AS company_name, c.slug AS company_slug
                           FROM library_images li INNER JOIN companies c ON c.id = li.company_id
-                         WHERE li.redo_at IS NOT NULL" . ($companyId ? ' AND li.company_id = ?' : '') . ($since !== '' ? sprintf($since, 'li', 'li', 'li') : '');
+                         WHERE li.redo_at IS NOT NULL" . trashRedoSql($pdo, 'library', 'li') . ($companyId ? ' AND li.company_id = ?' : '') . ($since !== '' ? sprintf($since, 'li', 'li', 'li') : '');
                 $p = $companyId ? [$companyId] : [];
                 if ($refs !== null) { $ids = array_values(array_map('intval', $refs['library'])); $sql .= ' AND li.id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')'; $p = array_merge($p, $ids); }
                 $s = $pdo->prepare($sql);

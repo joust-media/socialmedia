@@ -655,3 +655,14 @@ video.ui-viewer-media { width: 100%; background: #000; touch-action: auto; }
   .as-selectbar-actions { flex-wrap: wrap; }
   .as-selectbar-actions .ui-btn { flex: 1 1 30%; }
 }
+
+/* The Trash chip (trash.php — admin; only when this client's Trash holds something) + the select bar's Move to Trash… */
+.as-chip--trash { color: var(--label-secondary); gap: 4px; }
+.as-chip--trash .ui-icon { width: 14px; height: 14px; }
+.as-chip--redo + .as-chip--trash { margin-left: 0; }
+.as-select-trash .ui-icon { width: 16px; height: 16px; }
+@media (max-width: 599.98px) {
+  /* six buttons on a phone: the Trash button is icon-only (its aria-label says "Move to Trash…") so each row fits */
+  .as-selectbar-actions .as-select-trash { flex: 0 0 44px; padding-inline: 0; }
+  .as-select-trash span { display: none; }
+}

@@ -126,6 +126,15 @@ if (!$client) {
             'attrs'    => ['data-home-link' => 'redo'],
         ]) ?>
         <?php endif; ?>
+        <?php if (function_exists('trashReady') && trashReady($pdo) && ($trashN = trashCount($pdo, null)) > 0): // the Trash across clients (trash.php) ?>
+        <?= insetRow([
+            'href'     => portalUrl('trash'),
+            'icon'     => 'trash',
+            'title'    => 'Trash (' . $trashN . ')',
+            'subtitle' => 'Items you decided not to do — kept, but left out of every list and notification',
+            'attrs'    => ['data-home-link' => 'trash', 'data-trash-link' => ''],
+        ]) ?>
+        <?php endif; ?>
         <?= insetRow([
             'href'     => pagePath('drive'),
             'icon'     => 'drive',
@@ -149,7 +158,7 @@ if (!$client) {
 // =====================================================================
 $cid = (int)$client['id'];
 
-$st = $pdo->prepare("SELECT COUNT(*) FROM posts WHERE company_id = ? AND status = 'pending'");
+$st = $pdo->prepare("SELECT COUNT(*) FROM posts WHERE company_id = ? AND status = 'pending'" . trashAnd($pdo, 'post'));   // never a trashed item (trash-lib.php)
 $st->execute([$cid]);
 $pendingPosts = (int)$st->fetchColumn();
 
@@ -157,7 +166,7 @@ $st = $pdo->prepare("
     SELECT COUNT(*) AS images, COUNT(DISTINCT t.id) AS collections
       FROM tire_images ti
      INNER JOIN tires t ON t.id = ti.tire_id
-     WHERE t.company_id = ? AND ti.status = 'pending'
+     WHERE t.company_id = ? AND ti.status = 'pending'" . trashAnd($pdo, 'tire_image', 'ti') . "
 ");
 $st->execute([$cid]);
 $tireRow = $st->fetch();
@@ -166,7 +175,7 @@ $pendingCollections = (int)($tireRow['collections'] ?? 0);
 
 $pendingLibrary = 0;
 if ($hasLib) {
-    $st = $pdo->prepare("SELECT COUNT(*) FROM library_images WHERE company_id = ? AND status = 'pending'");
+    $st = $pdo->prepare("SELECT COUNT(*) FROM library_images WHERE company_id = ? AND status = 'pending'" . trashAnd($pdo, 'library_image'));
     $st->execute([$cid]);
     $pendingLibrary = (int)$st->fetchColumn();
 }
@@ -224,7 +233,7 @@ $st = $pdo->prepare("
            (SELECT pi.image_url FROM post_images pi WHERE pi.post_id = p.id ORDER BY pi.sort_order ASC, pi.id ASC LIMIT 1) AS thumb_url,
            {$thumbType}
       FROM posts p
-     WHERE p.company_id = ? AND {$readyWhere} AND p.scheduled_date >= CURDATE()
+     WHERE p.company_id = ? AND {$readyWhere} AND p.scheduled_date >= CURDATE()" . trashAnd($pdo, 'post', 'p') . "
      ORDER BY p.scheduled_date ASC, p.id ASC
      LIMIT 3
 ");
@@ -269,20 +278,20 @@ $unansweredTotal = 0;
 if ($isAdmin) {
     try {
         $deniedPostWhere = $hasPosted ? "status = 'denied' AND posted = 0" : "status = 'denied'";
-        $st = $pdo->prepare("SELECT COUNT(*) FROM posts WHERE company_id = ? AND {$deniedPostWhere}");
+        $st = $pdo->prepare("SELECT COUNT(*) FROM posts WHERE company_id = ? AND {$deniedPostWhere}" . trashAnd($pdo, 'post'));
         $st->execute([$cid]);
         $needsPosts = (int)$st->fetchColumn();
 
         $st = $pdo->prepare("
             SELECT COUNT(*) FROM tire_images ti
              INNER JOIN tires t ON t.id = ti.tire_id
-             WHERE t.company_id = ? AND ti.status = 'denied'
+             WHERE t.company_id = ? AND ti.status = 'denied'" . trashAnd($pdo, 'tire_image', 'ti') . "
         ");
         $st->execute([$cid]);
         $needsAssets['tire'] = (int)$st->fetchColumn();
 
         if ($hasLib) {
-            $st = $pdo->prepare("SELECT COUNT(*) FROM library_images WHERE company_id = ? AND status = 'denied'");
+            $st = $pdo->prepare("SELECT COUNT(*) FROM library_images WHERE company_id = ? AND status = 'denied'" . trashAnd($pdo, 'library_image'));
             $st->execute([$cid]);
             $needsAssets['library'] = (int)$st->fetchColumn();
         }
@@ -335,7 +344,7 @@ if ($isAdmin) {
                   FROM activity_log c
                  INNER JOIN posts p ON p.id = c.entity_id
                  WHERE c.company_id = ? AND c.entity_type = 'post' AND c.actor = 'client'
-                   AND c.action IN ('edited_caption', 'edited_hashtags') AND c.created_at >= ?
+                   AND c.action IN ('edited_caption', 'edited_hashtags') AND c.created_at >= ?" . trashAnd($pdo, 'post', 'p') . "
                  ORDER BY c.created_at DESC, c.id DESC
                  LIMIT 12
             ");
@@ -612,6 +621,11 @@ if (!$isAdmin && function_exists('sentBackHomeHtml')) echo sentBackHomeHtml($pdo
                   'subtitle' => $redoN > 0 ? $redoN . ' image' . ($redoN === 1 ? '' : 's') . ' to make again for ' . $client['name'] : 'Nothing to redo for ' . $client['name'],
                   'trailing' => $redoN > 0 ? '<span class="ui-badge ui-badge--redo" data-home-redo-count>' . ($redoN > 99 ? '99+' : $redoN) . '</span>' : '',
                   'attrs' => ['data-home-link' => 'redo']]) ?>
+    <?php endif; ?>
+    <?php if (function_exists('trashReady') && trashReady($pdo) && ($trashN = trashCount($pdo, $cid)) > 0): // this client's Trash (trash.php) ?>
+    <?= insetRow(['href' => portalUrl('trash', ['client' => $client['slug']]), 'icon' => 'trash', 'title' => 'Trash (' . $trashN . ')',
+                  'subtitle' => 'Kept for ' . $client['name'] . ', left out of every list and notification · restore or delete',
+                  'attrs' => ['data-home-link' => 'trash', 'data-trash-link' => '']]) ?>
     <?php endif; ?>
     <?= insetRow(['href' => manageUrl('export'), 'icon' => 'download', 'title' => 'Export approved assets', 'subtitle' => 'One zip, a folder per tire', 'attrs' => ['data-home-link' => 'export']]) ?>
     <?= insetRow(['href' => clientUrl('projects.php'), 'icon' => 'checklist', 'title' => 'Projects', 'subtitle' => 'Tasks shared with ' . $client['name'], 'attrs' => ['data-home-link' => 'projects']]) ?>

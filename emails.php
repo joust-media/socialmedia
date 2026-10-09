@@ -187,6 +187,7 @@ function emailsAttachComments(PDO $pdo, array &$rows): void {
 
 /** May this viewer open the row? (SQL already hides them from lists; this guards deep links.) */
 function emailVisibleTo(array $email, bool $admin): bool {
+    if (!empty($email['trashed_at'])) return false;   // in Joust's Trash (trash-lib.php): not openable from here, either seat
     if ($admin) return true;
     return !empty($email['live']) || in_array((string)$email['status'], ['pending', 'approved', 'denied'], true);   // denied = its Sent back
 }
@@ -218,7 +219,7 @@ if ($isPartial) {
     header('Cache-Control: no-store');
     if (!$directEmail) {
         http_response_code(404);
-        echo '<div class="ui-empty">This email is no longer available.</div>';
+        echo trashUnavailableHtml($admin && trashIsTrashed($pdo, 'email', $emailParam), 'email', $client);   // neutral for the client
         exit;
     }
     $one = [$directEmail];
@@ -414,6 +415,9 @@ include __DIR__ . '/partials/layout-top.php';
 <div class="posts-toolbar emails-toolbar">
   <?= segmented($segItems, ['label' => 'Email status', 'scroll' => true]) ?>
 </div>
+<?php if ($emailParam > 0 && trashIsTrashed($pdo, 'email', $emailParam) && trashItemCompany($pdo, 'email', $emailParam) === (int)$client['id']): // a deep link to an item in Joust's Trash: neutral, never an error ?>
+<div class="trash-gone"><?= trashUnavailableHtml($admin, 'item', $client) ?></div>
+<?php endif; ?>
 
 <?php if ($allGroups || $q !== ''): ?>
 <div class="emails-filters" data-emails-filters>

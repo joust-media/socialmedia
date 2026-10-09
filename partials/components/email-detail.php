@@ -114,7 +114,7 @@ if (!function_exists('renderEmailDetail')) {
         // Admin ⋯: Move to client… · Add to flow… · Set audiences… (assign.js sheets → assign.php)
         if ($admin && function_exists('assignMenuHtml')) {
             $out .= assignMenuHtml('email', $id, function_exists('emailDisplayLabel') ? emailDisplayLabel($email) : ($code !== '' ? $code : 'Email'),
-                ['admin' => true, 'extra' => (function_exists('trackingResolveMenuItem') ? trackingResolveMenuItem('email', $id) : '') . reviewMenuItemsHtml('email', $key, $editUrl, 'data-delete-email')]);
+                ['admin' => true, 'extra' => (function_exists('trackingResolveMenuItem') ? trackingResolveMenuItem('email', $id) : '') . reviewMenuItemsHtml('email', $key, $editUrl, 'data-delete-email', function_exists('trashMenuItemHtml') ? trashMenuItemHtml('email', $id) : '')]);
         }
         $out .= '</div>';
 

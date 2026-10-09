@@ -25,6 +25,9 @@
 -- author_user_id / internal / batch_id / summary / detail / client_contact_id and reads id + created_at (the feed, the
 -- Morning summary, escalation) — nothing else. Comment editing keeps to those; its own tables (comment_revisions,
 -- comment_slack) carry their own created_at.
+--
+-- The Trash columns (trashed_at, trashed_by, trash_note + ix_trashed on posts, emails, pages, tire_images,
+-- library_images) are NOT here either: migrate.php 54 adds them, exactly as on production.
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;

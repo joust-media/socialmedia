@@ -1424,6 +1424,18 @@ function recentActivity(PDO $pdo, $companyId = null, $limit = 20) {
             if (($g['_meta']['status'] ?? '') === 'draft') return false;
             return (bool)array_diff((array)($g['actions'] ?? []), ['drafted', 'moved_to_draft']);
         }));
+        // …nor anything about an item in Joust's Trash (trash-lib.php): it is no longer there for the client.
+        if (function_exists('trashFilterRows')) $grouped = trashFilterRows($pdo, $grouped);
+    } elseif (function_exists('trashFilterRows')) {
+        // Joust's feed: a trashed item is disregarded too — only its own "moved to Trash" row stays (the Trash
+        // page holds the rest); the client's old comments on it no longer fill Home.
+        $keep = [];
+        foreach ($grouped as $i => $g) {
+            if (array_intersect((array)($g['actions'] ?? []), ['trashed', 'restored'])) $keep[$i] = true;
+        }
+        $live = trashFilterRows($pdo, array_map(static function ($g, $i) { $g['_ti'] = $i; return $g; }, $grouped, array_keys($grouped)));
+        foreach ($live as $g) $keep[(int)$g['_ti']] = true;
+        $grouped = array_values(array_filter($grouped, static function ($i) use ($keep) { return isset($keep[$i]); }, ARRAY_FILTER_USE_KEY));
     }
 
     return $grouped;
@@ -1496,6 +1508,9 @@ function actionLabel($action) {
         'redo_marked'          => 'marked for redo',
         'redo_cleared'         => 'took off the redo list',
         'moved_to_tire'        => 'moved',
+        // the Trash (trash-lib.php; internal rows — the admin seat only)
+        'trashed'              => 'moved to Trash',
+        'restored'             => 'restored from Trash',
         // Drive storage view (entity_type = 'drive_snapshot', nightly collector)
         'snapshot'             => 'took a storage snapshot of',
     ];
@@ -2046,6 +2061,12 @@ if (!function_exists('activityFinalizeRows')) {
                 case 'redo_cleared':
                     $verb = 'took off the redo list'; $icon = 'checkmark'; $tone = 'neutral';
                     $t = "$who took $objT off the redo list"; $hh = "$whoH took $objH off the redo list"; break;
+                case 'trashed':
+                    $verb = 'moved to Trash'; $icon = 'trash'; $tone = 'neutral';
+                    $t = "$who moved $objT to the Trash"; $hh = "$whoH moved $objH to the Trash"; break;
+                case 'restored':
+                    $verb = 'restored from Trash'; $icon = 'checkmark'; $tone = 'neutral';
+                    $t = "$who restored $objT from the Trash"; $hh = "$whoH restored $objH from the Trash"; break;
                 case 'moved_to_tire':
                     $verb = 'moved'; $icon = 'grid'; $tone = 'accent';
                     $dest = '';
@@ -2506,3 +2527,4 @@ require_once __DIR__ . '/tracking-lib.php';
 require_once __DIR__ . '/redo-lib.php';         // the Redo queue (migrate.php 52): redoMark / redoAfterReplace / redoItems …
 require_once __DIR__ . '/comment-edit-lib.php'; // comment editing (migrate.php 53): commentEditApply / commentRevisionMeta / the Slack update …
 require_once __DIR__ . '/sentback-lib.php';     // the client's "Sent back" (its Needs changes items): counts, lists, the sheet panel, Home
+require_once __DIR__ . '/trash-lib.php';        // the Trash (migrate.php 54): trashMove / trashRestore / trashAnd() filters …

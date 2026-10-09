@@ -109,6 +109,7 @@
         replace: $('[data-viewer-replace]', root), replaceInput: $('[data-viewer-replace-input]', root), manage: $('[data-viewer-manage]', root),
         setRef: $('[data-viewer-set-reference]', root), del: $('[data-viewer-delete]', root), useInPost: $('[data-viewer-use-in-post]', root),
         redoPill: $('[data-viewer-redo-pill]', root), redo: $('[data-viewer-redo]', root), unredo: $('[data-viewer-unredo]', root), move: $('[data-viewer-move]', root),
+        trash: $('[data-viewer-trash]', root),
         sentback: $('[data-viewer-sentback]', root), confirm: $('[data-viewer-confirm]', root),   // client seat only (media-viewer.php)
         confirmOk: $('[data-viewer-confirm-ok]', root), confirmCancel: $('[data-viewer-confirm-cancel]', root),
         comments: $('[data-viewer-comments]', root), commentsToggle: $('[data-viewer-comments-toggle]', root),
@@ -168,6 +169,8 @@
       if (r.redo) r.redo.addEventListener('click', function () { var it = self.current(); self.closeMenu(); if (it) assets.redoSheet([it]); });
       if (r.unredo) r.unredo.addEventListener('click', function () { var it = self.current(); self.closeMenu(); if (it) assets.unredo([it]); });
       if (r.move) r.move.addEventListener('click', function () { var it = self.current(); self.closeMenu(); if (it) assets.moveSheet([it]); });
+      // admin: Joust's Trash (trash.php) — kept, out of every list; the sheet asks for an optional reason
+      if (r.trash) r.trash.addEventListener('click', function () { var it = self.current(); self.closeMenu(); if (it) assets.trashSheet([it]); });
       // admin: "Use in post" (approved items) → the New post pop-up (newpost.js) with this image as slide 1
       if (r.useInPost) r.useInPost.addEventListener('click', function () {
         var it = self.current(); self.closeMenu();
@@ -373,6 +376,7 @@
       if (r.redo) r.redo.hidden = !redoOn || !!item.redo;
       if (r.unredo) r.unredo.hidden = !redoOn || !item.redo;
       if (r.move) r.move.hidden = !(item.kind === 'library' && assets.cfg.move && assets.cfg.move.on && !item.strip);
+      if (r.trash) r.trash.hidden = !(assets.cfg.endpoints && assets.cfg.endpoints.trash) || (item.kind !== 'tire' && item.kind !== 'library');
       if (r.useInPost) r.useInPost.hidden = !(item.status === 'approved' && (item.kind === 'tire' || item.kind === 'library') && App.newPost);
       // Download: images go through the blob save (download()), videos through a direct <a download> link
       if (r.downloadLink) {
@@ -1013,6 +1017,8 @@
       var redoBtn = $('[data-select-redo]'), moveBtn = $('[data-select-move]');   // admin only: Redo queue / Library → tire
       if (redoBtn) redoBtn.addEventListener('click', function () { self.redoSheet(self.selectedTiles().map(function (t) { return self.tileToItem(t); })); });
       if (moveBtn) moveBtn.addEventListener('click', function () { self.moveSheet(self.selectedTiles().map(function (t) { return self.tileToItem(t); })); });
+      var trashBtn = $('[data-select-trash]');   // admin only: Joust's Trash (trash.php)
+      if (trashBtn) trashBtn.addEventListener('click', function () { self.trashSheet(self.selectedTiles().map(function (t) { return self.tileToItem(t); })); });
       // A replacement took a queued image off the Redo queue → To Review (the tile follows, the counts move)
       document.addEventListener('viewer:redo', function (e) {
         var d = e.detail, tile = d.item.tile || self.findTile(d.item.kind, d.item.id);
@@ -1102,7 +1108,7 @@
         self.stripTiles(e.detail.item.id).forEach(function (t) { t.dataset.status = e.detail.status; t.classList.toggle('is-approved', e.detail.status === 'approved'); });
       });
       document.addEventListener('viewer:removed', function (e) {
-        if (e.detail.reason !== 'deleted') return;
+        if (e.detail.reason !== 'deleted' && e.detail.reason !== 'trashed') return;
         self.stripTiles(e.detail.item.id).forEach(function (t) { t.remove(); });
         var n = $('[data-ref-count]', strip); if (n) n.textContent = String(self.stripTiles().filter(function (t) { return t.dataset.status === 'approved'; }).length);
       });
@@ -1321,6 +1327,37 @@
         });
       });
     },
+    /** "Move to Trash…" (admin): an optional reason (Joust only) → trash.php action=trash; the images leave every grid,
+     *  count and queue here (kept in the Trash, restorable — trash-lib.php). */
+    trashSheet: function (items) {
+      var self = this, ep = (this.cfg.endpoints || {}).trash;
+      items = (items || []).filter(Boolean);
+      if (!items.length || !ep || !App.trash) return;
+      var n = items.length;
+      App.trash.sheet({ n: n, noun: items[0].type === 'video' ? 'video' : 'image', nouns: 'images', sheet: '#asActionSheet' }).then(function (note) {
+        if (note === null) return;
+        App.trash.move(items.map(function (it) { return (it.kind === 'library' ? 'library_image' : 'tire_image') + ':' + it.id; }), note).then(function (res) {
+          if (!res.ok) { toast(res.error || 'Could not move to the Trash', { kind: 'error' }); return; }
+          if (self.selecting) self.setSelecting(false);
+          items.forEach(function (it) {
+            if (it.redo) self.bumpRedoChip(-1);   // off the Redo queue while it is in the Trash
+            if (viewer.isOpen && viewer.current() && viewer.current().kind === it.kind && viewer.current().id === it.id) viewer.removeCurrent('trashed');
+            else {
+              var tile = it.tile || self.findTile(it.kind, it.id);
+              if (!it.strip) {
+                self.adjustCounts(it.status, null);
+                if (self.cfg.page && self.cfg.page.total > 0) self.cfg.page.total--;
+              }
+              if (tile) self.leaveTile(tile);
+              viewer.items = viewer.items.filter(function (v) { return !(v.kind === it.kind && v.id === it.id); });
+            }
+          });
+          self.syncMore();
+          App.trash.toastDone(res, n);
+        });
+      });
+    },
+
     /** "Remove from redo" → redo.php action=unmark. */
     unredo: function (items) {
       var self = this, ep = (this.cfg.endpoints || {}).redo;
@@ -1575,9 +1612,10 @@
       if (post) { post.disabled = m === 0 || this._busyBatch; post.innerHTML = 'Create post' + (m > 0 ? '<span class="as-sel-n"> with ' + m + '</span>' : ''); post.title = m === 0 ? 'Select approved images to build a post' : ''; }
       if (dl && !this._busyZip) { dl.disabled = m === 0 || dl.getAttribute('data-zip') === '0'; if (dl.getAttribute('data-zip') === '0') dl.title = 'This server can only export the CSV list (32-bit PHP)'; }
       if (ex) ex.disabled = m === 0;
-      var rb = $('[data-select-redo]'), mb = $('[data-select-move]');
+      var rb = $('[data-select-redo]'), mb = $('[data-select-move]'), tb = $('[data-select-trash]');
       if (rb) rb.disabled = n === 0 || this._busyBatch;
       if (mb) mb.disabled = n === 0 || this._busyBatch;
+      if (tb) tb.disabled = n === 0 || this._busyBatch;
       // One bar, the actions the grid can use: approved grids offer post / Download / Export, the others Approve
       // (both when the selection mixes them). The client seat only ever has Approve.
       if (post) {

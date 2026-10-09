@@ -195,6 +195,7 @@ if (!function_exists('emailFlowAttachEmails')) {
         foreach ($steps as $st) {
             $e = $byId[(int)$st['email_id']] ?? null;
             if ($e === null) continue;
+            if (!empty($e['trashed_at'])) continue;   // in Joust's Trash (trash-lib.php): out of the flow for both seats
             if ($visibleTo === 'client' && empty($e['live']) && !in_array((string)($e['status'] ?? ''), ['pending', 'approved'], true)) continue;
             $st['email'] = $e;
             $out[] = $st;

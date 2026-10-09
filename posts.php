@@ -80,7 +80,7 @@ if (!$client) {
     }
     $companies = $pdo->query("
         SELECT c.id, c.name, c.slug, c.logo_url,
-               (SELECT COUNT(*) FROM posts WHERE posts.company_id = c.id AND posts.status = 'pending') AS pending_count
+               (SELECT COUNT(*) FROM posts WHERE posts.company_id = c.id AND posts.status = 'pending'" . trashAnd($pdo, 'post', 'posts') . ") AS pending_count
         FROM companies c
         ORDER BY c.name ASC
     ")->fetchAll();
@@ -141,6 +141,8 @@ if ($client) {
 if (!$admin) {
     $scopeWhere[] = postsClientVisibleSql('p');   // clients never see denied work or drafts (SQL, not CSS)
 }
+// Joust's Trash (trash-lib.php): out of every list, count and deep link for both seats — the Trash page is its home.
+$scopeWhere[] = trashLive($pdo, 'post', 'p');
 $hasDraft = $admin && postsHaveDraft($pdo);
 
 /** Load images + comments + approved_at + the latest copy edit for a set of post rows (4 queries total). */
@@ -241,7 +243,8 @@ if ($isPartial) {
     header('Cache-Control: no-store');
     if (!$directPost) {
         http_response_code(404);
-        echo '<div class="ui-empty">This post is no longer available.</div>';
+        // a trashed post: neutral for the client, "in the Trash" (+ a link) for Joust
+        echo trashUnavailableHtml($admin && $postParam > 0 && trashIsTrashed($pdo, 'post', $postParam), 'post', $client);
         exit;
     }
     $one = [$directPost];
@@ -425,6 +428,14 @@ function postsQueueInfo(array $post, ?string $deniedAt, ?array $client): array {
     ];
 }
 
+// A deep link to a post in Joust's Trash: a neutral notice on the page instead of an error (trash-lib.php) — the admin is
+// told it is in the Trash (+ a link). Other posts this seat cannot open (deleted, a draft for the client) keep the toast.
+$goneNotice = '';
+if ($postParam > 0 && !$directPost && !$isRowPartial && !$isListPartial && trashIsTrashed($pdo, 'post', $postParam)
+    && trashItemCompany($pdo, 'post', $postParam) === (int)$client['id']) {
+    $goneNotice = trashUnavailableHtml($admin, 'item', $client);
+}
+
 $inList = false;
 foreach ($posts as $p) { if ((int)$p['id'] === $postParam) { $inList = true; break; } }
 if ($directPost && !$inList) {
@@ -509,7 +520,7 @@ $postsConfig = [
     'inline'      => $inlineDetails,
     'admin'       => $admin,
     'hasPosted'   => $hasPosted,
-    'openPost'    => $postParam > 0 ? $postParam : 0,
+    'openPost'    => ($postParam > 0 && $goneNotice === '') ? $postParam : 0,
     'queue'       => $isQueue,
     'segmentUrls' => array_combine(array_keys($segments), array_map($segmentUrl, array_keys($segments))),
     'maxMedia'    => POST_MAX_MEDIA,   // most media one post may carry (helpers.php)
@@ -659,6 +670,7 @@ include __DIR__ . '/partials/layout-top.php';
 <div class="posts-toolbar">
   <?= segmented($segItems, ['label' => 'Post status', 'scroll' => true]) ?>
 </div>
+<?php if ($goneNotice !== ''): ?><div class="trash-gone"><?= $goneNotice ?></div><?php endif; ?>
 
 <?php if (!$posts): ?>
   <div class="ui-empty posts-empty" data-posts-empty>
@@ -693,6 +705,7 @@ include __DIR__ . '/partials/layout-top.php';
     <p class="ui-list-footer posts-hint">Posts you marked Needs changes, newest first. Joust is reworking them — they come back to To Review when ready. Open one to approve it instead or add a comment.</p>
   <?php endif; ?>
 </section>
+<?php if (($trashLink = trashLinkHtml($pdo, $client)) !== ''): // admin: this client's Trash (trash.php) ?><p class="trash-link-row"><?= $trashLink ?></p><?php endif; ?>
 
 <?php if ($directPost): ?>
   <template data-post-template="<?= (int)$directPost['id'] ?>"><?= renderPostDetail($directPost, ['admin' => $admin, 'hasPosted' => $hasPosted]) ?></template>

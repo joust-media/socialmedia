@@ -23,6 +23,7 @@ if (!preg_match('/^([a-z_]{3,20}):([1-9][0-9]{0,9})$/', (string)($_POST['entity'
 }
 $type = $m[1]; $id = (int)$m[2];
 $action = (string)($_POST['action'] ?? '');
+if (!isAdmin()) trashGuardJson($pdo, $type, $id, false);   // an item in Joust's Trash is gone for the client (trash-lib.php)
 
 if ($action === 'resolve') {
     if (!isAdmin()) $out(403, ['ok' => false, 'error' => 'Admin sign-in required']);

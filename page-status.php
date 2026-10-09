@@ -67,6 +67,8 @@ $comment = $hasCmt ? trim((string)$_POST['comment']) : null;
 if ($id <= 0) {
     pageFail(400, 'Invalid id');
 }
+// Joust's Trash (trash-lib.php): gone for the client (404), frozen for Joust (409) until restored
+if ($action !== 'delete_page') trashGuardJson($pdo, 'page', $id, $isAdminSession);
 if (!in_array($action, ['', 'submit', 'toggle_live', 'delete_page'], true)) {
     pageFail(400, 'Unknown action');
 }

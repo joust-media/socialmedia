@@ -405,6 +405,7 @@ function npPostOr404(PDO $pdo, int $postId, int $cid, bool $lock = false): array
     $p = $st->fetch();
     if (!$p) npFail(404, 'That post no longer exists.');
     if ((int)$p['company_id'] !== $cid) npFail(403, 'That post belongs to another client.');
+    if (!empty($p['trashed_at'])) npFail(409, 'That post is in the Trash — restore it first.');   // trash-lib.php
     return $p;
 }
 function npRows(PDO $pdo, int $postId): array {

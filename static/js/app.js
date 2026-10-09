@@ -322,6 +322,89 @@
   });
 
   /* ---------------------------------------------------------------- */
+  /* The Trash (admin; trash-lib.php / trash.php): "Move to Trash…"   */
+  /* asks for an optional reason (Joust only) — inline in an open     */
+  /* post / email / page sheet, or in a sheet of its own (Redo rows,  */
+  /* the Assets viewer has its own action sheet) — then posts         */
+  /* trash.php action=trash. The caller removes the item from view.   */
+  /*   App.trash.inline(beforeEl, {noun, n}) → Promise<note | null>   */
+  /*   App.trash.sheet({noun, n, sheet})     → Promise<note | null>   */
+  /*   App.trash.move(['post:3'], note, client) → App.post reply      */
+  /* ---------------------------------------------------------------- */
+  App.trash = {
+    ep: function () { return App.urls && App.urls.abs ? App.urls.abs('trash.php') : 'trash.php'; },
+    esc: function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); },
+    title: function (o) { var n = o.n || 1; return n === 1 ? 'Move this ' + (o.noun || 'item') + ' to Trash?' : 'Move ' + n + ' ' + (o.nouns || 'items') + ' to Trash?'; },
+    formHtml: function (o) {
+      var n = o.n || 1, id = 'trNote' + (++confirmSeq);
+      return '<form class="tr-ask-form" data-trash-form novalidate>'
+        + '<p class="pd-editor-hint tr-ask-text">' + (n === 1 ? 'It is kept' : 'They are kept') + ' — just left out of every list, count, export and notification, for you and the client. '
+        + 'Files stay where they are. Restore it from the Trash any time.</p>'
+        + '<label class="pd-editor-label tr-ask-label" for="' + id + '">Reason <span class="text-tertiary">(optional · Joust only, never shown to the client)</span></label>'
+        + '<textarea class="ui-textarea tr-ask-note" id="' + id + '" rows="2" maxlength="500" placeholder="e.g. Not redoing this one — the client moved on" data-trash-note data-sheet-autofocus></textarea>'
+        + '<div class="ui-btn-group tr-ask-actions"><button type="button" class="ui-btn ui-btn--gray" data-trash-cancel>Cancel</button>'
+        + '<button type="submit" class="ui-btn ui-btn--filled tr-ask-submit" data-trash-submit>' + (n === 1 ? 'Move to Trash' : 'Move ' + n + ' to Trash') + '</button></div></form>';
+    },
+    _wire: function (form, done) {
+      form.addEventListener('submit', function (e) { e.preventDefault(); done((form.querySelector('[data-trash-note]').value || '').trim()); });
+      form.addEventListener('click', function (e) { if (e.target.closest('[data-trash-cancel]')) { e.preventDefault(); done(null); } });
+      form.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); } });
+    },
+    /** In the open sheet, above `before` (the Needs changes form): the same panel style as App.confirmInline. */
+    inline: function (before, o) {
+      o = o || {};
+      var self = this;
+      return new Promise(function (resolve) {
+        if (!before || !before.parentNode) { var r = window.prompt(self.title(o) + '\n\nReason (optional, Joust only):', ''); resolve(r === null ? null : r.trim()); return; }
+        var prev = before.parentNode.querySelector('[data-trash-ask]');
+        if (prev && prev.__done) prev.__done(null);
+        var box = document.createElement('section');
+        box.className = 'pd-deny pd-confirm tr-ask';
+        box.setAttribute('data-trash-ask', '');
+        box.setAttribute('role', 'dialog');
+        box.setAttribute('aria-label', self.title(o));
+        box.innerHTML = '<p class="pd-editor-label pd-confirm-title">' + self.esc(self.title(o)) + '</p>' + self.formHtml(o);
+        before.parentNode.insertBefore(box, before);
+        var settled = false;
+        var done = function (v) { if (settled) return; settled = true; if (box.parentNode) box.parentNode.removeChild(box); resolve(v); };
+        box.__done = done;
+        self._wire(box.querySelector('[data-trash-form]'), done);
+        try { box.scrollIntoView({ block: 'nearest', behavior: App.reducedMotion() ? 'auto' : 'smooth' }); } catch (e) {}
+        var ta = box.querySelector('[data-trash-note]');
+        if (ta) try { ta.focus({ preventScroll: true }); } catch (e) { ta.focus(); }
+      });
+    },
+    /** In a sheet of its own (#uiSheet unless o.sheet names another). */
+    sheet: function (o) {
+      o = o || {};
+      var self = this;
+      return new Promise(function (resolve) {
+        var root = App.sheet && App.sheet.open(o.sheet || '#uiSheet', { title: self.title(o), html: self.formHtml(o), footer: '' });
+        if (!root) { var r = window.prompt(self.title(o) + '\n\nReason (optional, Joust only):', ''); resolve(r === null ? null : r.trim()); return; }
+        var form = root.querySelector('[data-trash-form]'), settled = false;
+        var onClose = function () { if (!settled) { settled = true; resolve(null); } root.removeEventListener('sheet:close', onClose); };
+        root.addEventListener('sheet:close', onClose);
+        self._wire(form, function (v) {
+          if (settled) return;
+          settled = true;
+          root.removeEventListener('sheet:close', onClose);
+          if (App.sheet.current === root) App.sheet.close();
+          resolve(v);
+        });
+      });
+    },
+    move: function (refs, note, client) {
+      var params = { action: 'trash', items: (refs || []).join(','), note: note || '' };
+      if (client !== undefined) params.client = client;
+      return App.post(this.ep(), params);
+    },
+    toastDone: function (res, n) {
+      var url = res && res.data && res.data.url;
+      App.toast((n > 1 ? n + ' items moved' : 'Moved') + ' to Trash', { kind: 'success', duration: 4000, link: url ? { href: url, label: 'Open Trash' } : null });
+    }
+  };
+
+  /* ---------------------------------------------------------------- */
   /* Toast                                                             */
   /* ---------------------------------------------------------------- */
   var toastTimer = null;
