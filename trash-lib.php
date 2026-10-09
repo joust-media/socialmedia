@@ -377,6 +377,8 @@ if (!function_exists('trashDeleteForever')) {
                     $o->execute([(string)$email['html_url'], $id]);
                     if ((int)$o->fetchColumn() > 0) $html = null;
                 }
+                // staging: a hosted email's HTML lives in the shared media/emails/ (production's) — the row goes, the file stays
+                if ($html !== null && $shared !== false && is_file($html)) { $html = null; $kept++; }
                 deleteEmail($pdo, $email, 'admin');
                 if ($html !== null && is_file($html) && !is_link($html) && @unlink($html)) $files++;
                 break;
@@ -385,6 +387,9 @@ if (!function_exists('trashDeleteForever')) {
                 if (!function_exists('deletePage') && is_file(__DIR__ . '/pages-lib.php')) require_once __DIR__ . '/pages-lib.php';
                 $page = pageById($pdo, $id);
                 if (!$page) return ['ok' => false, 'error' => 'Item not found'];
+                // staging: the page's folder lives in the shared media/pages/ (production's) — the row goes, the folder
+                // stays (deletePage() never touches the folder of a 'url' page)
+                if ($shared !== false && strtolower((string)($page['source'] ?? 'upload')) !== 'url') { $page['source'] = 'url'; $kept++; }
                 $r = deletePage($pdo, $page, 'admin');
                 $files += max(0, (int)($r['files'] ?? 0));
                 break;

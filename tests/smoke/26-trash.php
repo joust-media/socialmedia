@@ -592,6 +592,21 @@ ttest('Delete forever on staging: the row goes, a file in the shared media/ fold
         is(q1('SELECT id FROM tire_images WHERE id = 17'), false, 'tire row gone');
         clearstatcache();
         ok(is_file($libFile) && is_file($tireFile), 'the shared files stay');
+        // a hosted email's HTML (media/emails/) and an uploaded page's folder (media/pages/) are shared too
+        $emDir = $MEDIA . '/emails/privacybee'; @mkdir($emDir, 0777, true);
+        $emFile = $emDir . '/r2-5.html'; file_put_contents($emFile, '<html></html>');
+        db()->prepare("UPDATE emails SET html_url = ? WHERE id = 5")->execute(['/media/emails/privacybee/r2-5.html']);
+        $pgDir = $MEDIA . '/pages/privacybee/webinar'; @mkdir($pgDir, 0777, true);
+        $pgFile = $pgDir . '/index.html'; file_put_contents($pgFile, '<html></html>');
+        db()->exec("UPDATE pages SET source = 'upload' WHERE id = 3");
+        status(trash('email:5,page:3', '', 'privacybee'), 200);
+        $r = status(forever('email:5,page:3', 'DELETE', 'privacybee'), 200);
+        is($r['json']['deleted'], 2);
+        is($r['json']['files'], 0, 'nothing unlinked (email / page)');
+        is(q1('SELECT id FROM emails WHERE id = 5'), false, 'email row gone');
+        is(q1('SELECT id FROM pages WHERE id = 3'), false, 'page row gone');
+        clearstatcache();
+        ok(is_file($emFile) && is_file($pgFile), 'the shared email HTML and page folder stay');
     } finally {
         file_put_contents($f, $orig);
         sleep(3);
