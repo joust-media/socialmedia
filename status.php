@@ -56,6 +56,9 @@ if ($needsAdmin && !$isAdminSession) {
     exit;
 }
 
+// ---- Joust's Trash (trash-lib.php): a trashed post is gone for the client (404) and frozen for Joust (409) ----
+if ($action !== 'delete_post') trashGuardJson($pdo, 'post', (int)($_POST['id'] ?? 0), $isAdminSession);
+
 // ---- Toggle posted flag ---- (rules + activity row: transitions-lib.php, shared with the Slack buttons)
 if ($action === 'toggle_posted') {
     $res = transitionPostScheduled($pdo, (int)($_POST['id'] ?? 0), ((string)($_POST['to'] ?? '1')) === '1' ? 1 : 0, actorFromPost());

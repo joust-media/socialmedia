@@ -140,7 +140,7 @@ if (in_array($action, $seriesActions, true)) {
                 // "Approve all remaining" never approves the videos the client has not looked at (same predicate as the grid).
                 $type = tireMediaTypeKey($_POST['type'] ?? '', 'all');
                 $pdo->beginTransaction();
-                $upd = $pdo->prepare("UPDATE tire_images SET status = 'approved' WHERE series_id = ? AND status = 'pending'" . tireMediaTypeSql($type, 'image_url'));
+                $upd = $pdo->prepare("UPDATE tire_images SET status = 'approved' WHERE series_id = ? AND status = 'pending'" . tireMediaTypeSql($type, 'image_url') . trashAnd($pdo, 'tire_image'));   // never a trashed render
                 $upd->execute([$sid]);
                 $n = (int)$upd->rowCount();
                 if ($n > 0) {
@@ -176,6 +176,7 @@ if (in_array($action, $seriesActions, true)) {
             case 'set_reference': {
                 $imgId = (int)($_POST['id'] ?? 0);
                 if ($imgId <= 0) { $fail(400, 'Invalid id'); }
+                trashGuardJson($pdo, 'tire_image', $imgId, true);
                 $img = tireImageById($pdo, $imgId);
                 if (!$img) { $fail(404, 'Image not found'); }
                 $tire = $loadTire((int)$img['tire_id']);
@@ -332,6 +333,8 @@ if ($id <= 0) {
     echo json_encode(['ok' => false, 'error' => 'Invalid id']);
     exit;
 }
+// Joust's Trash (trash-lib.php): gone for the client (404), frozen for Joust (409) until restored
+trashGuardJson($pdo, 'tire_image', $id, (bool)currentAdmin());
 if (!$hasStat && !$hasCmt) {
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => 'Nothing to update']);

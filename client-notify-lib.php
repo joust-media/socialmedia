@@ -321,7 +321,8 @@ if (!function_exists('clientEmailRemindQueue')) {
         if (!clientEmailRemindReady($pdo) || !function_exists('trackingWaitingOnClient')) return 0;
         $n = 0;
         $rows = $pdo->query("SELECT company_id, remind_days FROM notify_clients WHERE email_remind = 1 AND remind_days > 0")->fetchAll();
-        $last = $pdo->prepare("SELECT MAX(created_at) FROM client_email_queue WHERE kind = 'remind' AND company_id = ?");
+        // ('trash:…' rows are a restored item's spent reminders — trash-lib.php — never a reminder that went out)
+        $last = $pdo->prepare("SELECT MAX(created_at) FROM client_email_queue WHERE kind = 'remind' AND company_id = ? AND (batch_key IS NULL OR batch_key NOT LIKE 'trash:%')");
         $count = $pdo->prepare("SELECT COUNT(*) FROM client_email_queue WHERE kind = 'remind' AND entity_type = ? AND entity_id = ? AND created_at >= ?");
         $ins = $pdo->prepare("INSERT INTO client_email_queue (company_id, kind, entity_type, entity_id) VALUES (?, 'remind', ?, ?)");
         foreach ($rows as $c) {
@@ -481,6 +482,7 @@ if (!function_exists('clientEmailItems')) {
         foreach ($items as $k => $it) {
             $info = notifyItemInfo($pdo, $it['type'], $it['id']);
             if (!$info['exists'] || (int)$info['company_id'] !== $companyId) continue;
+            if (!empty($info['trashed'])) continue;   // moved to Joust's Trash since (trash-lib.php): never in a client email
             $comments = [];
             if (($kind === 'review' || $kind === 'remind') && !in_array($info['status_key'], ['pending', 'mixed'], true)) continue;
             if ($kind === 'remind') $info['waiting_since'] = clientEmailWaitingSince($pdo, $it['type'], $it['id']);
@@ -743,14 +745,14 @@ if (!function_exists('clientEmailSample')) {
         }
         $items = [];
         if (!empty($company['id'])) {
-            $s = $pdo->prepare("SELECT id FROM posts WHERE company_id = ? AND status <> 'draft' ORDER BY id DESC LIMIT 3");
+            $s = $pdo->prepare("SELECT id FROM posts WHERE company_id = ? AND status <> 'draft'" . (function_exists('trashAnd') ? trashAnd($pdo, 'post') : '') . " ORDER BY id DESC LIMIT 3");
             $s->execute([(int)$company['id']]);
             foreach ($s->fetchAll(PDO::FETCH_COLUMN) as $pid) {
                 $info = notifyItemInfo($pdo, 'post', (int)$pid);
                 if ($info['exists']) $items[] = $info;
             }
             if (count($items) < 2 && function_exists('hasEmailsTable') && hasEmailsTable($pdo)) {
-                $s = $pdo->prepare("SELECT id FROM emails WHERE company_id = ? ORDER BY id DESC LIMIT 2");
+                $s = $pdo->prepare("SELECT id FROM emails WHERE company_id = ?" . (function_exists('trashAnd') ? trashAnd($pdo, 'email') : '') . " ORDER BY id DESC LIMIT 2");
                 $s->execute([(int)$company['id']]);
                 foreach ($s->fetchAll(PDO::FETCH_COLUMN) as $eid) { $info = notifyItemInfo($pdo, 'email', (int)$eid); if ($info['exists']) $items[] = $info; }
             }

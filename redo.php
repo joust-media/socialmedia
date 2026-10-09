@@ -189,6 +189,7 @@ requireAdmin();
 $wantAll = !$client || (string)($_GET['all'] ?? '') === '1';
 $cid     = !$wantAll ? (int)$client['id'] : null;
 $ready   = redoReady($pdo);
+$trashOn = trashReady($pdo, 'tire_image') && trashReady($pdo, 'library_image');
 $items   = $ready ? redoItems($pdo, $cid) : [];
 $countClient = ($ready && $client) ? redoCount($pdo, (int)$client['id']) : 0;
 $countAll    = $ready ? redoCount($pdo, null) : 0;
@@ -278,9 +279,13 @@ $scopeSlug = $client ? (string)$client['slug'] : '';
         <div class="rd-actions">
           <button type="button" class="ui-btn ui-btn--sm ui-btn--tinted" data-redo-replace>Replace…</button>
           <button type="button" class="ui-btn ui-btn--sm ui-btn--gray" data-redo-remove>Remove</button>
+          <?php if ($trashOn): // Lance will not redo it: Joust's Trash (trash.php) — kept, out of every list and notification ?>
+            <button type="button" class="ui-btn ui-btn--sm ui-btn--gray rd-trash" data-redo-trash title="Not redoing it: move it to the Trash (kept, out of every list and notification)"><?= icon('trash') ?><span>Trash…</span></button>
+          <?php endif; ?>
         </div>
       </li>
-  <?php endforeach; echo insetListClose('Replace sends the image back to the client as To Review. Remove takes it off this list and changes nothing else.'); endif; ?>
+  <?php endforeach; echo insetListClose('Replace sends the image back to the client as To Review. Remove takes it off this list and changes nothing else.' . ($trashOn ? ' Trash… keeps it but drops it from every list and notification (restore it from the Trash).' : '')); endif; ?>
+  <?php if ($trashOn && ($trashLink = trashLinkHtml($pdo, $wantAll ? null : $client)) !== ''): ?><p class="trash-link-row"><?= $trashLink ?></p><?php endif; ?>
   <?php endif; ?>
 </div>
 <?php

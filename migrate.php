@@ -2043,6 +2043,38 @@ if (!$errors) {
         $errors[] = $e->getMessage();
     }
 }
+
+// 54. The Trash (trash-lib.php): items Joust will not do, kept but disregarded everywhere. A state apart from the
+//     review status — never a new status value, so Restore returns the item exactly as it was:
+//       trashed_at   when it went to the Trash (NULL = not trashed)      trashed_by  the admin_users row that did it
+//       trash_note   the optional reason (Joust-only, never shown to a client)
+//     on posts, emails, pages, tire_images and library_images (+ KEY ix_trashed). Only ADD COLUMN / ADD KEY: nothing
+//     is read from or written to the existing columns (production's tables differ from the harness in places — e.g.
+//     tire_images has no created_at — so no other column is ever named here). A table that does not exist yet (the
+//     Emails / Pages modules on an old install) is skipped; each table and its index are probed on their own, so a
+//     re-run finishes a partial run and a second run changes nothing.
+if (!$errors) {
+    try {
+        foreach (['posts', 'emails', 'pages', 'tire_images', 'library_images'] as $tbl) {
+            if (!tableExists($pdo, $tbl)) { $steps[] = "• Table `{$tbl}` does not exist — skipped the Trash columns."; continue; }
+            $add = [];
+            if (!columnExists($pdo, $tbl, 'trashed_at')) $add[] = "ADD COLUMN trashed_at DATETIME NULL DEFAULT NULL";
+            if (!columnExists($pdo, $tbl, 'trashed_by')) $add[] = "ADD COLUMN trashed_by INT UNSIGNED NULL DEFAULT NULL";
+            if (!columnExists($pdo, $tbl, 'trash_note')) $add[] = "ADD COLUMN trash_note VARCHAR(500) NULL DEFAULT NULL";
+            $ix = $pdo->prepare("SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = 'ix_trashed'");
+            $ix->execute([$tbl]);
+            if ((int)$ix->fetchColumn() === 0) $add[] = "ADD KEY ix_trashed (trashed_at)";
+            if ($add) {
+                $pdo->exec("ALTER TABLE {$tbl} " . implode(', ', $add));
+                $steps[] = "✓ Added the Trash to {$tbl} (" . count($add) . " change" . (count($add) === 1 ? '' : 's') . ").";
+            } else {
+                $steps[] = "• {$tbl} Trash columns already exist — skipped.";
+            }
+        }
+    } catch (Exception $e) {
+        $errors[] = $e->getMessage();
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">

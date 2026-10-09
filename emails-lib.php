@@ -334,6 +334,8 @@ if (!function_exists('emailsForCompany')) {
         if ($companyId <= 0 || !hasEmailsTable($pdo)) return [];
         $where  = ['e.company_id = ?'];
         $params = [$companyId];
+        // Joust's Trash (trash-lib.php) is out of every list; $opts['trashed'] = true keeps it (code uniqueness, imports)
+        if (empty($opts['trashed']) && function_exists('trashLive')) $where[] = trashLive($pdo, 'email', 'e');
 
         $status = strtolower(trim((string)($opts['status'] ?? 'all')));
         if ($status === 'live') {
@@ -464,7 +466,7 @@ if (!function_exists('emailCounts')) {
     function emailCounts(PDO $pdo, int $companyId): array {
         $out = ['draft' => 0, 'pending' => 0, 'approved' => 0, 'denied' => 0, 'live' => 0, 'total' => 0];
         if ($companyId <= 0 || !hasEmailsTable($pdo)) return $out;
-        $s = $pdo->prepare("SELECT status, live, COUNT(*) AS n FROM emails WHERE company_id = ? GROUP BY status, live");
+        $s = $pdo->prepare("SELECT status, live, COUNT(*) AS n FROM emails WHERE company_id = ?" . (function_exists('trashAnd') ? trashAnd($pdo, 'email') : '') . " GROUP BY status, live");
         $s->execute([$companyId]);
         foreach ($s->fetchAll() as $r) {
             $n = (int)($r['n'] ?? 0);
@@ -821,7 +823,7 @@ if (!function_exists('emailImportDiff')) {
      */
     function emailImportDiff(PDO $pdo, int $companyId, array $rows): array {
         $existing = [];
-        foreach (emailsForCompany($pdo, $companyId) as $e) $existing[emailNormalizeCode((string)$e['code'])] = $e;
+        foreach (emailsForCompany($pdo, $companyId, ['trashed' => true]) as $e) $existing[emailNormalizeCode((string)$e['code'])] = $e;   // a trashed email still owns its code
         $summary = ['create' => 0, 'update' => 0, 'unchanged' => 0, 'skipped' => 0, 'duplicates' => 0, 'unknown_status' => 0, 'warnings' => 0];
         foreach ($rows as &$row) {
             $row['changes'] = [];

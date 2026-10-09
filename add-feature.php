@@ -244,7 +244,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // --- Fetch for display -------------------------------------------
 $allCategories = $pdo->query("SELECT id, name FROM categories ORDER BY sort_order, name")->fetchAll();
 
-$refOnlyTi = $refOnly !== '' ? ' AND ti.series_id IS NULL' : '';
+$refOnlyTi = ($refOnly !== '' ? ' AND ti.series_id IS NULL' : '') . trashAnd($pdo, 'tire_image', 'ti');   // never Joust's Trash
 $allItems = $pdo->prepare("
     SELECT t.id, t.name,
            (SELECT COUNT(*) FROM tire_images ti WHERE ti.tire_id = t.id{$refOnlyTi}) AS image_count,
@@ -275,7 +275,7 @@ if ($editId > 0) {
         $imgStmt = $pdo->prepare("
             SELECT id, image_url, caption, status, client_comment{$updatedSel}{$nameSel}
             FROM tire_images
-            WHERE tire_id = ?{$refOnly} ORDER BY sort_order ASC
+            WHERE tire_id = ?{$refOnly}" . trashAnd($pdo, 'tire_image') . " ORDER BY sort_order ASC
         ");
         $imgStmt->execute([$editId]);
         $editImages = $imgStmt->fetchAll();

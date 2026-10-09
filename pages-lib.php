@@ -736,6 +736,8 @@ if (!function_exists('pagesForCompany')) {
         if ($companyId <= 0 || !hasPagesTable($pdo)) return [];
         $where  = ['p.company_id = ?'];
         $params = [$companyId];
+        // Joust's Trash (trash-lib.php) is out of every list; $opts['trashed'] = true keeps it
+        if (empty($opts['trashed']) && function_exists('trashLive')) $where[] = trashLive($pdo, 'page', 'p');
 
         $status = strtolower(trim((string)($opts['status'] ?? 'all')));
         if ($status === 'live') {
@@ -842,7 +844,7 @@ if (!function_exists('pageCounts')) {
     function pageCounts(PDO $pdo, int $companyId): array {
         $out = ['draft' => 0, 'pending' => 0, 'approved' => 0, 'denied' => 0, 'live' => 0, 'total' => 0];
         if ($companyId <= 0 || !hasPagesTable($pdo)) return $out;
-        $s = $pdo->prepare("SELECT status, live, COUNT(*) AS n FROM pages WHERE company_id = ? GROUP BY status, live");
+        $s = $pdo->prepare("SELECT status, live, COUNT(*) AS n FROM pages WHERE company_id = ?" . (function_exists('trashAnd') ? trashAnd($pdo, 'page') : '') . " GROUP BY status, live");
         $s->execute([$companyId]);
         foreach ($s->fetchAll() as $r) {
             $n = (int)($r['n'] ?? 0);

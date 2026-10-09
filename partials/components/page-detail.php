@@ -115,7 +115,7 @@ if (!function_exists('renderPageDetail')) {
         }
         // Admin ⋯: Move to client… (assign.js sheet → assign.php; the folder moves with it)
         if ($admin && function_exists('assignMenuHtml')) {
-            $out .= assignMenuHtml('page', $id, $label, ['admin' => true, 'extra' => (function_exists('trackingResolveMenuItem') ? trackingResolveMenuItem('page', $id) : '') . reviewMenuItemsHtml('page', $key, $editUrl, 'data-delete-page')]);
+            $out .= assignMenuHtml('page', $id, $label, ['admin' => true, 'extra' => (function_exists('trackingResolveMenuItem') ? trackingResolveMenuItem('page', $id) : '') . reviewMenuItemsHtml('page', $key, $editUrl, 'data-delete-page', function_exists('trashMenuItemHtml') ? trashMenuItemHtml('page', $id) : '')]);
         }
         $out .= '</div>';
 

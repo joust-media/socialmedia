@@ -78,7 +78,7 @@ try {
         SELECT pi.id, pi.image_url, {$mediaSel}, {$nameSel}, p.caption, p.id AS post_id
         FROM post_images pi
         INNER JOIN posts p ON p.id = pi.post_id
-        WHERE p.company_id = ?
+        WHERE p.company_id = ?" . trashAnd($pdo, 'post', 'p') . "
         ORDER BY p.scheduled_date DESC, pi.sort_order ASC
         LIMIT 120
     ");
@@ -106,7 +106,7 @@ try {
         SELECT ti.id, ti.image_url, t.name AS tire_name
         FROM tire_images ti
         INNER JOIN tires t ON t.id = ti.tire_id
-        WHERE t.company_id = ?
+        WHERE t.company_id = ?" . trashAnd($pdo, 'tire_image', 'ti') . "
         ORDER BY t.name ASC, ti.sort_order ASC
         LIMIT 120
     ");

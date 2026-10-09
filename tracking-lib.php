@@ -65,13 +65,15 @@ if (!function_exists('trackingDeniedItems')) {
     /** Items in Needs changes: [key => ['entity_type', 'entity_id', 'company_id', 'since']] — 'since' = the newest
      *  'denied' row; an item with a 'resolved' row after that row is left out. */
     function trackingDeniedItems(PDO $pdo, ?int $companyId): array {
+        // never an item in Joust's Trash (trash-lib.php)
+        $tr = static function (string $type, string $alias = '') use ($pdo): string { return function_exists('trashAnd') ? trashAnd($pdo, $type, $alias) : ''; };
         $sets = [
-            ['post',  "SELECT id, company_id FROM posts WHERE status = 'denied'" . (function_exists('hasPostedColumn') && hasPostedColumn($pdo) ? ' AND posted = 0' : '')],
+            ['post',  "SELECT id, company_id FROM posts WHERE status = 'denied'" . (function_exists('hasPostedColumn') && hasPostedColumn($pdo) ? ' AND posted = 0' : '') . $tr('post')],
         ];
-        if (function_exists('hasEmailsTable') && hasEmailsTable($pdo)) $sets[] = ['email', "SELECT id, company_id FROM emails WHERE status = 'denied' AND live = 0"];
-        if (function_exists('hasPagesTable') && hasPagesTable($pdo))   $sets[] = ['page', "SELECT id, company_id FROM pages WHERE status = 'denied' AND live = 0"];
-        $sets[] = ['tire_image', "SELECT ti.id, t.company_id FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id WHERE ti.status = 'denied'"];
-        if (function_exists('hasLibraryImagesTable') && hasLibraryImagesTable($pdo)) $sets[] = ['library_image', "SELECT id, company_id FROM library_images WHERE status = 'denied'"];
+        if (function_exists('hasEmailsTable') && hasEmailsTable($pdo)) $sets[] = ['email', "SELECT id, company_id FROM emails WHERE status = 'denied' AND live = 0" . $tr('email')];
+        if (function_exists('hasPagesTable') && hasPagesTable($pdo))   $sets[] = ['page', "SELECT id, company_id FROM pages WHERE status = 'denied' AND live = 0" . $tr('page')];
+        $sets[] = ['tire_image', "SELECT ti.id, t.company_id FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id WHERE ti.status = 'denied'" . $tr('tire_image', 'ti')];
+        if (function_exists('hasLibraryImagesTable') && hasLibraryImagesTable($pdo)) $sets[] = ['library_image', "SELECT id, company_id FROM library_images WHERE status = 'denied'" . $tr('library_image')];
         $out = [];
         foreach ($sets as [$type, $sql]) {
             try {
@@ -153,14 +155,17 @@ if (!function_exists('trackingWaitingOnClient')) {
     /** To Review items with no client response since they were sent (oldest first). Rows: entity_type, entity_id,
      *  company_id, since. Tire renders are grouped per series. */
     function trackingWaitingOnClient(PDO $pdo, ?int $companyId = null): array {
-        $co = static function (string $col) use ($companyId): string { return $companyId ? " AND {$col} = " . (int)$companyId : ''; };
-        $sets = [['post', "SELECT id, company_id FROM posts WHERE status = 'pending'" . $co('company_id')]];
-        if (function_exists('hasEmailsTable') && hasEmailsTable($pdo)) $sets[] = ['email', "SELECT id, company_id FROM emails WHERE status = 'pending' AND live = 0" . $co('company_id')];
-        if (function_exists('hasPagesTable') && hasPagesTable($pdo))   $sets[] = ['page', "SELECT id, company_id FROM pages WHERE status = 'pending' AND live = 0" . $co('company_id')];
-        if (function_exists('hasLibraryImagesTable') && hasLibraryImagesTable($pdo)) $sets[] = ['library_image', "SELECT id, company_id FROM library_images WHERE status = 'pending'" . $co('company_id')];
+        // never an item in Joust's Trash (trash-lib.php): the Inbox, gentle reminders and the weekly report skip it
+        $co = static function (string $col, string $type = '', string $alias = '') use ($companyId, $pdo): string {
+            return ($companyId ? " AND {$col} = " . (int)$companyId : '') . ($type !== '' && function_exists('trashAnd') ? trashAnd($pdo, $type, $alias) : '');
+        };
+        $sets = [['post', "SELECT id, company_id FROM posts WHERE status = 'pending'" . $co('company_id', 'post')]];
+        if (function_exists('hasEmailsTable') && hasEmailsTable($pdo)) $sets[] = ['email', "SELECT id, company_id FROM emails WHERE status = 'pending' AND live = 0" . $co('company_id', 'email')];
+        if (function_exists('hasPagesTable') && hasPagesTable($pdo))   $sets[] = ['page', "SELECT id, company_id FROM pages WHERE status = 'pending' AND live = 0" . $co('company_id', 'page')];
+        if (function_exists('hasLibraryImagesTable') && hasLibraryImagesTable($pdo)) $sets[] = ['library_image', "SELECT id, company_id FROM library_images WHERE status = 'pending'" . $co('company_id', 'library_image')];
         if (function_exists('hasTireSeries') && hasTireSeries($pdo)) {
             $sets[] = ['tire_series', "SELECT DISTINCT ti.series_id AS id, t.company_id FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id
-                                       WHERE ti.status = 'pending' AND ti.series_id IS NOT NULL" . $co('t.company_id')];
+                                       WHERE ti.status = 'pending' AND ti.series_id IS NOT NULL" . $co('t.company_id', 'tire_image', 'ti')];
         }
         $out = [];
         foreach ($sets as [$type, $sql]) {
@@ -203,7 +208,9 @@ if (!function_exists('trackingResponsePairs')) {
         $types = "'" . implode("','", notifyThreadTypes()) . "'";
         $s = $pdo->prepare("SELECT id, company_id, entity_type, entity_id, action, actor, internal, detail, author_user_id, created_at
                               FROM activity_log WHERE created_at >= ? AND created_at < ? + INTERVAL 30 DAY AND entity_type IN ({$types})"
-                           . ($companyId ? ' AND company_id = ' . (int)$companyId : '') . " ORDER BY entity_type, entity_id, id");
+                           . ($companyId ? ' AND company_id = ' . (int)$companyId : '')
+                           . (function_exists('trashActivitySql') ? trashActivitySql($pdo) : '')   // never an item in Joust's Trash
+                           . " ORDER BY entity_type, entity_id, id");
         $s->execute([$from, $to]);
         $answers = notifyAnswerActions();
         $open = []; $pairs = [];
@@ -261,7 +268,8 @@ if (!function_exists('trackingWeeklyStats')) {
      */
     function trackingWeeklyStats(PDO $pdo, string $from, string $to, ?array $companyIds = null): array {
         $pairs = trackingResponsePairs($pdo, $from, $to);
-        $s = $pdo->prepare("SELECT company_id, COUNT(*) AS n FROM activity_log WHERE actor = 'client' AND action = 'approved' AND created_at >= ? AND created_at < ? GROUP BY company_id");
+        $s = $pdo->prepare("SELECT company_id, COUNT(*) AS n FROM activity_log WHERE actor = 'client' AND action = 'approved' AND created_at >= ? AND created_at < ?"
+                           . (function_exists('trashActivitySql') ? trashActivitySql($pdo) : '') . " GROUP BY company_id");
         $s->execute([$from, $to]);
         $approved = array_map('intval', $s->fetchAll(PDO::FETCH_KEY_PAIR));
         $waiting = trackingWaitingOnJoust($pdo, null);
@@ -573,7 +581,7 @@ if (!function_exists('trackingRepliedUnread')) {
                                   FROM activity_log a
                                   LEFT JOIN thread_seen s ON s.viewer_type = 'contact' AND s.viewer_id = ? AND s.entity_type = a.entity_type AND s.entity_id = a.entity_id
                                  WHERE a.company_id = ? AND a.entity_type IN ({$types}) AND a.id > ? AND a.id > COALESCE(s.last_seen_id, 0)
-                                   AND " . trackingUnreadSql('contact') . "
+                                   AND " . trackingUnreadSql('contact') . (function_exists('trashActivitySql') ? trashActivitySql($pdo, 'a.entity_type', 'a.entity_id') : '') . "
                                  GROUP BY a.entity_type, a.entity_id ORDER BY last_id DESC LIMIT " . max(30, $limit + 24));
             $s->execute([(int)$viewer[1], $companyId, $floor]);
             $rows = $s->fetchAll();
@@ -585,7 +593,7 @@ if (!function_exists('trackingRepliedUnread')) {
         $d = $pdo->prepare("SELECT detail FROM activity_log WHERE id = ?");
         foreach ($rows as $r) {
             $info = notifyItemInfo($pdo, (string)$r['entity_type'], (int)$r['entity_id']);
-            if (!$info['exists'] || (int)$info['company_id'] !== $companyId || $info['status_key'] === 'draft') continue;
+            if (!$info['exists'] || (int)$info['company_id'] !== $companyId || $info['status_key'] === 'draft' || !empty($info['trashed'])) continue;
             $d->execute([(int)$r['last_id']]);
             $out[] = ['entity_type' => (string)$r['entity_type'], 'entity_id' => (int)$r['entity_id'], 'last_id' => (int)$r['last_id'], 'n' => (int)$r['n'],
                       'last_at' => (string)$r['last_at'], 'last_detail' => (string)($d->fetchColumn() ?: ''), 'info' => $info];
@@ -613,7 +621,7 @@ if (!function_exists('trackingClientTabReplies')) {
             if (!isset($tabOf[$type])) continue;
             // already in the To Review count: a pending item; a series whose renders wait for review (they are counted)
             if ($type === 'tire_series') {
-                $s = $pdo->prepare("SELECT COUNT(*) FROM tire_images WHERE series_id = ? AND status = 'pending'");
+                $s = $pdo->prepare("SELECT COUNT(*) FROM tire_images WHERE series_id = ? AND status = 'pending'" . (function_exists('trashAnd') ? trashAnd($pdo, 'tire_image') : ''));
                 $s->execute([(int)$r['entity_id']]);
                 if ((int)$s->fetchColumn() > 0) continue;
             } elseif ((string)$r['info']['status_key'] === 'pending') {

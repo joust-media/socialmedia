@@ -40,6 +40,10 @@ if ($action === 'history') {
 }
 
 if ($action !== 'edit' && $action !== 'delete') $out(400, ['ok' => false, 'error' => 'Unknown action']);
+// A comment on an item in Joust's Trash (trash-lib.php): gone for the client (404), frozen for Joust (409)
+$tq = $pdo->prepare("SELECT entity_type, entity_id FROM activity_log WHERE id = ?");
+$tq->execute([$id]);
+if ($te = $tq->fetch()) trashGuardJson($pdo, (string)$te['entity_type'], (int)$te['entity_id'], $isAdminSession);
 $in = ['text' => (string)($_POST['text'] ?? '')];
 if (array_key_exists('slide', $_POST)) $in['slide'] = (string)$_POST['slide'];
 $res = commentEditApply($pdo, $id, $action, $in);

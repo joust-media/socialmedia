@@ -844,3 +844,23 @@ body[data-role="client"] .pgl-tile--denied { color: var(--label-secondary); back
 @media (max-width: 479.98px) {   /* phones: "Approve instead" wraps like "Needs changes" does (assets.css) */
   .ui-viewer-approve > span { white-space: normal; line-height: 1.1; text-align: center; }
 }
+
+/* =====================================================================
+   The Trash (trash-lib.php / trash.php) — shared bits: the "Move to Trash…" ask (App.trash, in a post / email / page
+   sheet or a sheet of its own), the small "Trash (N)" link, the neutral "no longer available" notice of a deep link.
+   ===================================================================== */
+.tr-ask-form { display: flex; flex-direction: column; gap: 8px; margin: 0; }
+.tr-ask-text { margin: 0; }
+.tr-ask-label .text-tertiary { text-transform: none; font-weight: 400; letter-spacing: 0; }
+.tr-ask-note { width: 100%; min-height: 64px; }
+.pd-deny .tr-ask-note { background: var(--bg-elevated); }
+.tr-ask-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.tr-ask-actions > .ui-btn { flex: 1 1 auto; }
+.tr-ask-submit { background: var(--label-secondary); color: var(--bg); }
+.trash-link { display: inline-flex; align-items: center; gap: 6px; color: var(--label-secondary); text-decoration: none;
+  font-size: var(--text-footnote); line-height: var(--lh-footnote); font-weight: 600; padding: 6px 0; }
+.trash-link:hover { color: var(--label); text-decoration: underline; }
+.trash-link .ui-icon { width: 16px; height: 16px; }
+.trash-link-row { margin: 8px 0 0; text-align: center; }
+.trash-gone { margin: 0 0 14px; }
+.trash-gone .ui-empty { padding: 14px 16px; border-radius: var(--radius-list, 12px); background: var(--fill-tertiary); color: var(--label-secondary); text-align: center; }

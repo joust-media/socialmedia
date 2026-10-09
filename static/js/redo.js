@@ -48,6 +48,7 @@
         var row = e.target.closest('[data-redo-row]');
         if (!row) return;
         if (e.target.closest('[data-redo-remove]')) { e.preventDefault(); self.remove(row); }
+        else if (e.target.closest('[data-redo-trash]')) { e.preventDefault(); self.trash(row); }
         else if (e.target.closest('[data-redo-replace]') && oneIn) { e.preventDefault(); self._row = row; oneIn.value = ''; oneIn.click(); }
       });
     },
@@ -120,6 +121,22 @@
         if (!res.ok) { if (btn) btn.disabled = false; toast(res.error || 'Could not remove', { kind: 'error' }); return; }
         self.dropRow(row);
         toast('Removed from redo', { kind: 'success' });
+      });
+    },
+
+    /** "Trash…": Lance will not redo it — trash.php action=trash (an optional reason, Joust only); the row leaves. */
+    trash: function (row) {
+      var self = this, btn = $('[data-redo-trash]', row);
+      if (!App.trash) return;
+      var ref = (row.getAttribute('data-kind') === 'library' ? 'library_image' : 'tire_image') + ':' + row.getAttribute('data-id');
+      App.trash.sheet({ noun: 'image' }).then(function (note) {
+        if (note === null) return;
+        if (btn) btn.disabled = true;
+        App.trash.move([ref], note, row.getAttribute('data-client') || '').then(function (res) {
+          if (!res.ok) { if (btn) btn.disabled = false; toast(res.error || 'Could not move it to the Trash', { kind: 'error' }); return; }
+          self.dropRow(row);
+          App.trash.toastDone(res, 1);
+        });
       });
     },
 

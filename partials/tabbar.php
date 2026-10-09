@@ -128,17 +128,17 @@ if (!empty($client['id']) && isset($pdo) && $pdo instanceof PDO) {
     try {
         $uiCid = (int)$client['id'];
 
-        $uiSt = $pdo->prepare("SELECT COUNT(*) FROM posts WHERE company_id = ? AND status = ?");
+        $uiSt = $pdo->prepare("SELECT COUNT(*) FROM posts WHERE company_id = ? AND status = ?" . trashAnd($pdo, 'post'));   // never a trashed item (trash-lib.php)
         $uiSt->execute([$uiCid, $uiQueue]);
         $uiBadges['posts'] = (int)$uiSt->fetchColumn();
 
         if ($uiHasEmails) {
-            $uiSt = $pdo->prepare("SELECT COUNT(*) FROM emails WHERE company_id = ? AND status = ? AND live = 0");
+            $uiSt = $pdo->prepare("SELECT COUNT(*) FROM emails WHERE company_id = ? AND status = ? AND live = 0" . trashAnd($pdo, 'email'));
             $uiSt->execute([$uiCid, $uiQueue]);
             $uiBadges['emails'] = (int)$uiSt->fetchColumn();
         }
         if ($uiHasPages) {
-            $uiSt = $pdo->prepare("SELECT COUNT(*) FROM pages WHERE company_id = ? AND status = ? AND live = 0");
+            $uiSt = $pdo->prepare("SELECT COUNT(*) FROM pages WHERE company_id = ? AND status = ? AND live = 0" . trashAnd($pdo, 'page'));
             $uiSt->execute([$uiCid, $uiQueue]);
             $uiBadges['pages'] = (int)$uiSt->fetchColumn();
         }
@@ -146,13 +146,13 @@ if (!empty($client['id']) && isset($pdo) && $pdo instanceof PDO) {
         $uiSt = $pdo->prepare("
             SELECT COUNT(*) FROM tire_images ti
             INNER JOIN tires t ON t.id = ti.tire_id
-            WHERE t.company_id = ? AND ti.status = ?
+            WHERE t.company_id = ? AND ti.status = ?" . trashAnd($pdo, 'tire_image', 'ti') . "
         ");
         $uiSt->execute([$uiCid, $uiQueue]);
         $uiBadges[$uiHasTires ? 'tires' : 'assets'] = (int)$uiSt->fetchColumn();
 
         if (function_exists('hasLibraryImagesTable') && hasLibraryImagesTable($pdo)) {
-            $uiSt = $pdo->prepare("SELECT COUNT(*) FROM library_images WHERE company_id = ? AND status = ?");
+            $uiSt = $pdo->prepare("SELECT COUNT(*) FROM library_images WHERE company_id = ? AND status = ?" . trashAnd($pdo, 'library_image'));
             $uiSt->execute([$uiCid, $uiQueue]);
             $uiBadges['assets'] += (int)$uiSt->fetchColumn();
         }

@@ -99,9 +99,9 @@ if (!$client) {
         try {
             $choose = $pdo->query("SELECT id, name, slug, logo_url, feature_label FROM companies ORDER BY name ASC")->fetchAll();
             foreach ($pdo->query("SELECT t.company_id AS cid, COUNT(*) AS n FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id
-                                   WHERE ti.status = 'pending' GROUP BY t.company_id")->fetchAll() as $r) { $pend[(int)$r['cid']]['tire'] = (int)$r['n']; }
+                                   WHERE ti.status = 'pending'" . trashAnd($pdo, 'tire_image', 'ti') . " GROUP BY t.company_id")->fetchAll() as $r) { $pend[(int)$r['cid']]['tire'] = (int)$r['n']; }
             if (hasLibraryImagesTable($pdo)) {
-                foreach ($pdo->query("SELECT company_id AS cid, COUNT(*) AS n FROM library_images WHERE status = 'pending' GROUP BY company_id")->fetchAll() as $r) {
+                foreach ($pdo->query("SELECT company_id AS cid, COUNT(*) AS n FROM library_images WHERE status = 'pending'" . trashAnd($pdo, 'library_image') . " GROUP BY company_id")->fetchAll() as $r) {
                     $pend[(int)$r['cid']]['library'] = (int)$r['n'];
                 }
             }
@@ -174,6 +174,10 @@ if (function_exists('tireMediaTypeKey') && tireMediaTypeKey($_GET['type'] ?? '',
 $libReady       = hasLibraryImagesTable($pdo);
 $clientOnly     = $isAdmin ? '' : " AND status <> 'denied'";        // spec §2 / §7: filtered in SQL, never CSS
 $clientOnlyTi   = $isAdmin ? '' : " AND ti.status <> 'denied'";
+// Joust's Trash (trash-lib.php): out of every grid, count, strip, list and deep link here — for both seats
+$trLib  = trashAnd($pdo, 'library_image');          // library_images (unaliased)
+$trTire = trashAnd($pdo, 'tire_image');             // tire_images (unaliased)
+$trTi   = trashAnd($pdo, 'tire_image', 'ti');       // tire_images ti
 $hasDisplayName = false;
 try { $hasDisplayName = $pdo->query("SHOW COLUMNS FROM tire_images LIKE 'display_name'")->rowCount() > 0; } catch (Throwable $e) {}
 $nameSel   = $hasDisplayName ? ', ti.display_name' : ", '' AS display_name";
@@ -192,11 +196,11 @@ if (($_GET['partial'] ?? '') === 'comments') {
     $cId   = max(0, (int)($_GET['id'] ?? 0));
     $hit   = null;
     if ($cKind === 'library' && $cId > 0 && $libReady) {
-        $s = $pdo->prepare("SELECT id FROM library_images WHERE id = ? AND company_id = ?");
+        $s = $pdo->prepare("SELECT id FROM library_images WHERE id = ? AND company_id = ?{$trLib}");
         $s->execute([$cId, $cid]);
         $hit = $s->fetch();
     } elseif ($cKind === 'tire' && $cId > 0) {
-        $s = $pdo->prepare("SELECT ti.id FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id WHERE ti.id = ? AND t.company_id = ?");
+        $s = $pdo->prepare("SELECT ti.id FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id WHERE ti.id = ? AND t.company_id = ?{$trTi}");
         $s->execute([$cId, $cid]);
         $hit = $s->fetch();
     }
@@ -227,7 +231,7 @@ if (($_GET['partial'] ?? '') === 'comments') {
 if ($deepId > 0 && $deepKind !== '') {
     $hit = null;
     if ($deepKind === 'library' && $libReady) {
-        $s = $pdo->prepare("SELECT id, status FROM library_images WHERE id = ? AND company_id = ?");
+        $s = $pdo->prepare("SELECT id, status FROM library_images WHERE id = ? AND company_id = ?{$trLib}");
         $s->execute([$deepId, $cid]);
         $hit = $s->fetch();
         if ($hit) { $view = 'library'; $itemId = 0; }
@@ -236,7 +240,7 @@ if ($deepId > 0 && $deepKind !== '') {
             SELECT ti.id, ti.status, ti.tire_id, ti.image_url{$seriesSel}
               FROM tire_images ti
               INNER JOIN tires t ON t.id = ti.tire_id
-             WHERE ti.id = ? AND t.company_id = ?
+             WHERE ti.id = ? AND t.company_id = ?{$trTi}
         ");
         $s->execute([$deepId, $cid]);
         $hit = $s->fetch();
@@ -255,7 +259,9 @@ if ($deepId > 0 && $deepKind !== '') {
         $filter   = (string)$hit['status'];
         $deepOpen = ['kind' => $deepKind, 'id' => (int)$hit['id']];
     } else {
-        $notice = 'That image is no longer available to review.';
+        // gone, or in Joust's Trash (trash-lib.php): a neutral note for the client, "in the Trash" for Joust
+        $notice = ($isAdmin && trashIsTrashed($pdo, $deepKind === 'library' ? 'library_image' : 'tire_image', $deepId))
+            ? 'That image is in the Trash — open Trash to restore it.' : 'This item is no longer available.';
     }
 }
 
@@ -492,7 +498,7 @@ if ($libReady) {
     if ($view === 'library' && !$partial) {
         syncLibraryImages($pdo, $cid, $slug);   // register new files dropped in media/library/<slug>/ (once per page view; "Load more" skips it)
     }
-    $s = $pdo->prepare("SELECT status, COUNT(*) AS n FROM library_images WHERE company_id = ? GROUP BY status");
+    $s = $pdo->prepare("SELECT status, COUNT(*) AS n FROM library_images WHERE company_id = ?{$trLib} GROUP BY status");
     $s->execute([$cid]);
     foreach ($s->fetchAll() as $r) { if (isset($libCounts[$r['status']])) $libCounts[$r['status']] = (int)$r['n']; }
 }
@@ -500,7 +506,7 @@ $s = $pdo->prepare("
     SELECT ti.status, COUNT(*) AS n
       FROM tire_images ti
       INNER JOIN tires t ON t.id = ti.tire_id
-     WHERE t.company_id = ?
+     WHERE t.company_id = ?{$trTi}
      GROUP BY ti.status
 ");
 $s->execute([$cid]);
@@ -542,7 +548,7 @@ if ($view === 'library') {
     if ($libReady && !$sentBackMode) {
         $sql = "SELECT id, filename, status, created_at, updated_at
                   FROM library_images
-                 WHERE company_id = ?{$clientOnly} AND status = ?
+                 WHERE company_id = ?{$clientOnly}{$trLib} AND status = ?
                  ORDER BY filename ASC";
         $s = $pdo->prepare($sql);
         $s->execute([$cid, $filter]);
@@ -588,13 +594,13 @@ if ($view === 'library') {
         // Approved chips count the whole tire (the list spans its series and reference images)
         if ($collection) {
             $scopeCounts = ['pending' => 0, 'approved' => 0, 'denied' => 0];
-            $s = $pdo->prepare("SELECT status, COUNT(*) AS n FROM tire_images WHERE tire_id = ? GROUP BY status");
+            $s = $pdo->prepare("SELECT status, COUNT(*) AS n FROM tire_images WHERE tire_id = ?{$trTire} GROUP BY status");
             $s->execute([$itemId]);
             foreach ($s->fetchAll() as $r) { if (isset($scopeCounts[$r['status']])) $scopeCounts[$r['status']] = (int)$r['n']; }
         }
     } elseif ($collection) {
         $scopeCounts = ['pending' => 0, 'approved' => 0, 'denied' => 0];
-        $s = $pdo->prepare("SELECT status, COUNT(*) AS n FROM tire_images WHERE tire_id = ? GROUP BY status");
+        $s = $pdo->prepare("SELECT status, COUNT(*) AS n FROM tire_images WHERE tire_id = ?{$trTire} GROUP BY status");
         $s->execute([$itemId]);
         foreach ($s->fetchAll() as $r) { if (isset($scopeCounts[$r['status']])) $scopeCounts[$r['status']] = (int)$r['n']; }
 
@@ -602,7 +608,7 @@ if ($view === 'library') {
         // ASSUMPTION at the top). Clients never see a denied one.
         // With series on, the reference is always one of the tire's own (series-less) images.
         $refOnly = $seriesOn ? ' AND series_id IS NULL' : '';
-        $s = $pdo->prepare("SELECT id, image_url, status FROM tire_images WHERE tire_id = ?{$clientOnly}{$refOnly} ORDER BY sort_order ASC, id ASC");
+        $s = $pdo->prepare("SELECT id, image_url, status FROM tire_images WHERE tire_id = ?{$clientOnly}{$trTire}{$refOnly} ORDER BY sort_order ASC, id ASC");
         $s->execute([$itemId]);
         $reference = null;
         foreach ($s->fetchAll() as $r) {   // approved first (in sort order), else the lowest sort_order one
@@ -627,7 +633,7 @@ if ($view === 'library') {
             // The Reference strip (always on top, whatever series the grid shows): the reference images the seat may see.
             $s = $pdo->prepare("SELECT ti.id, ti.image_url, ti.caption, ti.status, ti.sort_order{$nameSel}
                                   FROM tire_images ti
-                                 WHERE ti.tire_id = ? AND ti.series_id IS NULL{$clientOnlyTi}
+                                 WHERE ti.tire_id = ? AND ti.series_id IS NULL{$clientOnlyTi}{$trTi}
                                  ORDER BY ti.sort_order ASC, ti.id ASC");
             $s->execute([$itemId]);
             foreach ($s->fetchAll() as $r) { $r['src'] = assetsRootUrl((string)tireImageSrc($r)); $refStripRows[] = $r; }
@@ -658,7 +664,7 @@ if ($view === 'library') {
             $sql = "SELECT ti.id, ti.tire_id, ti.image_url, ti.caption, ti.status, ti.sort_order{$nameSel}, t.name AS tire_name
                       FROM tire_images ti
                       INNER JOIN tires t ON t.id = ti.tire_id
-                     WHERE t.company_id = ? AND ti.tire_id = ?{$clientOnlyTi} AND ti.status = ?
+                     WHERE t.company_id = ? AND ti.tire_id = ?{$clientOnlyTi}{$trTi} AND ti.status = ?
                      ORDER BY ti.sort_order ASC, ti.id ASC
                      LIMIT " . (int)ASSETS_PAGE . " OFFSET " . (int)$offset;
             $s = $pdo->prepare($sql);
@@ -710,7 +716,7 @@ if ($view === 'library') {
                    SUM(CASE WHEN ti.status = 'denied'   THEN 1 ELSE 0 END) AS denied_count,
                    COUNT(ti.id) AS total_count
               FROM tires t
-              LEFT JOIN tire_images ti ON ti.tire_id = t.id
+              LEFT JOIN tire_images ti ON ti.tire_id = t.id{$trTi}
              WHERE t.company_id = ?
              GROUP BY t.id, t.name
              ORDER BY t.name ASC
@@ -733,7 +739,7 @@ if ($view === 'library') {
             $ids = array_map('intval', array_column($collections, 'id'));
             $ph  = implode(',', array_fill(0, count($ids), '?'));
             $refOnly = $seriesOn ? ' AND series_id IS NULL' : '';
-            $s = $pdo->prepare("SELECT tire_id, image_url, status FROM tire_images WHERE tire_id IN ($ph){$clientOnly}{$refOnly} ORDER BY tire_id, sort_order ASC, id ASC");
+            $s = $pdo->prepare("SELECT tire_id, image_url, status FROM tire_images WHERE tire_id IN ($ph){$clientOnly}{$trTire}{$refOnly} ORDER BY tire_id, sort_order ASC, id ASC");
             $s->execute($ids);
             $thumbApproved = [];
             foreach ($s->fetchAll() as $r) {
@@ -767,7 +773,7 @@ if (!$isAdmin) {
         $sbItems = sentBackItems($pdo, $client, ['kinds' => [$view === 'library' ? 'library_image' : 'tire_image']] + ($view === 'collections' && $collection ? ['tire_id' => $itemId] : []));
         $sbChip  = count($sbItems);
     } elseif ($view === 'collections' && $collection) {
-        $s = $pdo->prepare("SELECT COUNT(*) FROM tire_images WHERE tire_id = ? AND status = 'denied'");
+        $s = $pdo->prepare("SELECT COUNT(*) FROM tire_images WHERE tire_id = ? AND status = 'denied'{$trTire}");
         $s->execute([$itemId]);
         $sbChip = (int)$s->fetchColumn();
     } else {
@@ -796,6 +802,8 @@ $refRedo = ($redoOn && $refStripRows) ? redoFlags($pdo, 'tire', array_map(static
 $redoClientCount = ($redoOn && $isAdmin) ? redoCount($pdo, $cid) : 0;
 // "Move to tire…" (library-move.php): the admin's Library, when the client has tires and series exist
 $canMove = $isAdmin && $view === 'library' && $seriesOn && $hasTiresTab;
+// "Move to Trash…" (trash.php): the admin's viewer ⋯ and select bar
+$trashOn = $isAdmin && trashReady($pdo, 'tire_image') && trashReady($pdo, 'library_image');
 
 $isGrid       = ($view === 'library') || ($view === 'collections' && $collection);
 $pendingTotal = $libCounts['pending'] + $tireCounts['pending'];   // = the Assets + Tires tab badges (split by partials/tabbar.php)
@@ -861,6 +869,12 @@ $redoChip = ($isAdmin && $redoOn)
     ? '<a class="as-chip as-chip--redo" href="' . esc(portalUrl('redo', ['client' => $slug])) . '" data-redo-chip title="Images to make again for ' . esc($client['name']) . ' — export them as one pack">'
       . 'Redo<span class="as-chip-count as-chip-count--redo" data-redo-chip-count>' . (int)$redoClientCount . '</span></a>'
     : '';
+// Admin: "Trash N" (trash.php) — only when this client's Trash holds something
+$trashN = $isAdmin && trashReady($pdo) ? trashCount($pdo, $cid) : 0;
+if ($trashN > 0) {
+    $redoChip .= '<a class="as-chip as-chip--trash" href="' . esc(portalUrl('trash', ['client' => $slug])) . '" data-trash-link title="Items kept out of every list and notification — restore or delete">'
+               . icon('trash') . '<span>Trash</span><span class="as-chip-count" data-trash-link-count>' . $trashN . '</span></a>';
+}
 ?>
 <?php if ($isGrid): // the status filter chips (the admin's Library Upload sits in the header — $navLinks above) ?>
 <div class="as-controls">
@@ -985,7 +999,7 @@ $redoChip = ($isAdmin && $redoOn)
           foreach ($tireAll as $k => $v) $tireAll[$k] = $v + (int)($tc[$k] ?? 0);
       }
       if (!$seriesOn) {
-          $st = $pdo->prepare("SELECT SUM(status = 'pending') AS pending, SUM(status = 'approved') AS approved, SUM(status = 'denied') AS denied, COUNT(*) AS total FROM tire_images WHERE tire_id = ?");
+          $st = $pdo->prepare("SELECT SUM(status = 'pending') AS pending, SUM(status = 'approved') AS approved, SUM(status = 'denied') AS denied, COUNT(*) AS total FROM tire_images WHERE tire_id = ?{$trTire}");
           $st->execute([$itemId]);
           $tireAll = array_map('intval', (array)$st->fetch()) + $tireAll;
       }
@@ -1160,6 +1174,9 @@ $redoChip = ($isAdmin && $redoOn)
         <?php if ($canMove): // Library → a tire series (library-move.php) ?>
           <button type="button" class="ui-btn ui-btn--gray as-select-move" data-select-move disabled title="Move the selected images into a tire series"><?= icon('tire') ?><span>Move to tire…</span></button>
         <?php endif; ?>
+        <?php if ($trashOn): // any status: into Joust's Trash (trash.php action=trash), with an optional reason ?>
+          <button type="button" class="ui-btn ui-btn--gray as-select-trash" data-select-trash disabled aria-label="Move to Trash…" title="Move the selected images to the Trash — kept, but out of every list and notification"><?= icon('trash') ?><span>Move to Trash…</span></button>
+        <?php endif; ?>
       <?php endif; ?>
     </div>
   </div>
@@ -1236,6 +1253,7 @@ $assetsConfig = [
         'comments' => clientUrl('assets.php', ['partial' => 'comments']),   // + &kind=&id= → {ok, count, html} (viewer Comments panel)
         'redo'     => $isAdmin && $redoOn ? basePath() . '/redo.php' : '',           // admin: action=mark / unmark {items, note}
         'move'     => $canMove ? basePath() . '/library-move.php' : '',              // admin: action=targets (GET) / move (POST)
+        'trash'    => $trashOn ? basePath() . '/trash.php' : '',                     // admin: action=trash {items, note} (trash-lib.php)
     ],
     'redo'      => ['on' => $redoOn, 'label' => function_exists('redoLabel') ? redoLabel($isAdmin) : 'Redo', 'url' => $isAdmin && $redoOn ? portalUrl('redo', ['client' => $slug]) : ''],
     'move'      => ['on' => $canMove, 'label' => $collectionsLabel],
@@ -1318,7 +1336,7 @@ if ($seenOnLoad && function_exists('trackingSeenAttr')) {
 }
 $includeSheet = $isAdmin && $seriesOn && $seriesActive !== null;   // only the admin's Rename / Delete series forms use the generic sheet
 // Admin: the "Mark for redo" / "Move to tire" sheet — its own root so it opens above the full-screen viewer (assets.css).
-if ($isAdmin && ($redoOn || $canMove) && $isGrid) {
+if ($isAdmin && ($redoOn || $canMove || $trashOn) && $isGrid) {
     $sheetId = 'asActionSheet'; $sheetTitle = ''; $sheetBody = ''; $sheetClass = 'as-action-sheet';
     ob_start();
     include __DIR__ . '/partials/sheet.php';

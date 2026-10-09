@@ -47,7 +47,7 @@ if (!function_exists('sentBackLibraryFiles')) {
     /** (internal) Library rows of one company in Needs changes whose file is still in the folder: [id => filename]. */
     function sentBackLibraryFiles(PDO $pdo, array $client): array {
         if (!function_exists('hasLibraryImagesTable') || !hasLibraryImagesTable($pdo)) return [];
-        $s = $pdo->prepare("SELECT id, filename FROM library_images WHERE company_id = ? AND status = 'denied' ORDER BY id ASC");
+        $s = $pdo->prepare("SELECT id, filename FROM library_images WHERE company_id = ? AND status = 'denied'" . trashAnd($pdo, 'library_image') . " ORDER BY id ASC");   // never Joust's Trash
         $s->execute([(int)$client['id']]);
         $dir = libraryDir((string)$client['slug']);
         $out = [];
@@ -67,20 +67,20 @@ if (!function_exists('sentBackCounts')) {
         if ($cid <= 0) return $out;
         try {
             $posted = function_exists('hasPostedColumn') && hasPostedColumn($pdo) ? ' AND posted = 0' : '';
-            $s = $pdo->prepare("SELECT COUNT(*) FROM posts WHERE company_id = ? AND status = 'denied'{$posted}");
+            $s = $pdo->prepare("SELECT COUNT(*) FROM posts WHERE company_id = ? AND status = 'denied'{$posted}" . trashAnd($pdo, 'post'));   // never Joust's Trash (trash-lib.php)
             $s->execute([$cid]);
             $out['post'] = (int)$s->fetchColumn();
             if (function_exists('hasEmailsTable') && hasEmailsTable($pdo)) {
-                $s = $pdo->prepare("SELECT COUNT(*) FROM emails WHERE company_id = ? AND status = 'denied' AND live = 0");
+                $s = $pdo->prepare("SELECT COUNT(*) FROM emails WHERE company_id = ? AND status = 'denied' AND live = 0" . trashAnd($pdo, 'email'));
                 $s->execute([$cid]);
                 $out['email'] = (int)$s->fetchColumn();
             }
             if (function_exists('hasPagesTable') && hasPagesTable($pdo)) {
-                $s = $pdo->prepare("SELECT COUNT(*) FROM pages WHERE company_id = ? AND status = 'denied' AND live = 0");
+                $s = $pdo->prepare("SELECT COUNT(*) FROM pages WHERE company_id = ? AND status = 'denied' AND live = 0" . trashAnd($pdo, 'page'));
                 $s->execute([$cid]);
                 $out['page'] = (int)$s->fetchColumn();
             }
-            $s = $pdo->prepare("SELECT COUNT(*) FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id WHERE t.company_id = ? AND ti.status = 'denied'");
+            $s = $pdo->prepare("SELECT COUNT(*) FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id WHERE t.company_id = ? AND ti.status = 'denied'" . trashAnd($pdo, 'tire_image', 'ti'));
             $s->execute([$cid]);
             $out['tire_image'] = (int)$s->fetchColumn();
             $out['library_image'] = count(sentBackLibraryFiles($pdo, $client));
@@ -212,7 +212,7 @@ if (!function_exists('sentBackItems')) {
                 $s = $pdo->prepare("SELECT p.id, p.caption, {$nameSel},
                                            (SELECT pi.image_url FROM post_images pi WHERE pi.post_id = p.id ORDER BY pi.sort_order ASC, pi.id ASC LIMIT 1) AS thumb_url,
                                            {$mt} AS thumb_type
-                                      FROM posts p WHERE p.company_id = ? AND p.status = 'denied'{$posted}");
+                                      FROM posts p WHERE p.company_id = ? AND p.status = 'denied'{$posted}" . trashAnd($pdo, 'post', 'p'));
                 $s->execute([$cid]);
                 foreach ($s->fetchAll() as $r) {
                     $u = trim((string)($r['thumb_url'] ?? ''));
@@ -225,7 +225,7 @@ if (!function_exists('sentBackItems')) {
                 }
             }
             if (in_array('email', $kinds, true) && function_exists('hasEmailsTable') && hasEmailsTable($pdo)) {
-                $s = $pdo->prepare("SELECT * FROM emails WHERE company_id = ? AND status = 'denied' AND live = 0");
+                $s = $pdo->prepare("SELECT * FROM emails WHERE company_id = ? AND status = 'denied' AND live = 0" . trashAnd($pdo, 'email'));
                 $s->execute([$cid]);
                 foreach ($s->fetchAll() as $r) {
                     $code = trim((string)($r['code'] ?? ''));
@@ -236,7 +236,7 @@ if (!function_exists('sentBackItems')) {
                 }
             }
             if (in_array('page', $kinds, true) && function_exists('hasPagesTable') && hasPagesTable($pdo)) {
-                $s = $pdo->prepare("SELECT * FROM pages WHERE company_id = ? AND status = 'denied' AND live = 0");
+                $s = $pdo->prepare("SELECT * FROM pages WHERE company_id = ? AND status = 'denied' AND live = 0" . trashAnd($pdo, 'page'));
                 $s->execute([$cid]);
                 foreach ($s->fetchAll() as $r) {
                     $pslug = trim((string)($r['slug'] ?? ''));
@@ -254,7 +254,7 @@ if (!function_exists('sentBackItems')) {
                 $s = $pdo->prepare("SELECT ti.id, ti.tire_id, ti.image_url, ti.caption, ti.client_comment, ti.sort_order, " . ($hasDn ? 'ti.display_name' : "'' AS display_name") . ", "
                     . ($seriesOn ? 'ti.series_id, s.name AS series_name, s.sort_order AS series_sort' : 'NULL AS series_id, NULL AS series_name, 0 AS series_sort') . ", t.name AS tire_name
                       FROM tire_images ti INNER JOIN tires t ON t.id = ti.tire_id" . ($seriesOn ? ' LEFT JOIN tire_series s ON s.id = ti.series_id' : '') . "
-                     WHERE t.company_id = ? AND ti.status = 'denied'{$tireOnly}
+                     WHERE t.company_id = ? AND ti.status = 'denied'{$tireOnly}" . trashAnd($pdo, 'tire_image', 'ti') . "
                      ORDER BY t.name ASC, ti.tire_id ASC, " . ($seriesOn ? '(ti.series_id IS NOT NULL) ASC, s.sort_order ASC, ' : '') . "ti.sort_order ASC, ti.id ASC");
                 $s->execute($tireOnly !== '' ? [$cid, (int)$opts['tire_id']] : [$cid]);
                 foreach ($s->fetchAll() as $r) {

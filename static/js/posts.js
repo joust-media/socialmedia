@@ -206,7 +206,11 @@
     if (tpl) return Promise.resolve(tpl.innerHTML);
     if (!cfg.partialUrl) return Promise.reject(new Error('No detail available'));
     return fetch(cfg.partialUrl.replace('__ID__', encodeURIComponent(id)), { credentials: 'same-origin', headers: { 'Accept': 'text/html' } })
-      .then(function (res) { if (!res.ok) throw new Error(res.status === 404 ? 'This post is no longer available' : 'Could not load this post'); return res.text(); });
+      .then(function (res) {
+        if (res.status === 404) { var gone = new Error('This item is no longer available'); gone.gone = true; throw gone; }   // trashed / deleted: neutral, not an error
+        if (!res.ok) throw new Error('Could not load this post');
+        return res.text();
+      });
   }
 
   function splitDetail(html) {
@@ -253,7 +257,7 @@
       document.dispatchEvent(new CustomEvent('posts:open', { detail: { id: id } }));
       return root;
     }).catch(function (err) {
-      toast(err && err.message ? err.message : 'Could not open this post', 'error');
+      toast(err && err.message ? err.message : 'Could not open this post', err && err.gone ? '' : 'error');
       return null;
     });
   };
@@ -629,6 +633,25 @@
     });
   };
 
+  /* "Move to Trash…" (admin ⋯; trash.php): kept, left out of every list — the post leaves this one, the counts drop. */
+  P.trash = function (id) {
+    id = String(id);
+    var root = sheetRoot();
+    var before = (root && ($('[data-deny-form]', root) || $('[data-pd-body] > *', root))) || null;
+    return App.trash.inline(before, { noun: 'post' }).then(function (note) {
+      if (note === null) return null;
+      return App.trash.move(['post:' + id], note).then(function (res) {
+        if (!res.ok) { toast(res.error || 'Could not move it to the Trash', 'error'); return res; }
+        var snap = snapshot(id);
+        if (snap) bumpCount(segmentOf(snap.status, snap.posted), -1);
+        if (P.current && P.current.id === id) P.close();
+        leaveList(id);
+        App.trash.toastDone(res, 1);
+        return res;
+      });
+    });
+  };
+
   P.remove = function (id) {
     id = String(id);
     if (!window.confirm('Delete this post and all its media? This cannot be undone.')) return Promise.resolve(null);
@@ -960,6 +983,7 @@
       var tp = t.closest('[data-toggle-posted]');
       if (tp) { P.togglePosted(id, tp.getAttribute('data-toggle-posted')); return; }
       if (t.closest('[data-delete-post]')) { closeMenu(root); P.remove(id); return; }
+      if (t.closest('[data-trash-item]')) { closeMenu(root); P.trash(id); return; }
 
       var menuBtn = t.closest('[data-menu-toggle]');
       if (menuBtn) { var m = $('[data-menu]', root); if (m) { m.hidden = !m.hidden; menuBtn.setAttribute('aria-expanded', m.hidden ? 'false' : 'true'); } return; }

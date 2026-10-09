@@ -95,6 +95,7 @@ foreach ((array)$st->fetchAll() as $r) $libRows[(int)$r['id']] = $r;
 foreach ($ids as $i) {
     if (!isset($libRows[$i])) lmFail(404, 'Image not found');
     if ((int)$libRows[$i]['company_id'] !== $cid) lmFail(403, 'This image belongs to another client');
+    if (!empty($libRows[$i]['trashed_at'])) lmFail(409, 'That image is in the Trash — restore it first');   // trash-lib.php
 }
 
 // The series: an existing one of this tire, or a new one by name.

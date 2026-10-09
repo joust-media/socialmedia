@@ -178,6 +178,7 @@ function pagesAttachRelations(PDO $pdo, array &$rows): void {
 
 /** May this viewer open the row? (SQL already hides them from lists; this guards deep links.) */
 function pageVisibleTo(array $page, bool $admin): bool {
+    if (!empty($page['trashed_at'])) return false;   // in Joust's Trash (trash-lib.php): not openable from here, either seat
     if ($admin) return true;
     return !empty($page['live']) || in_array((string)$page['status'], ['pending', 'approved', 'denied'], true);   // denied = its Sent back
 }
@@ -209,7 +210,7 @@ if ($isPartial) {
     header('Cache-Control: no-store');
     if (!$directPage) {
         http_response_code(404);
-        echo '<div class="ui-empty">This page is no longer available.</div>';
+        echo trashUnavailableHtml($admin && trashIsTrashed($pdo, 'page', $pageParam), 'page', $client);   // neutral for the client
         exit;
     }
     $one = [$directPage];
@@ -386,6 +387,9 @@ include __DIR__ . '/partials/layout-top.php';
 <div class="posts-toolbar pages-toolbar">
   <?= segmented($segItems, ['label' => 'Page status', 'scroll' => true]) ?>
 </div>
+<?php if ($pageParam > 0 && trashIsTrashed($pdo, 'page', $pageParam) && trashItemCompany($pdo, 'page', $pageParam) === (int)$client['id']): // a deep link to an item in Joust's Trash: neutral, never an error ?>
+<div class="trash-gone"><?= trashUnavailableHtml($admin, 'item', $client) ?></div>
+<?php endif; ?>
 
 <?php if ($q !== '' || count($filtered) > 6): ?>
 <div class="pages-filters" data-pages-filters>

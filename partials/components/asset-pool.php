@@ -196,7 +196,7 @@ if (!function_exists('studioApprovedPool')) {
             $st = $pdo->prepare("
                 SELECT id, filename, status, created_at
                 FROM library_images
-                WHERE company_id = ? AND status = 'approved'
+                WHERE company_id = ? AND status = 'approved'" . (function_exists('trashAnd') ? trashAnd($pdo, 'library_image') : '') . "
                 ORDER BY filename ASC
             ");
             $st->execute([$cid]);
@@ -218,7 +218,7 @@ if (!function_exists('studioApprovedPool')) {
                    t.name AS tire_name
             FROM tire_images ti
             INNER JOIN tires t ON t.id = ti.tire_id
-            WHERE t.company_id = ? AND ti.status = 'approved'
+            WHERE t.company_id = ? AND ti.status = 'approved'" . (function_exists('trashAnd') ? trashAnd($pdo, 'tire_image', 'ti') : '') . "
             ORDER BY t.name ASC, ti.sort_order ASC, ti.id ASC
         ");
         $st->execute([$cid]);
@@ -307,7 +307,7 @@ if (!function_exists('studioResolveAsset')) {
             if (!function_exists('hasLibraryImagesTable') || !hasLibraryImagesTable($pdo)) return null;
             $st = $pdo->prepare("
                 SELECT id, filename, status FROM library_images
-                WHERE id = ? AND company_id = ? AND status = 'approved'
+                WHERE id = ? AND company_id = ? AND status = 'approved'" . (function_exists('trashAnd') ? trashAnd($pdo, 'library_image') : '') . "
                 LIMIT 1
             ");
             $st->execute([$id, $cid]);
@@ -325,7 +325,7 @@ if (!function_exists('studioResolveAsset')) {
                        t.name AS tire_name
                 FROM tire_images ti
                 INNER JOIN tires t ON t.id = ti.tire_id
-                WHERE ti.id = ? AND t.company_id = ? AND ti.status = 'approved'
+                WHERE ti.id = ? AND t.company_id = ? AND ti.status = 'approved'" . (function_exists('trashAnd') ? trashAnd($pdo, 'tire_image', 'ti') : '') . "
                 LIMIT 1
             ");
             $st->execute([$id, $cid]);
