@@ -1173,6 +1173,8 @@
     var onPosts = !!(App.posts && App.posts.refresh && App.posts.open && $('.page-posts [data-posts-list]'))
                && (document.body.getAttribute('data-client') || '') === (slug || '');
     var go = function () { try { sessionStorage.setItem('np.toast', msg); } catch (e) {} window.location.href = url; };
+    // Posts → Calendar (posts-calendar.js): redraw the month in place, then open the post's sheet.
+    if (App.postsCalendar && App.postsCalendar.afterSave && App.postsCalendar.afterSave(id, slug, msg)) return;
     if (!onPosts) { go(); return; }
     App.posts.refresh(id).then(function (r) {
       App.posts.open(id);

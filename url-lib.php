@@ -109,6 +109,7 @@ if (!function_exists('portalRouteTable')) {
      *   /portal/                         index.php                  (admin: all clients · client: → their Home)
      *   /portal/<c>/                     index.php?client=<c>       Home
      *   /portal/<c>/posts[/<id>]         posts.php[&post=<id>]
+ *   /portal/<c>/posts/calendar       posts.php?view=calendar     (the month overview; &month=YYYY-MM stays in the query)
      *   /portal/<c>/assets               assets.php                 (Library; view=library is the default)
      *   /portal/<c>/tires[/<id>]         assets.php?view=collections[&item=<id>]
      *   /portal/<c>/tires/new            add-feature.php?module=tires              (admin)
@@ -132,6 +133,7 @@ if (!function_exists('portalRouteTable')) {
     function portalRouteTable(): array {
         return [
             ['{client}/',                    'index'],
+            ['{client}/posts/calendar',      'posts',       ['view' => 'calendar']],
             ['{client}/posts/{post}',        'posts'],
             ['{client}/posts',               'posts'],
             ['{client}/assets',              'assets',      [], ['view' => 'library']],

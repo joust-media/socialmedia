@@ -6,7 +6,8 @@
        opts: { card: '.pl-card', threshold: 0.35 (fraction of width, min 80px),
                canSwipe(item, dir) → bool, onCommit(item, dir), commitOut: dir|false }
    App.swipe.reset(item)          snap a row back
-   App.posts.open(id, {deny})     open the post detail sheet (inline template or partial fetch)
+   App.posts.open(id, {deny, title})   open the post detail sheet (inline template or partial fetch); title: the sheet's
+                                  title when the post has no row in this list (the Calendar's chips pass theirs)
    App.posts.close()
    App.posts.decide(id, status, note, {toast})   optimistic approve / deny (+ required note) / reset
    App.posts.resubmit(id)         admin work queue: denied → pending ("Send for review", status.php status=pending), row leaves the queue
@@ -20,7 +21,9 @@
    App.posts.videoFallback(root)  swaps a non-playable <video> for the "Open / Download" card
    App.posts.approveForClient(id) admin ⋯ "Approve for client…": asks first, then approves on the client's behalf
    Events: 'posts:decided' {id, status, ok}, 'posts:submitted' {id, ok}, 'posts:open' {id}, 'posts:close' {id},
-           'posts:refreshed' {id, segment, inView}
+           'posts:refreshed' {id, segment, inView}, 'posts:posted' {id, posted, ok} (Mark scheduled / Unmark),
+           'posts:dated' {id, date} (the admin's Post date), 'posts:removed' {id} (Trash / Delete) — the Calendar
+           (posts-calendar.js) redraws its month on these
    ===================================================================== */
 (function (window, document) {
   'use strict';
@@ -228,7 +231,7 @@
     opts = opts || {};
     id = String(id);
     var item = itemEl(id);
-    var title = item ? (item.getAttribute('data-title') || 'Post') : 'Post';
+    var title = item ? (item.getAttribute('data-title') || 'Post') : (opts.title || 'Post');   // opts.title: an opener outside the list (the Calendar)
     return detailHtml(id).then(function (html) {
       var parts = splitDetail(html);
       if (!item && parts.title) title = parts.title;   // a post outside the list (e.g. the client's own Needs-changes link)
@@ -629,6 +632,7 @@
         delete removed[id];
         toast(posted ? 'Marked as scheduled' : 'Unmarked', 'success');
       }
+      document.dispatchEvent(new CustomEvent('posts:posted', { detail: { id: id, posted: posted, ok: !!res.ok } }));
       return res;
     });
   };
@@ -647,6 +651,7 @@
         if (P.current && P.current.id === id) P.close();
         leaveList(id);
         App.trash.toastDone(res, 1);
+        document.dispatchEvent(new CustomEvent('posts:removed', { detail: { id: id } }));
         return res;
       });
     });
@@ -662,6 +667,7 @@
       if (P.current && P.current.id === id) P.close();
       leaveList(id);
       toast('Post deleted', 'success');
+      document.dispatchEvent(new CustomEvent('posts:removed', { detail: { id: id } }));
       return res;
     });
   };
@@ -878,6 +884,7 @@
       form.hidden = true;
       var row = $('[data-when-toggle]', root); if (row) row.setAttribute('aria-expanded', 'false');
       toast('Date saved', 'success');
+      document.dispatchEvent(new CustomEvent('posts:dated', { detail: { id: id, date: v } }));
     });
   }
   function requestDate(art, form) {
@@ -930,7 +937,7 @@
       if (!opener) return;
       if (e.metaKey || e.ctrlKey || e.shiftKey) return;
       e.preventDefault();
-      P.open(opener.getAttribute('data-post-open'));
+      P.open(opener.getAttribute('data-post-open'), { title: opener.getAttribute('data-title') || '' });
     });
 
     // One-shot flash from a save elsewhere (add-post.php → posts.php?post=…&msg=…): toast it once, drop it from the URL.
