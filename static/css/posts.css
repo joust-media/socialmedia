@@ -11,6 +11,9 @@
 /* ---------------------------------------------------------------------
    Page chrome
    --------------------------------------------------------------------- */
+/* List · Calendar (calendar-lib.php postsViewSwitchHtml; the calendar itself: calendar.css) */
+.posts-viewbar { display: flex; margin: 0 0 12px; }
+.posts-viewswitch .ui-segmented-item { min-width: 84px; }
 .posts-toolbar { margin: 2px 0 16px; }
 .posts-month-pill { gap: 4px; padding-right: 10px; }
 .posts-month-pill .ui-icon { width: 14px; height: 14px; stroke-width: 2.4; }

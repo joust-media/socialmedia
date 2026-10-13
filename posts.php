@@ -11,6 +11,8 @@
  *   &post=<id>&partial=1          return ONLY the detail partial HTML (for lists > 40 items)
  *   &post=<id>&partial=row        ONE list row as it renders in the post's own segment / month (headers X-Post-Segment,
  *                                 X-Post-Month) — posts.js App.posts.refresh() after a New post pop-up save, no reload
+ *   &view=calendar|list           List · Calendar (calendar-lib.php, partials/posts-calendar.php): the month overview of
+ *                                 scheduled posts (&month=YYYY-MM, &partial=calendar = the grid only); remembered per browser
  *   &partial=list&offset=<n>      the next POSTS_PAGE rows of the list (same status/month) as markup — "Load more";
  *                                 headers X-Posts-Total / X-Posts-Next ('' when done). The page renders the first
  *                                 POSTS_PAGE rows; a deep link past them still opens its sheet (standalone template).
@@ -58,6 +60,15 @@ if (!defined('POSTS_PAGE')) { define('POSTS_PAGE', 30); }             // list ro
 $listOffset = max(0, (int)($_GET['offset'] ?? 0));
 $postParam = (int)($_GET['post'] ?? 0);
 
+// List · Calendar (calendar-lib.php): ?view=calendar is the month overview of scheduled posts (partials/posts-calendar.php,
+// both seats; the admin unscoped = All clients). An explicit choice is remembered; list-only parameters keep the list.
+require_once __DIR__ . '/calendar-lib.php';
+$postsView = postsViewChoice($_GET);
+if ($postsView === 'calendar' && in_array((string)($_GET['partial'] ?? ''), ['', 'calendar', 'day'], true)) {
+    include __DIR__ . '/partials/posts-calendar.php';
+    exit;
+}
+
 // Posts only makes sense for one client. A client seat without a scope gets the
 // same "missing client" state assets.php uses (400); the admin picks a client.
 if (!$client) {
@@ -91,6 +102,7 @@ if (!$client) {
     $headExtra   = '<link rel="stylesheet" href="' . h(staticUrl('css/posts.css')) . '">';
     $bodyClass   = 'page-posts page-posts-chooser';
     include __DIR__ . '/partials/layout-top.php';
+    echo postsViewSwitchHtml('list', portalUrl('posts', ['view' => 'list']), portalUrl('posts', ['view' => 'calendar']));
     if (!$companies) {
         echo '<div class="ui-empty">No clients in the <code>companies</code> table yet.</div>';
     } else {
@@ -667,6 +679,7 @@ if ($isListPartial) {
 include __DIR__ . '/partials/layout-top.php';
 ?>
 
+<?= postsViewSwitchHtml('list', postsUrl(['view' => 'list', 'status' => $segment, 'month' => $monthUrlParam]), postsUrl(['view' => 'calendar', 'month' => $selectedMonth !== '' ? $selectedMonth : null])) ?>
 <div class="posts-toolbar">
   <?= segmented($segItems, ['label' => 'Post status', 'scroll' => true]) ?>
 </div>
