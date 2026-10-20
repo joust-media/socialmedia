@@ -444,7 +444,7 @@ if (!function_exists('notifyClientChannel')) {
 // =====================================================================================================================
 
 if (!function_exists('activityWithContext')) {
-    /** Run $fn with logActivity() writing $ctx: ['author_user_id' => id, 'internal' => 1, 'source' => 'slack']. */
+    /** Run $fn with logActivity() writing $ctx: ['author_user_id' => id, 'internal' => 1, 'source' => 'slack' | 'email' | 'agent']. */
     function activityWithContext(array $ctx, callable $fn) {
         $prev = $GLOBALS['__activityCtx'] ?? [];
         $GLOBALS['__activityCtx'] = $ctx + $prev;
@@ -1106,9 +1106,10 @@ if (!function_exists('notifyOnActivity')) {
                 return;
             }
             // An internal note written in the portal goes to the item's Slack thread, marked internal (a note that came
-            // FROM Slack — "!internal …" — is already there).
+            // FROM Slack — "!internal …" — is already there; the agent team's note on a draft it delivered through
+            // agent-intake.php stays in the portal: a draft is never announced anywhere).
             if ($row['actor'] === 'admin' && !empty($row['internal']) && $action === 'commented' && trim((string)($row['detail'] ?? '')) !== ''
-                && (($GLOBALS['__activityCtx']['source'] ?? '') !== 'slack') && notifySlackConfigured() && notifyClientChannel($pdo, $cid) !== '') {
+                && !in_array((string)($GLOBALS['__activityCtx']['source'] ?? ''), ['slack', 'agent'], true) && notifySlackConfigured() && notifyClientChannel($pdo, $cid) !== '') {
                 notifyEnqueue($pdo, 'slack', 'internal_note', ['entity_type' => $type, 'entity_id' => $eid, 'company_id' => $cid, 'activity_id' => $activityId],
                     ['dedupe' => 'int:' . $activityId, 'company_id' => $cid, 'entity_type' => $type, 'entity_id' => $eid]);
             }
