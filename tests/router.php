@@ -6,6 +6,12 @@
  * PHP files are required from here (top level, so the app's globals stay global) to keep the whole
  * request in one execution with the test-auth.php prepend; static files are served by php -S.
  */
+// Some PHP builds (8.3's php -S among them) never run auto_prepend_file for the router script: load the seat shim
+// here as well. test-auth.php is guarded (PORTAL_TEST_AUTH, PORTAL_TEST=1), so where the prepend did run this is a no-op.
+if (!defined('PORTAL_TEST_AUTH') && ($__pre = (string)ini_get('auto_prepend_file')) !== '' && is_file($__pre)) {
+    require_once $__pre;
+}
+unset($__pre);
 $__uri  = rawurldecode((string)parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH));
 $__root = rtrim((string)$_SERVER['DOCUMENT_ROOT'], '/');
 if (strpos($__uri, "\0") !== false || strpos($__uri, '..') !== false) {
@@ -24,7 +30,7 @@ if ($__cleanLinks && strpos($__uri, '/portal/') === 0 && !file_exists($__file)) 
     if (preg_match('#^([A-Za-z0-9_-]+)$#', $__rel, $__m) && is_file($__root . '/portal/' . $__m[1] . '.php')) {
         $__uri  = '/portal/' . $__m[1] . '.php';
         $__file = $__root . $__uri;
-    } elseif (preg_match('#^(slack-events|slack-actions|notify-cron|notify-thumb|notify-pump|drive-ingest|mail-inbound|google-oauth|email-prefs)/?$#', $__rel)) {
+    } elseif (preg_match('#^(slack-events|slack-actions|notify-cron|notify-thumb|notify-pump|drive-ingest|agent-intake|mail-inbound|google-oauth|email-prefs)/?$#', $__rel)) {
         http_response_code(404);
         echo 'Not found';
         return true;

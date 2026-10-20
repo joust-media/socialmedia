@@ -52,7 +52,7 @@ Clients sign in; a bare `?client=<slug>` link no longer opens anything by itself
   Pages redirect to sign-in with a return path and a friendly line; JSON endpoints answer 401 (no session,
   with a `signIn` URL — `App.post` follows it) or 403 (another client's). `clientOwnsCompany()` checks the
   session's company, never a posted slug. Admin-only scripts keep `requireAdmin()` (→ `login.php`); machine
-  endpoints (`drive-ingest`, the digest cron, Slack / notify endpoints) are not gated by it. `preview.php`
+  endpoints (`drive-ingest`, `agent-intake`, the digest cron, Slack / notify endpoints) are not gated by it. `preview.php`
   keeps its HMAC-signed URLs; **media files** (`media/`, `uploads/`) are still served statically by Apache
   with no session check, exactly as before.
 - **Signed deep links** for emails: `clientLink($slug, 'posts/12', $email, $ttlDays = 30)` (absolute URL with
@@ -71,7 +71,7 @@ Clients sign in; a bare `?client=<slug>` link no longer opens anything by itself
   `/portal/__clean-links-check`, `/portal/` and `/portal/sign-in` on the live server and puts the old file
   back if any of them fails. Clean links are printed only while that block is in place (or `clean_urls` in
   `config.php` forces it); without it every link stays `posts.php?client=…`. With it, old query-string URLs
-  301 to the clean form. Extensionless scripts (`/portal/drive-ingest`, `/portal/slack-events`,
+  301 to the clean form. Extensionless scripts (`/portal/drive-ingest`, `/portal/agent-intake`, `/portal/slack-events`,
   `/portal/notify-cron`, …) are served by their `.php` first and never reach the router (`route.php`).
   Slugs that would shadow a portal page (`manage`, `posts`, `sign-in`, …) are refused for new clients.
 - **Config keys** (server `config.php`; every key, once, in `config.example.php`): `client_link_secret`
@@ -152,7 +152,7 @@ Clients sign in; a bare `?client=<slug>` link no longer opens anything by itself
 - **Draft** (`posts.status = 'draft'`, `migrate.php` step 35): a post Joust is still building.
   The client never sees it anywhere (lists, counts, badges, Home, activity, deep links;
   `status.php` answers 404 to the client seat). Uploads ("a draft post per file") and batch posts start as drafts
-  with an empty caption. **Send for review** (Posts → Draft, or the post sheet;
+  with an empty caption; the agent team's posts arrive as drafts too (*Agent team intake* below). **Send for review** (Posts → Draft, or the post sheet;
   `status.php action=submit`) moves it to To Review and needs a caption first. Until step 35
   has run, those paths keep the old behaviour (To Review, placeholder caption).
 - **Carousels**: up to `POST_MAX_MEDIA` (20, `helpers.php`) images / videos per post.
@@ -859,6 +859,69 @@ reads only from the `drive_*` tables (`migrate.php` steps 30–34; helpers in `d
   + the 50 largest per client. Threshold emails (80 / 90 / 95 % used, under 14 days to full) are sent by
   the script once per crossing (`drive_alerts`). Each completed snapshot adds one activity-feed row
   ("Drive snapshot — 71% used, 12 candidates", admin feed only) that never triggers the daily digest.
+
+## Agent team intake (machine endpoint)
+
+Lance's AI agent team (Python, on his Mac) writes social posts — caption, hashtags, 1–20 images, a planned date — and
+hands each finished one to the portal as a **Draft** through `agent-intake.php`. A draft is Joust-only (see *Posts: drafts
+and carousels*): the client never sees it, nothing is announced (no client email, no Slack message, no escalation). Lance
+reviews it in Posts → Draft and sends it with the usual **Send for review**; the team reads the status back to learn what
+the client decided. Nothing is ever published to a social network from here.
+
+- **`config.php` key**: `'agent_intake_secret' => '<random, 24+ chars>'` (`php -r 'echo bin2hex(random_bytes(24));'`) —
+  the bearer the team sends: `Authorization: Bearer <secret>`, or `X-Agent-Secret: <secret>` when the host strips
+  Authorization (send both). Compared in constant time before anything else loads. Without it every call answers
+  `503 {"ok":false,"error":"not configured"}`; a missing or wrong secret is a `401`.
+- **Address**: `https://joustmedia.com/portal/agent-intake` — the extensionless form. The live host 301s `….php` to it,
+  and a redirected POST loses its body, so the team's client must use this URL (the staging copy:
+  `…/portal-staging/agent-intake`). The router and the Clean links block never capture it (a machine endpoint like
+  `drive-ingest`; `agent-intake/` is a 404, and it can never be a client slug).
+- **Health**: `curl -H "Authorization: Bearer <secret>" "https://joustmedia.com/portal/agent-intake?health=1"` →
+  `{ok, configured, migrated, chunk_bytes, max_media, max_bytes:{image, video}, mimes}`.
+- **Calls** (no session and no CSRF token — the secret is the only gate; every cookie is dropped before the portal code
+  loads; JSON in and out, `{ok:true, …}` / `{ok:false, error}`):
+
+  | Call | Body | Reply |
+  |---|---|---|
+  | `GET ?clients=1` | — | `{clients:[{slug, name}]}` — every company (the slug of `?client=kenda`) |
+  | `POST ?part=media_begin` | `{client, filename, mime, bytes, sha256}` | `{upload_id, chunk_bytes}` |
+  | `POST ?part=media_chunk&upload_id=<id>&offset=<n>` | the raw piece (`Content-Type: application/octet-stream`, ≤ `chunk_bytes`) | `{received}` |
+  | `POST ?part=media_finish` | `{upload_id}` | `{media_token, bytes, mime, type}` |
+  | `POST ?part=post` | `{client, caption, hashtags, scheduled_date, post_type?, media_tokens:[…], source_ref, note?}` | `{post_id, status:'draft', admin_url}` |
+  | `GET ?part=status&client=<slug>&ids=1,2` (or `&source_refs=a,b`, or both) | — | `{posts:[{id, source_ref, status, scheduled_date, posted, trashed, updated_at, last_client_note}]}` |
+
+  - **Media**: `image/png`, `image/jpeg`, `image/webp` (≤ 50 MB) and `video/mp4` (≤ 4 GB) — the composer's caps
+    (`upload-lib.php`). Sent in pieces because shared hosting caps one request: `chunk_bytes` = min(4 MiB, 80 % of the
+    PHP request cap); a smaller piece is fine. `offset` must equal the bytes received so far — anything else (a repeated
+    piece, a gap) is `409 {received}`, so the client resumes from `received`. `media_finish` checks the size, the
+    sha256 and the real type (the image must decode as the format its mime names, an MP4 must carry its container
+    magic); a mismatch is a `400` and the upload is discarded (begin again). A retried finish gets the same token. The
+    image's sm / lg previews are made right then and follow the file into the post.
+  - **Post**: one Draft for that client — `media_tokens` (1–20, `<token>` or `claim:<token>`) become the carousel in that
+    order; `hashtags` is a string or a list (`#` added); `scheduled_date` is `YYYY-MM-DD` (10:00 that day — an
+    optional `HH:MM` is kept) or `null` (tomorrow 10:00, what the portal gives any draft without a date); `post_type`
+    post / story / reel or `null` = auto (one video → reel). Activity: an internal "Agent team delivered a draft" row
+    (`drafted`, Joust only) and, with a `note`, an internal comment (Joust-only, never on the client's side, not posted
+    to Slack). `admin_url` opens the post sheet (`portal_url` when set). A token belongs to the client it was uploaded
+    for; a used, expired or foreign one is a `400` and nothing is saved.
+  - **Idempotent on (client, `source_ref`)** (≤ 190 characters, compared byte for byte): a repeat — even with spent
+    tokens or other content — answers `{ok:true, duplicate:true, post_id, status, admin_url}` and changes nothing.
+  - **Status**: `status` is the raw `posts.status` (`draft` · `pending` = To Review · `approved` · `denied` = Needs
+    changes), `posted` = Mark scheduled, `trashed` = in Joust's Trash, `updated_at` ISO 8601, `last_client_note` = the
+    client's latest comment / Needs-changes note (`[Slide N] …` as stored; never an internal note, never a deleted
+    comment). Ids / refs of another client, or unknown ones, are simply left out (≤ 200 per call).
+- **Codes**: 400 validation · 401 · 404 unknown client / upload · 405 · 409 offset / incomplete upload · 413 JSON over
+  1 MB, a piece over `chunk_bytes` or past the announced size, a file over its cap · 503 not configured / not migrated ·
+  500 `{"ok":false,"error":"server error"}` for anything unexpected (logged to the portal's `error_log`; `&debug=1`
+  with a valid secret adds `detail` + `at`).
+- **Where files go**: pieces in `uploads/.spool/<upload_id>.part` + `.json` (0600, deny-all `.htaccess`); a finished
+  file is parked as `uploads/tmp_<token>.<ext>` with its claim sidecar `uploads/.spool/<token>.claim` (purpose
+  `agent` — never mixed with the composer's); the post claims it as `uploads/img_…` / `vid_…` like any composer
+  upload. Unfinished uploads and unclaimed files are swept after 24 h (the shared spool rule, see *Large uploads*).
+- **Migration**: `migrate.php` step 55 adds `posts.source_ref` (`VARCHAR(190)` utf8mb4_bin, NULL for every portal-made
+  post) + `UNIQUE KEY ux_posts_source_ref (company_id, source_ref)`. Idempotent; until it has run (and step 35, drafts)
+  the endpoint answers `503 "not migrated"` except for health and the client list.
+- **Tests**: `tests/smoke/28-agent-intake.php`; the test stack's secret is in `tests/env.sh`.
 
 ## Not deployed
 

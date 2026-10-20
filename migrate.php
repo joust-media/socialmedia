@@ -2075,6 +2075,38 @@ if (!$errors) {
         $errors[] = $e->getMessage();
     }
 }
+
+// 55. Agent team intake (agent-intake.php): posts.source_ref — the agent team's own id for a post it delivered as a
+//     Draft (NULL for every post made in the portal) + UNIQUE KEY ux_posts_source_ref (company_id, source_ref), so a
+//     repeated delivery finds the post it already made instead of making a second one. A unique key accepts any number
+//     of NULLs, so the existing posts never collide. VARCHAR(190) utf8mb4_bin: an id compares byte for byte ('A1' ≠
+//     'a1') whatever the table's collation, and 190 × 4 bytes stays inside the 767-byte index limit of older InnoDB row
+//     formats. Only ADD COLUMN / ADD KEY on posts — no other column is named, nothing is read or rewritten; the column
+//     and the key are probed on their own, so a re-run finishes a partial run and a second run changes nothing. Until
+//     it has run agent-intake.php answers 503 "not migrated" (health and the client list still answer).
+if (!$errors) {
+    try {
+        if (!tableExists($pdo, 'posts')) {
+            $steps[] = "• Table `posts` does not exist — skipped posts.source_ref.";
+        } else {
+            $add = [];
+            if (!columnExists($pdo, 'posts', 'source_ref')) {
+                $add[] = "ADD COLUMN source_ref VARCHAR(190) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL DEFAULT NULL";
+            }
+            $ix = $pdo->prepare("SELECT COUNT(*) FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'posts' AND INDEX_NAME = 'ux_posts_source_ref'");
+            $ix->execute();
+            if ((int)$ix->fetchColumn() === 0) $add[] = "ADD UNIQUE KEY ux_posts_source_ref (company_id, source_ref)";
+            if ($add) {
+                $pdo->exec("ALTER TABLE posts " . implode(', ', $add));
+                $steps[] = "✓ Added posts.source_ref for the agent team intake (" . count($add) . " change" . (count($add) === 1 ? '' : 's') . ").";
+            } else {
+                $steps[] = "• posts.source_ref (agent team intake) already exists — skipped.";
+            }
+        }
+    } catch (Exception $e) {
+        $errors[] = $e->getMessage();
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">

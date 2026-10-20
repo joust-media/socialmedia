@@ -101,6 +101,12 @@ return [
     'drive_ingest_secret'          => '',   // 24+ random characters, shared with the Apps Script (INGEST_SECRET)
     'drive_clients_root_folder_id' => '',   // optional: the Drive folder whose sub-folders are the clients
 
+    // ---- Agent team intake (agent-intake.php; README "Agent team intake") ----------------------------------------
+    // The bearer Lance's agent team sends (Authorization: Bearer …, or X-Agent-Secret: … when the host strips
+    // Authorization) to deliver posts as Drafts and read their status back. 24+ random characters, e.g. the output of:
+    // php -r 'echo bin2hex(random_bytes(24));'. Blank = the endpoint answers 503 "not configured".
+    'agent_intake_secret' => '',
+
     // ---- Image previews ------------------------------------------------------------------------------------------
     // HMAC key for signed preview / notification thumbnail URLs. Blank = derived from the database settings above.
     // Changing it invalidates preview URLs already handed out (they are regenerated on the next page view).

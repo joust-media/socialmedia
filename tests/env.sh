@@ -69,6 +69,8 @@ return [
     'slack_signing_secret'  => 'test-signing-secret-abcdef',
     'slack_api_base'        => 'http://127.0.0.1:${PORTAL_TEST_STUB_PORT}/api',
     'client_link_secret'    => 'portal-test-client-link-secret-0123456789',
+    // agent-intake.php (tests/smoke/28-agent-intake.php; the agent team's client can point at this stack with it)
+    'agent_intake_secret'   => 'test-agent-intake-secret-0123456789abcdef',
     // Google (gmail-lib.php) against tests/google-stub.php. mail_transport stays 'sink' (explicit), so every email
     // still lands in MAIL_SINK_DIR; the Gmail transport itself is exercised by tests/smoke/20-email.php.
     'google_client_id'      => 'test-google-client-id',

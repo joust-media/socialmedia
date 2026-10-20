@@ -38,7 +38,7 @@ if ($__routeRel === '__clean-links-check') {
     exit;
 }
 
-// Machine endpoints (slack-events, slack-actions, notify-cron, notify-thumb, drive-ingest, …) are never routed: the
+// Machine endpoints (slack-events, slack-actions, notify-cron, notify-thumb, drive-ingest, agent-intake, …) are never routed: the
 // .htaccess serves '<name>' straight from '<name>.php' and passes '<name>/' through; should one still land here, it
 // gets the 404 below — never a client page, never a sign-in redirect (Slack and cron do not follow redirects).
 $__routeFirst = strtolower((string)explode('/', $__routeRel)[0]);

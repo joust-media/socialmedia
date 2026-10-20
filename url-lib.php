@@ -17,7 +17,7 @@
  * block is only kept when a self-request proved it works, so a folder without mod_rewrite keeps the query-string
  * URLs, and every old link keeps working either way (old URLs 301 to the clean form once the block is in).
  *
- * Machine endpoints (drive-ingest, slack-events, slack-actions, notify-cron, notify-thumb, google-oauth, email-prefs, …) are never captured by the router:
+ * Machine endpoints (drive-ingest, agent-intake, slack-events, slack-actions, notify-cron, notify-thumb, google-oauth, email-prefs, …) are never captured by the router:
  * an extensionless name whose .php exists is served by that file first, and the reserved names never reach route.php.
  *
  * Function definitions only (function_exists-guarded); no output, no DB.
@@ -127,7 +127,7 @@ if (!function_exists('portalRouteTable')) {
      *   /portal/<c>/sign-in              sign-in.php?client=<c>      (branded sign-in)
      *   /portal/manage[/<section>]       manage.php[?section=…]      (admin)
      *   /portal/<name>                   <name>.php                  (every other script, extensionless: sign-in, sign-out,
-     *                                                                login, logout, drive, prompts, vehicles, drive-ingest, …)
+     *                                                                login, logout, drive, prompts, vehicles, drive-ingest, agent-intake, …)
      * Anything else keeps its remaining parameters in the query string (?status=approved, ?msg=…).
      */
     function portalRouteTable(): array {
@@ -170,7 +170,7 @@ if (!function_exists('portalReservedSegments')) {
         $out = ['manage', 'sign-in', 'sign-out', 'login', 'logout', 'static', 'uploads', 'media', 'legacy', 'partials',
                 'docs', 'tests', 'api', 'route', 'admin', 'new', 'view-as',
                 // machine endpoints (portalMachineEndpoints()): never a client, never routed
-                'drive-ingest', 'slack-events', 'slack-actions', 'notify-cron', 'notify-thumb', 'notify-pump', 'mail-inbound',
+                'drive-ingest', 'agent-intake', 'slack-events', 'slack-actions', 'notify-cron', 'notify-thumb', 'notify-pump', 'mail-inbound',
                 'google-oauth', 'email-prefs', '__clean-links-check'];
         foreach (glob(__DIR__ . '/*.php') ?: [] as $f) $out[] = basename($f, '.php');
         foreach (glob(__DIR__ . '/*', GLOB_ONLYDIR) ?: [] as $d) $out[] = basename($d);
@@ -182,7 +182,7 @@ if (!function_exists('portalReservedSegments')) {
 if (!function_exists('portalMachineEndpoints')) {
     /** Extensionless machine endpoints the router must never capture (the .htaccess passes them straight through). */
     function portalMachineEndpoints(): array {
-        return ['drive-ingest', 'slack-events', 'slack-actions', 'notify-cron', 'notify-thumb', 'notify-pump', 'mail-inbound',
+        return ['drive-ingest', 'agent-intake', 'slack-events', 'slack-actions', 'notify-cron', 'notify-thumb', 'notify-pump', 'mail-inbound',
                 'google-oauth', 'email-prefs'];   // Google's OAuth redirect; the emailed preferences / one-click unsubscribe link
     }
 }
@@ -398,7 +398,7 @@ if (!function_exists('cleanLinksBlock')) {
      * directive answers 500 for the whole folder on this host). Substitutions are absolute URL paths, so a
      * RewriteBase elsewhere in the file cannot bend them. Order:
      *   1. real files / folders are served as they are (static/, uploads/, every *.php, the folder index)
-     *   2. extensionless names whose .php exists → that script (drive-ingest, slack-events, notify-cron, sign-in, …)
+     *   2. extensionless names whose .php exists → that script (drive-ingest, agent-intake, slack-events, notify-cron, sign-in, …)
      *   3. the reserved machine names never reach the router (a 404 rather than a client page)
      *   4. everything else → route.php (the clean-link map)
      */
