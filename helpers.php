@@ -110,6 +110,7 @@ require_once __DIR__ . '/partials/components/card.php';
 require_once __DIR__ . '/partials/components/video.php';
 require_once __DIR__ . '/partials/components/new-menu.php';   // admin "+ New" (navbar.php)
 require_once __DIR__ . '/partials/components/upload-sheet.php'; // admin Upload sheet: boot tags (layout-bottom.php) + uploadSheetUrl() / uploadSheetAttrs()
+require_once __DIR__ . '/partials/components/comment-export.php'; // admin "Export open comments": boot tags (layout-bottom.php) + commentExportButton()
 
 /** The admin's hub for the global tools (Prompt / Vehicle Library, AI Builder, Drive, Clients) — the parent
  *  their back links point at: Manage → Tools (manage.php, keeping the client scope when there is one).

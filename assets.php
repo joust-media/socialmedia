@@ -875,6 +875,12 @@ if ($trashN > 0) {
     $redoChip .= '<a class="as-chip as-chip--trash" href="' . esc(portalUrl('trash', ['client' => $slug])) . '" data-trash-link title="Items kept out of every list and notification — restore or delete">'
                . icon('trash') . '<span>Trash</span><span class="as-chip-count" data-trash-link-count>' . $trashN . '</span></a>';
 }
+// Admin: the toolbar's ⋯ menu — "Export open comments…" (comment-export.js; this client's image comments)
+$asMore = $isAdmin
+    ? '<div class="asg-more as-tools-more" data-assets-tools>'
+      . '<button type="button" class="ui-btn ui-btn--sm ui-btn--gray ui-btn--icon asg-more-btn" data-asg-menu-toggle aria-haspopup="menu" aria-expanded="false" aria-label="More actions">' . icon('ellipsis') . '</button>'
+      . '<div class="asg-menu" role="menu" data-asg-menu hidden>' . commentExportButton(['menuitem' => true, 'attrs' => ['data-assets-cexp' => '']]) . '</div></div>'
+    : '';
 ?>
 <?php if ($isGrid): // the status filter chips (the admin's Library Upload sits in the header — $navLinks above) ?>
 <div class="as-controls">
@@ -886,9 +892,10 @@ if ($trashN > 0) {
       <?php endforeach; ?>
       <?= $redoChip ?>
     </nav>
+    <?= $asMore ?>
 </div>
-<?php elseif ($redoChip !== '' && $view === 'collections'): // the Tires list: the Redo chip on its own ?>
-<div class="as-controls"><nav class="as-filters" aria-label="Queues"><?= $redoChip ?></nav></div>
+<?php elseif (($redoChip !== '' || $asMore !== '') && $view === 'collections'): // the Tires list: the Redo chip on its own (+ the ⋯ menu) ?>
+<div class="as-controls"><nav class="as-filters" aria-label="Queues"><?= $redoChip ?></nav><?= $asMore ?></div>
 <?php elseif (!$isAdmin && $view === 'collections'): // the client's Tires list: every tire · its Sent back (all tires) ?>
 <div class="as-controls">
   <nav class="as-filters" aria-label="<?= esc($collectionsLabel) ?>" data-sentback-chips>
@@ -1111,6 +1118,7 @@ if ($trashN > 0) {
               <div class="as-menu-list" data-series-menu-list role="menu" hidden>
                 <button type="button" class="as-menu-item" role="menuitem" data-series-manage><?= icon('checklist') ?>Manage series…</button>
                 <a class="as-menu-item" role="menuitem" href="<?= esc(manageUrl('export', ['tire' => $itemId, 'series' => $seriesActive ? (int)$seriesActive['id'] : null])) ?>" data-series-export title="Manage → Export with this tire preselected"><?= icon('download') ?>Export approved…</a>
+                <?= commentExportButton(['menuitem' => true, 'icon' => true, 'class' => 'as-menu-item', 'attrs' => ['data-series-cexp' => '']]) // comment-export.js ?>
                 <?php if ($seriesActive): ?>
                   <button type="button" class="as-menu-item" role="menuitem" data-series-rename><?= icon('wand') ?>Rename series…</button>
                   <button type="button" class="as-menu-item" role="menuitem" data-series-drive-edit><?= icon('drive') ?><?= $headDrive !== '' ? 'Edit Google Drive link…' : 'Add Google Drive link…' ?></button>

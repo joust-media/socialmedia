@@ -73,6 +73,9 @@ echo '<div class="ibx-head">' . segmented([
     ['label' => 'Waiting on client', 'href' => $segUrl('client'), 'active' => $tab === 'client', 'count' => count($theirs), 'attrs' => ['data-inbox-tab' => 'client']],
     ['label' => 'Resolved', 'href' => $segUrl('resolved'), 'active' => $tab === 'resolved', 'count' => count($resolved), 'attrs' => ['data-inbox-tab' => 'resolved']],
 ], ['label' => 'Inbox view', 'scroll' => true]) . '</div>';
+// "Export open comments…" (comment-export.js): this client's image comments, or every client's when unscoped
+echo '<div class="ibx-tools">' . commentExportButton(['label' => 'Export open comments…', 'class' => 'ui-btn ui-btn--sm ui-btn--gray', 'scope' => $client ? '' : 'all',
+                                                    'attrs' => ['data-inbox-export' => '']]) . '</div>';
 
 if (!$ready) {
     echo '<div class="studio-alert studio-alert--error" role="alert">The Inbox needs the database update: open <a href="' . h(basePath() . '/migrate.php') . '">migrate.php</a> once (steps 45–49).</div>';

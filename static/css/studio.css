@@ -289,3 +289,6 @@
 .studio-client-contacts, .studio-client-sessions { margin-top: 20px; padding-top: 16px; box-shadow: inset 0 0.5px 0 var(--separator); }
 .studio-client-contacts .studio-client-modlist, .studio-client-sessions .studio-client-modlist { margin-top: 8px; }
 .studio-contact-add { margin-top: 10px; }
+
+/* Manage → Export: "Export open comments" (comment-export.js) — its own card beside the approved-asset export */
+.manage-cexp { margin: 16px 0; }

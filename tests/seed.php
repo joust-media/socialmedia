@@ -281,6 +281,8 @@ foreach (['comment_revisions', 'comment_slack'] as $t) { if ($has($t)) $pdo->exe
 
 // ---- the Redo queue (migrate.php 52): nothing queued (the tables were re-created above), no "last redo pack" watermark ----
 try { $pdo->exec("DELETE FROM meta WHERE k LIKE 'redo\\_export\\_last%'"); } catch (Throwable $e) { /* meta absent: nothing to reset */ }
+// ---- "Export open comments" (comment-export-lib.php): no "last comment export" watermark ----
+try { $pdo->exec("DELETE FROM meta WHERE k LIKE 'comment\\_export\\_last%'"); } catch (Throwable $e) { /* meta absent */ }
 
 $n = static fn(string $t) => (int)$pdo->query("SELECT COUNT(*) FROM `$t`")->fetchColumn();
 printf("  seeded: %d companies, %d tires, %d tire images, %d library, %d posts (%d media), %d emails, %d pages\n",

@@ -10,6 +10,11 @@
    --------------------------------------------------------------------- */
 .as-controls { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 16px; }
 .as-controls:empty { display: none; }
+/* admin: the chips + the toolbar's ⋯ menu ("Export open comments…") on one row */
+.as-controls:has(> .as-tools-more) { flex-direction: row; align-items: flex-start; gap: 8px; }
+.as-controls:has(> .as-tools-more) > .as-filters { flex: 1 1 auto; min-width: 0; }
+.as-tools-more { flex: 0 0 auto; margin-top: 2px; }
+.as-tools-more .asg-more-btn { width: 32px; height: 32px; min-height: 32px; padding: 0; border-radius: 50%; }
 .as-empty .ui-btn { margin-top: 14px; }
 .as-filters {
   display: flex; gap: 6px; flex-wrap: nowrap;

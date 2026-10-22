@@ -234,6 +234,7 @@ $scopeSlug = $client ? (string)$client['slug'] : '';
     <div class="rd-head-actions">
       <button type="button" class="ui-btn ui-btn--tinted" data-redo-export<?= $items ? '' : ' disabled' ?>><?= icon('download') ?><span data-redo-export-label>Export redo pack</span></button>
       <button type="button" class="ui-btn ui-btn--gray" data-redo-folder<?= $items ? '' : ' disabled' ?> title="Pick the folder with the fixed files: each one replaces the queued image of the same name"><?= icon('upload') ?><span>Replace from folder</span></button>
+      <?= commentExportButton(['label' => 'Export open comments…', 'class' => 'ui-btn ui-btn--gray', 'scope' => $wantAll ? 'all' : '', 'attrs' => ['data-redo-comments' => '']]) // comment-export.js: the comments on every image, not only the queue ?>
     </div>
     <label class="rd-since"><input type="checkbox" data-redo-since<?= $lastExport !== '' && $newCount > 0 ? ' checked' : '' ?>> Only new since last export
       <span class="text-secondary" data-redo-last><?= $lastExport !== '' ? '· last ' . esc(relativeTime($lastExport)) . ' · ' . $newCount . ' new' : '· never exported' ?></span></label>

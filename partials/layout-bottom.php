@@ -34,6 +34,9 @@ echo uploadSheetBootHtml($client ?? null);
 // Admin: Move to client / Add to flow / Set audiences sheets + "+ New → New email / New page" in place (App.assign)
 require_once __DIR__ . '/components/assign.php';
 echo assignBootHtml($client ?? null);
+// Admin: "Export open comments" (App.commentExport) — Manage → Export, Redo, the Assets / Tires ⋯ menus, the Inbox
+require_once __DIR__ . '/components/comment-export.php';
+echo commentExportBootHtml($client ?? null);
 ?>
 <?= appScript() ?>
 <script src="<?= esc(staticUrl('js/video.js')) ?>" defer></script>
