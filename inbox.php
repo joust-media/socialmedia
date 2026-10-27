@@ -73,9 +73,23 @@ echo '<div class="ibx-head">' . segmented([
     ['label' => 'Waiting on client', 'href' => $segUrl('client'), 'active' => $tab === 'client', 'count' => count($theirs), 'attrs' => ['data-inbox-tab' => 'client']],
     ['label' => 'Resolved', 'href' => $segUrl('resolved'), 'active' => $tab === 'resolved', 'count' => count($resolved), 'attrs' => ['data-inbox-tab' => 'resolved']],
 ], ['label' => 'Inbox view', 'scroll' => true]) . '</div>';
-// "Export open comments…" (comment-export.js): this client's image comments, or every client's when unscoped
-echo '<div class="ibx-tools">' . commentExportButton(['label' => 'Export open comments…', 'class' => 'ui-btn ui-btn--sm ui-btn--gray', 'scope' => $client ? '' : 'all',
-                                                    'attrs' => ['data-inbox-export' => '']]) . '</div>';
+// "Export open comments…" (comment-export.js): this client's image comments, or every client's when unscoped — and a
+// bot pack per client ("Kenda Tires 6": that client's open comments, comment-export-lib.php's count; one collect)
+require_once __DIR__ . '/comment-export-lib.php';
+$cexpN = cexpPageCounts($pdo, $client ?: null);
+$cexpPerClient = '';
+$cexpCos = $client ? [(int)$client['id'] => $client] : $companies;
+uasort($cexpCos, static function ($a, $b) { return strcasecmp((string)$a['name'], (string)$b['name']); });
+foreach ($cexpCos as $coId => $co) {
+    if ($mine && !$client && isset($myCo) && !isset($myCo[(int)$coId])) continue;
+    $n = cexpCountOf($cexpN, 'client:' . (int)$coId);
+    $cexpPerClient .= commentExportPackButton(['count' => $n, 'client' => (string)$co['slug'], 'client_name' => (string)$co['name'],
+        'label' => $client ? 'Export open comments ({n})' : (string)$co['name'] . ' {n}', 'class' => $client ? '' : 'cexp-btn--keep',
+        'aria' => 'Export ' . $n . ' open comments for ' . $co['name'] . ' as a bot pack', 'attrs' => ['data-inbox-client-cexp' => (string)$co['slug']]]);
+}
+echo '<div class="ibx-tools">' . ($cexpPerClient !== '' ? '<div class="ibx-cexp" data-inbox-cexp-list>' . ($client ? '' : '<span class="ibx-cexp-label t-footnote">Bot pack:</span>') . $cexpPerClient . '</div>' : '')
+   . commentExportButton(['label' => 'Export open comments…', 'class' => 'ui-btn ui-btn--sm ui-btn--gray', 'scope' => $client ? '' : 'all',
+                          'attrs' => ['data-inbox-export' => '']]) . '</div>';
 
 if (!$ready) {
     echo '<div class="studio-alert studio-alert--error" role="alert">The Inbox needs the database update: open <a href="' . h(basePath() . '/migrate.php') . '">migrate.php</a> once (steps 45–49).</div>';

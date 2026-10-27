@@ -61,3 +61,11 @@
   .rd-actions { grid-column: 2; flex-direction: row; }
   .rd-actions .ui-btn { flex: 1 1 0; }
 }
+
+/* "Export N open" bars (comment-export.php commentExportPackButton()): one per client (all clients) and per tire / Library */
+.rd-part-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 18px 0 8px; padding: 0 4px 0 16px; }
+.rd-part-head + .rd-part-head { margin-top: 4px; }
+.rd-part-title { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--text-subhead); line-height: var(--lh-subhead); font-weight: 600; color: var(--label); }
+.rd-part-head--client { margin-top: 26px; padding-bottom: 6px; border-bottom: .5px solid var(--separator); }
+.rd-part-head--client .rd-part-title { font-size: var(--text-title3, 20px); line-height: 1.25; font-weight: 700; }

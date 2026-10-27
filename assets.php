@@ -81,6 +81,7 @@ require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';
 require_once __DIR__ . '/partials/components/comment-thread.php';   // commentThreadHtml() for the viewer's Comments panel
 require_once __DIR__ . '/export-lib.php';                            // exportZipSupported(): the admin select bar's Download
+require_once __DIR__ . '/comment-export-lib.php';                    // admin: "Export N open" counts (cexpPageCounts(), one collect per page)
 if (is_file(__DIR__ . '/tire-series-lib.php')) { require_once __DIR__ . '/tire-series-lib.php'; }
 
 $isAdmin  = isAdmin();
@@ -820,6 +821,10 @@ if ($partial) {   // (the Sent back list has no pages: $items is empty there)
     exit;
 }
 
+// Admin: the open-comment counts behind the "Export N open" buttons (comment-export-lib.php — the export's own rule,
+// ONE collect for the whole client, grouped per tire / series / Reference / Library; never a query per row).
+$cexpN = $isAdmin && !$sentBackMode ? cexpPageCounts($pdo, $client) : [];
+
 // ---------------------------------------------------------------------
 // Chrome
 // ---------------------------------------------------------------------
@@ -892,6 +897,8 @@ $asMore = $isAdmin
       <?php endforeach; ?>
       <?= $redoChip ?>
     </nav>
+    <?= $view === 'library' ? commentExportPackButton(['count' => cexpCountOf($cexpN, 'library:' . $cid), 'area' => 'library', 'class' => 'as-cexp',
+                                                       'aria' => 'Export ' . cexpCountOf($cexpN, 'library:' . $cid) . ' open comments on the Library', 'attrs' => ['data-library-cexp' => '']]) : '' ?>
     <?= $asMore ?>
 </div>
 <?php elseif (($redoChip !== '' || $asMore !== '') && $view === 'collections'): // the Tires list: the Redo chip on its own (+ the ⋯ menu) ?>
@@ -964,15 +971,24 @@ $asMore = $isAdmin
         $stateHtml = '';
         if ($isAdmin && $state === 'allok')  $stateHtml = assetsAllOkHtml('tire');
         if ($isAdmin && $state === 'denied') $stateHtml = '<span class="ui-pill ui-pill--nodot ui-pill--denied" data-tire-denied>' . $d . ' need' . ($d === 1 ? 's' : '') . ' changes</span>';
-        echo insetRow([
+        // Admin: "Export N open" — this tire's open comments as a bot pack, beside the row's link (never inside it; it
+        // takes the chevron's place at the row's end)
+        $nOpen = cexpCountOf($cexpN, 'tire:' . $tid);
+        $cexpBtn = commentExportPackButton(['count' => $nOpen, 'tire' => $tid, 'class' => 'as-collection-cexp',
+                                            'aria' => 'Export ' . $nOpen . ' open comments on ' . $c['name'], 'attrs' => ['data-tire-cexp' => $tid]]);
+        $rowHtml = insetRow([
             'href'     => clientUrl('assets.php', ['view' => 'collections', 'item' => $tid]),
             'leading'  => $thumb,
             'title'    => (string)$c['name'],
             'subtitle' => implode(' · ', $parts),
             'trailing' => $driveGlyph . $stateHtml . ($p > 0 ? '<span class="ui-badge">' . ($p > 99 ? '99+' : $p) . '</span>' : ''),
-            'chevron'  => true,
+            'chevron'  => $cexpBtn === '',
             'attrs'    => ['id' => 'collection-' . $tid, 'data-collection' => $tid],
         ]);
+        if ($cexpBtn !== '' && substr($rowHtml, 0, 4) === '<li>' && substr($rowHtml, -5) === '</li>') {
+            $rowHtml = '<li class="as-collection-item has-cexp">' . substr($rowHtml, 4, -5) . $cexpBtn . '</li>';
+        }
+        echo $rowHtml;
     endforeach; ?>
     <?= insetListClose() ?>
   <?php endif; ?>
@@ -985,7 +1001,10 @@ $asMore = $isAdmin
     $refAdminHtml = '';
     if ($isAdmin) {
         $refUpload = ['dest' => 'reference', 'tire' => $itemId];   // the Upload sheet with this tire's Reference preselected
+        $nRef = cexpCountOf($cexpN, 'ref:' . $itemId);
         $refAdminHtml = '<div class="as-reference-admin">'
+            . commentExportPackButton(['count' => $nRef, 'tire' => $itemId, 'series' => 'ref', 'label' => 'Export ({n})',
+                                       'aria' => 'Export ' . $nRef . ' open comments on the reference images of ' . $collection['name'], 'attrs' => ['data-ref-cexp' => '']])
             . '<a class="ui-btn ui-btn--sm ui-btn--tinted" href="' . esc(uploadSheetUrl('assets.php', $refUpload, ['view' => 'collections', 'item' => $itemId, 'series' => 'ref'])) . '"' . uploadSheetAttrs($refUpload) . ' data-ref-upload>' . icon('upload') . '<span>Upload</span></a>'
             . '<a class="ui-btn ui-btn--sm ui-btn--gray" href="' . esc(clientUrl('add-feature.php', ['module' => 'tires', 'edit_item' => $itemId])) . '">Edit</a>'
             . '<div class="asg-more as-tire-more">'
@@ -1022,6 +1041,9 @@ $asMore = $isAdmin
         <?php else: ?>
           <span class="ui-pill">No images yet</span>
         <?php endif; ?>
+        <?php $nTire = cexpCountOf($cexpN, 'tire:' . $itemId);   // the whole tire's open comments as a bot pack ?>
+        <?= commentExportPackButton(['count' => $nTire, 'tire' => $itemId, 'label' => 'Export open comments ({n})', 'class' => 'as-tire-cexp',
+                                     'aria' => 'Export ' . $nTire . ' open comments on ' . $collection['name'], 'attrs' => ['data-tire-page-cexp' => '']]) ?>
       </div>
     <?php endif; ?>
     <?php if ($seriesOn): // ---- Reference card + strip: the tire's approved reference images, always on top (above the switcher) ----
@@ -1110,6 +1132,11 @@ $asMore = $isAdmin
                     data-param-action="approve_series" data-series-id="<?= (int)$seriesActive['id'] ?>"<?= $typeEff !== 'all' ? ' data-param-type="' . esc($typeEff) . '"' : '' ?>
                     data-confirm="<?= esc('Approve all ' . $typePending . ' remaining ' . $typeNoun . ($typePending === 1 ? '' : 's') . ' in ' . $seriesActive['name'] . '?') ?>"
                     data-toast="<?= esc($seriesActive['name'] . ($typeEff !== 'all' ? ' ' . $typeNoun . 's' : '') . ' approved') ?>" data-reload><?= icon('checkmark') ?><span>Approve all remaining</span></button>
+          <?php endif; ?>
+          <?php if ($isAdmin && $seriesActive): // this series' open comments as a bot pack (the Reference card carries the Reference's)
+                $nSeries = cexpCountOf($cexpN, 'series:' . (int)$seriesActive['id']); ?>
+            <?= commentExportPackButton(['count' => $nSeries, 'tire' => $itemId, 'series' => (int)$seriesActive['id'], 'label' => 'Export ({n})',
+                                         'aria' => 'Export ' . $nSeries . ' open comments on ' . $collection['name'] . ' · ' . $seriesActive['name'], 'attrs' => ['data-series-head-cexp' => (int)$seriesActive['id']]]) ?>
           <?php endif; ?>
           <?php if ($isAdmin): // admin-only: never rendered for clients ?>
             <a class="ui-btn ui-btn--sm ui-btn--tinted as-series-upload" href="<?= esc(uploadSheetUrl('assets.php', $headUpload, ['view' => 'collections', 'item' => $itemId, 'series' => $seriesKey])) ?>"<?= uploadSheetAttrs($headUpload) ?> data-series-upload><?= icon('upload') ?><span>Upload</span></a>

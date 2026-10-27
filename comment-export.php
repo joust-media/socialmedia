@@ -7,11 +7,15 @@
  * scope=all (every client).
  *
  * Fields (every action): scope client|all, filter open|waiting|all, internal 0|1, since 0|1, from / to (YYYY-MM-DD),
- *                        size original|lg (zip)
- *   GET|POST action=count      → {ok, comments, items, images, clients, last_export, last_export_label}
+ *                        size original|lg (zip), tire <id>, series <id>|ref, area tires|library|posts (the part of the
+ *                        client — a tire / series always pins its own client: another client's → 404), pack bot (zip_start)
+ *   GET|POST action=count      → {ok, comments, items, images, clients, last_export, last_export_label, scope_path,
+ *                                 filename (the bot pack's), parts [{label, tire, series, area, comments, items, images}]}
  *   GET      action=csv        → text/csv (UTF-8 + BOM, CRLF; streamed); stamps "the last export"
  *   GET      action=html       → the printable summary page (Print → Save as PDF); stamps nothing
- *   POST     action=zip_start  → {ok, job, files, bytes, comments, label, filename, warnings} (export-lib.php's stepwise zip)
+ *   POST     action=zip_start  → {ok, job, files, bytes, comments, label, filename, warnings} (export-lib.php's stepwise zip;
+ *                                 pack=bot → the bot pack: images + <stem>.comments.md, manifest.json, comments.csv,
+ *                                 REVIEW_INSTRUCTIONS.md — comment-export-lib.php cexpBotStartJob())
  *   POST     action=zip_step   {job} → {ok, done, …}; the step that finishes it stamps "the last export"
  *   GET      action=download&job=… → the zip
  * Errors: 400 bad input / nothing to export, 403 not admin / cross-site, 404 unknown client / job, 405 method,
@@ -48,6 +52,14 @@ $slug = postedClientSlug();
 $scope = $slug !== '' ? helpersLoadCompany($pdo, $slug) : null;
 if ($slug !== '' && !$scope) cexpOut(404, ['ok' => false, 'error' => 'Unknown client']);
 $target = ($opts['scope'] === 'all' || !$scope) ? null : $scope;   // null = every client
+// a tire / series pins its own client (scope=all never widens it); one that is not the posted client's → 404
+$resolved = ['tire' => null, 'series' => null];
+if ($opts['tire'] > 0 || $opts['series'] !== '') {
+    $resolved = cexpResolveScope($pdo, $scope, $opts);
+    if ($resolved['error'] !== '') cexpOut(404, ['ok' => false, 'error' => $resolved['error'] === 'series' ? 'Unknown series' : 'Unknown tire']);
+    $target = $resolved['client'];
+    $opts = cexpScopeOptions($opts, $resolved);
+}
 
 /** A comment-export job by id (400 bad id, 404 unknown or not one of ours). */
 $loadJob = static function () use ($in): array {
@@ -66,6 +78,11 @@ if ($action === 'count') {
     $last = cexpLastExport($pdo, $target ? (int)$target['id'] : null);
     cexpOut(200, ['ok' => true, 'comments' => count($data['rows']), 'items' => count($data['items']), 'images' => $images,
                   'clients' => count($data['clients']), 'scope' => $target ? 'client' : 'all', 'client' => $target ? (string)$target['slug'] : '',
+                  'client_name' => $target ? (string)$target['name'] : '',
+                  'tire' => $resolved['tire'] ? (int)$resolved['tire']['id'] : 0, 'series' => $opts['series'], 'area' => $opts['area'],
+                  'scope_path' => cexpScopePath($target, $resolved, $opts),
+                  'filename' => cexpFileStem($target, $opts, $resolved) . '.zip',
+                  'parts' => $target ? cexpParts($data, $opts) : [],
                   'last_export' => $last, 'last_export_label' => $last !== '' ? relativeTime($last) : '', 'zip' => exportZipSupported()]);
 }
 
@@ -75,7 +92,7 @@ if ($action === 'csv') {
     if (function_exists('session_write_close')) @session_write_close();
     while (ob_get_level() > 0) { @ob_end_clean(); }
     header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename="' . cexpFileStem($target, $opts) . '.csv"');
+    header('Content-Disposition: attachment; filename="' . cexpFileStem($target, $opts, $resolved) . '.csv"');
     header('Cache-Control: no-store');
     header('X-Content-Type-Options: nosniff');
     header('X-Comment-Count: ' . count($data['rows']));
@@ -107,7 +124,7 @@ if ($action === 'html') {
 
 if ($action === 'zip_start') {
     if (!exportZipSupported()) cexpOut(503, ['ok' => false, 'error' => 'This server runs a 32-bit PHP build, which cannot write zips safely — download the CSV instead']);
-    try { $job = cexpZipStartJob($pdo, $target, $opts); }
+    try { $job = $opts['pack'] === 'bot' ? cexpBotStartJob($pdo, $target, $opts, $resolved) : cexpZipStartJob($pdo, $target, $opts, $resolved); }
     catch (InvalidArgumentException $e) { cexpOut(400, ['ok' => false, 'error' => $e->getMessage()]); }
     catch (Throwable $e) { error_log('comment export zip start: ' . $e->getMessage()); cexpOut(500, ['ok' => false, 'error' => 'Could not start the zip']); }
     cexpOut(200, ['ok' => true, 'job' => $job['job'], 'files' => count($job['files']), 'bytes' => $job['bytes'], 'comments' => (int)$job['comments'],

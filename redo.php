@@ -31,6 +31,7 @@ require_once __DIR__ . '/helpers.php';
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/export-lib.php';
 require_once __DIR__ . '/upload-lib.php';
+require_once __DIR__ . '/comment-export-lib.php';   // the "Export N open" counts per client / tire group (cexpPageCounts())
 
 $action = strtolower(trim((string)($_POST['action'] ?? $_GET['action'] ?? '')));
 $method = (string)($_SERVER['REQUEST_METHOD'] ?? 'GET');
@@ -251,7 +252,35 @@ $scopeSlug = $client ? (string)$client['slug'] : '';
     </div>
   <?php else:
     $group = null;
+    // "Export N open" (comment-export-lib.php): a bar per client and per tire (+ the Library) with that part's open
+    // comments as a bot pack — the export's own count, one collect for the page
+    $cexpN = cexpPageCounts($pdo, $wantAll ? null : $client);
+    $clientBar = null; $partBar = null;
     foreach ($items as $it):
+      $ck = (int)$it['company_id'];
+      if ($ck !== $clientBar) {
+          if ($group !== null) { echo insetListClose(); $group = null; }
+          $nC = cexpCountOf($cexpN, 'client:' . $ck);
+          $btn = commentExportPackButton(['count' => $nC, 'client' => $it['company_slug'], 'client_name' => $it['company_name'],
+                                          'aria' => 'Export ' . $nC . ' open comments for ' . $it['company_name'], 'attrs' => ['data-redo-client-cexp' => $it['company_slug']]]);
+          if ($wantAll || $btn !== '') {
+              echo '<div class="rd-part-head rd-part-head--client" data-redo-client-head="' . esc($it['company_slug']) . '"><h2 class="rd-part-title">' . esc($it['company_name']) . '</h2>' . $btn . '</div>';
+          }
+          $clientBar = $ck; $partBar = null;
+      }
+      $pk = $it['kind'] === 'library' ? 'library:' . $ck : 'tire:' . (int)$it['tire_id'];
+      if ($pk !== $partBar) {
+          $nP = cexpCountOf($cexpN, $pk);
+          $btn = commentExportPackButton(['count' => $nP, 'client' => $it['company_slug'], 'client_name' => $it['company_name'],
+                                          'tire' => $it['kind'] === 'library' ? 0 : (int)$it['tire_id'], 'area' => $it['kind'] === 'library' ? 'library' : 'tires',
+                                          'aria' => 'Export ' . $nP . ' open comments on ' . ($it['kind'] === 'library' ? 'the Library' : $it['tire_name']),
+                                          'attrs' => [$it['kind'] === 'library' ? 'data-redo-library-cexp' : 'data-redo-tire-cexp' => $it['kind'] === 'library' ? $it['company_slug'] : (string)(int)$it['tire_id']]]);
+          if ($btn !== '') {
+              if ($group !== null) { echo insetListClose(); $group = null; }
+              echo '<div class="rd-part-head" data-redo-part-head="' . esc($pk) . '"><span class="rd-part-title">' . esc($it['kind'] === 'library' ? 'Library' : $it['tire_name']) . '</span>' . $btn . '</div>';
+          }
+          $partBar = $pk;
+      }
       $g = ($wantAll ? $it['company_name'] . ' · ' : '') . ($it['kind'] === 'library' ? 'Library' : $it['tire_name'] . ' · ' . ($it['series_id'] ? $it['series_name'] : 'Reference'));
       if ($g !== $group) {
           if ($group !== null) echo insetListClose();

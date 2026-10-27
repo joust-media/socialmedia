@@ -864,3 +864,16 @@ body[data-role="client"] .pgl-tile--denied { color: var(--label-secondary); back
 .trash-link-row { margin: 8px 0 0; text-align: center; }
 .trash-gone { margin: 0 0 14px; }
 .trash-gone .ui-empty { padding: 14px 16px; border-radius: var(--radius-list, 12px); background: var(--fill-tertiary); color: var(--label-secondary); text-align: center; }
+
+/* ---------------------------------------------------------------------
+   "Export N open" (admin; partials/components/comment-export.php commentExportPackButton()) — a visible button where
+   a batch of comments lives; opens the export sheet on the Bot pack. Phones: the icon + the number only.
+   --------------------------------------------------------------------- */
+.cexp-btn { flex: 0 0 auto; gap: 5px; }
+.cexp-btn .ui-icon { width: 16px; height: 16px; }
+.cexp-btn-label { white-space: pre; }
+.cexp-btn-n { font-variant-numeric: tabular-nums; font-weight: 700; }
+@media (max-width: 600px) {
+  .cexp-btn:not(.cexp-btn--keep) .cexp-btn-text { display: none; }
+  .cexp-btn:not(.cexp-btn--keep) { padding-inline: 9px; min-width: 44px; }
+}

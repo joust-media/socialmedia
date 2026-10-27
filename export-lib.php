@@ -909,6 +909,10 @@ if (!function_exists('exportStep')) {
                 }
                 $job['entries'][] = exportZipAddString($zip, $pos, 'comments.csv', (string)($job['csv'] ?? ''), $now);
                 if ((string)($job['summary'] ?? '') !== '') $job['entries'][] = exportZipAddString($zip, $pos, 'summary.html', (string)$job['summary'], $now);
+                // the bot pack: manifest.json (paths / sizes as built) + REVIEW_INSTRUCTIONS.md (comment-export-lib.php)
+                if (!empty($job['bot']) && function_exists('cexpBotFinalFiles')) {
+                    foreach (cexpBotFinalFiles($job) as $t) $job['entries'][] = exportZipAddString($zip, $pos, (string)$t[0], (string)$t[1], $now);
+                }
             } else {
                 $job['entries'][] = exportZipAddString($zip, $pos, $job['folder'] . '/manifest.csv', exportManifestCsv($job), $now);
                 $job['entries'][] = exportZipAddString($zip, $pos, $job['folder'] . '/manifest.json', exportManifestJson($job), $now);

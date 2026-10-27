@@ -30,3 +30,27 @@
 @media (max-width: 600px) {
   .cexp-actions .ui-btn { flex: 1 1 0; }
 }
+
+/* the scope of a narrowed export ("Kenda Tires › Klever AT2 › Series 1") + Whole client */
+.cexp-path { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 14px;
+  border-radius: var(--radius-list, 10px); background: var(--bg-elevated); box-shadow: inset 0 0 0 .5px var(--separator); }
+.cexp-path-text { font-size: var(--text-body); line-height: var(--lh-body); font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.cexp-widen { flex: 0 0 auto; }
+.cexp-file { margin: -8px 0 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary); font-family: var(--font-mono, ui-monospace, monospace); overflow-wrap: anywhere; }
+.cexp-file[hidden], .cexp-parts[hidden] { display: none; }
+/* Bot pack: the big primary "Download bot pack" */
+.cexp-actions:has(.cexp-submit--big) { flex-direction: column-reverse; align-items: stretch; }
+.cexp-submit--big { min-height: 50px; font-size: var(--text-headline, 17px); border-radius: 12px; width: 100%; }
+/* one pack per tire / series */
+.cexp-parts-list { list-style: none; margin: 0; padding: 0; border-radius: var(--radius-list, 10px); background: var(--bg-elevated); box-shadow: inset 0 0 0 .5px var(--separator); overflow: hidden; }
+.cexp-part { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name btn" "n btn"; align-items: center; gap: 0 12px; padding: 10px 14px; }
+.cexp-part + .cexp-part { border-top: .5px solid var(--separator); }
+.cexp-part-name { grid-area: name; font-weight: 600; font-size: var(--text-body); line-height: var(--lh-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cexp-part-n { grid-area: n; font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary); }
+.cexp-part .ui-btn { grid-area: btn; }
+.cexp-part .ui-btn .ui-icon { width: 16px; height: 16px; }
+/* the finer options (folded under the bot pack) */
+.cexp-more { border-radius: var(--radius-list, 10px); background: var(--fill-quaternary, transparent); }
+.cexp-more-sum { cursor: pointer; padding: 6px 0; font-size: var(--text-subhead); line-height: var(--lh-subhead); font-weight: 600; color: var(--label); list-style-position: inside; }
+.cexp-more-sum .cexp-dim { font-weight: 400; }
+.cexp-more-body { display: flex; flex-direction: column; gap: 16px; padding-top: 10px; }
