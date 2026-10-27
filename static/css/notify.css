@@ -74,6 +74,10 @@
 
 /* Joust Inbox (inbox.php) */
 .ibx-head { margin-bottom: 14px; }
+.ibx-tools { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: flex-start; gap: 8px; margin: -4px 0 12px; }   /* "Export open comments…" (comment-export.js) */
+.ibx-cexp { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; }   /* a bot pack per client */
+.ibx-cexp-label { color: var(--label-secondary); }
+@media (max-width: 600px) { .ibx-cexp { flex-basis: 100%; } }
 .ibx-who { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
 .ibx-my-settings { color: var(--accent); text-decoration: none; }
 /* Unmatched replies that failed Google's sender check */

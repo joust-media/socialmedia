@@ -1,0 +1,56 @@
+/* =====================================================================
+   "Export open comments" — the export sheet (static/js/comment-export.js). Loaded on demand by the sheet.
+   ===================================================================== */
+.cexp-sheet-root { z-index: 1060; }   /* above the Assets viewer (1050), under the toast (1100) */
+.cexp { display: flex; flex-direction: column; gap: 16px; padding-bottom: 4px; }
+.cexp-lead { margin: 0; color: var(--label-secondary); font-size: var(--text-subhead); line-height: var(--lh-subhead); }
+.cexp-field { margin: 0; padding: 0; border: 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.cexp-label { padding: 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); font-weight: 600; color: var(--label-secondary); text-transform: uppercase; letter-spacing: .02em; }
+.cexp-dim { color: var(--label-tertiary); font-weight: 400; text-transform: none; letter-spacing: 0; }
+.cexp-static { margin: 0; font-size: var(--text-body); }
+.cexp-seg .ui-segmented-item { white-space: normal; text-align: center; line-height: 16px; }
+.cexp-radios { display: flex; flex-direction: column; border-radius: var(--radius-list, 10px); background: var(--bg-elevated); box-shadow: inset 0 0 0 .5px var(--separator); overflow: hidden; }
+.cexp-radio { display: flex; align-items: flex-start; gap: 12px; padding: 10px 14px; cursor: pointer; }
+.cexp-radio + .cexp-radio { border-top: .5px solid var(--separator); }
+.cexp-radio input, .cexp-check input { width: 20px; height: 20px; margin: 1px 0 0; accent-color: var(--accent); flex: 0 0 auto; }
+.cexp-radio-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cexp-radio-title { font-size: var(--text-body); line-height: var(--lh-body); font-weight: 500; }
+.cexp-radio-help { font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary); }
+.cexp-check { display: flex; align-items: flex-start; gap: 10px; font-size: var(--text-body); line-height: var(--lh-body); cursor: pointer; }
+.cexp-dates { display: flex; gap: 10px; flex-wrap: wrap; }
+.cexp-date { flex: 1 1 140px; display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: var(--text-footnote); color: var(--label-secondary); }
+.cexp-date .ui-input { min-height: 40px; padding: 6px 10px; width: 100%; box-sizing: border-box; }
+.cexp-help { margin: 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary); }
+.cexp-count { margin: 0; font-size: var(--text-subhead); font-weight: 600; }
+.cexp-progress { display: flex; flex-direction: column; gap: 6px; font-size: var(--text-footnote); color: var(--label-secondary); }
+.cexp-progress[hidden], .cexp-field[hidden] { display: none; }
+.cexp-bar { height: 6px; border-radius: 3px; background: var(--fill-tertiary); overflow: hidden; }
+.cexp-fill { height: 100%; width: 0; background: var(--accent); border-radius: 3px; transition: width .2s ease; }
+.cexp-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+@media (max-width: 600px) {
+  .cexp-actions .ui-btn { flex: 1 1 0; }
+}
+
+/* the scope of a narrowed export ("Kenda Tires › Klever AT2 › Series 1") + Whole client */
+.cexp-path { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 14px;
+  border-radius: var(--radius-list, 10px); background: var(--bg-elevated); box-shadow: inset 0 0 0 .5px var(--separator); }
+.cexp-path-text { font-size: var(--text-body); line-height: var(--lh-body); font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.cexp-widen { flex: 0 0 auto; }
+.cexp-file { margin: -8px 0 0; font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary); font-family: var(--font-mono, ui-monospace, monospace); overflow-wrap: anywhere; }
+.cexp-file[hidden], .cexp-parts[hidden] { display: none; }
+/* Bot pack: the big primary "Download bot pack" */
+.cexp-actions:has(.cexp-submit--big) { flex-direction: column-reverse; align-items: stretch; }
+.cexp-submit--big { min-height: 50px; font-size: var(--text-headline, 17px); border-radius: 12px; width: 100%; }
+/* one pack per tire / series */
+.cexp-parts-list { list-style: none; margin: 0; padding: 0; border-radius: var(--radius-list, 10px); background: var(--bg-elevated); box-shadow: inset 0 0 0 .5px var(--separator); overflow: hidden; }
+.cexp-part { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name btn" "n btn"; align-items: center; gap: 0 12px; padding: 10px 14px; }
+.cexp-part + .cexp-part { border-top: .5px solid var(--separator); }
+.cexp-part-name { grid-area: name; font-weight: 600; font-size: var(--text-body); line-height: var(--lh-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cexp-part-n { grid-area: n; font-size: var(--text-footnote); line-height: var(--lh-footnote); color: var(--label-secondary); }
+.cexp-part .ui-btn { grid-area: btn; }
+.cexp-part .ui-btn .ui-icon { width: 16px; height: 16px; }
+/* the finer options (folded under the bot pack) */
+.cexp-more { border-radius: var(--radius-list, 10px); background: var(--fill-quaternary, transparent); }
+.cexp-more-sum { cursor: pointer; padding: 6px 0; font-size: var(--text-subhead); line-height: var(--lh-subhead); font-weight: 600; color: var(--label); list-style-position: inside; }
+.cexp-more-sum .cexp-dim { font-weight: 400; }
+.cexp-more-body { display: flex; flex-direction: column; gap: 16px; padding-top: 10px; }

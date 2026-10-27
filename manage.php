@@ -150,7 +150,20 @@ include __DIR__ . '/partials/layout-top.php';
 <?php elseif ($section === 'export'): ?>
 <!-- Export & previews ---------------------------------------------------- -->
 <section class="studio-section manage-section" data-manage-section="export">
+  <?php // "Export open comments" (comment-export.js / comment-export.php): the image comments, one client or every client
+    ob_start(); ?>
+  <section class="ui-card studio-export-card manage-cexp" data-manage-cexp>
+    <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Export open comments</h3>
+      <p class="ui-card-subtitle">Every comment on <?= $client ? h($client['name']) . '’s' : 'every client’s' ?> images that still needs work — tire series images, reference images, whole series, the Library and post images (slide comments go with their slide). A CSV for Excel / Google Sheets, a zip with the images and a <code>.txt</code> of each image’s comments, or a page to print.</p></div></div>
+    <div class="ui-card-body">
+      <div class="studio-export-actions">
+        <?= commentExportButton(['label' => 'Export open comments…', 'class' => 'ui-btn ui-btn--filled', 'scope' => $client ? '' : 'all', 'attrs' => ['data-manage-cexp-open' => '']]) ?>
+      </div>
+    </div>
+  </section>
+  <?php $cexpCard = ob_get_clean(); ?>
   <?php if (!$client): ?>
+    <?= $cexpCard ?>
     <?= $clientPicker($pdo, 'export', 'Exports are built per client: everything it has approved, one folder per tire.') ?>
   <?php else: ?>
   <div class="studio-export" data-export data-endpoint="<?= h($exportConfig['endpoint']) ?>" data-zip="<?= $exportZipOn ? '1' : '0' ?>">
@@ -229,6 +242,7 @@ include __DIR__ . '/partials/layout-top.php';
       </section>
     </div>
   </div>
+  <?= $cexpCard ?>
   <?php endif; ?>
 
   <p class="studio-help manage-moved-note" data-previews-moved>Image previews are in <a href="<?= h(manageUrl('tools') . '#previews') ?>">Tools → Maintenance</a>.</p>

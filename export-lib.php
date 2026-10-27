@@ -372,6 +372,18 @@ if (!function_exists('exportResolvePath')) {
             if (!empty($file['client_slug'])) $client = ['slug' => (string)$file['client_slug']] + $client;
             return exportLibraryPath($client, basename($src));
         }
+        if ($kind === 'media') {
+            // "Export open comments" (comment-export-lib.php): any portal media ref (uploads/, media/tires/, media/library/)
+            // through preview-lib.php's containment helpers; size 'lg' = the large preview (made now when missing / stale)
+            $ref = function_exists('previewCanonicalRef') ? previewCanonicalRef($src) : null;
+            $abs = ($ref !== null && function_exists('previewRefPath')) ? previewRefPath($ref) : null;
+            if ($abs === null) return null;
+            if (($file['size'] ?? '') === 'lg' && function_exists('previewEnsure') && function_exists('previewIsImage') && previewIsImage($abs)) {
+                $lg = previewEnsure($abs, 'lg', ['wait' => 10]);
+                if ($lg !== null && is_file($lg) && !is_link($lg)) return $lg;
+            }
+            return $abs;
+        }
         return null;
     }
 }
@@ -883,6 +895,24 @@ if (!function_exists('exportStep')) {
                     $job['entries'][] = exportZipAddString($zip, $pos, (string)$f['txt_name'], (string)($f['txt'] ?? ''), $now);
                 }
                 $job['entries'][] = exportZipAddString($zip, $pos, 'redo-index.csv', exportRedoIndexCsv($job), $now);
+            } elseif (!empty($job['cexp'])) {
+                // Export open comments (comment-export-lib.php): "<stem>.txt" next to each image (kept when the image went
+                // missing — the comments still travel), the series / whole-post threads, comments.csv + summary.html at the top
+                foreach ($job['files'] as $f) {
+                    if (($f['txt_name'] ?? '') === '') continue;
+                    $txt = (string)($f['txt'] ?? '');
+                    if (!empty($f['skipped']) && empty($f['ok'])) $txt .= "\r\n(The image file was missing on the server when this zip was built.)\r\n";
+                    $job['entries'][] = exportZipAddString($zip, $pos, (string)$f['txt_name'], $txt, $now);
+                }
+                foreach ((array)($job['texts'] ?? []) as $t) {
+                    if (is_array($t) && isset($t[0], $t[1])) $job['entries'][] = exportZipAddString($zip, $pos, (string)$t[0], (string)$t[1], $now);
+                }
+                $job['entries'][] = exportZipAddString($zip, $pos, 'comments.csv', (string)($job['csv'] ?? ''), $now);
+                if ((string)($job['summary'] ?? '') !== '') $job['entries'][] = exportZipAddString($zip, $pos, 'summary.html', (string)$job['summary'], $now);
+                // the bot pack: manifest.json (paths / sizes as built) + REVIEW_INSTRUCTIONS.md (comment-export-lib.php)
+                if (!empty($job['bot']) && function_exists('cexpBotFinalFiles')) {
+                    foreach (cexpBotFinalFiles($job) as $t) $job['entries'][] = exportZipAddString($zip, $pos, (string)$t[0], (string)$t[1], $now);
+                }
             } else {
                 $job['entries'][] = exportZipAddString($zip, $pos, $job['folder'] . '/manifest.csv', exportManifestCsv($job), $now);
                 $job['entries'][] = exportZipAddString($zip, $pos, $job['folder'] . '/manifest.json', exportManifestJson($job), $now);

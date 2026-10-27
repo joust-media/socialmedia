@@ -10,6 +10,11 @@
    --------------------------------------------------------------------- */
 .as-controls { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 16px; }
 .as-controls:empty { display: none; }
+/* admin: the chips + the toolbar's ⋯ menu ("Export open comments…") on one row */
+.as-controls:has(> .as-tools-more) { flex-direction: row; align-items: flex-start; gap: 8px; }
+.as-controls:has(> .as-tools-more) > .as-filters { flex: 1 1 auto; min-width: 0; }
+.as-tools-more { flex: 0 0 auto; margin-top: 2px; }
+.as-tools-more .asg-more-btn { width: 32px; height: 32px; min-height: 32px; padding: 0; border-radius: 50%; }
 .as-empty .ui-btn { margin-top: 14px; }
 .as-filters {
   display: flex; gap: 6px; flex-wrap: nowrap;
@@ -665,4 +670,20 @@ video.ui-viewer-media { width: 100%; background: #000; touch-action: auto; }
   /* six buttons on a phone: the Trash button is icon-only (its aria-label says "Move to Trash…") so each row fits */
   .as-selectbar-actions .as-select-trash { flex: 0 0 44px; padding-inline: 0; }
   .as-select-trash span { display: none; }
+}
+
+/* "Export N open" (comment-export.php commentExportPackButton(), admin): a tire row's own button at the row's end (its
+   chevron's place), the tire header, the series head, the Reference card, the Library toolbar */
+.as-collection-item { display: flex; align-items: center; }
+.as-collection-item > .ui-row { flex: 1 1 auto; min-width: 0; }
+.as-collection-item > .ui-row::before { right: -480px; }   /* the separator runs under the button too (the list clips it) */
+.as-collection-cexp { margin: 0 12px 0 -4px; }
+.as-tire-cexp { margin-left: auto; }
+.as-controls:has(> .as-cexp) { flex-direction: row; align-items: flex-start; gap: 8px; }
+.as-controls:has(> .as-cexp) > .as-filters { flex: 1 1 auto; min-width: 0; }
+.as-cexp { margin-top: 1px; }
+@media (max-width: 600px) {
+  /* phones: the row keeps room for the tire's name — the state pill gives way (its count is in the subtitle) */
+  .as-collection-item.has-cexp .ui-row-trailing .ui-pill { display: none; }
+  .as-collection-cexp { margin-right: 10px; }
 }

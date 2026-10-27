@@ -22,6 +22,8 @@
  *                      6 draft    "Behind the scenes"     caption set
  *                      7 draft    (no name)                empty caption — Send for review must 422
  *               privacybee 8 pending "Privacy week"
+ *               (dated today + 1…12 days, 10:00 — a date past the end of this month lands on its last day, so every
+ *               seeded post stays in the month Posts opens on)
  *   emails      privacybee: W1 draft, W2 pending, W3 approved, R1 denied, R2 approved + live; groups Free / Renewal;
  *               flow "Welcome" = W1 → W2 → W3
  *   pages       privacybee: 1 pending (url), 2 approved + live (url), 3 draft (url)
@@ -180,8 +182,14 @@ $posts = [
 $insPost = $pdo->prepare("INSERT INTO posts (id, company_id, name, caption, hashtags, scheduled_date, status, posted, posted_at, post_type, client_comment)
                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
 $insPi = $pdo->prepare("INSERT INTO post_images (post_id, image_url, sort_order, media_type) VALUES (?, ?, ?, 'image')");
+// Every post stays in the current month: Posts opens on the current month, and the suites expect the seed's posts in
+// it. In the last days of a month a "+N days" that crosses into the next one lands on the month's last day instead
+// (10:00 + N minutes, so the order of the posts is kept).
+$monthEnd = new DateTimeImmutable('last day of this month 10:00');
 foreach ($posts as $k => [$id, $co, $name, $caption, $st, $posted, $days, $type, $imgs]) {
-    $when = $today->modify("+{$days} days")->format('Y-m-d H:i:s');
+    $whenDt = $today->modify("+{$days} days");
+    if ($whenDt->format('Y-m') !== $today->format('Y-m')) $whenDt = $monthEnd->modify("+{$days} minutes");
+    $when = $whenDt->format('Y-m-d H:i:s');
     $insPost->execute([$id, $co, $name, $caption, $co === 1 ? '#Kenda' : '#PrivacyBee', $when, $st, $posted,
         $posted ? $when : null, $type, $st === 'denied' ? 'Please use the darker render' : null]);
     foreach ($imgs as $j => $label) {
@@ -281,6 +289,8 @@ foreach (['comment_revisions', 'comment_slack'] as $t) { if ($has($t)) $pdo->exe
 
 // ---- the Redo queue (migrate.php 52): nothing queued (the tables were re-created above), no "last redo pack" watermark ----
 try { $pdo->exec("DELETE FROM meta WHERE k LIKE 'redo\\_export\\_last%'"); } catch (Throwable $e) { /* meta absent: nothing to reset */ }
+// ---- "Export open comments" (comment-export-lib.php): no "last comment export" watermark ----
+try { $pdo->exec("DELETE FROM meta WHERE k LIKE 'comment\\_export\\_last%'"); } catch (Throwable $e) { /* meta absent */ }
 
 $n = static fn(string $t) => (int)$pdo->query("SELECT COUNT(*) FROM `$t`")->fetchColumn();
 printf("  seeded: %d companies, %d tires, %d tire images, %d library, %d posts (%d media), %d emails, %d pages\n",

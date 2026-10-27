@@ -81,6 +81,7 @@ require __DIR__ . '/db.php';
 require __DIR__ . '/helpers.php';
 require_once __DIR__ . '/partials/components/comment-thread.php';   // commentThreadHtml() for the viewer's Comments panel
 require_once __DIR__ . '/export-lib.php';                            // exportZipSupported(): the admin select bar's Download
+require_once __DIR__ . '/comment-export-lib.php';                    // admin: "Export N open" counts (cexpPageCounts(), one collect per page)
 if (is_file(__DIR__ . '/tire-series-lib.php')) { require_once __DIR__ . '/tire-series-lib.php'; }
 
 $isAdmin  = isAdmin();
@@ -820,6 +821,10 @@ if ($partial) {   // (the Sent back list has no pages: $items is empty there)
     exit;
 }
 
+// Admin: the open-comment counts behind the "Export N open" buttons (comment-export-lib.php — the export's own rule,
+// ONE collect for the whole client, grouped per tire / series / Reference / Library; never a query per row).
+$cexpN = $isAdmin && !$sentBackMode ? cexpPageCounts($pdo, $client) : [];
+
 // ---------------------------------------------------------------------
 // Chrome
 // ---------------------------------------------------------------------
@@ -875,6 +880,12 @@ if ($trashN > 0) {
     $redoChip .= '<a class="as-chip as-chip--trash" href="' . esc(portalUrl('trash', ['client' => $slug])) . '" data-trash-link title="Items kept out of every list and notification — restore or delete">'
                . icon('trash') . '<span>Trash</span><span class="as-chip-count" data-trash-link-count>' . $trashN . '</span></a>';
 }
+// Admin: the toolbar's ⋯ menu — "Export open comments…" (comment-export.js; this client's image comments)
+$asMore = $isAdmin
+    ? '<div class="asg-more as-tools-more" data-assets-tools>'
+      . '<button type="button" class="ui-btn ui-btn--sm ui-btn--gray ui-btn--icon asg-more-btn" data-asg-menu-toggle aria-haspopup="menu" aria-expanded="false" aria-label="More actions">' . icon('ellipsis') . '</button>'
+      . '<div class="asg-menu" role="menu" data-asg-menu hidden>' . commentExportButton(['menuitem' => true, 'attrs' => ['data-assets-cexp' => '']]) . '</div></div>'
+    : '';
 ?>
 <?php if ($isGrid): // the status filter chips (the admin's Library Upload sits in the header — $navLinks above) ?>
 <div class="as-controls">
@@ -886,9 +897,12 @@ if ($trashN > 0) {
       <?php endforeach; ?>
       <?= $redoChip ?>
     </nav>
+    <?= $view === 'library' ? commentExportPackButton(['count' => cexpCountOf($cexpN, 'library:' . $cid), 'area' => 'library', 'class' => 'as-cexp',
+                                                       'aria' => 'Export ' . cexpCountOf($cexpN, 'library:' . $cid) . ' open comments on the Library', 'attrs' => ['data-library-cexp' => '']]) : '' ?>
+    <?= $asMore ?>
 </div>
-<?php elseif ($redoChip !== '' && $view === 'collections'): // the Tires list: the Redo chip on its own ?>
-<div class="as-controls"><nav class="as-filters" aria-label="Queues"><?= $redoChip ?></nav></div>
+<?php elseif (($redoChip !== '' || $asMore !== '') && $view === 'collections'): // the Tires list: the Redo chip on its own (+ the ⋯ menu) ?>
+<div class="as-controls"><nav class="as-filters" aria-label="Queues"><?= $redoChip ?></nav><?= $asMore ?></div>
 <?php elseif (!$isAdmin && $view === 'collections'): // the client's Tires list: every tire · its Sent back (all tires) ?>
 <div class="as-controls">
   <nav class="as-filters" aria-label="<?= esc($collectionsLabel) ?>" data-sentback-chips>
@@ -957,15 +971,24 @@ if ($trashN > 0) {
         $stateHtml = '';
         if ($isAdmin && $state === 'allok')  $stateHtml = assetsAllOkHtml('tire');
         if ($isAdmin && $state === 'denied') $stateHtml = '<span class="ui-pill ui-pill--nodot ui-pill--denied" data-tire-denied>' . $d . ' need' . ($d === 1 ? 's' : '') . ' changes</span>';
-        echo insetRow([
+        // Admin: "Export N open" — this tire's open comments as a bot pack, beside the row's link (never inside it; it
+        // takes the chevron's place at the row's end)
+        $nOpen = cexpCountOf($cexpN, 'tire:' . $tid);
+        $cexpBtn = commentExportPackButton(['count' => $nOpen, 'tire' => $tid, 'class' => 'as-collection-cexp',
+                                            'aria' => 'Export ' . $nOpen . ' open comments on ' . $c['name'], 'attrs' => ['data-tire-cexp' => $tid]]);
+        $rowHtml = insetRow([
             'href'     => clientUrl('assets.php', ['view' => 'collections', 'item' => $tid]),
             'leading'  => $thumb,
             'title'    => (string)$c['name'],
             'subtitle' => implode(' · ', $parts),
             'trailing' => $driveGlyph . $stateHtml . ($p > 0 ? '<span class="ui-badge">' . ($p > 99 ? '99+' : $p) . '</span>' : ''),
-            'chevron'  => true,
+            'chevron'  => $cexpBtn === '',
             'attrs'    => ['id' => 'collection-' . $tid, 'data-collection' => $tid],
         ]);
+        if ($cexpBtn !== '' && substr($rowHtml, 0, 4) === '<li>' && substr($rowHtml, -5) === '</li>') {
+            $rowHtml = '<li class="as-collection-item has-cexp">' . substr($rowHtml, 4, -5) . $cexpBtn . '</li>';
+        }
+        echo $rowHtml;
     endforeach; ?>
     <?= insetListClose() ?>
   <?php endif; ?>
@@ -978,7 +1001,10 @@ if ($trashN > 0) {
     $refAdminHtml = '';
     if ($isAdmin) {
         $refUpload = ['dest' => 'reference', 'tire' => $itemId];   // the Upload sheet with this tire's Reference preselected
+        $nRef = cexpCountOf($cexpN, 'ref:' . $itemId);
         $refAdminHtml = '<div class="as-reference-admin">'
+            . commentExportPackButton(['count' => $nRef, 'tire' => $itemId, 'series' => 'ref', 'label' => 'Export ({n})',
+                                       'aria' => 'Export ' . $nRef . ' open comments on the reference images of ' . $collection['name'], 'attrs' => ['data-ref-cexp' => '']])
             . '<a class="ui-btn ui-btn--sm ui-btn--tinted" href="' . esc(uploadSheetUrl('assets.php', $refUpload, ['view' => 'collections', 'item' => $itemId, 'series' => 'ref'])) . '"' . uploadSheetAttrs($refUpload) . ' data-ref-upload>' . icon('upload') . '<span>Upload</span></a>'
             . '<a class="ui-btn ui-btn--sm ui-btn--gray" href="' . esc(clientUrl('add-feature.php', ['module' => 'tires', 'edit_item' => $itemId])) . '">Edit</a>'
             . '<div class="asg-more as-tire-more">'
@@ -1015,6 +1041,9 @@ if ($trashN > 0) {
         <?php else: ?>
           <span class="ui-pill">No images yet</span>
         <?php endif; ?>
+        <?php $nTire = cexpCountOf($cexpN, 'tire:' . $itemId);   // the whole tire's open comments as a bot pack ?>
+        <?= commentExportPackButton(['count' => $nTire, 'tire' => $itemId, 'label' => 'Export open comments ({n})', 'class' => 'as-tire-cexp',
+                                     'aria' => 'Export ' . $nTire . ' open comments on ' . $collection['name'], 'attrs' => ['data-tire-page-cexp' => '']]) ?>
       </div>
     <?php endif; ?>
     <?php if ($seriesOn): // ---- Reference card + strip: the tire's approved reference images, always on top (above the switcher) ----
@@ -1104,6 +1133,11 @@ if ($trashN > 0) {
                     data-confirm="<?= esc('Approve all ' . $typePending . ' remaining ' . $typeNoun . ($typePending === 1 ? '' : 's') . ' in ' . $seriesActive['name'] . '?') ?>"
                     data-toast="<?= esc($seriesActive['name'] . ($typeEff !== 'all' ? ' ' . $typeNoun . 's' : '') . ' approved') ?>" data-reload><?= icon('checkmark') ?><span>Approve all remaining</span></button>
           <?php endif; ?>
+          <?php if ($isAdmin && $seriesActive): // this series' open comments as a bot pack (the Reference card carries the Reference's)
+                $nSeries = cexpCountOf($cexpN, 'series:' . (int)$seriesActive['id']); ?>
+            <?= commentExportPackButton(['count' => $nSeries, 'tire' => $itemId, 'series' => (int)$seriesActive['id'], 'label' => 'Export ({n})',
+                                         'aria' => 'Export ' . $nSeries . ' open comments on ' . $collection['name'] . ' · ' . $seriesActive['name'], 'attrs' => ['data-series-head-cexp' => (int)$seriesActive['id']]]) ?>
+          <?php endif; ?>
           <?php if ($isAdmin): // admin-only: never rendered for clients ?>
             <a class="ui-btn ui-btn--sm ui-btn--tinted as-series-upload" href="<?= esc(uploadSheetUrl('assets.php', $headUpload, ['view' => 'collections', 'item' => $itemId, 'series' => $seriesKey])) ?>"<?= uploadSheetAttrs($headUpload) ?> data-series-upload><?= icon('upload') ?><span>Upload</span></a>
             <div class="as-menu" data-series-menu-root>
@@ -1111,6 +1145,7 @@ if ($trashN > 0) {
               <div class="as-menu-list" data-series-menu-list role="menu" hidden>
                 <button type="button" class="as-menu-item" role="menuitem" data-series-manage><?= icon('checklist') ?>Manage series…</button>
                 <a class="as-menu-item" role="menuitem" href="<?= esc(manageUrl('export', ['tire' => $itemId, 'series' => $seriesActive ? (int)$seriesActive['id'] : null])) ?>" data-series-export title="Manage → Export with this tire preselected"><?= icon('download') ?>Export approved…</a>
+                <?= commentExportButton(['menuitem' => true, 'icon' => true, 'class' => 'as-menu-item', 'attrs' => ['data-series-cexp' => '']]) // comment-export.js ?>
                 <?php if ($seriesActive): ?>
                   <button type="button" class="as-menu-item" role="menuitem" data-series-rename><?= icon('wand') ?>Rename series…</button>
                   <button type="button" class="as-menu-item" role="menuitem" data-series-drive-edit><?= icon('drive') ?><?= $headDrive !== '' ? 'Edit Google Drive link…' : 'Add Google Drive link…' ?></button>
