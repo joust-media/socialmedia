@@ -66,6 +66,8 @@ async function segCount(page, seg) { return parseInt((await page.textContent(`.u
       await page.click('#uiSheet [data-deny-submit]');
       await page.waitForSelector('#uiSheet .pd[data-status="denied"]');
       await page.waitForSelector('#uiSheet [data-pd-note]:not([hidden])');
+      // the banner shows at once (optimistic); its text is filled when status.php answers — wait for it, not a race
+      await page.waitForFunction(() => /Logo is cropped/.test((document.querySelector('#uiSheet [data-pd-note]') || {}).textContent || ''), null, { timeout: 10000 }).catch(() => {});
       expect((await page.textContent('#uiSheet [data-pd-note]')).indexOf('Logo is cropped') !== -1, 'note text');
       expect.eq((await primaries(page)).join(' | '), 'Edit & resubmit');
     });
