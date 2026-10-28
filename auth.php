@@ -176,6 +176,7 @@ function adminSessionLookup(PDO $pdo): ?array {
         return $row;
     } catch (Throwable $e) {
         error_log('admin session lookup failed: ' . $e->getMessage());
+        $GLOBALS['__jsmAdminDbFault'] = true;   // currentAdmin(): the PHP session decides (never a lockout on a DB fault)
         return null;
     }
 }
@@ -194,6 +195,8 @@ function adminLegacyCarryOk(PDO $pdo): bool {
         $last = (int)$all->fetchColumn();
         return $last === 0 || $at > $last;
     } catch (Throwable $e) {
+        error_log('admin session carry-over check failed: ' . $e->getMessage());
+        $GLOBALS['__jsmAdminDbFault'] = true;
         return false;
     }
 }
@@ -220,6 +223,7 @@ function currentAdmin() {
         // Before migrate 56: the PHP session alone (unchanged behaviour; not cached — login / logout change it).
         return $_SESSION['admin_email'] ?? null;
     }
+    unset($GLOBALS['__jsmAdminDbFault']);
     $row = adminSessionLookup($pdo);
     if ($row) {
         startAdminSession(true);   // the host may have deleted the PHP session: start a fresh one for the scratch state
@@ -230,12 +234,24 @@ function currentAdmin() {
         return $GLOBALS['__jsmAdmin'] = (string)$row['admin_email'];
     }
     if (adminLegacyCarryOk($pdo)) {
+        // Output already started: no cookie can be set now, so the carry-over waits for the next request (this one is
+        // still the PHP session's, as before migrate 56).
+        if (headers_sent()) return $_SESSION['admin_email'] ?? null;
         try {
             $_SESSION['admin_sid'] = adminSessionCreate($pdo, 'carried', (int)$_SESSION['admin_login_at']);
             return $GLOBALS['__jsmAdmin'] = ADMIN_EMAIL;
         } catch (Throwable $e) {
             error_log('admin session carry-over failed: ' . $e->getMessage());
+            $GLOBALS['__jsmAdminDbFault'] = true;
         }
+    }
+    // The database failed inside the new path (an error, not an answer): fall back to the PHP session, exactly the
+    // sign-in before migrate 56 — a broken / unreachable admin_sessions must never lock the admin out. A row that is
+    // merely revoked / idle / past the maximum is an answer, not a fault, and still signs out below. Not cached.
+    if (!empty($GLOBALS['__jsmAdminDbFault'])) {
+        unset($GLOBALS['__jsmAdminDbFault']);
+        $email = (session_status() === PHP_SESSION_ACTIVE) ? ($_SESSION['admin_email'] ?? null) : null;
+        if (is_string($email) && strcasecmp($email, ADMIN_EMAIL) === 0) return $email;
     }
     // Not signed in: a PHP session that still says otherwise (its row is revoked / expired) is cleared.
     if (session_status() === PHP_SESSION_ACTIVE && (isset($_SESSION['admin_email']) || isset($_SESSION['admin_sid']))) {
@@ -381,15 +397,21 @@ function adminLogout(bool $everywhere = false) {
 /** The admin's live sign-ins (Manage → Tools → Your sign-ins), newest first; 'current' marks this browser's. */
 function adminSessionsList(PDO $pdo): array {
     if (!adminSessionsReady($pdo)) return [];
-    $st = $pdo->prepare("SELECT id, via, ip, user_agent, created_at, last_seen_at, expires_at, token_hash FROM admin_sessions
-        WHERE admin_email = ? AND revoked_at IS NULL AND expires_at > NOW()
-          AND created_at > NOW() - INTERVAL " . adminMaxSeconds() . " SECOND
-          AND last_seen_at > NOW() - INTERVAL " . adminIdleSeconds() . " SECOND
-        ORDER BY last_seen_at DESC, id DESC LIMIT 50");
-    $st->execute([ADMIN_EMAIL]);
+    try {
+        $st = $pdo->prepare("SELECT id, via, ip, user_agent, created_at, last_seen_at, expires_at, token_hash FROM admin_sessions
+            WHERE admin_email = ? AND revoked_at IS NULL AND expires_at > NOW()
+              AND created_at > NOW() - INTERVAL " . adminMaxSeconds() . " SECOND
+              AND last_seen_at > NOW() - INTERVAL " . adminIdleSeconds() . " SECOND
+            ORDER BY last_seen_at DESC, id DESC LIMIT 50");
+        $st->execute([ADMIN_EMAIL]);
+        $all = $st->fetchAll();
+    } catch (Throwable $e) {   // a broken table must not take Manage → Tools down with it
+        error_log('admin sessions list failed: ' . $e->getMessage());
+        return [];
+    }
     $mine = adminKeyCookie() !== '' ? adminTokenHash(adminKeyCookie()) : '';
     $out = [];
-    foreach ($st->fetchAll() as $r) {
+    foreach ($all as $r) {
         $r['current'] = $mine !== '' && hash_equals((string)$r['token_hash'], $mine);
         unset($r['token_hash']);
         $out[] = $r;

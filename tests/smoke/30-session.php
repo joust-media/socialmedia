@@ -474,4 +474,39 @@ test('before migrate 56: the old behaviour (PHP session only); migrate 56 fresh 
     }
 });
 
+test('a broken admin_sessions (the table there but unusable) never locks the admin out: the PHP session decides, as before migrate 56', function () {
+    if (!hasTable()) runMigrate();
+    db()->exec("TRUNCATE TABLE admin_sessions");
+    $before = login();
+    ok(isIn($before), 'signed in with a row');
+    try {
+        // every SELECT / INSERT on token_hash now fails (a DB error inside the new path)
+        db()->exec("ALTER TABLE admin_sessions CHANGE token_hash token_hash_broken CHAR(64) NOT NULL");
+        $r = $before->get('manage.php?section=tools');
+        is($r['code'], 200, 'an existing sign-in stays signed in (PHP session fallback)');
+        ok(!isset($r['headers']['x-portal-auth']), 'no signed-out header');
+        // a fresh sign-in with the real password still gets in
+        $j = new Jar();
+        $r = $j->post('login.php', ['email' => LANCE, 'password' => PW]);
+        is($r['code'], 302, 'login redirects');
+        ok(isIn($j), 'fresh sign-in works with the table broken');
+        ok(isIn($j), 'and keeps working');
+        // the login page does not loop for a signed-in browser
+        $r = $j->get('login.php');
+        is($r['code'], 302);
+        hasNot($r['location'], 'login.php', 'login → the app, not back to login');
+        // sign-out still signs out
+        $j->get('logout.php');
+        ok(!isIn($j), 'logout works with the table broken');
+        // nobody else gets in
+        ok(!isIn(new Jar()), 'anonymous stays out');
+    } finally {
+        db()->exec("ALTER TABLE admin_sessions CHANGE token_hash_broken token_hash CHAR(64) NOT NULL");
+    }
+    // repaired: the row path again (a fresh key on the next sign-in)
+    $k = login();
+    ok(isIn($k));
+    ok(rowOf($k) !== null);
+});
+
 finish();
