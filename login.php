@@ -223,8 +223,10 @@ $joustLogo = $brandUrl('joust.png');
 
     <?php if ($error): ?>
       <div class="notice notice--error" role="alert"><?= h($error) ?></div>
+    <?php elseif (($_GET['reason'] ?? '') === 'expired'): // auth.php requireAdmin(): the sign-in ended (idle, the hard maximum, signed out elsewhere) ?>
+      <div class="notice notice--error" role="alert" data-login-expired>You were signed out. Please sign in again — you’ll go right back to the page you were on.</div>
     <?php elseif (!empty($_GET['signed_out'])): ?>
-      <div class="notice notice--ok" role="status">Signed out. Sign in again to continue.</div>
+      <div class="notice notice--ok" role="status"><?= ($_GET['signed_out'] ?? '') === 'everywhere' ? 'Signed out on every device. Sign in again to continue.' : 'Signed out. Sign in again to continue.' ?></div>
       <script>
         // logout.php only redirects (no DOM), so the signed-out state of this page is the first
         // same-origin document after sign-out: drop App.video's cached poster frames / durations

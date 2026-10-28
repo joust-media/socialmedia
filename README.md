@@ -21,6 +21,30 @@ Social Media Builder
 with `migrate.php`, deterministic fixtures) and runs the HTTP smoke suites and the Playwright
 checks. See `tests/README.md`. `tests/` is never deployed.
 
+## Admin sign-in
+
+`login.php` (email + password, `auth.php`). Since `migrate.php` step 56 the sign-in is an `admin_sessions` row
+behind the cookie `jsm_admin_key` (random 256-bit token, only its sha256 stored; HttpOnly, SameSite=Lax, Secure on
+HTTPS, path = the portal folder, so production and staging never share it; it expires with the hard maximum).
+It lasts until **`admin_idle_hours`** (config.php, default **12**) without using the portal, and at most
+**`admin_max_days`** (default **7**) after signing in; both are checked on every request against `last_seen_at`
+(written at most every 5 minutes) and `created_at`, so changing them applies to existing sign-ins too.
+The `jsm_admin` PHP session is only scratch state now (View as client, the Google OAuth state) and is rebuilt
+whenever the host's session clean-up has deleted it — before step 56 that clean-up (shared hosting deletes idle
+session files after `session.gc_maxlifetime`, ~24 minutes) signed the admin out every half hour or so.
+Before step 56 the PHP session alone decides, as before; a PHP session signed in before it is carried over into
+a row on its next request (no new sign-in), unless it is older than the hard maximum or a *Sign out everywhere*
+came after it. `session_regenerate_id()` and a fresh key on every sign-in.
+
+- **Sign out** (`logout.php`) revokes this browser's row. Manage → Tools → **Your sign-ins** lists every live
+  device (*this device* marked) with *Sign out* per device, *Sign out other devices* (`admin-sessions.php`) and
+  *Sign out everywhere* (`logout.php` POST `everywhere=1`, same-site only).
+- **Signed out mid-page**: every reply then carries `X-Portal-Auth: signed-out`; `app.js` shows a banner whose
+  *Sign in again* returns to the same page. `requireAdmin()` answers fetches with 401 JSON (`signIn`), and pages /
+  form POSTs with the sign-in page (`reason=expired`: "You were signed out…") and back to the page (for a POST, the
+  page the form was on). On client-facing pages an admin whose sign-in ended goes to `login.php`, not the client's
+  magic link. Client sessions (below) are not affected by any of this.
+
 ## Client sign-in and clean links
 
 Clients sign in; a bare `?client=<slug>` link no longer opens anything by itself.

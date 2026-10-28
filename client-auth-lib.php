@@ -682,6 +682,21 @@ if (!function_exists('portalDeny')) {
     /** Stop: JSON 401 (nobody signed in) / 403 (signed in for another client), or a redirect to sign-in. */
     function portalDeny(string $script, int $code, string $reason, string $slug): void {
         $return = (string)($_SERVER['REQUEST_URI'] ?? '');
+        // The admin's own sign-in ended (auth.php: a jsm_admin_key whose row is idle / past the maximum / revoked) and no
+        // client session stands in for it: back to the admin sign-in (not the client's magic link), then to this page.
+        if ($code === 401 && function_exists('adminSignedOutHere') && adminSignedOutHere() && function_exists('adminLoginUrl')) {
+            $back = ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET' && !portalWantsJson($script) ? $return : adminSameAppReferer();
+            $url = adminLoginUrl($back !== '' ? $back : $return, 'expired');
+            header('Cache-Control: no-store');
+            if (portalWantsJson($script)) {
+                http_response_code(401);
+                header('Content-Type: application/json');
+                echo json_encode(['ok' => false, 'signedOut' => true, 'error' => 'You were signed out. Please sign in again.', 'signIn' => $url], JSON_UNESCAPED_SLASHES);
+                exit;
+            }
+            header('Location: ' . $url, true, 302);
+            exit;
+        }
         if (portalWantsJson($script)) {
             http_response_code($code);
             header('Content-Type: application/json');

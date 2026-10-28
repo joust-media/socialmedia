@@ -396,6 +396,49 @@ include __DIR__ . '/partials/layout-top.php';
   </section>
   <iframe name="digest_iframe" class="ui-visually-hidden" aria-hidden="true" tabindex="-1"></iframe>
 
+  <?php if (adminSessionsReady($pdo)): // Your sign-ins (auth.php admin_sessions, migrate.php 56; admin-sessions.php / logout.php everywhere=1)
+    $asRows = adminSessionsList($pdo);
+    $asIdleH = adminIdleSeconds() / 3600; $asMaxD = adminMaxSeconds() / 86400;
+    $asNum = static function (float $n): string { return rtrim(rtrim(number_format($n, 2, '.', ''), '0'), '.'); };
+    $asOthers = count(array_filter($asRows, static function ($r) { return !$r['current']; }));
+  ?>
+  <section class="ui-card studio-export-card manage-signins" id="sign-ins" data-admin-sessions data-tool="sign-ins">
+    <div class="ui-card-header"><div class="ui-card-heading"><h3 class="ui-card-title">Your sign-ins</h3>
+      <p class="ui-card-subtitle">You stay signed in on a device until you go <?= h($asNum($asIdleH)) ?> hour<?= $asNum($asIdleH) === '1' ? '' : 's' ?> without using the portal, and at most <?= h($asNum($asMaxD)) ?> day<?= $asNum($asMaxD) === '1' ? '' : 's' ?> after signing in (config.php <code>admin_idle_hours</code> / <code>admin_max_days</code>).</p></div></div>
+    <div class="ui-card-body">
+      <ul class="studio-client-modlist" role="list">
+        <?php foreach ($asRows as $asR): ?>
+          <li class="studio-client-mod-row" data-admin-session="<?= (int)$asR['id'] ?>"<?= $asR['current'] ? ' data-admin-session-current' : '' ?>>
+            <div class="studio-client-mod-body">
+              <div class="ui-row-title"><?= h(clientDeviceLabel((string)$asR['user_agent'])) ?><?= $asR['current'] ? ' · <span class="text-secondary">this device</span>' : '' ?></div>
+              <div class="ui-row-subtitle" title="<?= h((string)$asR['user_agent']) ?>">signed in <?= h(relativeTime($asR['created_at'])) ?><?= $asR['via'] === 'test' ? ' (test)' : '' ?> · active <?= h(relativeTime($asR['last_seen_at'] ?: $asR['created_at'])) ?><?= !empty($asR['ip']) ? ' · ' . h((string)$asR['ip']) : '' ?> · until <?= h(date('M j', strtotime((string)$asR['expires_at']))) ?> at the latest</div>
+            </div>
+            <?php if (!$asR['current']): ?>
+            <form method="POST" action="<?= h(pagePath('admin-sessions')) ?>" class="studio-inline-form">
+              <input type="hidden" name="action" value="revoke">
+              <input type="hidden" name="id" value="<?= (int)$asR['id'] ?>">
+              <button type="submit" class="ui-btn ui-btn--gray ui-btn--sm" data-admin-session-revoke>Sign out</button>
+            </form>
+            <?php endif; ?>
+          </li>
+        <?php endforeach; ?>
+      </ul>
+      <div class="studio-export-actions">
+        <?php if ($asOthers > 0): ?>
+        <form method="POST" action="<?= h(pagePath('admin-sessions')) ?>" class="studio-inline-form" data-confirm-submit="Sign out on every other device? This one stays signed in.">
+          <input type="hidden" name="action" value="others">
+          <button type="submit" class="ui-btn ui-btn--gray ui-btn--sm" data-admin-sessions-others>Sign out other devices</button>
+        </form>
+        <?php endif; ?>
+        <form method="POST" action="<?= h(pagePath('logout')) ?>" class="studio-inline-form" data-confirm-submit="Sign out on every device, this one included?">
+          <input type="hidden" name="everywhere" value="1">
+          <button type="submit" class="ui-btn ui-btn--plain ui-btn--sm studio-danger-btn" data-admin-sessions-everywhere>Sign out everywhere</button>
+        </form>
+      </div>
+    </div>
+  </section>
+  <?php unset($asRows, $asR, $asIdleH, $asMaxD, $asNum, $asOthers); endif; ?>
+
   <?php if (!$client): ?>
     <?= $clientPicker($pdo, 'tools', 'Tires, AI Builder, Projects and the email tools work per client.') ?>
   <?php endif; ?>

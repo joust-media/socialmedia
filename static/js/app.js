@@ -607,6 +607,56 @@
   };
 
   /* ---------------------------------------------------------------- */
+  /* Signed out mid-page: once the admin's sign-in has ended (idle     */
+  /* limit, the hard maximum, signed out elsewhere) auth.php answers   */
+  /* every request with X-Portal-Auth: signed-out. Every fetch / XHR   */
+  /* reply is checked; the first such reply shows one banner whose     */
+  /* "Sign in again" goes to login and comes back to this very page.  */
+  /* ---------------------------------------------------------------- */
+  App.signedOut = function () {
+    if (App._signedOut || !document.body) return;
+    App._signedOut = true;
+    var here = window.location.pathname + window.location.search + window.location.hash;
+    var el = document.createElement('div');
+    el.className = 'ui-signedout';
+    el.setAttribute('role', 'alert');
+    el.setAttribute('data-signed-out', '');
+    var msg = document.createElement('span');
+    msg.textContent = 'You were signed out, so what you just did was not saved. Sign in again to continue on this page.';
+    var a = document.createElement('a');
+    a.className = 'ui-btn ui-btn--filled ui-btn--sm';
+    a.href = App.urls.build('login', { 'return': here, reason: 'expired' });
+    a.textContent = 'Sign in again';
+    el.appendChild(msg); el.appendChild(a);
+    document.body.appendChild(el);
+  };
+  function saysSignedOut(read) {
+    try { return String(read('X-Portal-Auth') || '').toLowerCase() === 'signed-out'; } catch (e) { return false; }
+  }
+  if (window.fetch && !window.fetch.__portalAuth) {
+    var nativeFetch = window.fetch;
+    var authFetch = function () {
+      return nativeFetch.apply(window, arguments).then(function (res) {
+        if (res && res.headers && saysSignedOut(function (n) { return res.headers.get(n); })) App.signedOut();
+        return res;
+      });
+    };
+    authFetch.__portalAuth = true;
+    window.fetch = authFetch;
+  }
+  if (window.XMLHttpRequest && !XMLHttpRequest.prototype.__portalAuth) {
+    var nativeSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function () {
+      var xhr = this;
+      xhr.addEventListener('loadend', function () {
+        if (xhr.readyState === 4 && saysSignedOut(function (n) { return xhr.getResponseHeader(n); })) App.signedOut();
+      });
+      return nativeSend.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.__portalAuth = true;
+  }
+
+  /* ---------------------------------------------------------------- */
   /* Fetch helper — application/x-www-form-urlencoded, JSON back      */
   /* ---------------------------------------------------------------- */
   App.post = function (endpoint, params) {

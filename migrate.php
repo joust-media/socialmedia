@@ -2107,6 +2107,42 @@ if (!$errors) {
         $errors[] = $e->getMessage();
     }
 }
+
+// 56. admin_sessions (auth.php) — the admin's sign-ins, kept in the database instead of the host's PHP session files
+//     (which a shared host deletes after session.gc_maxlifetime, ~24 minutes idle — the "signed out every 15 minutes"
+//     report). The jsm_admin_key cookie = a random token, only its sha256 stored; idle limit (config admin_idle_hours,
+//     default 12) and hard maximum (admin_max_days, default 7) are checked against last_seen_at / created_at, so a
+//     config change applies to existing sign-ins too. A new table only — no existing table or column is touched.
+//     Until it exists auth.php keeps the PHP session alone (the old behaviour); a PHP session signed in before it is
+//     carried over into a row on its next request, so Lance does not have to sign in again.
+if (!$errors) {
+    try {
+        if (!tableExists($pdo, 'admin_sessions')) {
+            $pdo->exec("
+                CREATE TABLE admin_sessions (
+                    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                    admin_email VARCHAR(190) NOT NULL,
+                    token_hash CHAR(64) NOT NULL,
+                    via VARCHAR(12) NOT NULL DEFAULT 'password',
+                    ip VARCHAR(45) NULL DEFAULT NULL,
+                    user_agent VARCHAR(255) NULL DEFAULT NULL,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    last_seen_at DATETIME NULL DEFAULT NULL,
+                    expires_at DATETIME NOT NULL,
+                    revoked_at DATETIME NULL DEFAULT NULL,
+                    revoked_by VARCHAR(20) NULL DEFAULT NULL,
+                    UNIQUE KEY uq_admin_token (token_hash),
+                    KEY ix_admin_live (admin_email, revoked_at, expires_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            ");
+            $steps[] = "✓ Created `admin_sessions` (admin sign-ins that survive the host's session clean-up).";
+        } else {
+            $steps[] = "• `admin_sessions` already exists — skipped.";
+        }
+    } catch (Exception $e) {
+        $errors[] = $e->getMessage();
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
