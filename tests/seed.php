@@ -286,6 +286,8 @@ if (!empty($cfg['mail_sink_dir']) && is_dir($cfg['mail_sink_dir'])) {
 
 // ---- comment editing (migrate.php 53): no revisions, no remembered Slack messages ------------------------------------
 foreach (['comment_revisions', 'comment_slack'] as $t) { if ($has($t)) $pdo->exec("TRUNCATE TABLE `{$t}`"); }
+// ---- admin sign-ins (migrate.php 56): none (the admin seat of tests/test-auth.php makes its own row on demand) ----------
+if ($has('admin_sessions')) $pdo->exec("TRUNCATE TABLE `admin_sessions`");
 
 // ---- the Redo queue (migrate.php 52): nothing queued (the tables were re-created above), no "last redo pack" watermark ----
 try { $pdo->exec("DELETE FROM meta WHERE k LIKE 'redo\\_export\\_last%'"); } catch (Throwable $e) { /* meta absent: nothing to reset */ }

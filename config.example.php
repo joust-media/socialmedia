@@ -40,6 +40,12 @@ return [
     // request's own origin (right on the live host).
     'clean_links_check_origin' => '',
 
+    // ---- Admin sign-in (auth.php; the admin_sessions table — migrate.php step 56) --------------------------------
+    // How long the Joust admin stays signed in on a device. Kept in the database, so the host's PHP session clean-up
+    // (~24 minutes idle on shared hosting) no longer signs anyone out. Changes apply to existing sign-ins at once.
+    'admin_idle_hours' => 12,    // signed out after this many hours without using the portal (0.25 – 720; decimals OK)
+    'admin_max_days'   => 7,     // and at the latest this many days after signing in, however active (1 – 90)
+
     // ---- Client sign-in (client-auth-lib.php) -------------------------------------------------------------------
     // HMAC key for the signed deep links in client emails (clientLink()), the [J#…] reply tokens and the email
     // preferences links. 32+ random characters; changing it voids every link already sent. Blank = derived from the
